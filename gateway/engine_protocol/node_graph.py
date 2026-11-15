@@ -437,8 +437,8 @@ class GraphSession:
     async def history_page(self, max_items: int) -> WireReply:
         return await self._send(self.client.get, f"/history?max_items={max_items}")
 
-    async def queue(self, *, headers: Any = UNSET, timeout: Any = UNSET) -> WireReply:
-        return await self._send(self.client.get, "/queue", **supplied(headers=headers, timeout=timeout))
+    async def queue(self, *, headers: Any = UNSET, timeout: Any = UNSET, extensions: Any = UNSET) -> WireReply:
+        return await self._send(self.client.get, "/queue", **supplied(headers=headers, timeout=timeout, extensions=extensions))
 
     async def view(self, params: Mapping[str, Any], *, headers: Any = UNSET) -> WireReply:
         return await self._send(self.client.get, "/view", **supplied(headers=headers, params=params))
@@ -467,8 +467,8 @@ class GraphSession:
         """The node definitions of one class, or of every class."""
         return await self._send(self.client.get, "/object_info" if class_type is None else f"/object_info/{quote(class_type, safe='')}")
 
-    async def stats(self, *, timeout: Any = UNSET) -> WireReply:
-        return await self._send(self.client.get, "/system_stats", **supplied(timeout=timeout))
+    async def stats(self, *, timeout: Any = UNSET, extensions: Any = UNSET) -> WireReply:
+        return await self._send(self.client.get, "/system_stats", **supplied(timeout=timeout, extensions=extensions))
 
     async def free(self, body: Mapping[str, Any], *, timeout: Any = UNSET) -> WireReply:
         return await self._send(self.client.post, "/free", **supplied(json=body, timeout=timeout))
@@ -548,42 +548,57 @@ class NodeGraphAdapter:
 
     # --- the interface ----------------------------------------------------------------------
 
-    async def observe(self, conn: Connection) -> Mapping[str, Any] | None:
-        """Read queue and runtime once through the existing bounded session path.
+    async def observe(self, conn: Connection, *, client: Any = None) -> Mapping[str, Any]:
+        """Independent status parts; an unknown half never erases the successful half.
 
-        Any incomplete or malformed response is unknown, not an empty queue.
-        Queue order is preserved; runtime fields and device rows are opaque.
+        The optional caller client retains its TLS, timeout and probe policy.
+        Queue counts include legacy rows skipped by id extraction; ids keep raw types.
         """
+        import asyncio
         from copy import deepcopy
+        from gateway import status_words
 
-        replies = []
-        async with self.open(conn) as opened:
-            for read in (opened.queue, opened.stats):
-                try:
-                    reply = await read(timeout=CONTROL_TIMEOUT_S)
-                    replies.append(reply.json() if reply.status == 200 else None)
-                except (TransportFailure, ValueError):
-                    replies.append(None)
-        queue, stats = replies
-        if not isinstance(queue, Mapping) or not isinstance(stats, Mapping):
-            return None
-        normalized = {}
-        for source, destination in (("queue_running", "running"), ("queue_pending", "pending")):
-            rows = queue.get(source)
-            if not isinstance(rows, list):
+        async def read(opened, method):
+            try:
+                options = ({"extensions": engine_egress.probe()} if client is not None
+                           else {"timeout": CONTROL_TIMEOUT_S})
+                reply = await method(**options)
+                return reply.json() if reply.status == 200 else None
+            except Exception:
                 return None
-            ids = []
-            for row in rows:
-                if not isinstance(row, (list, tuple)) or len(row) < 2 or not isinstance(row[1], str) or not row[1]:
-                    return None
-                ids.append(row[1])
-            normalized[destination] = ids
-        runtime, devices = stats.get("system"), stats.get("devices")
-        if not isinstance(runtime, Mapping) or not isinstance(devices, list) or any(
-            not isinstance(row, Mapping) for row in devices
-        ):
-            return None
-        return {"queue": normalized, "runtime": deepcopy(dict(runtime)), "devices": deepcopy(devices)}
+
+        async def parts(opened):
+            return await asyncio.gather(read(opened, opened.queue), read(opened, opened.stats))
+
+        if client is None:
+            async with self.open(conn) as opened:
+                queue, stats = await parts(opened)
+        else:
+            queue, stats = await parts(self.attach(conn, client))
+        normalized = None
+        if isinstance(queue, Mapping):
+            try:
+                running, pending = queue.get("queue_running") or [], queue.get("queue_pending") or []
+                normalized = {"running": len(running), "pending": len(pending),
+                              "running_ids": [row[1] for row in running if isinstance(row, list) and len(row) >= 2],
+                              "pending_ids": [row[1] for row in pending if isinstance(row, list) and len(row) >= 2]}
+            except (TypeError, ValueError):
+                pass
+        runtime, devices = None, None
+        raw_stats = deepcopy(dict(stats)) if isinstance(stats, Mapping) else None
+        if raw_stats is not None:
+            system = raw_stats.get("system") or {}
+            devices = deepcopy(raw_stats.get("devices") or [])
+            if isinstance(system, Mapping):
+                version_key = status_words.words("images")["version_key"]
+                runtime = {version_key: system.get(version_key),
+                           "python_version": system.get("python_version"),
+                           "pytorch_version": system.get("pytorch_version"),
+                           "ram_total_bytes": system.get("ram_total"),
+                           "ram_free_bytes": system.get("ram_free"),
+                           "argv": deepcopy(system.get("argv"))}
+        return {"queue": deepcopy(normalized), "stats_runtime": runtime,
+                "devices": devices, "raw_stats": raw_stats}
 
 
     async def health(self, conn: Connection) -> Health:

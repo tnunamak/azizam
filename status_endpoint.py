@@ -861,46 +861,22 @@ def _graph_record(config: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
 
 
 async def _graph_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:
-    async def _get(client, url):
-        try:
-            r = await client.get(url, extensions=engine_egress.probe())
-            return r.json() if r.status_code == 200 else None
-        except Exception:
-            return None
+    from gateway.engine_protocol.adapter import observe
+    from gateway.engine_protocol.types import Connection
 
     graph = _graph_record(config)
     origin = _configured_engine_base(graph)
-    if not origin:  # the record names no address: the graph engine is not configured
+    if not origin:
         return None, None
     try:
+        adapter = reviewed_adapters.adapter_for_backend(graph, _GRAPH_CAPABILITY)
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
-            queue, stats = await asyncio.gather(
-                _get(client, service_registry.join_base_path(origin, "/queue")),
-                _get(client, service_registry.join_base_path(origin, "/system_stats")),
-            )
-        if isinstance(queue, dict):
-            running = queue.get("queue_running") or []
-            pending = queue.get("queue_pending") or []
-            running_ids = []
-            for q in running:
-                if isinstance(q, list) and len(q) >= 2:
-                    running_ids.append(q[1])
-            pending_ids = []
-            for q in pending:
-                if isinstance(q, list) and len(q) >= 2:
-                    pending_ids.append(q[1])
-            queue_summary = {
-                "running": len(running),
-                "pending": len(pending),
-                "running_ids": running_ids,
-                "pending_ids": pending_ids,
-            }
-        else:
-            queue_summary = None
-        return queue_summary, stats if isinstance(stats, dict) else None
+            observation = await observe(adapter, Connection(address=origin), client=client)
+        if observation is None:
+            return None, None
+        return observation["queue"], observation
     except Exception:
         return None, None
-
 
 async def _gpu_workloads(
     gpus: Optional[list[dict]],
@@ -4049,21 +4025,12 @@ async def build_status_payload(config: dict) -> dict:
     swap_state = loop_section("swap_state", lambda: _swap_state(proxy_module) if proxy_module else {})
     graph_ws_state = loop_section(_GRAPH_WORDS["ws_state_key"], lambda: _graph_ws_state(proxy_module) if proxy_module else {})
 
-    # ComfyUI system_stats — VRAM headroom from comfy's perspective.
+    # The adapter owns engine fields; the public view keeps first-device compatibility.
     graph_view: Optional[dict] = None
-    if graph_stats:
+    if graph_stats and graph_stats["raw_stats"]:
         try:
-            devices = graph_stats.get("devices") or []
-            sysd = graph_stats.get("system") or {}
-            graph_view = {
-                _GRAPH_WORDS["version_key"]: sysd.get(_GRAPH_WORDS["version_key"]),
-                "python_version": sysd.get("python_version"),
-                "pytorch_version": sysd.get("pytorch_version"),
-                "ram_total_bytes": sysd.get("ram_total"),
-                "ram_free_bytes": sysd.get("ram_free"),
-                "argv": sysd.get("argv"),
-                "device": devices[0] if devices else None,
-            }
+            devices = graph_stats["devices"] or []
+            graph_view = {**graph_stats["stats_runtime"], "device": devices[0] if devices else None}
         except Exception as e:
             errors[_GRAPH_WORDS["stats_error_key"]] = _safe_err(e)
 
