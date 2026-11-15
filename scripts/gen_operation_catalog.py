@@ -225,6 +225,48 @@ def models_catalog_projection(source: Path, existing: list[dict]) -> tuple[list[
     return gaps, spellings
 
 
+
+def missing_model_operations(source: Path, vocabulary: dict, existing: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Declare exact corroborated identities only; examples never grant execution."""
+    # Reuse the strict shape/selector validation before inspecting any example.
+    models_catalog_projection(source, [])
+    rows = yaml.safe_load(source.read_text(encoding="utf-8"))["operations"]
+    known = {operation["id"]: operation for operation in existing}
+    if len(known) != len(existing):
+        raise ValueError("Duplicate declared operation")
+    operations, gaps = [], []
+    for order, row in enumerate(rows):
+        selectors = row["intent_prefixes"]
+        examples = row.get("examples", [])
+        reason = None
+        if len(selectors) != 1 or selectors[0].endswith(".") or "*" in selectors[0]:
+            reason = "Missing operation identity needs one exact singleton selector."
+        elif not examples or any(example.get("intent") != selectors[0] for example in examples):
+            reason = "Exact selector and every example intent must agree."
+        else:
+            intent = selectors[0]
+            families = {vocabulary.get(name, {}).get(intent)
+                        for name, _context in PROJECTED if intent in vocabulary.get(name, {})}
+            if len(families) != 1 or any(not isinstance(family, str) or not family.strip()
+                                         for family in families):
+                reason = "Missing operation identity needs one corroborated exact family mapping."
+            else:
+                family = next(iter(families))
+                if intent in known:
+                    if known[intent]["family"] != family:
+                        raise ValueError("Conflicting declared operation family: " + intent)
+                else:
+                    operation = {"id": intent, "family": family,
+                                 "request": _schema(None), "result": _schema(None),
+                                 "submittable_as_job": False}
+                    operations.append(operation)
+                    known[intent] = operation
+        if reason:
+            gaps.append({"source": source.name, "key": f"operations[{order}]:{row['id']}",
+                         "reason": reason})
+    return operations, gaps
+
+
 def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
     """Keep the gap-only helper conservative when no catalog operations are supplied."""
     return models_catalog_projection(source, [])[0]
@@ -295,8 +337,15 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         catalog["operations"].extend(alias_operations)
         catalog["relations"].extend(alias_relations)
     if models_source is not None:
+        missing_operations, identity_gaps = missing_model_operations(
+            models_source, document, catalog["operations"]
+        )
+        catalog["operations"].extend(missing_operations)
         model_gaps, model_spellings = models_catalog_projection(models_source, catalog["operations"])
-        catalog["unexpressed"].extend(model_gaps)
+        reasons = {gap["key"]: gap["reason"] for gap in identity_gaps}
+        catalog["unexpressed"].extend(
+            {**gap, "reason": reasons.get(gap["key"], gap["reason"])} for gap in model_gaps
+        )
         catalog["relations"].extend(model_spellings)
     if frontends_source is not None:
         catalog["unexpressed"].extend(protocol_frontend_gaps(frontends_source))
