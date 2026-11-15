@@ -1,10 +1,10 @@
 # Remote protocol engines
 
 Status: proposed design, not a shipped capability.
-Source pin: `50688daf80c6e264293669720daacaa30cddcd51`.
+Review pin: `44659c2fcd74a70d34f7c3a9974f7d1d4f9906f6`.
 This change is documentation only; remote dispatch remains refused.
-Only the three code inputs named below were inspected. No test source or
-transport implementation was in scope; no tests were run.
+This revision inspected dispatch, egress and the two named test modules.
+Earlier registry observations below are retained historical evidence; no tests ran.
 Prior-art claims supplied with the assignment are background, not independently
 verified evidence that this gateway already enforces any control.
 
@@ -128,28 +128,91 @@ Those controls are proposed, not proven by the inspected code.
 Red tests: oversized compressed/uncompressed body; slow trickle; endless polling;
 cancelled stream; limits apply to probes/control as well as generation.
 
+## Mandatory remote capability and revocation contract
+
+Proposed capability: immutable (service_id, exact_origin, policy_generation,
+address_exceptions, credential_ref, finite_budgets), minted only from the current
+owner-controlled registry. Never build it from a request URL or caller headers.
+One mandatory client factory owns this capability and the enforcing transport.
+Main dispatch, fresh HTTP observations, inventory, control, polling and asset
+fetches must all obtain their clients from it; absence or mismatch fails closed
+before DNS or socket creation. AdapterRegistry must receive it on every path.
+No adapter may fall back to a default client. Keep existing local-only behavior.
+Remote security validation runs independently of lease authorization: probes,
+unmapped destinations and lease exemptions cannot skip it. The optional
+Runtime.require_egress callback is not the remote security boundary.
+
+Check service id, exact origin and current generation at dispatch, dequeue,
+every poll/observation and immediately before each socket write or pooled reuse.
+Pool keys include the complete binding, never origin alone; validate the retained
+peer against that binding. Services sharing an origin never union exceptions.
+Registry updates publish a new generation atomically with admission revocation.
+Opt-out refuses new work immediately, invalidates idle pools and cancels admitted
+running work, queued polls and observations; close active sockets and mark the job
+cancelled with a bounded reason. Do not finish remote work under revoked authority.
+Serialize send authorization with revocation so no send begins after revocation
+commits; bytes already sent cannot be recalled. No cleanup/cancel request to the
+remote service is exempt. A policy change requires fresh admission, not silent
+rebinding of an old job. Persist the binding with queued work; reload must recheck.
+
+Evidence at 44659c2: dispatch.py creates the main adapter with transport (96-108),
+but its fresh observation adapter (206) omits it and invokes at 218 without
+require_egress; that callback is optional (154-157). engine_egress.py (296-330)
+exempts probes/unmapped hosts and attaches lease hooks, not socket policy.
+
+## Four gated stages and concrete test bindings
+
+These are specified NEW node IDs, not existing or passing tests. Prefix R means
+tests/test_engine_protocol_round3.py:: and S means tests/test_c2d2_scenarios.py::.
+Implement these top-level functions; run `python -m pytest <full node IDs>`.
+
+1. Registry/admission binding (registry + dispatch + the two named test modules):
+   - Rtest_remote_binding_required_on_every_adapter_path
+   - Rtest_remote_same_origin_services_do_not_union_exceptions
+   - Rtest_remote_policy_generation_rechecked_on_dispatch_and_reuse
+   - Stest_s6_only_owner_can_enable_remote_dispatch
+   Cover default-off, unknown policy/billing refusal, paid flags at every nesting
+   level, request-body overrides, origin changes and unchanged local behavior.
+   Exercise all six factory paths, including the freshly compiled observation.
+2. Socket boundary (egress + scoped transport implementation + R module):
+   - Rtest_remote_observation_denied_dns_zero_connections
+   - Rtest_remote_observation_redirect_zero_forbidden_connections
+   - Rtest_remote_observation_proxy_env_zero_forbidden_connections
+   - Rtest_remote_observation_credential_canary_zero_forbidden_connections
+   - Rtest_remote_dns_pinning_reconnect_and_tls_identity
+   Use the real transport connector with a controlled resolver/socket recorder,
+   not a mocked policy predicate. Count zero connections to each forbidden peer,
+   including redirect/proxy targets; assert canaries absent from all wire/logs.
+   Exercise mixed DNS answers, mapped IPv6, metadata, CIDR limits and TLS mismatch.
+3. Lifecycle/resource bounds (dispatch + egress + scoped transport + R module):
+   - Rtest_remote_opt_out_closes_pool_and_cancels_queued_poll
+   - Rtest_remote_aggregate_deadline_spans_retries_and_polling
+   - Rtest_remote_wire_and_decompressed_byte_caps
+   - Rtest_remote_header_limits_and_cancellation_close_socket
+   Use a single monotonic deadline from admission (queue time included); retries,
+   observations and polls consume remaining budget, never restart it. Limit both
+   wire and decoded bytes while streaming, header count/bytes and poll count.
+   Assert deadline/overflow/cancellation closes sockets, returns bounded errors,
+   performs no extra request and cannot reuse a revoked pooled connection.
+4. Real generic-job journey (S module + this receipt document):
+   - Stest_s6_remote_job_observation_poll_asset_security
+   - Stest_s6_remote_opt_out_cancels_running_job
+   - Existing: Stest_s6_owner_opted_in_remote_engine_serves_a_job
+   Align its provisional allow_remote input with the canonical owner policy field;
+   the current in-process fixture/strict capability-gap xfail is not socket proof.
+   Add controlled connection-level positive and denial evidence through the real
+   job path; retain local and paid regressions, asset bytes and one terminal receipt.
+
+Until all four stage results pass, retain production local-only refusal. Exercise
+candidate remote admission only in an isolated test harness, not an owner-visible
+bypass. The final separate release change permits remote admission LAST and cites
+each stage's exact commit, full node IDs, output and limitations. A missing test,
+xfail, skipped security path or mocked socket assertion does not satisfy a gate.
+
 ## Verification and readiness
 
-Expect it to work because the owner-selected identity, network and billing policy
-is bound to the record and enforced again at the actual connection boundary,
-while existing leases and strict paid routing remain independent requirements.
-The likeliest-wrong assumption is that today's egress hook pins DNS: its source
-shows host:port matching and exemptions, not a resolved peer check.
-Confidence: **0.85 in design direction; implementation remains unverified**.
-No code, ratchet baseline or test-count budget changes are part of this patch.
-Exact pytest node IDs are unavailable, not guessed. Before implementation, the
-owner must scope the authentication/transport evidence and one concrete test module
-for each row below; bind these acceptance cases to real node IDs and run them.
-
-## Build order (red test first)
-
-Each row budgets at most five files; “test module” is an explicit unbound dependency,
-not permission to invent or edit an out-of-scope path. Never enable remotely before
-all four rows' negative and positive cases pass through the real connection path.
-
-| Order | Red first | File budget and implementation target |
-| --- | --- | --- |
-| 1 | Owner-only opt-in, defaults, nested paid flags, unchanged local behavior | 3 files: one owner-scoped test module, `gateway/service_registry.py`, `gateway/engine_protocol/dispatch.py`; authentication evidence must be scoped first. |
-| 2 | DNS rebinding, forbidden ranges, zero redirect/proxy escape, TLS mismatch | Up to 3 files: one owner-scoped test module, `gateway/engine_egress.py`, one transport file only if inspection proves it necessary and owner scopes it. |
-| 3 | Credential canaries, derived URLs, deadlines/bytes/polling/cancellation | Up to 4 files: one owner-scoped test module, `gateway/engine_protocol/dispatch.py`, `gateway/engine_egress.py`, the same scoped transport file if needed. |
-| 4 | End-to-end approved remote job and all denials; local/paid regressions | 2 files: one owner-scoped end-to-end test module, `docs/design/REMOTE_ENGINES.md` updated with exact receipts and verified limitations. |
+Expect it to work because one service-bound transport carries the same immutable
+authority across every main and auxiliary request; socket checks cannot inherit
+the lease/probe exemptions. Generation revocation closes pools and queued work.
+Confidence: **0.87 in design; implementation and runtime security unverified**.
+No tests run. Only visible document regions changed; redacted text was preserved.
