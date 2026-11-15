@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -186,6 +186,35 @@ class MediaInputResolver:
         self._may_send_remote = may_send_remote
         self._max_bytes = max_bytes
         self._fetch = fetch
+
+    def resolve_named_asset(
+        self, name: str, asset_id: str, caller: Any, *, holder: Holder,
+        destination: Destination, declared_inputs: Mapping[str, Sequence[str]],
+    ) -> tuple[str, ResolvedInput]:
+        """Bind one library asset to exactly one trusted declared input.
+
+        Frozen internal signature for owner wiring: (name, asset_id, caller, *,
+        holder, destination, declared_inputs) -> (name, ResolvedInput).
+        Only name and asset_id may originate in the public request. The owner
+        must supply the authenticated caller, an admitted holder, a destination
+        derived from trusted registry data and declarations from the selected
+        operation, never request-provided acceptance types or disclosure flags.
+        This helper cannot establish the provenance of those trusted arguments.
+
+        This is not batch admission or rollback. Resolve every input before an
+        upstream call; the owner must arrange atomic adoption and per-entry
+        cleanup for a multi-input request. In particular, a post-lease sweep
+        race may raise MISSING while retaining a lease: its holder must end it.
+        Never release an established job holder to undo one rejected input.
+        The existing stored-asset path stays uncapped and never ingests bytes.
+        """
+        if not isinstance(name, str) or name not in declared_inputs:
+            raise MediaInputError(INVALID, "input name is not declared for this operation")
+        resolved = self.resolve_asset(
+            caller, asset_id, holder=holder, destination=destination,
+            accepts=declared_inputs[name],
+        )
+        return name, resolved
 
     # -- the disclosure check ------------------------------------------------
 
