@@ -548,6 +548,44 @@ class NodeGraphAdapter:
 
     # --- the interface ----------------------------------------------------------------------
 
+    async def observe(self, conn: Connection) -> Mapping[str, Any] | None:
+        """Read queue and runtime once through the existing bounded session path.
+
+        Any incomplete or malformed response is unknown, not an empty queue.
+        Queue order is preserved; runtime fields and device rows are opaque.
+        """
+        from copy import deepcopy
+
+        replies = []
+        async with self.open(conn) as opened:
+            for read in (opened.queue, opened.stats):
+                try:
+                    reply = await read(timeout=CONTROL_TIMEOUT_S)
+                    replies.append(reply.json() if reply.status == 200 else None)
+                except (TransportFailure, ValueError):
+                    replies.append(None)
+        queue, stats = replies
+        if not isinstance(queue, Mapping) or not isinstance(stats, Mapping):
+            return None
+        normalized = {}
+        for source, destination in (("queue_running", "running"), ("queue_pending", "pending")):
+            rows = queue.get(source)
+            if not isinstance(rows, list):
+                return None
+            ids = []
+            for row in rows:
+                if not isinstance(row, (list, tuple)) or len(row) < 2 or not isinstance(row[1], str) or not row[1]:
+                    return None
+                ids.append(row[1])
+            normalized[destination] = ids
+        runtime, devices = stats.get("system"), stats.get("devices")
+        if not isinstance(runtime, Mapping) or not isinstance(devices, list) or any(
+            not isinstance(row, Mapping) for row in devices
+        ):
+            return None
+        return {"queue": normalized, "runtime": deepcopy(dict(runtime)), "devices": deepcopy(devices)}
+
+
     async def health(self, conn: Connection) -> Health:
         try:
             async with self._use(conn, None) as session:

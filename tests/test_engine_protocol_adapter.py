@@ -109,6 +109,28 @@ OPS = {
 }
 
 
+def test_optional_observations_are_unknown_without_changing_required_interface():
+    impl = http_adapter(OPS, lambda r: httpx.Response(200))
+    assert isinstance(impl, adapter.EngineAdapter)
+    assert run(adapter.observe(impl, Connection(address=BASE))) is None
+    assert adapter.describe_workflow(impl, {}) is None
+    assert run(impl.health(Connection(address=BASE))) == adapter.Health("ok", "", "health")
+
+
+def test_optional_observations_dispatch_only_implemented_hooks():
+    class Optional:
+        async def observe(self, conn):
+            return {"queue": {"running": [], "pending": []}, "runtime": {}, "devices": []}
+
+        def describe_workflow(self, binding):
+            return {"inputs": ["text"], "outputs": [], "diagnostics": dict(binding)}
+
+    impl = Optional()
+    assert run(adapter.observe(impl, Connection(address=BASE)))["queue"]["running"] == []
+    assert adapter.describe_workflow(impl, {"source": "declared"}) == {
+        "inputs": ["text"], "outputs": [], "diagnostics": {"source": "declared"}}
+
+
 def test_health_is_what_the_health_operation_saw_and_failures_are_reported_not_raised() -> None:
     ok = http_adapter(OPS, lambda r: httpx.Response(200))
     assert run(ok.health(Connection(address=BASE))) == adapter.Health("ok", "", "health")

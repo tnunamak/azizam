@@ -75,6 +75,61 @@ def session(client: Any) -> GraphSession:
 # --- each operation is the call the gateway always made --------------------------------------------------------
 
 
+@pytest.mark.parametrize("queue,stats,expected", [
+    ({"queue_running": [[0, "r1"], [1, "r2"]], "queue_pending": [[2, "p1"]]},
+     {"system": {"version": "opaque"}, "devices": [{"name": "device", "memory": 9}]},
+     {"queue": {"running": ["r1", "r2"], "pending": ["p1"]},
+      "runtime": {"version": "opaque"}, "devices": [{"name": "device", "memory": 9}]}),
+    ({"queue_running": [], "queue_pending": []}, {"system": {}, "devices": []},
+     {"queue": {"running": [], "pending": []}, "runtime": {}, "devices": []}),
+    ([], {"system": {}, "devices": []}, None),
+    ({"queue_running": "invalid", "queue_pending": []}, {"system": {}, "devices": []}, None),
+    ({"queue_running": [[0, None]], "queue_pending": []}, {"system": {}, "devices": []}, None),
+    ({"queue_running": [], "queue_pending": []}, {"system": [], "devices": []}, None),
+    ({"queue_running": [], "queue_pending": []}, {"system": {}, "devices": [7]}, None),
+    ({}, {}, None),
+])
+def test_observe_normalizes_or_reports_unknown(monkeypatch, queue, stats, expected):
+    client = RecordingClient(lambda method, url, kwargs:
+                             Response(200, queue if url.endswith("/queue") else stats))
+    impl = NodeGraphAdapter()
+
+    @asynccontextmanager
+    async def opened(conn):
+        assert conn is CONN
+        yield session(client)
+
+    monkeypatch.setattr(impl, "open", opened)
+    assert run(impl.observe(CONN)) == expected
+    assert client.calls == [
+        ("GET", f"http://{HOST}/queue", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+        ("GET", f"http://{HOST}/system_stats", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+    ]
+
+
+@pytest.mark.parametrize("failed_path", ["/queue", "/system_stats"])
+def test_observe_non_success_is_unknown_and_health_is_unchanged(monkeypatch, failed_path):
+    def answer(method, url, kwargs):
+        if url.endswith(failed_path):
+            return Response(503, {})
+        return Response(200, {"queue_running": [], "queue_pending": [],
+                              "system": {}, "devices": []})
+    client = RecordingClient(answer)
+    impl = NodeGraphAdapter()
+
+    @asynccontextmanager
+    async def opened(conn):
+        yield session(client)
+
+    monkeypatch.setattr(impl, "open", opened)
+    assert run(impl.observe(CONN)) is None
+    assert len(client.calls) == 2
+    health = run(impl.health(CONN))
+    assert health == node_graph.Health(
+        "failing" if failed_path == "/system_stats" else "ok",
+        "HTTP 503" if failed_path == "/system_stats" else "", "graph.stats")
+
+
 def test_each_operation_issues_the_exact_client_call() -> None:
     client = RecordingClient()
     s = session(client)
