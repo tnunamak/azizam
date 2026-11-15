@@ -279,7 +279,9 @@ def test_persisted_cancel_resistant_cleanup_settles_without_success(job_store):
         try:
             done, _pending = await asyncio.wait({task}, timeout=OUTER_WAIT_S)
             assert task in done, "Persisted cancellation held the runner beyond its outer deadline"
-            with pytest.raises(media_jobs.CancellationPending):
+            with pytest.raises(
+                media_jobs.CancellationPending, match="Cleanup is unknown; the upstream may still run",
+            ):
                 await task
             assert cancel_started.is_set()
             assert not cleanup_finished.is_set(), "The resistant upstream stop is still unconfirmed"
