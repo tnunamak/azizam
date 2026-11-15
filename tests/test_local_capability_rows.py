@@ -382,16 +382,31 @@ def test_all_preexisting_backend_triggers_keep_literal_rows():
         assert _rows_for_voice_one(capabilities) == expected, capabilities
 
 def test_catalog_edit_changes_served_alias_intent(tmp_path, monkeypatch):
+    source_text = ROWS.read_text(encoding="utf-8")
+    source = tmp_path / "fixed-local-capabilities.yml"
+    source.write_text(source_text, encoding="utf-8")
+    raw_aliases, raw_families = local.load_local_capability_rows(source)
+    assert raw_aliases["chat"][0] == "chat.completions"
     catalog_path = ROWS.with_name("operations.yml")
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    assert "text.embeddings" in {row["id"] for row in catalog["operations"]}
+    changed = 0
     for relation in catalog["relations"]:
         if (relation["kind"], relation.get("context"), relation.get("word")) == (
             "spelling", "legacy", "chat",
         ):
+            assert relation["operation"] == raw_aliases["chat"][0]
             relation["operation"] = "text.embeddings"
+            changed += 1
+    assert changed == 1
     edited = tmp_path / "edited-catalog.yml"
     edited.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
-    loaded = local._load_catalog_local_capability_rows(catalog_path=edited)
+    loaded = local._load_catalog_local_capability_rows(source, catalog_path=edited)
+    assert source.read_text(encoding="utf-8") == source_text
+    assert loaded[0]["chat"] == ("text.embeddings", *raw_aliases["chat"][1:])
+    assert loaded[1] == raw_families
+    # The old raw-source reader keeps chat.completions despite the catalog edit.
+    assert local.load_local_capability_rows(source)[0]["chat"][0] != loaded[0]["chat"][0]
     monkeypatch.setattr(local, "_ALIAS_INTENTS", loaded[0])
     monkeypatch.setattr(local, "_ALIAS_ROWS", loaded[6])
     caps = local.build_alias_capabilities({
