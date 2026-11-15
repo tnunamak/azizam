@@ -521,3 +521,111 @@ def test_alias_duplicate_legacy_name_is_refused_by_loader(tmp_path):
     output.write_text(generate(source, local_source=local), encoding="utf-8")
     with pytest.raises(CatalogError, match="unique_spelling_in_context"):
         load(output)
+
+
+def _reader_sources(tmp_path):
+    source = tmp_path / "capability_words.yml"
+    source.write_text(json.dumps({
+        "schema_version": 1,
+        "capabilities": [{"id": "old", "label": "Old"}, {"id": "new", "label": "New"}],
+        "protocol_words": {"shared": "old", "Sample_Word": "old"},
+        "route_intents": {"shared": "old", "route.only": "old"},
+        "type_capabilities": {"sample": "old"},
+    }), encoding="utf-8")
+    rows = [
+        {"kind": "family", "context": context, "word": word, "family": "new", "order": order}
+        for context, words in (
+            ("protocol", ["Sample_Word", "shared"]),
+            ("route", ["route.only", "shared"]),
+            ("type", ["sample"]),
+        )
+        for order, word in enumerate(words)
+    ]
+    catalog = tmp_path / "operations.yml"
+    catalog.write_text(json.dumps({"schema_version": 1, "operations": [], "relations": rows[::-1]}),
+                       encoding="utf-8")
+    return source, catalog
+
+
+def test_capability_reader_catalog_shipped_source_wins(tmp_path, monkeypatch):
+    from gateway import capability_ids as ids
+
+    source, catalog = _reader_sources(tmp_path)
+    # The pre-cutover reader accepts this same call but returns the old source maps.
+    monkeypatch.setattr(ids, "CAPABILITY_WORDS_PATH", source)
+    protocol, intents = ids.load_capability_words(source)
+    assert list(protocol.items()) == [("Sample_Word", "new"), ("shared", "new")]
+    assert list(intents.items()) == [
+        ("Sample_Word", "new"), ("shared", "new"), ("route.only", "new")]
+    types, audio, hidden = ids.load_capability_classification(source)
+    assert dict(types) == {"sample": "new"}
+    assert dict(audio) == dict(hidden) == {}
+    monkeypatch.setattr(ids, "INTENT_CAPABILITIES", intents)
+    assert ids.capability_of_word("  Sample_Word  ") == "new"
+    assert ids.capability_of_word("  SAMPLE_word  ") == "SAMPLE_word"
+    for table in (protocol, intents, types):
+        with pytest.raises(TypeError):
+            table["injected"] = "old"
+    frozen = load(catalog)
+    with pytest.raises(TypeError):
+        frozen.relations("family")[0]["family"] = "old"
+
+
+def test_capability_reader_catalog_explicit_and_custom_contract(tmp_path):
+    from gateway import capability_ids as ids
+
+    source, catalog = _reader_sources(tmp_path)
+    assert ids.load_capability_words(source)[0]["shared"] == "old"
+    for binding in (catalog, load(catalog)):
+        assert ids.load_capability_words(source, catalog=binding)[0]["shared"] == "new"
+        assert ids.load_capability_classification(source, catalog=binding)[0]["sample"] == "new"
+        assert len(ids._load_capability_data(source, catalog=binding)) == 4
+        assert len(ids.load_capability_presentation(source, catalog=binding)) == 3
+        assert list(ids.load_capability_display_order(source, catalog=binding)) == ["old", "new"]
+        assert ids.load_capability_alias_name_hiding(source, catalog=binding) == frozenset()
+        assert len(ids.load_capability_member_words(source, catalog=binding)) == 2
+        assert len(ids.load_capability_screen_words(source, catalog=binding)) == 3
+
+
+def test_capability_reader_catalog_absent_source_sections(tmp_path, monkeypatch):
+    from gateway import capability_ids as ids
+
+    source, _ = _reader_sources(tmp_path)
+    document = json.loads(source.read_text(encoding="utf-8"))
+    for section in PROJECTED:
+        del document[section]
+    source.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(ids, "CAPABILITY_WORDS_PATH", source)
+    assert ids.load_capability_words(source)[0]["shared"] == "new"
+    assert ids.load_capability_classification(source)[0]["sample"] == "new"
+
+
+@pytest.mark.parametrize("context", ["protocol", "route", "type"])
+def test_capability_reader_catalog_invalid_family_target(tmp_path, context):
+    from gateway import capability_ids as ids
+
+    source, catalog = _reader_sources(tmp_path)
+    document = json.loads(catalog.read_text(encoding="utf-8"))
+    next(row for row in document["relations"] if row["context"] == context)["family"] = "absent"
+    catalog.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown capability"):
+        ids.load_capability_words(source, catalog=catalog)
+
+
+def test_capability_reader_catalog_conflict_and_no_fallback(tmp_path, monkeypatch):
+    from gateway import capability_ids as ids
+
+    source, catalog = _reader_sources(tmp_path)
+    document = json.loads(catalog.read_text(encoding="utf-8"))
+    next(row for row in document["relations"]
+         if row["context"] == "route" and row["word"] == "shared")["family"] = "old"
+    catalog.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="conflicting capabilities"):
+        ids.load_capability_words(source, catalog=catalog)
+    monkeypatch.setattr(ids, "CAPABILITY_WORDS_PATH", source)
+    catalog.write_text("{", encoding="utf-8")
+    with pytest.raises(CatalogError):
+        ids.load_capability_words(source)
+    catalog.unlink()
+    with pytest.raises(CatalogError):
+        ids.load_capability_words(source)
