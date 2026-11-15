@@ -25,6 +25,10 @@ EXPECTED_METADATA = {
 }
 MESSAGE_FIELDS = {
     "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "prompt_namespace_description",
+    "workflow_namespace_description",
+    "chat_namespace_description",
+    "routing_namespace_description",
     "current_loaded_model_description", "current_loaded_fast_model_description",
     "long_video_not_supported", "video_extend_not_supported", "surface_existing_clients", "surface_new_setup",
 }
@@ -197,6 +201,15 @@ def test_current_loaded_descriptions_keep_bytes_and_read_copy(monkeypatch):
     monkeypatch.setattr(gateway_messages, "GATEWAY_MESSAGES", messages)
     for alias, key, _text in expected:
         assert proxy._current_loaded_model_entry(alias)["description"] == messages[key]
+
+
+@pytest.mark.parametrize("key", ["prompt_namespace_description","workflow_namespace_description","chat_namespace_description","routing_namespace_description"])
+def test_namespace_description_key_is_required(tmp_path, key):
+    document = _document()
+    document.pop(key, None)
+    with pytest.raises(ValueError, match="gateway messages: missing keys") as error:
+        gateway_messages.load_gateway_messages(_write(tmp_path, document))
+    assert key in str(error.value)
 
 
 def test_toolcall_detection_does_not_export_message_loader():

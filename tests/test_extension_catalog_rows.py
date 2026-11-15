@@ -265,3 +265,52 @@ def test_a_route_with_an_empty_path_segment_is_refused(tmp_path, route):
     assert str(error.value) == (
         f"{path}: record 1, row 1: extension route has an empty path segment: {route!r}"
     )
+
+
+NAMESPACE_COPY = [
+    [
+        "com.azizam.prompts",
+        "prompt_namespace_description",
+        "Per-request prompt retention choice; this control is removed before backend dispatch."
+    ],
+    [
+        "com.azizam.workflow",
+        "workflow_namespace_description",
+        "Gateway-owned workflow controls for image, video, and audio routes."
+    ],
+    [
+        "com.azizam.chat",
+        "chat_namespace_description",
+        "Gateway-owned chat diagnostics controls."
+    ],
+    [
+        "com.azizam.routing",
+        "routing_namespace_description",
+        "Gateway-owned routing hints that cannot override app profile policy."
+    ]
+]
+
+
+def test_namespace_descriptions_keep_literal_bytes():
+    registry = c2d_parity.shipped_registry()
+    for audience in catalog.VALID_AUDIENCES:
+        rows = {row["namespace"]: row for row in catalog.summarize_extensions(registry, audience)["extensions"]}
+        for namespace, key, text in NAMESPACE_COPY:
+            assert rows[namespace]["description"].encode("utf-8") == text.encode("utf-8")
+            assert catalog.gateway_messages.GATEWAY_MESSAGES[key] == text
+
+
+def test_namespace_descriptions_use_loaded_messages(monkeypatch):
+    registry = c2d_parity.shipped_registry()
+    before = {audience: catalog.summarize_extensions(registry, audience) for audience in catalog.VALID_AUDIENCES}
+    messages = dict(catalog.gateway_messages.GATEWAY_MESSAGES)
+    for namespace, key, text in NAMESPACE_COPY:
+        messages[key] = "Operator replacement: " + key
+    monkeypatch.setattr(catalog.gateway_messages, "GATEWAY_MESSAGES", messages)
+    for audience, original in before.items():
+        result = catalog.summarize_extensions(registry, audience)
+        rows = {row["namespace"]: row for row in result["extensions"]}
+        for namespace, key, text in NAMESPACE_COPY:
+            assert rows[namespace]["description"] == messages[key]
+            rows[namespace]["description"] = text
+        assert result == original  # All non-copy catalog facts unchanged.
