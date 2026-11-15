@@ -26,6 +26,7 @@ verified evidence that this gateway already enforces any control.
 
 Owner authentication and generic job lifecycle enforcement are **not established
 by the scoped files**. They must be inspected and tested before enabling this feature.
+Stage 0 below owns this verification and blocks stage 1 until it passes.
 Do not label a paid provider “self-hosted” to bypass its billing/access controls.
 
 ## Existing enforcement, and what it does not prove
@@ -56,6 +57,9 @@ private/ULA, shared-address space, multicast and reserved/special-use ranges.
 Normalize IPv4-mapped IPv6 before classification; explicitly reject metadata
 destinations even where a platform uses an address outside link-local space.
 The owner may list exact private/ULA CIDRs per service for a LAN engine.
+IPv4 exceptions must have prefix length >=24 (/24 or narrower); IPv6 exceptions
+must have prefix length >=64 (/64 or narrower). Registration rejects broader
+CIDRs, including /0; dispatch repeats this validation on the effective policy.
 Do not allow a broad exception to authorize loopback, link-local or metadata:
 those remain forbidden on the remote path. Existing local behavior is separate.
 
@@ -103,6 +107,11 @@ the actual outbound construction and all auxiliary requests still need verificat
 Red tests: unique inbound secret canaries absent from captured requests/logs;
 only the configured service credential appears; mismatched control origin fails;
 probe omission is preserved; redirects never transmit a second request.
+Stage 2 cannot pass until separate poll, asset, control and probe production-path
+tests assert unique inbound secret canaries absent from captured outbound requests,
+errors and logs. Also assert that only the credential bound to the approved service
+and origin can appear. Unavailable credential-construction evidence is a failed
+gate, not permission to assume these auxiliary paths are safe.
 
 ### P1: paid-provider bypass
 
@@ -119,6 +128,31 @@ unopted legacy rows remain refused; permitted non-billed remote record succeeds.
 
 Require finite per-service ceilings for DNS/connect/TLS, first byte, idle read,
 total operation deadline, wire bytes, decompressed bytes, headers and poll count.
+The following are proposed policy defaults and non-overridable hard maxima, not
+measured performance claims. Omitted values take the default; registration rejects
+non-finite, non-positive, wrong-unit or above-maximum values. Byte/count values must
+be integers. Runtime validates the effective limits again; owners may only lower
+the maxima, never enlarge them.
+
+| Ceiling | Default | Hard maximum |
+| --- | ---: | ---: |
+| DNS resolution per attempt | 5 s | 15 s |
+| TCP connect per attempt | 5 s | 15 s |
+| TLS handshake per attempt | 5 s | 15 s |
+| First response byte per request | 30 s | 60 s |
+| Idle read between received chunks | 15 s | 30 s |
+| Total operation, including queue time | 120 s | 600 s |
+| Response wire bytes, aggregate operation | 64 MiB | 256 MiB |
+| Decompressed response bytes, aggregate operation | 128 MiB | 512 MiB |
+| Response headers per response, encoded bytes | 32 KiB | 64 KiB |
+| Response header fields per response | 100 | 256 |
+| Poll requests per operation | 60 | 300 |
+
+KiB = 1024 bytes; MiB = 1024 KiB. Header bytes include names, values and framing.
+Counters include retries, polls, observations, control and asset requests belonging
+to the operation; standalone auxiliary operations get the same policy. Enforce the
+smaller of each phase budget and the remaining total deadline; an exhausted budget
+refuses the next action before DNS or send. Streaming cannot reset byte counters.
 Apply the total deadline across retries and polling, not separately to each hop.
 Close streaming bodies/sockets on overflow, cancellation and deadline; bound
 concurrency and avoid buffering an entire body before checking its size.
@@ -160,12 +194,35 @@ but its fresh observation adapter (206) omits it and invokes at 218 without
 require_egress; that callback is optional (154-157). engine_egress.py (296-330)
 exempts probes/unmapped hosts and attaches lease hooks, not socket policy.
 
-## Four gated stages and concrete test bindings
+## Stage 0 prerequisites and four gated build stages
 
 These are specified NEW node IDs, not existing or passing tests. Prefix R means
 tests/test_engine_protocol_round3.py:: and S means tests/test_c2d2_scenarios.py::.
 Implement these top-level functions; run `python -m pytest <full node IDs>`.
 
+0. Owner prerequisites (owner accountable; no stage 1 work before this gate passes):
+   - Stest_s6_remote_policy_owner_authentication_production_path
+   - Stest_s6_remote_generic_job_lifecycle_and_leases_production_path
+   Verify actual policy mutation rejects unauthenticated and ordinary API callers
+   while permitting the authenticated owner. Verify admission, execution, terminal
+   receipts and serving leases use the generic production job path, not a bypass.
+   The owner must bind each path below to its exact production file and function
+   at a pinned commit and assign one production-path test per row for stage 1.
+   Stage 1 cannot pass until all six tests pass against its implementation. These
+   are required owner tasks, not claims that an existing factory already covers them.
+
+   | Factory path | Stage 0 owner binding task | Required test |
+   | --- | --- | --- |
+   | Main dispatch | Record exact file + function | Rtest_remote_factory_main_dispatch |
+   | Fresh observation | Record exact file + function | Rtest_remote_factory_fresh_observation |
+   | Inventory | Record exact file + function | Rtest_remote_factory_inventory |
+   | Control | Record exact file + function | Rtest_remote_factory_control |
+   | Polling | Record exact file + function | Rtest_remote_factory_polling |
+   | Assets | Record exact file + function | Rtest_remote_factory_assets |
+
+   Each test traces the real caller into the mandatory factory, verifies service/
+   origin/generation binding and refusal without the capability before any socket.
+   Missing bindings or missing owner/lifecycle/lease evidence keep stage 1 blocked.
 1. Registry/admission binding (registry + dispatch + the two named test modules):
    - Rtest_remote_binding_required_on_every_adapter_path
    - Rtest_remote_same_origin_services_do_not_union_exceptions
@@ -180,6 +237,10 @@ Implement these top-level functions; run `python -m pytest <full node IDs>`.
    - Rtest_remote_observation_proxy_env_zero_forbidden_connections
    - Rtest_remote_observation_credential_canary_zero_forbidden_connections
    - Rtest_remote_dns_pinning_reconnect_and_tls_identity
+   - Rtest_remote_poll_secret_canary_absent
+   - Rtest_remote_asset_secret_canary_absent
+   - Rtest_remote_control_secret_canary_absent
+   - Rtest_remote_probe_secret_canary_absent
    Use the real transport connector with a controlled resolver/socket recorder,
    not a mocked policy predicate. Count zero connections to each forbidden peer,
    including redirect/proxy targets; assert canaries absent from all wire/logs.
@@ -203,7 +264,7 @@ Implement these top-level functions; run `python -m pytest <full node IDs>`.
    Add controlled connection-level positive and denial evidence through the real
    job path; retain local and paid regressions, asset bytes and one terminal receipt.
 
-Until all four stage results pass, retain production local-only refusal. Exercise
+Until stage 0 and all four build stage results pass, retain production local-only refusal. Exercise
 candidate remote admission only in an isolated test harness, not an owner-visible
 bypass. The final separate release change permits remote admission LAST and cites
 each stage's exact commit, full node IDs, output and limitations. A missing test,
@@ -214,5 +275,16 @@ xfail, skipped security path or mocked socket assertion does not satisfy a gate.
 Expect it to work because one service-bound transport carries the same immutable
 authority across every main and auxiliary request; socket checks cannot inherit
 the lease/probe exemptions. Generation revocation closes pools and queued work.
-Confidence: **0.87 in design; implementation and runtime security unverified**.
+Confidence: **0.88 in design; implementation and runtime security unverified**.
 No tests run. Only visible document regions changed; redacted text was preserved.
+
+## Revisions
+
+- Added explicit default and hard-maximum transport/resource budgets with registration refusal.
+- Added blocking stage 0 owner-authentication, generic lifecycle and lease verification.
+- Named six factory paths with owner file/function bindings and one test per path.
+- Required separate poll, asset, control and probe secret-canary evidence before stage 2 passes.
+- Bounded private CIDR exceptions to IPv4 /24 and IPv6 /64 or narrower.
+- Most uncertain assumption remains production-path completeness: prior scoped evidence
+  did not establish owner authentication, lifecycle enforcement or all credential
+  construction. Stage 0 and auxiliary canary gates require evidence, not inference.
