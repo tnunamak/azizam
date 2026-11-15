@@ -1,5 +1,6 @@
 """Configured host observation; command and column knowledge live in data."""
 from pathlib import Path
+import re
 
 import yaml
 
@@ -27,6 +28,8 @@ def load_registry(path=DEFAULT_REGISTRY):
         if not isinstance(kind, str) or kind not in _TYPES:
             raise ValueError("observation_field_type_unknown")
         keys.add(key)
+    if "devices" in config or "runtime_display" in config:
+        _validate_display(config)
     return config
 
 
@@ -72,13 +75,16 @@ def observe(runner, path=DEFAULT_REGISTRY):
 
 
 def display_config(path=DEFAULT_REGISTRY):
-    """Validate display data separately so observation-only callers stay compatible."""
-    config = load_registry(path)
+    """Return validated display data; observation-only registries remain valid."""
+    return _validate_display(load_registry(path))
+
+
+def _validate_display(config):
     devices, runtime = config.get("devices"), config.get("runtime_display")
     if not isinstance(devices, list) or not devices:
         raise ValueError("observation_devices_invalid")
-    indexes, orders = set(), set()
-    for device in devices:
+    indexes, orders, budget_keys = set(), set(), set()
+    for device_position, device in enumerate(devices):
         if not isinstance(device, dict):
             raise ValueError("observation_device_invalid")
         index, order = device.get("index"), device.get("order")
@@ -91,18 +97,39 @@ def display_config(path=DEFAULT_REGISTRY):
         if any(not isinstance(device.get(key), str) or not device[key]
                for key in ("label", "budget_key")):
             raise ValueError("observation_device_label_invalid")
+        location = f"devices[{device_position}]"
+        budget_key = device["budget_key"]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", budget_key) or budget_key in budget_keys:
+            raise ValueError(f"observation_device_budget_key_invalid: {location}")
+        budget_keys.add(budget_key)
         roles = device.get("roles")
         if not isinstance(roles, list) or not roles:
             raise ValueError("observation_device_roles_invalid")
-        for role in roles:
+        role_keys, buckets = set(), set()
+        for role_position, role in enumerate(roles):
+            role_location = f"{location}.roles[{role_position}]"
             if not isinstance(role, dict) or any(
                 not isinstance(role.get(key), str) or not role[key] for key in ("label", "key")
             ):
-                raise ValueError("observation_device_role_invalid")
+                raise ValueError(f"observation_device_role_invalid: {role_location}")
             if ("{" in role["label"] or "}" in role["label"]) and role["label"] != "{label}":
-                raise ValueError("observation_device_role_template_invalid")
+                raise ValueError(f"observation_device_role_template_invalid: {role_location}")
             if ("{" in role["key"] or "}" in role["key"]) and role["key"] != "{gpu_budget_key}":
-                raise ValueError("observation_device_role_template_invalid")
+                raise ValueError(f"observation_device_role_template_invalid: {role_location}")
+            key = role["key"]
+            if (key != "{gpu_budget_key}" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)) or key in role_keys:
+                raise ValueError(f"observation_device_role_key_invalid: {role_location}")
+            role_keys.add(key)
+            if "bucket" in role:
+                bucket = role["bucket"]
+                if (not isinstance(bucket, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", bucket)
+                        or bucket in buckets):
+                    raise ValueError(f"observation_device_bucket_invalid: {role_location}")
+                buckets.add(bucket)
+            source = role.get("source")
+            if source is not None and (not isinstance(source, str) or not source
+                    or (source != "{gpu_budget_var}" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", source))):
+                raise ValueError(f"observation_role_source_invalid: {role_location}")
     if (not isinstance(runtime, dict) or type(runtime.get("device_index")) is not int
             or runtime["device_index"] not in indexes
             or any(not isinstance(runtime.get(key), str) or not runtime[key]

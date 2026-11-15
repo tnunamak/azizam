@@ -189,3 +189,83 @@ def test_status_unmapped_device_has_unknown_role_and_no_budget(monkeypatch, tmp_
     import asyncio
     devices = asyncio.run(status._gpu_workloads([{"index": 2}], {"running": 0}, []))
     assert devices[0]["active_workload"]["label"] == "unknown"
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("empty-role-key", "devices[0].roles[0]"),
+    ("malformed-role-key", "devices[0].roles[0]"),
+    ("unknown-role-template", "devices[0].roles[0]"),
+    ("duplicate-role-key", "devices[0].roles[1]"),
+    ("duplicate-bucket", "devices[0].roles[2]"),
+    ("duplicate-budget-key", "devices[1]"),
+    ("unknown-source-template", "devices[0].roles[0]"),
+])
+def test_status_registry_rejects_ambiguous_rows_at_load(tmp_path, case, expected):
+    config = load_registry()
+    roles = config["devices"][0]["roles"]
+    if case == "empty-role-key":
+        roles[0]["key"] = ""
+    elif case == "malformed-role-key":
+        roles[0]["key"] = "not a key"
+    elif case == "unknown-role-template":
+        roles[0]["key"] = "{missing_word}"
+    elif case == "duplicate-role-key":
+        roles[1]["key"] = roles[0]["key"]
+    elif case == "duplicate-bucket":
+        roles[2]["bucket"] = roles[1]["bucket"]
+    elif case == "duplicate-budget-key":
+        config["devices"][1]["budget_key"] = config["devices"][0]["budget_key"]
+    else:
+        roles[0]["source"] = "{missing_word}"
+    path = tmp_path / "invalid-observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    # Refuse before a status/renderer call, not merely during template expansion.
+    with pytest.raises(ValueError) as error:
+        load_registry(path)
+    assert expected in str(error.value)
+
+
+def test_observation_only_registry_remains_supported(tmp_path):
+    config = {"argv": ["example-probe"], "fields": [{"key": "index", "type": "int"}]}
+    path = tmp_path / "minimal-observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    assert load_registry(path) == config
+    assert observe(lambda argv: (0, "2", ""), path) == [{"index": 2}]
+
+
+@pytest.mark.parametrize("reversed_indexes", [False, True], ids=["original", "remapped"])
+def test_process_attribution_follows_remapped_identity(monkeypatch, tmp_path, reversed_indexes):
+    status = _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes)
+    config = load_registry()
+    role = config["devices"][0]
+    backend_role = next(item for item in role["roles"] if item["key"] == "{gpu_budget_key}")
+    from gateway import gpu_observation
+    expanded = gpu_observation.status_devices(status._GRAPH_WORDS)
+    mapped = next(item for item in expanded if item["budget_key"] == role["budget_key"])
+    index = mapped["index"]
+    other = 1 - index
+    source = status._GRAPH_WORDS[backend_role["source"][1:-1]]
+    monkeypatch.setattr(status, "_get_compute_apps", lambda **kwargs: [
+        {"gpu_uuid": "worker-device", "pid": 101, "used_mb": 1024},
+        {"gpu_uuid": "worker-device", "pid": 202, "used_mb": 512},
+    ])
+    monkeypatch.setattr(status, "_service_pids", lambda *args, **kwargs: {"example-backend": {101}})
+    monkeypatch.setattr(status, "_read_proc_comm", lambda pid: "example-process")
+    gpus = [
+        {"index": index, "uuid": "worker-device", "memory_used_mb": 2048, "memory_total_mb": 24576},
+        {"index": other, "uuid": "other-device", "memory_used_mb": 0, "memory_total_mb": 24576},
+    ]
+    result = status._vram_attribution(
+        gpus, {"backends": {"example-backend": {"vram_budget_key": source}}})
+    by_index = {item["index"]: item for item in result["per_gpu"]}
+    services = {item["service"]: item for item in by_index[index]["services"]}
+    assert services["example-backend"]["used_mb"] == 1024
+    assert services["example-backend"]["budget_gb"] == 4
+    assert services["example-backend"]["spillover"] is False
+    assert services["desktop"]["used_mb"] == 512
+    assert services["desktop"]["budget_gb"] == 2
+    assert services["desktop"]["top_contributors"] == [
+        {"pid": 202, "used_mb": 512, "comm": "example-process"}]
+    assert services["__headroom"]["budget_gb"] == 5
+    assert not {"example-backend", "desktop"} & {
+        item["service"] for item in by_index[other]["services"]}
