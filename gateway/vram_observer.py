@@ -15,9 +15,11 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
+from gateway import gpu_observation
+
 MIB = 1 << 20
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
-QUERY = ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"]
+QUERY = ["--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"]
 
 
 class ObserverUnavailable(Exception):
@@ -34,7 +36,7 @@ class GpuMemory:
 def read_gpu_memory(gpu_index: int, *, timeout_s: float, run: Callable[..., Any] = subprocess.run) -> GpuMemory:
     """Ask the driver for one GPU's free and total memory. Raises ObserverUnavailable on any doubt."""
     try:
-        completed = run([*QUERY, "-i", str(gpu_index)], capture_output=True, text=True, timeout=timeout_s, check=False)
+        completed = run([gpu_observation.executable(), *QUERY, "-i", str(gpu_index)], capture_output=True, text=True, timeout=timeout_s, check=False)
     except (OSError, subprocess.SubprocessError) as error:
         raise ObserverUnavailable("the driver did not answer") from error
     if completed.returncode != 0:

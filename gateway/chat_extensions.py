@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+import yaml
 
 from gateway.extensions import (
     ExtensionError,
@@ -21,10 +24,21 @@ from gateway.extensions import (
 CHAT_EXTENSION_NAMESPACE = "com.azizam.chat"
 ROUTING_EXTENSION_NAMESPACE = "com.azizam.routing"
 
+
+def _standard_container_field() -> str:
+    path = Path(__file__).resolve().parent.parent / "registry" / "thinking_controls.yml"
+    with path.open(encoding="utf-8") as stream:
+        controls = yaml.safe_load(stream)
+    value = controls.get("container_field") if isinstance(controls, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("thinking controls must define a nonempty container_field")
+    return value
+
+
 STANDARD_CHAT_COMPLETIONS_FIELDS: frozenset[str] = frozenset(
     {
         "audio",
-        "chat_template_kwargs",
+        _standard_container_field(),
         "frequency_penalty",
         "function_call",
         "functions",
