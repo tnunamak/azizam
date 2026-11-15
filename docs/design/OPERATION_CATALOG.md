@@ -113,3 +113,187 @@ kinds suffice; 80% that steps 1-2 land with no wire change, because the goldens 
 1. Public operation ids: later, as a new versioned field; receipts keep intents.
 2. Owner kinds: owners may add schemas and parameter roles over shipped storage primitives, not new storage kinds.
 3. Categories: label typed targets (models, workflows, later operations); never imply access or execution.
+
+## Capability display contract gate (2026-11-15)
+
+Status: proposal only against pinned input
+`3a91ecd4f6e44271100dd6128735d98d88b99643`. No schema, runtime reader,
+shipped data, generated output or test-budget change is authorized by this proposal.
+This section does not select an operation for a family.
+
+### Field ownership and projected reader shape
+
+The current source of truth remains `registry/capability_words.yml` until a
+separate data-population and reader-migration slice is accepted. Proposed future
+ownership is ONE closed `display` payload on `catalog_group`, not an arbitrary
+metadata bag. It would describe a display family whose known exact members are
+the group's existing `operations`. The owner must approve this identity and
+ownership decision before implementation.
+
+| Current field | Meaning and cardinality | Proposed future source | Read projection / validation |
+| --- | --- | --- | --- |
+| id | One display-family identity, not an operation | catalog_group.group, only for groups with display | Unique declared family key; no implicit operation alias |
+| label | Presentation title | display.label | Required nonblank string; ordered labels map |
+| member_label | Presentation member title | display.member_label | Optional string; existing fallback to label preserved |
+| task_name | Presentation task title | display.task_name | Optional string; fallback to effective member_label preserved |
+| models_explainer | Presentation explanation | display.models_explainer | Optional nonblank trimmed string; sparse ordered map |
+| try_help | Presentation help | display.try_help | Optional nonblank trimmed string; sparse ordered map |
+| request_noun | Presentation request wording | display.request_noun | Optional nonblank trimmed string; sparse ordered map |
+| summary | Presentation summary | display.summary | Optional nonblank string; sparse ordered map |
+| display_order | Presentation rank, distinct from relation order | display.display_order | Nonnegative integer, unique across declared display families; preserve source-order default |
+| icon | Reference to another display family's icon identity | display.icon | Validate against declared display families, including forward refs; default to own group |
+| hidden_by | Ordered suppression references, not execution exclusions | display.hidden_by | Ordered family-reference array; validate every target, return tuple |
+| alias_hides_declared_names | Presentation of an alias row's title | display.alias_hides_declared_names | Boolean; true values project to a frozen family set |
+| recommended_alias | Recommendation with explicit target cardinality | display.recommended_alias = {word, target_kind: group} | Nonblank word; target is this entire group, never a spelling or permission; sparse ordered recommendation map |
+| policy_protocol | Family-level policy hint; no per-operation authorization evidence | display.policy_hint | Optional opaque non-whitespace string, projected separately as family hints; NEVER synthesize runtime_policy rows |
+| operations | Exact known members, not all possible selector matches | Existing catalog_group.operations | Ordered tuple of declared operation ids; no admission/execution derivation |
+
+The proposed payload has a fixed property allow-list and
+`additionalProperties: false` at every object level, including recommendation.
+It does not contain paths, modes, serves, admission, execute, or offering tasks.
+Open prefix selectors are not closed membership lists: retain them separately in
+their existing authority or mark their conversion unresolved. Do not fill gaps
+by selecting the first known member or fanning hints out over members.
+No fallback reader may consult both old and new authorities.
+
+Projected readers preserve the current tuple-of-maps boundaries rather than
+inventing a global resolver: labels and policy hints separately; icons,
+recommendations and summaries separately; suppression tuples separately from
+classification rules; display order; alias-name hiding; member/task titles; and
+explanation/help/noun maps. `protocol_words`, `route_intents`,
+`type_capabilities`, `audio_rule`, `modality_words` and
+`media_type_modalities` are not fields of this proposed display payload.
+Their migration is not this contract. Unknown-word passthrough and
+consumer-specific normalization remain unchanged.
+
+### Evidence against mechanical conversion
+
+- `capability_words.yml:17-26` describes image generation AND editing with one
+  recommendation and one policy hint; its protocol map includes both operations.
+  `models_catalog_operations.yml:29-43` distinguishes their selectors and examples.
+  A recommendation called image is not evidence for one global executable target.
+- `capability_words.yml:27-34` supplies a video recommendation and family hint.
+  `models_catalog_operations.yml:80-94` includes a two-prefix videos group as
+  well as separate generation/edit rows. A prefix selector is not a proof of a
+  complete finite operation set.
+- `capability_words.yml:35-80` has several distinct audio-related families
+  sharing a policy hint; the audio family also has ordered suppression and an
+  icon reference, and lacks a recommendation. Neither sharing a policy string
+  nor omitting an alias makes these families operation synonyms.
+- `gateway/capability_ids.py:231-237` returns separate maps, tuples and a
+  frozenset; `:248-280` exposes distinct presentation/classification readers.
+  Existing icon and hidden_by validation checks capability references
+  (`:171-179`), not operation references.
+
+### Single-operation and multi-operation examples
+
+These synthetic rows are proposals, not shipped data or executable aliases.
+Assume declared operations specimen.render and specimen.revise.
+
+A confirmed one-operation display spelling remains the existing relation:
+
+```yaml
+kind: spelling
+context: display
+word: specimen-render-only
+operation: specimen.render
+```
+
+This is a context-bound spelling, not an admission grant. A consumer may choose
+its own normalization; the catalog exposes no context-free resolve function.
+
+A different recommendation may represent both operations:
+
+```yaml
+kind: catalog_group
+group: specimen-family
+operations: [specimen.render, specimen.revise]
+display:
+  label: Specimens
+  display_order: 0
+  icon: specimen-family
+  hidden_by: []
+  recommended_alias: {word: specimen-choice, target_kind: group}
+  policy_hint: policy.specimen
+```
+
+There is no spelling, admission or runtime_policy row implied by this group.
+Trying to use `operation: specimen-family` as an executable spelling is rejected
+because the target is not a declared operation. Trying to put an operations list
+on spelling is rejected by its closed schema. Two spelling rows for the same
+word/context with different targets are rejected by unique_spelling_in_context.
+A consumer must not reduce specimen-choice to either member on its own.
+
+### Why the schema-only implementation stops here
+
+The current schema can describe the payload shape but cannot validate dynamic
+cross-row family references. `gateway/operation_catalog.py:164-191` checks
+operation targets and spelling uniqueness; it does NOT maintain a declared
+display-family index, validate icon/hidden_by against that index, or reject two
+different catalog_group definitions with the same group key. Its earlier
+duplicate-row check compares entire rows, so conflicting definitions differ
+and escape it. Deep freezing (`:39-45`) prevents mutation AFTER acceptance;
+it does not prove semantic references are valid.
+
+Consequently the required unknown-family and conflicting-group tests need
+generic loader validation changes outside this slice's three change files.
+Adding a schema-only payload would leave precisely those invalid rows accepted.
+No schema change or deliberately failing implementation test is landed here.
+This follows the contract gate's explicit stop condition, not a request to widen
+permissions silently.
+
+Decision for the submitting thread: approve or reject ONE display payload on
+catalog_group as the future sole presentation source (including group-target
+recommendations and inert policy hints), with unique declared display-family
+keys. If approved, issue a separate slice that can change generic loader
+validation, schema and synthetic tests together. Alias cardinality of shipped
+rows and any actual runtime-policy mapping still require per-row evidence before
+population. Alternatively keep presentation as a separate derived view and
+specify its validated family registry; do not implement both as authorities.
+
+### Red-first acceptance plan for that separate slice
+
+Use two synthetic operations in family specimen, with no shipped ids and no
+subprocess, generator, script, dispatch, policy evaluation or engine branches.
+All acceptance goes through `load()`, not jsonschema alone. These are proposed
+future node ids, NOT tests added or claimed passing in this documentation patch:
+
+- `tests/test_operation_catalog.py::test_capability_contract_group_recommendation_is_not_spelling`:
+  load the example, assert zero spelling/admission/runtime_policy rows, no
+  resolver, false job-submittable flags, and unchanged two-member tuple.
+- `tests/test_operation_catalog.py::test_capability_contract_unknown_family_refused`:
+  parameterize icon and hidden_by unknown targets; valid forward reference first
+  loads, replacing it with a missing family fails a named semantic rule.
+- `tests/test_operation_catalog.py::test_capability_contract_conflicting_group_refused`:
+  same group with different member order/set or display payload must fail;
+  identical duplicate remains rejected by existing duplicate-row rule.
+- `tests/test_operation_catalog.py::test_capability_contract_untyped_execution_field_refused`:
+  inject execute/serves at relation, display and recommendation levels; all fail.
+- `tests/test_operation_catalog.py::test_capability_contract_ambiguous_spelling_refused`:
+  two display spellings sharing word/context but naming different operations fail;
+  group-id target and list-valued operation also fail; a confirmed single target
+  remains loadable without admission.
+- `tests/test_operation_catalog.py::test_capability_contract_order_and_nested_freeze`:
+  load two display families in deliberately nonalphabetical order, with reversed
+  operation order and ordered suppression refs; assert exact relation/member/
+  suppression tuples and map insertion order. Attempts to mutate display,
+  recommendation, operations and hidden_by fail. Assert boolean/rank types and
+  duplicate rank refusal without increasing any allowed fixture count.
+
+Existing bounded synthetic regression nodes for a maintainer to run on this
+documentation-only patch (not executed here):
+`tests/test_operation_catalog.py::test_valid_catalog_loads_and_keeps_relation_order`,
+`tests/test_operation_catalog.py::test_deeply_frozen`,
+`tests/test_operation_catalog.py::test_catalog_group_unknown_operation_refused`,
+`tests/test_operation_catalog.py::test_duplicate_spelling_in_context_refused`,
+`tests/test_operation_catalog.py::test_relation_cannot_grant_execution`.
+No shipped-catalog count test, generator or budget refresh is requested here.
+
+Expect it to work because: a closed presentation payload plus explicit semantic
+family validation would preserve the existing separate reader shapes, while
+exact operation facts remain the only input to spelling/admission/policy
+relations. The image/video/audio evidence above disproves automatic conversion.
+The current deliverable only records this safe boundary; functionality is
+unverified and no tests ran. Confidence: 0.95 in the schema-only blocker;
+0.75 in the proposed contract pending the ownership decision and executable
+synthetic tests. It does not establish shipped-policy equivalence.
