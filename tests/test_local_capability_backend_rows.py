@@ -185,3 +185,38 @@ def test_building_does_not_read_files_and_skips_unknown_or_malformed_triggers(mo
     assert capabilities(["UNKNOWN", 4, "speech.synthesis"]) == []
     assert capabilities("chat") == []
     assert capabilities(["CHAT"])[0].intent == "chat.completions"
+
+
+@pytest.mark.parametrize("catalog", [False, True], ids=["role", "model"])
+def test_llm_capabilities_follow_chat_row(tmp_path, monkeypatch, catalog):
+    data = document()
+    row = next(row for row in data["backend_rows"] if "chat" in row["triggers"])
+    row.update(streaming=False, gpu_required=False, intent="custom.chat",
+               outputs=["vector"], execution="job")
+    monkeypatch.setattr(local, "_BACKEND_ROWS",
+                        local.load_backend_capability_rows(write_rows(tmp_path, data)))
+    config = ({"models": [{"id": "demo-model", "backend": "demo"}]} if catalog
+              else {"roles": {"main": {"backend": "demo"}}})
+    (cap,) = local._build_llm_capabilities(config, {"demo": {}}, {})
+    assert (cap.intent, cap.output_modalities, cap.execution, cap.streaming,
+            cap.resources.gpu_required) == ("custom.chat", ("vector",), "job", False, False)
+    assert local._build_llm_capabilities(config, {"demo": {}}, {"llm": False}) == []
+
+
+def test_transcription_trigger_selection_survives_intent_rename(tmp_path, monkeypatch):
+    data = document()
+    row = next(row for row in data["backend_rows"] if "transcriptions" in row["triggers"])
+    row["intent"] = "custom.recognition"
+    monkeypatch.setattr(local, "_BACKEND_ROWS",
+                        local.load_backend_capability_rows(write_rows(tmp_path, data)))
+    assert local.transcription_triggers() == frozenset({
+        "transcriptions", "stt", "audio.transcriptions",
+    })
+    assert capabilities(["transcriptions"])[0].intent == "custom.recognition"
+
+
+def test_transcription_marker_requires_boolean(tmp_path):
+    data = document()
+    data["backend_rows"][0]["transcription_triggers"] = "yes"
+    with pytest.raises(ValueError, match="transcription_triggers"):
+        local.load_backend_capability_rows(write_rows(tmp_path, data))

@@ -314,6 +314,7 @@ def _load_local_capability_rows(
     }
     optional = frozenset({
         "vision", "resources_from", "tags", "action_label", "recordable_inputs", "caveats", "capability",
+        "transcription_triggers",
     })
     for number, row in enumerate(rows, start=1):
         where = f"backend_rows row {number}"
@@ -348,6 +349,10 @@ def _load_local_capability_rows(
             frozen["action_label"] = text(row, "action_label", where)
         if "capability" in row:
             frozen["capability"] = text(row, "capability", where)
+        if "transcription_triggers" in row:
+            if type(row["transcription_triggers"]) is not bool:
+                fail(where, "transcription_triggers must be a boolean")
+            frozen["transcription_triggers"] = row["transcription_triggers"]
         if "resources_from" in row:
             if text(row, "resources_from", where) != "backend":
                 fail(where, "resources_from must be backend")
@@ -407,7 +412,7 @@ def transcription_triggers() -> frozenset[str]:
     return frozenset(
         trigger.lower()
         for row in _BACKEND_ROWS
-        if row["group"] == "recognition" and row["intent"] == INTENT_TRANSCRIPTIONS
+        if row["group"] == "recognition" and row.get("transcription_triggers", False)
         for trigger in row["triggers"]
     )
 
@@ -455,7 +460,9 @@ def _build_llm_capabilities(
     backends: Mapping[str, Any],
     flags: Mapping[str, bool],
 ) -> list[Capability]:
-    if not flags.get("llm", True):
+    row = next((row for row in _BACKEND_ROWS
+                if row["group"] == "endpoints" and "chat" in row["triggers"]), None)
+    if row is None or not flags.get(row["flag"], True):
         return []
 
     out: list[Capability] = []
@@ -479,16 +486,16 @@ def _build_llm_capabilities(
             model_title = declared_model.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         out.append(
             Capability(
-                intent=INTENT_CHAT,
+                intent=row["intent"],
                 backend=backend,
                 model=f"role:{role_name}",
                 title=spec.get("title") or spec.get("display_name") or model_title,
                 description=spec.get("description"),
                 input_modalities=modalities,
-                output_modalities=("text",),
-                execution="sync",
-                streaming=True,
-                resources=ResourceEstimate(gpu_required=True),
+                output_modalities=row["outputs"],
+                execution=row["execution"],
+                streaming=row["streaming"],
+                resources=ResourceEstimate(gpu_required=row["gpu_required"]),
                 caveats=tuple(caveats),
                 availability=model_file_availability(spec),
             )
@@ -513,14 +520,14 @@ def _build_llm_capabilities(
                 caveats.append(missing_file)
             out.append(
                 Capability(
-                    intent=INTENT_CHAT,
+                    intent=row["intent"],
                     backend=backend,
                     model=model_id,
                     input_modalities=modalities,
-                    output_modalities=("text",),
-                    execution="sync",
-                    streaming=True,
-                    resources=ResourceEstimate(gpu_required=True),
+                    output_modalities=row["outputs"],
+                    execution=row["execution"],
+                    streaming=row["streaming"],
+                    resources=ResourceEstimate(gpu_required=row["gpu_required"]),
                     caveats=tuple(caveats),
                     availability=model_file_availability(spec),
                 )
