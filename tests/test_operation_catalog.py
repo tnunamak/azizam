@@ -219,6 +219,28 @@ def test_exact_duplicate_relation_names_both_positions(tmp_path, index):
     assert "unique_family_word_in_context" not in str(error.value)
 
 
+def test_exact_duplicate_word_family_names_both_positions(tmp_path):
+    document = _document()
+    row = {"kind": "family", "context": "protocol", "word": "work", "family": "work"}
+    document["relations"].extend([row, dict(row)])
+    with pytest.raises(CatalogError) as error:
+        load(_write(tmp_path, document))
+    assert str(error.value) == (
+        "relations row 8: rule unique_relation_row: duplicates relations row 7"
+    )
+
+
+def test_distinct_word_family_in_same_context_refused(tmp_path):
+    document = _document()
+    row = {"kind": "family", "context": "protocol", "word": "work", "family": "work"}
+    document["relations"].extend([row, {**row, "family": "other"}])
+    with pytest.raises(CatalogError) as error:
+        load(_write(tmp_path, document))
+    assert str(error.value) == (
+        "relations row 8: rule unique_family_word_in_context: ('protocol', 'work')"
+    )
+
+
 @pytest.mark.parametrize("field,value", [
     ("operation", "work.two"), ("path", "/other"), ("method", "PUT"),
 ])
