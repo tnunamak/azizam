@@ -342,7 +342,8 @@ def test_conservative_models_examples_are_gaps_not_operation_contracts():
     catalog = load(CATALOG)
     for index, row in enumerate(document["operations"]):
         intents = {example["intent"] for example in row.get("examples", [])}
-        projected = len(intents) == 1 and next(iter(intents)) in catalog.operations
+        projected = (len(intents) == 1 and next(iter(intents)) in catalog.operations
+                     and row["intent_prefixes"] == sorted(intents))
         expected.append({
             "source": source.name, "key": f"operations[{index}]:{row['id']}",
             "reason": MODELS_WORDS_GAP_REASON if projected else MODELS_GAP_REASON,
