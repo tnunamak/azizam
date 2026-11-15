@@ -121,6 +121,25 @@ def test_catalog_group_unknown_operation_refused(tmp_path):
         load(_write(tmp_path, document))
 
 
+def test_catalog_group_key_unique_without_display(tmp_path):
+    document = _document()
+    document["relations"].append({
+        "kind": "catalog_group", "group": "shared", "operations": ["work.one"],
+    })
+    assert all("display" not in row for row in document["relations"])
+    catalog = load(_write(tmp_path, document))
+    group = catalog.relations("catalog_group")[-1]
+    assert group["group"] == "shared"
+    assert group["operations"] == ("work.one",)
+    assert "display" not in group
+
+    document["relations"].append({
+        "kind": "catalog_group", "group": "shared", "operations": ["work.two"],
+    })
+    with pytest.raises(CatalogError, match="rule unique_catalog_group: shared"):
+        load(_write(tmp_path, document))
+
+
 @pytest.mark.parametrize("index", range(7))
 @pytest.mark.parametrize("field", ["serves", "offering_task", "execute", "permissions"])
 def test_relation_cannot_grant_execution(tmp_path, index, field):
