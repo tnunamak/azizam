@@ -132,7 +132,7 @@ ownership decision before implementation.
 
 | Current field | Meaning and cardinality | Proposed future source | Read projection / validation |
 | --- | --- | --- | --- |
-| id | One display-family identity, not an operation | catalog_group.group, only for groups with display | Unique declared family key; no implicit operation alias |
+| id | One display-family identity, not an operation | catalog_group.group; display uses that same key | Group keys are unique across all catalog_group rows, with or without display; no implicit operation alias |
 | label | Presentation title | display.label | Required nonblank string; ordered labels map |
 | member_label | Presentation member title | display.member_label | Optional string; existing fallback to label preserved |
 | task_name | Presentation task title | display.task_name | Optional string; fallback to effective member_label preserved |
@@ -265,7 +265,9 @@ future node ids, NOT tests added or claimed passing in this documentation patch:
   parameterize icon and hidden_by unknown targets; valid forward reference first
   loads, replacing it with a missing family fails a named semantic rule.
 - `tests/test_operation_catalog.py::test_capability_contract_conflicting_group_refused`:
-  same group with different member order/set or display payload must fail;
+  group keys are unique across all catalog_group rows, with or without display.
+  Each key names one ordered member set; display identity is that same key.
+  A repeated key with different members or display payload must fail;
   identical duplicate remains rejected by existing duplicate-row rule.
 - `tests/test_operation_catalog.py::test_capability_contract_untyped_execution_field_refused`:
   inject execute/serves at relation, display and recommendation levels; all fail.

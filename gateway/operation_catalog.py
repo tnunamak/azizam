@@ -154,6 +154,48 @@ def load(path: str | Path) -> Catalog:
             )
         relation_positions[identity] = index
 
+    # Collect display identities before references so forward references are valid.
+    groups = {}
+    display_orders = {}
+    for index, row in enumerate(document["relations"]):
+        if row["kind"] != "catalog_group":
+            continue
+        key = row["group"]
+        if key in groups:
+            raise CatalogError(
+                f"relations row {index}: rule unique_catalog_group: {key}"
+            )
+        groups[key] = row
+        display = row.get("display")
+        if display is not None and "display_order" in display:
+            order = display["display_order"]
+            if order in display_orders:
+                raise CatalogError(
+                    f"relations row {index}: rule unique_display_order: "
+                    f"{key} and {display_orders[order]} use {order}"
+                )
+            display_orders[order] = key
+    display_families = {key for key, row in groups.items() if "display" in row}
+    recommendation_words = set()
+    for index, row in enumerate(document["relations"]):
+        if row["kind"] != "catalog_group" or "display" not in row:
+            continue
+        display = row["display"]
+        recommendation = display.get("recommended_alias")
+        if recommendation is not None:
+            word = recommendation["word"]
+            if word in recommendation_words:
+                raise CatalogError(
+                    f"relations row {index}: rule unique_display_recommendation: {word}"
+                )
+            recommendation_words.add(word)
+        references = (display.get("icon", row["group"]), *display.get("hidden_by", []))
+        for target in references:
+            if target not in display_families:
+                raise CatalogError(
+                    f"relations row {index}: rule defined_display_family: {target}"
+                )
+
     seen = set()
     seen_family_words = set()
     for index, row in enumerate(document["relations"]):

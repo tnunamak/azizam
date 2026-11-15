@@ -313,6 +313,9 @@
         "order": {
           "type": "integer",
           "minimum": 0
+        },
+        "display": {
+          "$ref": "#/$defs/display"
         }
       }
     },
@@ -363,6 +366,75 @@
           ]
         }
       ]
+    },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ],
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/text"
+        },
+        "member_label": {
+          "type": "string"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "models_explainer": {
+          "type": "string",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
+        },
+        "try_help": {
+          "type": "string",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
+        },
+        "request_noun": {
+          "type": "string",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "display_order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "icon": {
+          "$ref": "#/$defs/text"
+        },
+        "hidden_by": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "alias_hides_declared_names": {
+          "type": "boolean"
+        },
+        "recommended_alias": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "word",
+            "target_kind"
+          ],
+          "properties": {
+            "word": {
+              "$ref": "#/$defs/text"
+            },
+            "target_kind": {
+              "const": "group"
+            }
+          }
+        },
+        "policy_hint": {
+          "type": "string",
+          "pattern": "^\\S+(?![\\s\\S])"
+        }
+      }
     }
   }
 }

@@ -121,6 +121,25 @@ def test_catalog_group_unknown_operation_refused(tmp_path):
         load(_write(tmp_path, document))
 
 
+def test_catalog_group_key_unique_without_display(tmp_path):
+    document = _document()
+    document["relations"].append({
+        "kind": "catalog_group", "group": "shared", "operations": ["work.one"],
+    })
+    assert all("display" not in row for row in document["relations"])
+    catalog = load(_write(tmp_path, document))
+    group = catalog.relations("catalog_group")[-1]
+    assert group["group"] == "shared"
+    assert group["operations"] == ("work.one",)
+    assert "display" not in group
+
+    document["relations"].append({
+        "kind": "catalog_group", "group": "shared", "operations": ["work.two"],
+    })
+    with pytest.raises(CatalogError, match="rule unique_catalog_group: shared"):
+        load(_write(tmp_path, document))
+
+
 @pytest.mark.parametrize("index", range(7))
 @pytest.mark.parametrize("field", ["serves", "offering_task", "execute", "permissions"])
 def test_relation_cannot_grant_execution(tmp_path, index, field):
@@ -307,3 +326,141 @@ def test_missing_operation_projection_loader_boundaries(tmp_path):
     document["operations"][0]["request"] = {}
     with pytest.raises(CatalogError, match="schema"):
         load(_write(tmp_path, document))
+
+
+def _display_document():
+    document = _document()
+    document["relations"][5]["display"] = {"label": "Works"}
+    return document
+
+
+@pytest.mark.parametrize("field,target", [
+    ("hidden_by", "missing"), ("icon", "missing"),
+    ("hidden_by", "work.one"), ("icon", "work.one"),
+    ("hidden_by", "plain"), ("icon", "plain"),
+])
+def test_display_references_require_declared_display_family(tmp_path, field, target):
+    document = _display_document()
+    document["relations"].append(
+        {"kind": "catalog_group", "group": "plain", "operations": ["work.one"]}
+    )
+    document["relations"][5]["display"][field] = [target] if field == "hidden_by" else target
+    with pytest.raises(CatalogError, match="defined_display_family") as error:
+        load(_write(tmp_path, document))
+    assert target in str(error.value)
+
+
+@pytest.mark.parametrize("change", [
+    {"operations": ["work.one"]},
+    {"display": {"label": "Different"}},
+    {"why": "Another definition"},
+])
+def test_conflicting_group_key_names_key(tmp_path, change):
+    document = _display_document()
+    document["relations"].append({**document["relations"][5], **change})
+    with pytest.raises(CatalogError, match="unique_catalog_group.*works"):
+        load(_write(tmp_path, document))
+
+
+@pytest.mark.parametrize("recommendation", [
+    {"word": "work", "target_kind": "operation"},
+    {"word": "work", "target_kind": "group", "target": "work.one"},
+    {"word": " ", "target_kind": "group"},
+    {"word": "work"},
+])
+def test_display_recommendation_targets_whole_group_only(tmp_path, recommendation):
+    document = _display_document()
+    document["relations"][5]["display"]["recommended_alias"] = recommendation
+    with pytest.raises(CatalogError):
+        load(_write(tmp_path, document))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("unknown", True), ("admission", "anything"), ("family", "missing"),
+    ("label", " "), ("display_order", -1), ("display_order", True),
+    ("alias_hides_declared_names", "yes"), ("hidden_by", "works"),
+    ("models_explainer", " padded "), ("try_help", " "), ("request_noun", ""),
+    ("models_explainer", "text\n"), ("policy_hint", "hint\n"),
+    ("policy_hint", "two words"),
+])
+def test_display_schema_is_closed_and_typed(tmp_path, field, value):
+    document = _display_document()
+    document["relations"][5]["display"][field] = value
+    with pytest.raises(CatalogError):
+        load(_write(tmp_path, document))
+
+
+def test_display_order_unique_among_declared_families(tmp_path):
+    document = _display_document()
+    document["relations"][5]["display"]["display_order"] = 2
+    document["relations"].append({
+        "kind": "catalog_group", "group": "later", "operations": [],
+        "display": {"label": "Later", "display_order": 2},
+    })
+    with pytest.raises(CatalogError, match="unique_display_order"):
+        load(_write(tmp_path, document))
+
+
+def test_display_forward_references_are_frozen_and_inert(tmp_path):
+    document = _display_document()
+    display = {
+        "label": "Works", "member_label": "", "task_name": "Task",
+        "models_explainer": "Explanation", "try_help": "Help",
+        "request_noun": "request", "summary": "Summary", "display_order": 0,
+        "icon": "later", "hidden_by": ["later", "works"],
+        "alias_hides_declared_names": True,
+        "recommended_alias": {"word": "both", "target_kind": "group"},
+        "policy_hint": "opaque.policy",
+    }
+    document["relations"][5]["display"] = display
+    document["relations"].append({
+        "kind": "catalog_group", "group": "later", "operations": [],
+        "display": {"label": "Later"},
+    })
+    catalog = load(_write(tmp_path, document))
+    group, later = catalog.relations("catalog_group")
+    assert group["operations"] == ("work.one", "work.two")
+    assert group["display"]["hidden_by"] == ("later", "works")
+    assert dict(group["display"]["recommended_alias"]) == display["recommended_alias"]
+    assert "icon" not in later["display"]  # own-key default belongs to future projection
+    assert "display_order" not in later["display"]
+    with pytest.raises(TypeError):
+        group["display"]["label"] = "changed"
+    with pytest.raises(TypeError):
+        group["display"]["recommended_alias"]["word"] = "changed"
+    assert len(catalog.relations("admission")) == 1
+    assert len(catalog.relations("runtime_policy")) == 1
+    assert len(catalog.relations("spelling")) == 1
+
+
+def test_display_recommendation_word_unique_in_context(tmp_path):
+    document = _display_document()
+    recommendation = {"word": "choice", "target_kind": "group"}
+    document["relations"][5]["display"]["recommended_alias"] = recommendation
+    document["relations"].append({
+        "kind": "catalog_group", "group": "later", "operations": ["work.two"],
+        "display": {"label": "Later", "recommended_alias": dict(recommendation)},
+    })
+    with pytest.raises(CatalogError, match="unique_display_recommendation.*choice"):
+        load(_write(tmp_path, document))
+
+
+def test_display_recommendation_context_is_separate_and_exact(tmp_path):
+    document = _display_document()
+    document["relations"][5]["display"]["recommended_alias"] = {
+        "word": "work", "target_kind": "group",
+    }
+    document["relations"].append({
+        "kind": "catalog_group", "group": "later", "operations": ["work.two"],
+        "display": {
+            "label": "Later",
+            "recommended_alias": {"word": "Work", "target_kind": "group"},
+        },
+    })
+    catalog = load(_write(tmp_path, document))
+    groups = catalog.relations("catalog_group")
+    assert [g["display"]["recommended_alias"]["word"] for g in groups] == ["work", "Work"]
+    assert catalog.relations("spelling", "catalog")[0]["word"] == "work"
+    assert catalog.relations("spelling", "display") == ()
+    assert groups[0]["operations"] == ("work.one", "work.two")
+    assert len(catalog.relations("admission")) == 1
