@@ -271,3 +271,18 @@ def project_media_job_intents(catalog: Catalog) -> list[dict[str, Any]]:
                 rebuilt["component"] = operation["request"]["schema"].removeprefix("openapi:")
         rows.append(rebuilt)
     return rows
+
+
+# Preserve the historical admission intent alongside catalog operation spellings.
+LEGACY_CHAT_TASK = ("chat", "chat.generate")
+
+
+def project_dispatch_task_aliases(op: str, *, catalog: Catalog) -> set[str]:
+    """Project literal legacy task spellings and their target's capability."""
+    aliases = {op}
+    target = project_models_legacy_spellings(catalog).get(op)
+    if target is not None:
+        aliases.update((target, catalog.operations[target]["family"]))
+    if op == LEGACY_CHAT_TASK[0]:
+        aliases.add(LEGACY_CHAT_TASK[1])
+    return aliases

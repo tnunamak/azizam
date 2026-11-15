@@ -6,12 +6,13 @@ before invocation. Selection uses the same transaction as other engine paths.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import lru_cache
+from pathlib import Path
 import secrets
 import time
 from typing import Any, Mapping
 
-from gateway.capability_ids import capability_of_word
-from gateway.discovery_metadata import operation_intent
+from gateway.operation_catalog import Catalog, load as load_catalog, project_dispatch_task_aliases
 from gateway.engine_contract_view import address_for_class, connection_config, observations_config, offerings_config
 from gateway.engine_credentials import CredentialOriginMismatch, CredentialUnavailable, credential_headers
 from gateway.engine_control import EngineControlRuntime
@@ -53,7 +54,16 @@ def offerings_of(engine_id: str, service: Mapping[str, Any]) -> list[Mapping[str
     return list(offerings)
 
 
-def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
+@lru_cache(maxsize=1)
+def _task_catalog() -> Catalog:
+    """Reuse the immutable shipped catalog; explicit catalog bindings stay uncached."""
+    return load_catalog(Path(__file__).resolve().parents[2] / "registry" / "operations.yml")
+
+
+def resolve(
+    registry: Mapping[str, Any], model: Any, op: str, *,
+    catalog: Catalog | str | Path | None = None,
+) -> Target | None:
     """Resolve an offering id (or engine/id); existing records never enter here."""
     if not isinstance(model, str):
         return None
@@ -85,9 +95,10 @@ def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
         raise UnknownOperation(f"The description declares no generation operation '{op}'.")
     # A declared task limits the operation; an absent task list is not a grant.
     tasks = {row.get('task') for row in offering.get('tasks') or [] if isinstance(row, Mapping)}
-    aliases = {'images': {capability_of_word(operation_intent('images')), operation_intent('images')}, 'speech': {'speech', 'speech.synthesis'},
-               'embeddings': {'embeddings', 'text.embeddings'}, 'chat': {'chat', 'chat.generate'}}
-    if not tasks.intersection(aliases.get(op, {op})):
+    bound_catalog = (_task_catalog() if catalog is None else
+                     catalog if isinstance(catalog, Catalog) else load_catalog(catalog))
+    aliases = project_dispatch_task_aliases(op, catalog=bound_catalog)
+    if not tasks.intersection(aliases):
         raise UnknownOperation('The offering does not declare this task.')
     return Target(str(engine_id), service, offering, doc)
 
