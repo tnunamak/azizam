@@ -47,10 +47,26 @@ def _consumers(monkeypatch, document):
     # Exercise the real import-time reader without reloading shared application modules.
     original_read = Path.read_text
     serialized = yaml.safe_dump(document, sort_keys=False)
+    catalog_path = capability_ids.CAPABILITY_WORDS_PATH.with_name("operations.yml")
+    catalog = yaml.safe_load(original_read(catalog_path, encoding="utf-8"))
+    # Extend only the fixture's family facts; retain all other shipped catalog rows.
+    for section, context in (("protocol_words", "protocol"), ("route_intents", "route"),
+                             ("type_capabilities", "type")):
+        existing = {row["word"] for row in catalog["relations"]
+                    if row["kind"] == "family" and row.get("context") == context and "word" in row}
+        for order, (word, family) in enumerate(document.get(section, {}).items()):
+            if word not in existing:
+                catalog["relations"].append({
+                    "kind": "family", "context": context, "word": word,
+                    "family": family, "order": order,
+                })
+    catalog_text = yaml.safe_dump(catalog, sort_keys=False)
 
     def read(path, *args, **kwargs):
         if path == capability_ids.CAPABILITY_WORDS_PATH:
             return serialized
+        if path == catalog_path:
+            return catalog_text
         return original_read(path, *args, **kwargs)
 
     with monkeypatch.context() as data_patch:

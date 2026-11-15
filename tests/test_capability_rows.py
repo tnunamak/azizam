@@ -52,6 +52,15 @@ def _import_tree(tmp_path, document):
     data = tmp_path / "registry" / "capability_words.yml"
     data.parent.mkdir(parents=True, exist_ok=True)
     data.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    relations = [
+        {"kind": "family", "context": context, "word": word, "family": family, "order": order}
+        for section, context in (("protocol_words", "protocol"), ("route_intents", "route"),
+                                 ("type_capabilities", "type"))
+        for order, (word, family) in enumerate(document.get(section, {}).items())
+    ]
+    data.with_name("operations.yml").write_text(yaml.safe_dump({
+        "schema_version": 1, "operations": [], "relations": relations,
+    }, sort_keys=False), encoding="utf-8")
     spec = importlib.util.spec_from_file_location("_capability_rows_under_test", source)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
