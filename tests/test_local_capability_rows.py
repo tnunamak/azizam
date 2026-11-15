@@ -449,3 +449,69 @@ def test_catalog_runtime_loader_is_independent_of_working_directory(tmp_path, mo
     assert isinstance(actual[0], MappingProxyType)
     with pytest.raises(TypeError):
         actual[6][0]["intent"] = "changed"
+
+
+def test_journey_catalog_alias_rows_preserve_literal_key_order():
+    loaded = local._load_catalog_local_capability_rows(ROWS)
+    rows = {row["name"]: row for row in loaded[6]}
+    assert list(rows["chat"].keys()) == [
+        "name", "intent", "input_modalities", "output_modalities",
+        "execution", "capability", "shared_operations", "engine_operation",
+        "publish_capability",
+    ]
+    assert list(rows["rerank"].keys()) == [
+        "name", "intent", "input_modalities", "output_modalities",
+        "execution", "capability", "shared_operations", "engine_operation",
+        "publish_capability",
+    ]
+    assert rows["chat"]["name"] == "chat"
+    assert (
+        rows["chat"]["intent"], rows["chat"]["input_modalities"],
+        rows["chat"]["output_modalities"], rows["chat"]["execution"],
+        rows["chat"]["capability"],
+    ) == ("chat.completions", ("text",), ("text",), "sync", None)
+    assert rows["rerank"]["name"] == "rerank"
+    assert rows["rerank"]["intent"] is None
+    assert rows["rerank"]["publish_capability"] is False
+
+
+def test_journey_catalog_missing_legacy_spelling_names_exact_row_and_path(tmp_path):
+    shipped_catalog = ROWS.with_name("operations.yml")
+    source_text = ROWS.read_text(encoding="utf-8")
+    copied = tmp_path / "custom-operation-catalog.yml"
+    copied.write_text(shipped_catalog.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # Establish that this exact path and the unchanged source rows work first.
+    control = local._load_catalog_local_capability_rows(ROWS, catalog_path=copied)
+    assert control == local._load_catalog_local_capability_rows(ROWS)
+    assert control[6][0]["name"] == "chat"
+    assert control[0]["chat"] == EXPECTED_ALIASES["chat"]
+
+    catalog = yaml.safe_load(copied.read_text(encoding="utf-8"))
+    original = deepcopy(catalog)
+    positions = [
+        index for index, row in enumerate(catalog["relations"])
+        if (row["kind"], row.get("context"), row.get("word")) == (
+            "spelling", "legacy", "chat",
+        )
+    ]
+    assert len(positions) == 1
+    removed = catalog["relations"].pop(positions[0])
+    assert removed["operation"] == "chat.completions"
+    expected = deepcopy(original)
+    expected["relations"].pop(positions[0])
+    assert catalog == expected
+    copied.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+
+    # Structural validity must survive; the error belongs to alias projection.
+    parsed = local.load_operation_catalog(copied)
+    assert all(
+        row["word"] != "chat"
+        for row in parsed.relations("spelling", "legacy")
+    )
+    with pytest.raises(ValueError) as error:
+        local._load_catalog_local_capability_rows(ROWS, catalog_path=copied)
+    assert str(error.value) == (
+        f"{copied}: alias_operations row 1: missing legacy spelling for 'chat'"
+    )
+    assert ROWS.read_text(encoding="utf-8") == source_text
