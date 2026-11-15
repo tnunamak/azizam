@@ -46,12 +46,94 @@ def _alias_spellings():
     return words
 
 
+def _models_spellings():
+    source = ROOT / "registry" / "models_catalog_operations.yml"
+    rows = yaml.safe_load(source.read_text(encoding="utf-8"))["operations"]
+    known = set(load(CATALOG).operations)
+    spellings = []
+    for row in rows:
+        intents = {example["intent"] for example in row.get("examples", [])}
+        if len(intents) != 1:
+            continue
+        intent = next(iter(intents))
+        if intent not in known:
+            continue
+        spellings.extend((word, intent) for word in dict.fromkeys([row["id"], *row["words"]])
+                         if word != intent)
+    return spellings
+
+
+def test_models_single_intent_rows_project_each_word():
+    catalog = load(CATALOG)
+    spellings = catalog.relations("spelling", "catalog")
+    expected = _models_spellings()
+    assert expected
+    assert [(row["word"], row["operation"]) for row in spellings] == expected
+    assert [row["order"] for row in spellings] == list(range(len(expected)))
+    assert len({word for word, _intent in expected}) == len(expected)
+
+
+def test_models_ambiguous_examples_stay_gaps(tmp_path):
+    from scripts.gen_operation_catalog import generate, MODELS_GAP_REASON
+
+    source, local = _alias_fixture_sources(tmp_path, [
+        {"name": "first", "intent": "sample.first"},
+        {"name": "second", "intent": "sample.second"},
+    ], {"sample.first": "sample", "sample.second": "sample"})
+    models = tmp_path / "models.yml"
+    models.write_text(yaml.safe_dump({
+        "schema_version": 1, "row_id_placeholder": "$row",
+        "operations": [{"id": "ambiguous", "words": ["either"],
+                        "intent_prefixes": ["sample."],
+                        "examples": [{"intent": "sample.first"}, {"intent": "sample.second"}]}],
+    }), encoding="utf-8")
+    document = json.loads(generate(source, local_source=local, models_source=models))
+    assert not [row for row in document["relations"]
+                if row["kind"] == "spelling" and row["context"] == "catalog"]
+    assert document["unexpressed"][-1] == {
+        "source": models.name, "key": "operations[0]:ambiguous", "reason": MODELS_GAP_REASON,
+    }
+
+
+def test_models_word_projection_deduplicates_and_preserves_gaps(tmp_path):
+    from scripts.gen_operation_catalog import (
+        models_catalog_projection, MODELS_GAP_REASON, MODELS_WORDS_GAP_REASON,
+    )
+
+    source = tmp_path / "models.yml"
+    rows = [
+        {"id": "first", "words": ["first", "spelling", "spelling", "sample.first"],
+         "intent_prefixes": ["ignored."],
+         "examples": [{"intent": "sample.first"}, {"intent": "sample.first"}]},
+        {"id": "empty", "words": ["empty"], "intent_prefixes": []},
+        {"id": "unknown", "words": ["unknown"], "intent_prefixes": [],
+         "examples": [{"intent": "sample.missing"}]},
+    ]
+    document = {"schema_version": 1, "row_id_placeholder": "$row", "operations": rows}
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    gaps, spellings = models_catalog_projection(source, [{"id": "sample.first"}])
+    assert spellings == [
+        {"kind": "spelling", "context": "catalog", "word": word,
+         "operation": "sample.first", "order": order}
+        for order, word in enumerate(["first", "spelling"])
+    ]
+    assert [gap["reason"] for gap in gaps[2:]] == [
+        MODELS_WORDS_GAP_REASON, MODELS_GAP_REASON, MODELS_GAP_REASON,
+    ]
+    document["operations"] = [rows[0], {
+        **rows[0], "id": "second", "words": ["spelling"],
+    }]
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="Duplicate catalog word 'spelling' in rows 'first' and 'second'"):
+        models_catalog_projection(source, [{"id": "sample.first"}])
+
+
 def test_projection_matches_source_order():
     source = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
     catalog = load(CATALOG)
     projected = project_capability_words(catalog)
     assert set(catalog.operations) == _catalog_intents()
-    assert [(row["word"], row["operation"]) for row in catalog.relations("spelling")] == _alias_spellings()
+    assert [(row["word"], row["operation"]) for row in catalog.relations("spelling")] == _alias_spellings() + _models_spellings()
     assert set(projected) == set(PROJECTED)
     for name in PROJECTED:
         assert list(projected[name].items()) == list(source[name].items())
@@ -233,11 +315,16 @@ def test_conservative_models_examples_are_gaps_not_operation_contracts():
         {"source": source.name, "key": "row_id_placeholder",
          "reason": "Example substitution marker, not an operation fact."},
     ]
-    expected.extend({
-        "source": source.name, "key": f"operations[{index}]:{row['id']}",
-        "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations.",
-    } for index, row in enumerate(document["operations"]))
+    from scripts.gen_operation_catalog import MODELS_GAP_REASON, MODELS_WORDS_GAP_REASON
+
     catalog = load(CATALOG)
+    for index, row in enumerate(document["operations"]):
+        intents = {example["intent"] for example in row.get("examples", [])}
+        projected = len(intents) == 1 and next(iter(intents)) in catalog.operations
+        expected.append({
+            "source": source.name, "key": f"operations[{index}]:{row['id']}",
+            "reason": MODELS_WORDS_GAP_REASON if projected else MODELS_GAP_REASON,
+        })
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
     from gateway.operation_catalog import project_models_legacy_spellings
     assert list(project_models_legacy_spellings(catalog).items()) == _alias_spellings()
@@ -292,7 +379,7 @@ def test_conservative_frontend_bindings_are_exact_gaps_not_equivalences():
     catalog = load(CATALOG)
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
     assert set(catalog.operations) == _catalog_intents()
-    assert [(row["word"], row["operation"]) for row in catalog.relations("spelling")] == _alias_spellings()
+    assert [(row["word"], row["operation"]) for row in catalog.relations("spelling")] == _alias_spellings() + _models_spellings()
 
 
 def test_frontend_gap_does_not_equate_admission_and_runtime_policy(tmp_path):

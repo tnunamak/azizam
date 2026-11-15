@@ -166,8 +166,11 @@ def local_alias_operations(source: Path, protocol_words: dict, existing: list[di
 MODELS_GAP_REASON = "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
 
 
-def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
-    """Assume examples are not contracts; count rows instead of fabricating targets."""
+MODELS_WORDS_GAP_REASON = "Words are projected; intent_prefixes and examples are not expressed."
+
+
+def models_catalog_projection(source: Path, existing: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Project unambiguous literal words, never prefixes or example payloads."""
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(document, dict) or set(document) != {"schema_version", "row_id_placeholder", "operations"}:
         raise ValueError("Every models source top-level key must be classified")
@@ -183,6 +186,9 @@ def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
         {"source": source.name, "key": "row_id_placeholder", "reason": "Example substitution marker, not an operation fact."},
     ]
     seen = set()
+    known = {operation["id"] for operation in existing}
+    spellings = []
+    word_rows = {}
     for order, row in enumerate(rows):
         if not isinstance(row, dict) or not {"id", "words", "intent_prefixes"} <= set(row) or set(row) - {"id", "words", "intent_prefixes", "examples"}:
             raise ValueError("Every models operation field must be classified")
@@ -195,9 +201,28 @@ def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
                 raise ValueError("Models words and prefixes must be text lists")
         if "examples" in row and (not isinstance(row["examples"], list) or any(not isinstance(example, dict) for example in row["examples"])):
             raise ValueError("Models examples must be mappings")
-        gaps.append({"source": source.name, "key": f"operations[{order}]:{identifier}", "reason": MODELS_GAP_REASON})
-    return gaps
+        intents = {example.get("intent") for example in row.get("examples", [])}
+        intent = next(iter(intents)) if len(intents) == 1 else None
+        projected = isinstance(intent, str) and intent in known
+        if projected:
+            for word in dict.fromkeys([identifier, *row["words"]]):
+                if word == intent:
+                    continue
+                if word in word_rows:
+                    raise ValueError(
+                        f"Duplicate catalog word {word!r} in rows {word_rows[word]!r} and {identifier!r}"
+                    )
+                word_rows[word] = identifier
+                spellings.append({"kind": "spelling", "context": "catalog", "word": word,
+                                  "operation": intent, "order": len(spellings)})
+        gaps.append({"source": source.name, "key": f"operations[{order}]:{identifier}",
+                     "reason": MODELS_WORDS_GAP_REASON if projected else MODELS_GAP_REASON})
+    return gaps, spellings
 
+
+def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
+    """Keep the gap-only helper conservative when no catalog operations are supplied."""
+    return models_catalog_projection(source, [])[0]
 
 
 FRONTEND_GAP_REASON = "Admission, runtime policy and receipt bindings need defined operation targets and closed relation field contracts; they are not spelling equivalences."
@@ -224,6 +249,7 @@ def protocol_frontend_gaps(source: Path) -> list[dict[str, str]]:
             # Position records source precedence without copying executable policy payloads.
             gaps.append({"source": source.name, "key": f"{section}[{order}]:{row['id']}", "reason": FRONTEND_GAP_REASON})
     return gaps
+
 
 
 def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None, models_source: Path | None = None, frontends_source: Path | None = None) -> str:
@@ -264,7 +290,9 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         catalog["operations"].extend(alias_operations)
         catalog["relations"].extend(alias_relations)
     if models_source is not None:
-        catalog["unexpressed"].extend(models_catalog_gaps(models_source))
+        model_gaps, model_spellings = models_catalog_projection(models_source, catalog["operations"])
+        catalog["unexpressed"].extend(model_gaps)
+        catalog["relations"].extend(model_spellings)
     if frontends_source is not None:
         catalog["unexpressed"].extend(protocol_frontend_gaps(frontends_source))
     # JSON is a YAML subset, with stable key order and explicit string quoting.
