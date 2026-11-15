@@ -59,10 +59,13 @@ class _Progress:
                                  metadata_patch={'protocol_state': moved.value}, path=media_jobs.DB_PATH)
 
 
-async def _follow(adapter, conn, ref, progress: _Progress, wake: asyncio.Event) -> None:
+async def _follow(adapter, conn, ref, progress: _Progress, wake: asyncio.Event,
+                  stopped: asyncio.Event | None = None) -> None:
     """Read the engine's push channel. A terminal event only wakes the poll loop; it is not completion."""
     try:
         async for event in adapter.events(conn, ref):
+            if stopped is not None and stopped.is_set():
+                return
             if event.state is None:
                 continue
             if event.state in TERMINAL:
@@ -219,7 +222,8 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
                                  metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
     progress = _Progress(job_id, _saved_state(metadata.get('protocol_state')))
     wake = asyncio.Event()
-    follower = asyncio.ensure_future(_follow(adapter, conn, ref, progress, wake)) if follow_events else None
+    follower_stopped = asyncio.Event()
+    follower = asyncio.ensure_future(_follow(adapter, conn, ref, progress, wake, follower_stopped)) if follow_events else None
     last_error = None
     try:
         async with asyncio.timeout(max_wait_s):
@@ -267,7 +271,17 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
             raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from None
         raise
     finally:
+        follower_stopped.set()
         if follower is not None:
             follower.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await follower
+            try:
+                # wait_for would wait for a resistant iterator to acknowledge
+                # cancellation. wait bounds the join without that acknowledgement.
+                await asyncio.wait({follower}, timeout=max_wait_s)
+            finally:
+                if follower.done():
+                    _consume_cancel_result(follower)
+                else:
+                    # Also observe completion if a second caller cancel interrupts
+                    # this bounded join. Late events are fenced by follower_stopped.
+                    follower.add_done_callback(_consume_cancel_result)
