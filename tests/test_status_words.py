@@ -98,7 +98,7 @@ def test_the_queue_probe_reads_the_selected_records_address(monkeypatch):
     config = _graph_record_config(render={"capabilities": ["images"], "host": "203.0.113.7", "port": 8188})
     queue, stats = asyncio.run(status_endpoint._graph_queue_and_stats(config))
     assert queue == {"running": 1, "pending": 0, "running_ids": ["a"], "pending_ids": []}
-    assert stats == {"system": {}}
+    assert stats["raw_stats"] == {"system": {}}  # the adapter observation carries the raw stats reply
     assert any("203.0.113.7:8188/queue" in url for url in seen)
 
 
