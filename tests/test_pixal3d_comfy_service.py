@@ -343,3 +343,73 @@ def test_a_prompt_comfyui_reported_as_errored_is_not_cancelled() -> None:
 
     asyncio.run(scenario())
     assert deletes == []
+
+@pytest.mark.parametrize("history", [
+    {"p1": "bad"}, {"p1": []}, {"p1": None},
+    {"p1": {"status": "bad"}}, {"p1": {"status": []}},
+    {"p1": {"status": None}}, {"p1": {"outputs": "bad"}},
+    {"p1": {"outputs": []}}, {"p1": {"outputs": None}},
+    {"p1": {"outputs": {svc.OUTPUT_NODE: "bad"}}},
+])
+def test_malformed_history_shapes_are_controlled_502(fake_upstreams, history):
+    fake, app = serve(fake_upstreams, full_run([history], view=False) + CLEANUP)
+    response = post(app)
+    assert response.status_code == 502
+    assert isinstance(response.json()["error"], str)
+    assert len(fake.calls("delete")) == 1
+    assert fake.calls("delete")[0].json == {"delete": ["p1"]}
+    assert not [r for r in fake.requests if r.path == "/interrupt"]
+
+
+@pytest.mark.parametrize("release_cleanup", [False, True])
+def test_cancelled_generation_cleans_only_accepted_prompt_before_reraising(release_cleanup):
+    async def scenario():
+        polling, deleting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        requests = []
+
+        async def upstream(request):
+            requests.append((request.method, request.url.path))
+            path = request.url.path
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                polling.set()
+                await asyncio.Event().wait()
+            if path == "/queue" and request.method == "POST":
+                assert json.loads(request.content) == {"delete": ["p1"]}
+                deleting.set()
+                await release.wait()
+            if path == "/interrupt":
+                raise AssertionError("global interrupt is forbidden")
+            return httpx.Response(200, json=IDLE)
+
+        app = svc.create_app(
+            "http://upstream.test", prompt=svc.load_prompt(),
+            client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(upstream)),
+            cleanup_timeout=0.1,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://svc.test") as client:
+            task = asyncio.create_task(client.post("/generate", files={"image": ("in.png", b"image", "image/png")}))
+            try:
+                await asyncio.wait_for(polling.wait(), 1)
+                task.cancel()
+                await asyncio.wait_for(deleting.wait(), 1)
+                # A second cancellation must not close the client underneath cleanup.
+                task.cancel()
+                if release_cleanup:
+                    release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 1)
+                assert requests.count(("POST", "/queue")) == 1
+                assert not any(path == "/interrupt" for _, path in requests)
+                if release_cleanup:
+                    assert requests.count(("GET", "/queue")) == 2
+            finally:
+                release.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())

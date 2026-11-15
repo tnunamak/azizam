@@ -130,6 +130,21 @@ class Pixal3DService:
             entry = await self._wait(client, prompt_id)
         except PromptEnded:
             raise
+        except asyncio.CancelledError:
+            # Preserve the client until cleanup finishes, despite repeated cancellation.
+            cleanup = asyncio.create_task(self._cancel_prompt(client, prompt_id))
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            try:
+                cleanup.result()
+            except (Exception, asyncio.CancelledError):
+                logging.getLogger(__name__).warning("Prompt cleanup failed during cancellation")
+            raise
         except Exception:
             # Every other failed wait (timeout, a failed or malformed poll) leaves the submitted prompt possibly running.
             await self._cancel_prompt(client, prompt_id)
@@ -146,9 +161,16 @@ class Pixal3DService:
         deadline = asyncio.get_running_loop().time() + self.timeout
         while True:
             history = upstream_object(await client.get(f"{self.base_url}/history/{prompt_id}"), "history")
-            entry = history.get(prompt_id)
-            if entry:
-                status = entry.get("status") or {}
+            if prompt_id in history:
+                entry = history[prompt_id]
+                if not isinstance(entry, dict):
+                    raise Refusal(502, "History prompt entry must be an object")
+                status = entry.get("status", {})
+                outputs = entry.get("outputs", {})
+                if not isinstance(status, dict) or not isinstance(outputs, dict):
+                    raise Refusal(502, "History status and outputs must be objects")
+                if OUTPUT_NODE in outputs and not isinstance(outputs[OUTPUT_NODE], dict):
+                    raise Refusal(502, "History output node must be an object")
                 if status.get("status_str") == "error":
                     raise PromptEnded(502, "ComfyUI reported an error for the prompt")
                 if status.get("completed") or entry.get("outputs"):
