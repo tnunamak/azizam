@@ -86,7 +86,7 @@ def test_unknown_relation_kind_refused(tmp_path):
 
 def test_duplicate_spelling_in_context_refused(tmp_path):
     document = _document()
-    document["relations"].append(dict(document["relations"][0]))
+    document["relations"].append({**document["relations"][0], "operation": "work.two"})
     with pytest.raises(CatalogError, match="relations row 7: rule unique_spelling_in_context"):
         load(_write(tmp_path, document))
 
@@ -212,9 +212,11 @@ def test_exact_duplicate_relation_names_both_positions(tmp_path, index):
     document["relations"].append(dict(reversed(list(document["relations"][index].items()))))
     with pytest.raises(CatalogError) as error:
         load(_write(tmp_path, document))
-    assert "rule unique_relation_row" in str(error.value)
-    assert "relations row 7" in str(error.value)
-    assert f"relations row {index}" in str(error.value)
+    assert str(error.value) == (
+        f"relations row 7: rule unique_relation_row: duplicates relations row {index}"
+    )
+    assert "unique_spelling_in_context" not in str(error.value)
+    assert "unique_family_word_in_context" not in str(error.value)
 
 
 @pytest.mark.parametrize("field,value", [
