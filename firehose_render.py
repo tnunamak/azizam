@@ -16,6 +16,7 @@ import html
 import json
 import re
 import time
+from functools import lru_cache
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -1040,14 +1041,38 @@ def _render_gpus(gpus: list[dict]) -> str:
     return "".join(parts)
 
 
+@lru_cache(maxsize=1)
+def _observation_executable_label(provider) -> Optional[str]:
+    """Cache best-effort label per provider; strict observation is unchanged."""
+    try:
+        return provider()
+    except Exception:
+        return None
+
+
+def _observation_display() -> dict[str, Any]:
+    """Keep display failures local without freezing configurable display data."""
+    try:
+        return gpu_observation.display_config()
+    except Exception:
+        return {"devices": [], "runtime": {
+            "device_label": "Device", "python_label": "Interpreter version",
+            "runtime_label": "Runtime version",
+        }}
+
+
 def _vram_row_label(s: dict) -> str:
     """Render the Service column with synthesized-row styling and spillover note."""
     name = s.get("service") or "?"
     if name == "__unattributed":
+        executable = _observation_executable_label(gpu_observation.executable)
+        if executable is None:
+            return ('<span class="muted" title="GPU memory not attributed to a compute process">'
+                    '[graphics + system, no CUDA context]</span>')
         return (
             '<span class="muted" title="processes hold /dev/nvidia* via DRM '
             "(Xwayland, plasmashell, browsers, etc.) but don't appear in "
-            f'{_esc(gpu_observation.executable())} --query-compute-apps because they have no CUDA '
+            f'{_esc(executable)} --query-compute-apps because they have no CUDA '
             'context">[graphics + system, no CUDA context]</span>'
         )
     if name == "__headroom":
@@ -1289,7 +1314,7 @@ def _render_budgets(b: dict) -> str:
     parts = []
     img = b.get("images") or {}
     rows = []
-    for device in gpu_observation.display_config()["devices"]:
+    for device in _observation_display()["devices"]:
         budget = b.get(device["budget_key"]) or {}
         for role in device["roles"]:
             label = role["label"].format_map(_GRAPH_WORDS)
@@ -2021,7 +2046,7 @@ def _render_graph_view(c: Optional[dict]) -> str:
     if not c:
         return '<div class="muted">unavailable</div>'
     dev = c.get("device") or {}
-    display = gpu_observation.display_config()["runtime"]
+    display = _observation_display()["runtime"]
     device_label = display["device_label"]
     return _kv_table([
         (f'{_GRAPH_WORDS["label"]} version', c.get(_GRAPH_WORDS["version_key"])),
