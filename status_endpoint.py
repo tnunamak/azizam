@@ -936,21 +936,23 @@ async def _gpu_workloads(
                         "pending": pending,
                     }
         elif device.get("workload") == "slots":
+            workload_label = next(role["label"] for role in device["roles"]
+                                  if role["key"] == device["workload_role"])
             if slots is not None:
                 active = [s for s in slots if isinstance(s, dict) and s.get("is_processing")]
                 total = len(slots)
                 workload = {
                     "label": "processing" if active else "loaded",
-                    "detail": f"LLM: {len(active)} active / {total} slots",
+                    "detail": f"{workload_label}: {len(active)} active / {total} slots",
                     "active_slots": len(active),
                     "total_slots": total,
                 }
             else:
                 used_mb = int(g.get("memory_used_mb") or 0)
                 if used_mb > 5 * 1024:
-                    workload = {"label": "loaded", "detail": "LLM: model resident (slots endpoint unavailable)"}
+                    workload = {"label": "loaded", "detail": f"{workload_label}: model resident (slots endpoint unavailable)"}
                 else:
-                    workload = {"label": "idle", "detail": "LLM: no model resident"}
+                    workload = {"label": "idle", "detail": f"{workload_label}: no model resident"}
         out.append({**g, "active_workload": workload})
     return out
 
@@ -1288,6 +1290,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
     """
     if not gpus:
         return {"per_gpu": [], "errors": ["gpus unavailable"]}
+    buckets = gpu_observation.attribution_buckets()
     compute_diagnostics: dict = {}
     apps = _get_compute_apps(diagnostics=compute_diagnostics)
     pid_to_service: dict[int, str] = {}
@@ -1324,18 +1327,18 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         if idx is None:
             continue
         pid = app["pid"]
-        svc = pid_to_service.get(pid, "desktop")
+        svc = pid_to_service.get(pid, buckets["unowned"])
         per_gpu_svc[idx][svc] += app["used_mb"]
 
         if (
-            svc != "desktop"
+            svc != buckets["unowned"]
             and pid in pid_primary_gpu
             and pid_primary_gpu[pid] != idx
         ):
             spillover_flags[idx][svc] = True
             spillover_primary[idx][svc] = pid_primary_gpu[pid]
 
-        if svc == "desktop":
+        if svc == buckets["unowned"]:
             desktop_top[idx].append({
                 "pid": pid,
                 "used_mb": app["used_mb"],
@@ -1395,7 +1398,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
             if is_spillover:
                 row["spillover_from_gpu"] = spillover_primary.get(idx, {}).get(svc)
                 row["note"] = "tensor-split spillover"
-            if svc == "desktop":
+            if svc == buckets["unowned"]:
                 tops = sorted(desktop_top.get(idx, []), key=lambda x: -x["used_mb"])[:5]
                 row["top_contributors"] = tops
             services.append(row)
@@ -1404,7 +1407,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         # Synthesized rows.
         unattributed_mb = max(0, total_used_mb - accounted_mb)
         services.append({
-            "service": "__unattributed",
+            "service": buckets["unattributed"],
             "used_mb": unattributed_mb,
             "used_gb": round(unattributed_mb / 1024.0, 2),
             "budget_gb": None,
@@ -1415,7 +1418,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         })
 
         headroom_mb = max(0, total_mb - total_used_mb)
-        headroom_budget_gb = budget_for(idx, "__headroom")
+        headroom_budget_gb = budget_for(idx, buckets["headroom"])
         headroom_pct = (
             ((headroom_mb / 1024.0) / float(headroom_budget_gb) * 100.0)
             if (headroom_budget_gb and headroom_budget_gb > 0) else None
@@ -1426,7 +1429,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
             and (headroom_mb / 1024.0) < float(headroom_budget_gb) - 0.5
         )
         services.append({
-            "service": "__headroom",
+            "service": buckets["headroom"],
             "used_mb": headroom_mb,
             "used_gb": round(headroom_mb / 1024.0, 2),
             "budget_gb": headroom_budget_gb,
@@ -1442,7 +1445,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
             scope = budget.get(devices[idx]["budget_key"]) or {} if idx in devices else {}
             total_budget_gb = scope.get("total_gb")
         services.append({
-            "service": "__total",
+            "service": buckets["total"],
             "used_mb": total_used_mb,
             "used_gb": round(total_used_mb / 1024.0, 2),
             "budget_gb": total_budget_gb,

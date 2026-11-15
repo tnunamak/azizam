@@ -22,6 +22,11 @@ fields:
   - {key: pcie_link_gen_max, type: optional_int}
   - {key: pcie_link_width, type: optional_int}
   - {key: pcie_link_width_max, type: optional_int}
+attribution_buckets:
+  unowned: desktop
+  headroom: __headroom
+  unattributed: __unattributed
+  total: __total
 devices:
   - index: 0
     label: GPU0
@@ -30,19 +35,20 @@ devices:
     workload: queue
     roles:
       - {label: total, key: total_gb, source: GPU_TOTAL_GB}
-      - {label: desktop, key: desktop_gb, source: GPU0_DESKTOP, bucket: desktop}
+      - {label: desktop, key: desktop_gb, source: GPU0_DESKTOP, bucket: unowned}
       - {label: TTS, key: tts_gb, source: GPU0_TTS}
       - {label: "{label}", key: "{gpu_budget_key}", source: "{gpu_budget_var}"}
-      - {label: headroom, key: headroom_gb, source: GPU0_HEADROOM, bucket: __headroom}
+      - {label: headroom, key: headroom_gb, source: GPU0_HEADROOM, bucket: headroom}
   - index: 1
     label: GPU1
     order: 1
     budget_key: gpu1
     workload: slots
+    workload_role: llm_gb
     roles:
       - {label: total, key: total_gb, source: GPU_TOTAL_GB}
       - {label: LLM, key: llm_gb, source: GPU1_LLM}
-      - {label: headroom, key: headroom_gb, source: GPU1_HEADROOM, bucket: __headroom}
+      - {label: headroom, key: headroom_gb, source: GPU1_HEADROOM, bucket: headroom}
 runtime_display:
   device_index: 0
   device_label: device[0]

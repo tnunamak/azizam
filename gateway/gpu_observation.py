@@ -75,6 +75,12 @@ def display_config(path=DEFAULT_REGISTRY):
     """Validate display data separately so observation-only callers stay compatible."""
     config = load_registry(path)
     devices, runtime = config.get("devices"), config.get("runtime_display")
+    buckets = config.get("attribution_buckets")
+    if (not isinstance(buckets, dict)
+            or set(buckets) != {"unowned", "headroom", "unattributed", "total"}
+            or any(not isinstance(value, str) or not value for value in buckets.values())
+            or len(set(buckets.values())) != len(buckets)):
+        raise ValueError("observation_attribution_buckets_invalid")
     if not isinstance(devices, list) or not devices:
         raise ValueError("observation_devices_invalid")
     indexes, orders = set(), set()
@@ -94,27 +100,39 @@ def display_config(path=DEFAULT_REGISTRY):
         roles = device.get("roles")
         if not isinstance(roles, list) or not roles:
             raise ValueError("observation_device_roles_invalid")
+        role_keys = set()
         for role in roles:
             if not isinstance(role, dict) or any(
                 not isinstance(role.get(key), str) or not role[key] for key in ("label", "key")
             ):
                 raise ValueError("observation_device_role_invalid")
+            if role["key"] in role_keys:
+                raise ValueError("observation_device_role_duplicate")
+            role_keys.add(role["key"])
+            if "bucket" in role and (not isinstance(role["bucket"], str) or role["bucket"] not in buckets):
+                raise ValueError("observation_role_bucket_invalid")
             if ("{" in role["label"] or "}" in role["label"]) and role["label"] != "{label}":
                 raise ValueError("observation_device_role_template_invalid")
             if ("{" in role["key"] or "}" in role["key"]) and role["key"] != "{gpu_budget_key}":
                 raise ValueError("observation_device_role_template_invalid")
+        if device.get("workload") == "slots" and (
+                not isinstance(device.get("workload_role"), str)
+                or device["workload_role"] not in role_keys):
+            raise ValueError("observation_workload_role_invalid")
     if (not isinstance(runtime, dict) or type(runtime.get("device_index")) is not int
             or runtime["device_index"] not in indexes
             or any(not isinstance(runtime.get(key), str) or not runtime[key]
                    for key in ("device_label", "python_label", "runtime_label"))):
         raise ValueError("observation_runtime_display_invalid")
-    return {"devices": sorted(devices, key=lambda row: row["order"]), "runtime": runtime}
+    return {"devices": sorted(devices, key=lambda row: row["order"]), "runtime": runtime,
+            "attribution_buckets": buckets}
 
 
 def status_devices(words):
     """Status roles and source variables share the renderer's ordered registry rows."""
     result = []
-    for row in display_config()["devices"]:
+    config = display_config()
+    for row in config["devices"]:
         roles = []
         for role in row["roles"]:
             source = role.get("source")
@@ -126,8 +144,13 @@ def status_devices(words):
                 if not isinstance(value, str) or not value:
                     raise ValueError("observation_status_word_invalid")
                 return value
-            roles.append({**role, "key": expanded(role["key"]), "source": expanded(source)})
-        result.append({**row, "roles": roles})
+            roles.append({**role, "label": expanded(role["label"]),
+                          "key": expanded(role["key"]), "source": expanded(source),
+                          **({"bucket": config["attribution_buckets"][role["bucket"]]}
+                             if "bucket" in role else {})})
+        result.append({**row, "roles": roles,
+                       **({"workload_role": expanded(row["workload_role"])}
+                          if "workload_role" in row else {})})
     return result
 
 
@@ -136,3 +159,8 @@ def sampling_device_label():
     config = display_config()
     return next((row["label"] for row in config["devices"]
                  if row["index"] == config["runtime"]["device_index"]), "unknown")
+
+
+def attribution_buckets():
+    """Stable semantic selectors map to operator-owned output names."""
+    return display_config()["attribution_buckets"]

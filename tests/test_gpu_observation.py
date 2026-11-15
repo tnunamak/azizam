@@ -112,11 +112,13 @@ def test_renderer_tooltip_uses_configured_executable(monkeypatch):
     )
 
 
-def _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes=False):
+def _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes=False, amend=None):
     import status_endpoint as status
     from gateway import gpu_observation
 
     config = load_registry()
+    if amend is not None:
+        amend(config)
     if reversed_indexes:
         for device in config["devices"]:
             device["index"] = 1 - device["index"]
@@ -189,3 +191,76 @@ def test_status_unmapped_device_has_unknown_role_and_no_budget(monkeypatch, tmp_
     import asyncio
     devices = asyncio.run(status._gpu_workloads([{"index": 2}], {"running": 0}, []))
     assert devices[0]["active_workload"]["label"] == "unknown"
+
+
+def test_status_role_label_and_bucket_names_follow_registry(monkeypatch, tmp_path):
+    import asyncio
+
+    def amend(config):
+        config["attribution_buckets"] = {
+            "unowned": "unowned-renamed", "headroom": "reserve-renamed",
+            "unattributed": "unmeasured-renamed", "total": "sum-renamed",
+        }
+        for device in config["devices"]:
+            if device["workload"] == "slots":
+                for role in device["roles"]:
+                    if role["key"] == device["workload_role"]:
+                        role["label"] = "Renamed workload"
+
+    status = _status_budget_fixture(monkeypatch, tmp_path, amend=amend)
+    monkeypatch.setattr(status, "_get_compute_apps", lambda **kwargs: [
+        {"pid": 91919, "gpu_uuid": "0", "used_mb": 1024, "process_name": "fixture"},
+    ])
+    monkeypatch.setattr(status, "_read_proc_comm", lambda pid: "fixture")
+    services = _headroom_rows(status, [0])[0]["services"]
+    assert [row["service"] for row in services] == [
+        "unowned-renamed", "unmeasured-renamed", "reserve-renamed", "sum-renamed",
+    ]
+    assert services[0]["budget_gb"] == 2
+    assert services[0]["top_contributors"] == [
+        {"pid": 91919, "used_mb": 1024, "comm": "fixture"},
+    ]
+    assert services[2]["budget_gb"] == 5
+    for slots, used, expected in [
+        ([{"is_processing": True}, {}], 0, "Renamed workload: 1 active / 2 slots"),
+        (None, 8192, "Renamed workload: model resident (slots endpoint unavailable)"),
+        (None, 0, "Renamed workload: no model resident"),
+    ]:
+        result = asyncio.run(status._gpu_workloads(
+            [{"index": 1, "memory_used_mb": used}], None, slots))
+        assert result[0]["active_workload"]["detail"] == expected
+
+
+def test_status_shipped_workload_strings_and_bucket_names(monkeypatch, tmp_path):
+    import asyncio
+
+    status = _status_budget_fixture(monkeypatch, tmp_path)
+    for slots, used, expected in [
+        ([{"is_processing": True}, {}], 0, "LLM: 1 active / 2 slots"),
+        (None, 8192, "LLM: model resident (slots endpoint unavailable)"),
+        (None, 0, "LLM: no model resident"),
+    ]:
+        result = asyncio.run(status._gpu_workloads(
+            [{"index": 1, "memory_used_mb": used}], None, slots))
+        assert result[0]["active_workload"]["detail"] == expected
+    assert [row["service"] for row in _headroom_rows(status, [0])[0]["services"]] == [
+        "__unattributed", "__headroom", "__total",
+    ]
+
+
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "selector"])
+def test_registry_rejects_invalid_attribution_bindings(tmp_path, defect):
+    from gateway.gpu_observation import display_config
+
+    config = load_registry()
+    if defect == "missing":
+        del config["attribution_buckets"]["total"]
+    elif defect == "duplicate":
+        config["attribution_buckets"]["total"] = config["attribution_buckets"]["headroom"]
+    else:
+        next(device for device in config["devices"]
+             if device["workload"] == "slots")["workload_role"] = "missing-role"
+    path = tmp_path / "invalid-observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="observation_"):
+        display_config(path)
