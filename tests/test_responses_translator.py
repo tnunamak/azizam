@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 import responses_translator as rt
 
@@ -25,6 +26,57 @@ def _event_payloads(frames: list[bytes]) -> list[dict]:
 
 
 class ResponsesTranslatorTests(unittest.TestCase):
+    def test_no_reasoning_body_preserves_current_shape(self):
+        for effort in ("none", "minimal"):
+            with self.subTest(effort=effort):
+                self.assertEqual(
+                    rt.to_chat_completions({"model": "local", "input": "hi",
+                                            "reasoning": {"effort": effort}}),
+                    {"model": "local",
+                     "messages": [{"role": "system", "content": "/no_think"},
+                                  {"role": "user", "content": "hi"}],
+                     "chat_template_kwargs": {"enable_thinking": False}},
+                )
+
+    def test_no_reasoning_body_uses_renamed_registry_fields(self):
+        from gateway import transforms
+        registry = (
+            "schema_version: 1\n"
+            "container_field: request_options\n"
+            "switch_field: reason_enabled\n"
+            'open_marker: "<thought>"\n'
+            'close_marker: "</thought>"\n'
+        )
+        # Exercise the real registry reader, not a stub suppression function.
+        with patch.object(transforms.Path, "read_text", return_value=registry):
+            controls = transforms._read_thinking_controls()
+        with patch.object(transforms, "_THINKING_CONTROLS", controls), patch.object(
+            transforms, "ENABLE_THINKING_KEY", controls["switch_field"]
+        ):
+            for effort in ("none", "minimal"):
+                with self.subTest(effort=effort):
+                    self.assertEqual(
+                        rt.to_chat_completions({"model": "local", "input": "hi",
+                                                "reasoning": {"effort": effort}}),
+                        {"model": "local",
+                         "messages": [{"role": "system", "content": "/no_think"},
+                                      {"role": "user", "content": "hi"}],
+                         "request_options": {"reason_enabled": False}},
+                    )
+
+    def test_reasoning_kwargs_preserve_explicit_values_and_non_suppressed_body(self):
+        for existing in ({"enable_thinking": True, "other": 7}, "opaque", None):
+            with self.subTest(existing=existing):
+                body = {"chat_template_kwargs": existing}
+                expected = json.loads(json.dumps(body))
+                rt._apply_reasoning_effort_kwargs(body, {"effort": "none"})
+                self.assertEqual(body, expected)
+        for reasoning in (None, {}, {"effort": "high"}, "none"):
+            with self.subTest(reasoning=reasoning):
+                body = {"unchanged": 1}
+                rt._apply_reasoning_effort_kwargs(body, reasoning)
+                self.assertEqual(body, {"unchanged": 1})
+
     def translator(self):
         return rt.StreamTranslator(response_id="resp_test", created_at=123, original_request={"input": "hi"})
 
