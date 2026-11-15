@@ -148,14 +148,8 @@ def load(path: str | Path) -> Catalog:
         identity = json.dumps(row, sort_keys=True, allow_nan=False)
         if identity in relation_positions:
             first = relation_positions[identity]
-            # Keep older diagnostic prefixes compatible.
-            prior_rule = ""
-            if row["kind"] == "spelling":
-                prior_rule = "rule unique_spelling_in_context: "
-            elif row["kind"] == "family" and "word" in row:
-                prior_rule = "rule unique_family_word_in_context: "
             raise CatalogError(
-                f"relations row {index}: {prior_rule}rule unique_relation_row: "
+                f"relations row {index}: rule unique_relation_row: "
                 f"duplicates relations row {first}"
             )
         relation_positions[identity] = index
