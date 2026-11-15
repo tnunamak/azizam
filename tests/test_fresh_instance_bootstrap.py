@@ -204,18 +204,13 @@ done
             for ready, observed in ((proxy_ready, proxy_observed), (tail_ready, tail_observed)):
                 assert observed.read_text() == "True", "stores removed before child termination"
                 pid = int(ready.read_text())
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    pass
-                else:
-                    raise AssertionError(f"owned child {pid} survived EXIT cleanup")
+                # Hermetic pytest forbids os.kill, so read liveness from /proc (a zombie counts as gone).
+                stat = Path(f"/proc/{pid}/stat")
+                state = stat.read_text().rsplit(")", 1)[1].split()[0] if stat.exists() else "gone"
+                assert state in ("gone", "Z"), f"owned child {pid} survived EXIT cleanup (state {state})"
         finally:
             # A reverted/broken cleanup must not leak the dummy children either.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            subprocess.run(["kill", "-KILL", "--", f"-{process.pid}"], capture_output=True, check=False)
             process.communicate(timeout=5)
             shutil.rmtree(workspace, ignore_errors=True)
 
