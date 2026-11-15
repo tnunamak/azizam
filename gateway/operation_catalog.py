@@ -278,11 +278,15 @@ LEGACY_CHAT_TASK = ("chat", "chat.generate")
 
 
 def project_dispatch_task_aliases(op: str, *, catalog: Catalog) -> set[str]:
-    """Project literal legacy task spellings and their target's capability."""
-    aliases = {op}
-    target = project_models_legacy_spellings(catalog).get(op)
-    if target is not None:
-        aliases.update((target, catalog.operations[target]["family"]))
+    """Preserve the four historical dispatch branches without widening other words."""
     if op == LEGACY_CHAT_TASK[0]:
-        aliases.add(LEGACY_CHAT_TASK[1])
+        return set(LEGACY_CHAT_TASK)
+    if op not in {"images", "speech", "embeddings"}:
+        return {op}
+    target = project_models_legacy_spellings(catalog).get(op)
+    aliases = set() if op == "images" else {op}
+    if target is not None:
+        aliases.add(target)
+        if op in {"images", "speech"}:
+            aliases.add(catalog.operations[target]["family"])
     return aliases

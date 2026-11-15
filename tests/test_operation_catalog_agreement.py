@@ -824,23 +824,30 @@ def _dispatch_accepts_task(monkeypatch, op, task, **kwargs):
 
 
 def test_dispatch_task_aliases_agree_with_catalog(monkeypatch):
-    from gateway.operation_catalog import LEGACY_CHAT_TASK, project_dispatch_task_aliases
+    from gateway.operation_catalog import project_dispatch_task_aliases
 
     catalog = load(CATALOG)
-    legacy = {row["word"]: row["operation"] for row in catalog.relations("spelling", "legacy")}
-    assert LEGACY_CHAT_TASK == ("chat", "chat.generate")
-    for op in ("images", "speech", "embeddings", "chat"):
-        target = legacy[op]
-        expected = {op, target, catalog.operations[target]["family"]}
-        if op == LEGACY_CHAT_TASK[0]:
-            expected.add(LEGACY_CHAT_TASK[1])
-        assert project_dispatch_task_aliases(op, catalog=catalog) == expected
-        candidates = set(catalog.operations) | {row["family"] for row in catalog.operations.values()}
-        candidates |= set(legacy) | expected | {"unrelated.task"}
-        accepted = {task for task in candidates if _dispatch_accepts_task(monkeypatch, op, task)}
-        assert accepted == expected
-    assert _dispatch_accepts_task(monkeypatch, "chat", "chat.generate")
-    assert project_dispatch_task_aliases("unknown.op", catalog=catalog) == {"unknown.op"}
+    # Frozen pre-cutover admission, not an oracle derived from the new projection.
+    # images was verified by the maintainer at 3edfb7a59db7756b1a99ed745e7eb455e7fba14f.
+    frozen = {
+        "images": {"image", "image.generate"},
+        "speech": {"speech", "speech.synthesis"},
+        "embeddings": {"embeddings", "text.embeddings"},
+        "chat": {"chat", "chat.generate"},
+    }
+    words = set(catalog.operations)
+    words |= {row["family"] for row in catalog.operations.values()}
+    words |= {row["word"] for row in catalog.relations("spelling", "legacy")}
+    words |= {row["word"] for row in catalog.relations("family")}
+    candidates = words | set(frozen) | set().union(*frozen.values()) | {"unrelated.task"}
+    for op in sorted(candidates):
+        expected = frozen.get(op, {op})
+        assert project_dispatch_task_aliases(op, catalog=catalog) == expected, op
+        # One task per offering: another allowed task cannot mask a broadened alias.
+        for task in sorted(candidates):
+            assert _dispatch_accepts_task(monkeypatch, op, task, catalog=catalog) == (
+                task in expected
+            ), (op, task, expected)
 
 
 def test_dispatch_task_aliases_follow_catalog_mutation(tmp_path, monkeypatch):
