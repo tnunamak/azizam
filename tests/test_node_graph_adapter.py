@@ -149,6 +149,51 @@ def test_observe_non_success_is_unknown_and_health_is_unchanged(monkeypatch, fai
             "HTTP 503" if failed_path == "/system_stats" else "", "graph.stats")
 
 
+
+@pytest.mark.parametrize("failed_path", ["/queue", "/system_stats"], ids=["queue", "stats"])
+@pytest.mark.parametrize("failure", ["transport", "json"])
+def test_observe_read_failure_preserves_other_nonempty_part(monkeypatch, failed_path, failure):
+    queue = {"queue_running": [[0, "active"]], "queue_pending": [[1, "waiting"]]}
+    stats = {"system": {"python_version": "fixture", "ram_free": 17},
+             "devices": [{"name": "device", "memory": 9}]}
+
+    def answer(method, url, kwargs):
+        if url.endswith(failed_path):
+            if failure == "transport":
+                raise httpx.ConnectError("fixture")
+            # The recording response's json() raises ValueError for this HTTP 200.
+            return Response(200, payload=None)
+        return Response(200, queue if url.endswith("/queue") else stats)
+
+    client = RecordingClient(answer)
+    impl = NodeGraphAdapter()
+
+    @asynccontextmanager
+    async def opened(conn):
+        assert conn is CONN
+        yield session(client)
+
+    monkeypatch.setattr(impl, "open", opened)
+    observed = run(impl.observe(CONN))
+    assert set(observed) == {"queue", "stats_runtime", "devices", "raw_stats"}
+    if failed_path == "/queue":
+        assert observed["queue"] is None
+        assert observed["raw_stats"] == stats
+        assert observed["devices"] == stats["devices"]
+        assert observed["stats_runtime"]["python_version"] == "fixture"
+        assert observed["stats_runtime"]["ram_free_bytes"] == 17
+    else:
+        assert observed["queue"] == {
+            "running": 1, "pending": 1, "running_ids": ["active"], "pending_ids": ["waiting"]}
+        assert observed["raw_stats"] is None
+        assert observed["stats_runtime"] is None
+        assert observed["devices"] is None
+    assert client.calls == [
+        ("GET", f"http://{HOST}/queue", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+        ("GET", f"http://{HOST}/system_stats", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+    ]
+
+
 def test_each_operation_issues_the_exact_client_call() -> None:
     client = RecordingClient()
     s = session(client)
