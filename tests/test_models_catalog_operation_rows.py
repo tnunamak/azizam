@@ -218,3 +218,40 @@ def test_assumption_legacy_folding_and_insertion_order_remain_until_catalog_migr
         assert entry["path"] == "/v1/test-paint"
         assert entry["files"] == ("canvas",)
     assert placeholder == "$row_id"
+
+
+def test_catalog_spelling_retarget_changes_normalized_reader_prefixes(tmp_path):
+    document = yaml.safe_load(
+        catalog.MODELS_CATALOG_OPERATIONS_PATH.with_name("operations.yml").read_text(encoding="utf-8")
+    )
+    spelling = next(row for row in document["relations"]
+                    if row["kind"] == "spelling" and row.get("context") == "catalog"
+                    and "." in row["word"])
+    word = spelling["word"]
+    original = spelling["operation"]
+    target = next(row["id"] for row in document["operations"] if row["id"] != original)
+    spelling["word"] = " " + word.upper().replace(".", "_") + " "
+    path = tmp_path / "operations.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    before, _, _ = catalog.load_models_catalog_operations(catalog_path=path)
+    normalized = word.strip().lower().replace("_", ".")
+    assert before[normalized] == (original,)
+
+    spelling["operation"] = target
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    after, _, _ = catalog.load_models_catalog_operations(catalog_path=path)
+    assert after[normalized] == (target,)
+    assert {key: value for key, value in after.items() if key != normalized} == {
+        key: value for key, value in before.items() if key != normalized
+    }
+
+
+def test_shipped_catalog_words_preserve_every_legacy_row_prefix():
+    document = yaml.safe_load(catalog.MODELS_CATALOG_OPERATIONS_PATH.read_text(encoding="utf-8"))
+    expected = {
+        word.strip().lower().replace("_", "."): tuple(row["intent_prefixes"])
+        for row in document["operations"] for word in row["words"]
+    }
+    prefixes, _, _ = catalog.load_models_catalog_operations()
+    assert dict(prefixes) == expected
+    assert list(prefixes) == list(expected)
