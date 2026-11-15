@@ -65,17 +65,66 @@ class ResponsesTranslatorTests(unittest.TestCase):
                     )
 
     def test_reasoning_kwargs_preserve_explicit_values_and_non_suppressed_body(self):
-        for existing in ({"enable_thinking": True, "other": 7}, "opaque", None):
-            with self.subTest(existing=existing):
-                body = {"chat_template_kwargs": existing}
-                expected = json.loads(json.dumps(body))
-                rt._apply_reasoning_effort_kwargs(body, {"effort": "none"})
-                self.assertEqual(body, expected)
-        for reasoning in (None, {}, {"effort": "high"}, "none"):
-            with self.subTest(reasoning=reasoning):
-                body = {"unchanged": 1}
-                rt._apply_reasoning_effort_kwargs(body, reasoning)
-                self.assertEqual(body, {"unchanged": 1})
+        from contextlib import nullcontext
+        from gateway import transforms
+
+        registry = (
+            "schema_version: 1\n"
+            "container_field: request_options\n"
+            "switch_field: reason_enabled\n"
+            'open_marker: "<thought>"\n'
+            'close_marker: "</thought>"\n'
+        )
+        # Literal input/output pairs: no expected value comes from the controls.
+        variants = (
+            ("default", (
+                ("absent", {}, {"chat_template_kwargs": {"enable_thinking": False}}),
+                ("empty", {"chat_template_kwargs": {}},
+                 {"chat_template_kwargs": {"enable_thinking": False}}),
+                ("true", {"chat_template_kwargs": {"enable_thinking": True, "other": 7}},
+                 {"chat_template_kwargs": {"enable_thinking": True, "other": 7}}),
+                ("false", {"chat_template_kwargs": {"enable_thinking": False, "other": 7}},
+                 {"chat_template_kwargs": {"enable_thinking": False, "other": 7}}),
+                ("non-dict", {"chat_template_kwargs": "opaque"}, {"chat_template_kwargs": "opaque"}),
+                ("null", {"chat_template_kwargs": None}, {"chat_template_kwargs": None}),
+                ("sibling", {"unchanged": {"items": [0, False, None]}, "chat_template_kwargs": {"other": 7}},
+                 {"unchanged": {"items": [0, False, None]},
+                  "chat_template_kwargs": {"other": 7, "enable_thinking": False}}),
+            )),
+            ("renamed", (
+                ("absent", {}, {"request_options": {"reason_enabled": False}}),
+                ("empty", {"request_options": {}}, {"request_options": {"reason_enabled": False}}),
+                ("true", {"request_options": {"reason_enabled": True, "other": 7}},
+                 {"request_options": {"reason_enabled": True, "other": 7}}),
+                ("false", {"request_options": {"reason_enabled": False, "other": 7}},
+                 {"request_options": {"reason_enabled": False, "other": 7}}),
+                ("non-dict", {"request_options": "opaque"}, {"request_options": "opaque"}),
+                ("null", {"request_options": None}, {"request_options": None}),
+                ("sibling", {"unchanged": {"items": [0, False, None]}, "request_options": {"other": 7}},
+                 {"unchanged": {"items": [0, False, None]},
+                  "request_options": {"other": 7, "reason_enabled": False}}),
+            )),
+        )
+        for variant, cases in variants:
+            # Default uses the shipped controls; renamed uses the real registry reader.
+            with patch.object(transforms.Path, "read_text", return_value=registry):
+                controls = transforms._read_thinking_controls()
+            context = (patch.object(transforms, "_THINKING_CONTROLS", controls)
+                       if variant == "renamed" else nullcontext())
+            switch_context = (patch.object(transforms, "ENABLE_THINKING_KEY", controls["switch_field"])
+                              if variant == "renamed" else nullcontext())
+            with context, switch_context:
+                for case, original, expected in cases:
+                    for effort in ("none", "minimal"):
+                        with self.subTest(controls=variant, case=case, effort=effort):
+                            body = json.loads(json.dumps(original))
+                            rt._apply_reasoning_effort_kwargs(body, {"effort": effort})
+                            self.assertEqual(body, expected)
+                    for reasoning in (None, {}, {"effort": "high"}, "none"):
+                        with self.subTest(controls=variant, case=case, reasoning=reasoning):
+                            body = json.loads(json.dumps(original))
+                            rt._apply_reasoning_effort_kwargs(body, reasoning)
+                            self.assertEqual(body, original)
 
     def translator(self):
         return rt.StreamTranslator(response_id="resp_test", created_at=123, original_request={"input": "hi"})
