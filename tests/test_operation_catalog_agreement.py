@@ -431,7 +431,6 @@ def test_frontend_gap_does_not_equate_admission_and_runtime_policy(tmp_path):
             protocol_frontend_gaps(source)
 
 
-
 @pytest.mark.parametrize("document", [
     "intents: []\nintents: []\n",
     "intents:\n  - {intent: first, intent: second, modality: sample, submittable: false}\n",
@@ -629,3 +628,74 @@ def test_capability_reader_catalog_conflict_and_no_fallback(tmp_path, monkeypatc
     catalog.unlink()
     with pytest.raises(CatalogError):
         ids.load_capability_words(source)
+
+
+def _authority_cutover_selector_contract(source_prefixes, replacement, *, semantic_change_version=None):
+    """Ledger-only invariant; not a production selector or migration adapter."""
+    if replacement["kind"] == "prefix":
+        if tuple(replacement["prefixes"]) != tuple(source_prefixes):
+            raise ValueError("ordered prefix semantics changed")
+        return
+    if source_prefixes and not (
+        isinstance(semantic_change_version, str) and semantic_change_version.strip()
+    ):
+        raise ValueError("open selector requires an explicit versioned semantic change")
+    if replacement["kind"] != "finite":
+        raise ValueError("unknown replacement contract")
+
+
+def test_authority_cutover_contract_typed_family_roundtrip(tmp_path):
+    source = {
+        "protocol_words": {"second": "visual", "first": "lingual"},
+        "route_intents": {"second": "lingual", "last": "visual"},
+        "type_capabilities": {"zeta": "visual", "alpha": "lingual"},
+    }
+    contexts = {"protocol_words": "protocol", "route_intents": "route",
+                "type_capabilities": "type"}
+    rows = [
+        {"kind": "family", "word": word, "family": family,
+         "context": contexts[section], "order": index}
+        for section, words in source.items()
+        for index, (word, family) in enumerate(words.items())
+    ]
+    catalog = load(_catalog(tmp_path, list(reversed(rows))))
+    projected = project_capability_words(catalog)
+    assert list(projected) == list(source)
+    for section, words in source.items():
+        assert list(projected[section].items()) == list(words.items())
+        assert "unknown" not in projected[section]
+    assert not catalog.operations
+    assert not catalog.relations("admission")
+
+
+def test_authority_cutover_contract_open_selector_requires_versioned_change():
+    prefixes = ("decision.",)
+    current = ("decision.current",)
+    future = current + ("decision.example",)
+    finite_group = {"kind": "finite", "operations": current}
+    assert tuple(item for item in future if item.startswith(prefixes)) == future
+    assert tuple(item for item in future if item in finite_group["operations"]) == current
+    with pytest.raises(ValueError, match="explicit versioned semantic change"):
+        _authority_cutover_selector_contract(prefixes, finite_group)
+    with pytest.raises(ValueError, match="explicit versioned semantic change"):
+        _authority_cutover_selector_contract(prefixes, finite_group, semantic_change_version="")
+    _authority_cutover_selector_contract(
+        prefixes, finite_group, semantic_change_version="selector-contract-v2",
+    )
+    # Explicit opt-in acknowledges a changed contract, not equivalent behavior.
+    assert finite_group["operations"] != future
+
+
+def test_authority_cutover_contract_preserves_prefix_order_and_unknowns():
+    prefixes = ("second.", "first.")
+    _authority_cutover_selector_contract(
+        prefixes, {"kind": "prefix", "prefixes": list(prefixes)},
+    )
+    with pytest.raises(ValueError, match="ordered prefix semantics changed"):
+        _authority_cutover_selector_contract(
+            prefixes, {"kind": "prefix", "prefixes": list(reversed(prefixes))},
+        )
+    candidates = ("second.item", "unknown.item", "first.item")
+    assert tuple(item for item in candidates if item.startswith(prefixes)) == (
+        "second.item", "first.item",
+    )
