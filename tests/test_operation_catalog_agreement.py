@@ -32,8 +32,14 @@ def _alias_rows():
     return yaml.safe_load(LOCAL_SOURCE.read_text(encoding="utf-8"))["alias_operations"]
 
 
+# Operations the generator declares from models catalog rows with one exact selector,
+# agreeing examples and one corroborated family (missing_model_operations).
+MODEL_DECLARED = {"speech.translation", "text.completions", "text.rerank"}
+
+
 def _catalog_intents():
-    return _media_intents() | {row["intent"] for row in _alias_rows() if row["intent"] is not None}
+    return (_media_intents() | MODEL_DECLARED
+            | {row["intent"] for row in _alias_rows() if row["intent"] is not None})
 
 
 def _alias_spellings():
@@ -345,9 +351,20 @@ def test_conservative_models_examples_are_gaps_not_operation_contracts():
         intents = {example["intent"] for example in row.get("examples", [])}
         projected = (len(intents) == 1 and next(iter(intents)) in catalog.operations
                      and row["intent_prefixes"] == sorted(intents))
+        selectors = row["intent_prefixes"]
+        if projected:
+            reason = MODELS_WORDS_GAP_REASON
+        elif len(selectors) != 1 or selectors[0].endswith(".") or "*" in selectors[0]:
+            reason = "Missing operation identity needs one exact singleton selector."
+        elif not intents or intents != {selectors[0]}:
+            reason = "Exact selector and every example intent must agree."
+        elif selectors[0] not in catalog.operations:
+            reason = "Missing operation identity needs one corroborated exact family mapping."
+        else:
+            reason = MODELS_GAP_REASON
         expected.append({
             "source": source.name, "key": f"operations[{index}]:{row['id']}",
-            "reason": MODELS_WORDS_GAP_REASON if projected else MODELS_GAP_REASON,
+            "reason": reason,
         })
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
     from gateway.operation_catalog import project_models_legacy_spellings
@@ -469,7 +486,7 @@ def test_alias_operations_and_legacy_spellings_match_source():
     assert [(row["word"], row["operation"]) for row in spellings] == _alias_spellings()
     assert [row["order"] for row in spellings] == list(range(len(spellings)))
     assert len(spellings) == 11
-    assert len(set(catalog.operations) - _media_intents()) == 5
+    assert len(set(catalog.operations) - _media_intents() - MODEL_DECLARED) == 5
     for row in _alias_rows():
         intent = row["intent"]
         if intent is None:
@@ -485,7 +502,7 @@ def test_alias_operations_and_legacy_spellings_match_source():
                 expected["modality"] = row["output_modalities"][0]
             assert dict(catalog.operations[intent]) == expected
     assert dict(_alias_spellings())["translations"] == "speech.transcription"
-    assert "speech.translation" not in catalog.operations
+    assert "speech.translation" not in {row["intent"] for row in _alias_rows()}
 
 
 def _alias_fixture_sources(tmp_path, rows, words):

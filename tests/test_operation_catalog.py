@@ -179,12 +179,12 @@ def test_shipped_catalog_holds_media_operations_and_word_family_rows():
     # Media job intents come first, then the local alias operations and the models catalog words whose selector is one operation; the other relation kinds come in later steps.
     path = Path(__file__).resolve().parents[1] / "registry" / "operations.yml"
     catalog = load(path)
-    assert len(catalog.operations) == 16
+    assert len(catalog.operations) == 19
     assert len(catalog.relations("admission")) == 11
     assert catalog.relations("binding")
     spellings = catalog.relations("spelling")
     contexts = [row["context"] for row in spellings]
-    assert contexts.count("legacy") == 11 and contexts.count("catalog") == 17 and len(contexts) == 28
+    assert contexts.count("legacy") == 11 and contexts.count("catalog") == 24 and len(contexts) == 35
     for kind in ("runtime_policy", "receipt", "catalog_group"):
         assert catalog.relations(kind) == ()
     families = catalog.relations("family")
