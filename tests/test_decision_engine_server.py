@@ -1087,3 +1087,109 @@ def test_cancellable_post_rechecks_cancel_after_connect_before_post(monkeypatch)
     assert sent == []
     assert fake_socket.shutdown_called
     assert fake_socket.closed
+
+
+@pytest.mark.parametrize("deadline_header", [None, "500"])
+def test_incomplete_bodies_release_all_admission_slots(monkeypatch, deadline_header):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    monkeypatch.setattr(server, "DEFAULT_REQUEST_TIMEOUT_S", 0.5)
+    class Admission(_CountingSemaphore):
+        def __init__(self):
+            super().__init__(5, target=5)
+            self.released = 0
+            self.all_released = threading.Event()
+
+        def release(self, n=1):
+            super().release(n)
+            with self._count_lock:
+                self._held -= n
+                self.released += n
+                if self.released == 5:
+                    self.all_released.set()
+
+    admission = Admission()
+    scorer = UsageScorer()
+    connections = []
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        parsed = urlparse(base_url)
+        try:
+            for _ in range(5):
+                conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+                connections.append(conn)
+                conn.putrequest("POST", "/v1/systemone")
+                conn.putheader("Content-Length", "100")
+                if deadline_header is not None:
+                    conn.putheader("x-decision-deadline-ms", deadline_header)
+                conn.endheaders()
+            assert admission.at_target.wait(timeout=2)
+            assert admission.all_released.wait(timeout=2)
+            assert scorer.total_calls == 0
+            for conn in connections:
+                response = conn.getresponse()
+                assert response.status == 504
+                assert json.loads(response.read())["error"]["code"] == "deadline_exceeded"
+            status, _, _ = _post_json(base_url, "/v1/systemone", _systemone_body("after"))
+            assert status == 200
+            assert scorer.total_calls == 1
+        finally:
+            for conn in connections:
+                conn.close()
+
+
+def test_trickled_body_cannot_extend_absolute_deadline():
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    stop = threading.Event()
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        parsed = urlparse(base_url)
+        conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+        conn.putrequest("POST", "/v1/systemone")
+        conn.putheader("Content-Length", "1000")
+        conn.putheader("x-decision-deadline-ms", "200")
+        conn.endheaders()
+        def trickle():
+            while not stop.wait(0.02):
+                try:
+                    conn.send(b" ")
+                except OSError:
+                    return
+        worker = threading.Thread(target=trickle, daemon=True)
+        worker.start()
+        try:
+            started = time.monotonic()
+            response = conn.getresponse()
+            assert response.status == 504
+            assert json.loads(response.read())["error"]["code"] == "deadline_exceeded"
+            assert time.monotonic() - started < 2
+            assert scorer.total_calls == 0
+        finally:
+            stop.set()
+            worker.join(timeout=1)
+            conn.close()
+
+
+@pytest.mark.parametrize("length", ["-1", "bad", "17", "1, 1"])
+def test_invalid_or_oversize_body_length_is_rejected(length):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    handler = _handler_for(scorer)
+    handler.max_request_body_bytes = 16
+    with _ThreadedServer(handler) as base_url:
+        parsed = urlparse(base_url)
+        conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+        try:
+            conn.putrequest("POST", "/v1/systemone")
+            conn.putheader("Content-Length", length)
+            conn.endheaders()
+            response = conn.getresponse()
+            assert response.status == 422
+            assert json.loads(response.read())["error"]["code"] == "invalid_content_length"
+            assert scorer.total_calls == 0
+        finally:
+            conn.close()

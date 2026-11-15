@@ -363,6 +363,7 @@ class Handler(BaseHTTPRequestHandler):
     llama_process: subprocess.Popen[Any] | None = None
     request_lock = threading.Lock()
     admission = threading.BoundedSemaphore(5)
+    max_request_body_bytes = 16 * 1024 * 1024
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
@@ -409,14 +410,14 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         try:
-            length = int(self.headers.get("content-length") or "0")
+            started = time.perf_counter()
+            deadline = _request_deadline(self.headers.get("x-decision-deadline-ms"))
             try:
-                body = json.loads(self.rfile.read(length) or b"{}")
+                body = json.loads(self._read_request_body(deadline) or b"{}")
             except json.JSONDecodeError:
                 raise decision_engine.DecisionInputError("Request body must be valid JSON.", code="invalid_json")
             req = decision_engine.parse_request(body)
-            started = time.perf_counter()
-            deadline = _request_deadline(self.headers.get("x-decision-deadline-ms"))
+            _raise_if_stopped(deadline, None)
             if not _acquire_until(self.request_lock, deadline, self._client_disconnected):
                 raise DecisionDeadlineExceeded("decision deadline exceeded")
             try:
@@ -452,6 +453,42 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, decision_engine.error_body(str(exc), code="decision_engine_error", kind="server_error"))
         finally:
             self.admission.release()
+
+    def _read_request_body(self, deadline: float) -> bytes:
+        # Unread or timed-out framing must never become a subsequent request.
+        self.close_connection = True
+        lengths = self.headers.get_all("content-length", [])
+        raw = lengths[0].strip() if len(lengths) == 1 else "0"
+        if (len(lengths) > 1 or self.headers.get("transfer-encoding") is not None
+                or not raw.isascii() or not raw.isdecimal()
+                or len(raw) > 20):
+            raise decision_engine.DecisionInputError(
+                "Invalid Content-Length.", code="invalid_content_length")
+        length = int(raw)
+        if length > self.max_request_body_bytes:
+            raise decision_engine.DecisionInputError(
+                "Request body is too large.", code="invalid_content_length")
+        chunks = []
+        remaining_bytes = length
+        previous_timeout = self.connection.gettimeout()
+        try:
+            while remaining_bytes:
+                _raise_if_stopped(deadline, None)
+                self.connection.settimeout(max(MIN_UPSTREAM_TIMEOUT_S, deadline - time.monotonic()))
+                try:
+                    # read1 performs at most one raw read: trickle traffic cannot
+                    # restart a full buffered-read timeout indefinitely.
+                    chunk = self.rfile.read1(min(65536, remaining_bytes))
+                except TimeoutError as exc:
+                    raise DecisionDeadlineExceeded("decision deadline exceeded") from exc
+                if not chunk:
+                    raise DecisionCancelled("client disconnected")
+                chunks.append(chunk)
+                remaining_bytes -= len(chunk)
+            _raise_if_stopped(deadline, None)
+            return b"".join(chunks)
+        finally:
+            self.connection.settimeout(previous_timeout)
 
     def _client_disconnected(self) -> bool:
         return _socket_disconnected(self.connection)
