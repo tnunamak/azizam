@@ -55,17 +55,22 @@ def load_admin_surfaces_catalog(path: Path) -> list[dict[str, Any]]:
     if not isinstance(records, list):
         return []
     return [
-        _normalize_admin_surface(record)
-        for record in records
+        _normalize_admin_surface(record, row_index=index)
+        for index, record in enumerate(records)
         if isinstance(record, Mapping)
     ]
 
 
-def _normalize_admin_surface(record: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_admin_surface(record: Mapping[str, Any], *, row_index: int) -> dict[str, Any]:
+    for field in ("name", "status"):
+        value = record.get(field)
+        if not isinstance(value, str) or not value.strip():
+            row = record.get("id") or f"records[{row_index}]"
+            raise ValueError(f"Admin surface {row!r}: {field} must be a non-empty string")
     return {
-        "name": str(record.get("name") or "Admin API"),
+        "name": record["name"],
         "route_base": str(record.get("route_base") or ""),
-        "status": str(record.get("status") or "live"),
+        "status": record["status"],
         "profile_gates": _string_list(record.get("profile_gates")),
         "clients": _string_list(record.get("clients")),
         "description": str(record.get("description") or ""),

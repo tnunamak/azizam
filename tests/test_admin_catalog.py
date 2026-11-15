@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
+import yaml
 
 from tests.registry_test_helpers import seed_registry_document
 from gateway import service_registry
@@ -31,6 +35,7 @@ records:
 records:
   - id: owner-api
     name: Owner API
+    status: live
     route_base: /owner/api
     profile_gates:
       - owner session
@@ -93,3 +98,33 @@ def test_admin_control_surface_is_catalog_data() -> None:
 
 def test_admin_surfaces_catalog_ignores_missing_file(tmp_path: Path) -> None:
     assert load_admin_surfaces_catalog(tmp_path / "missing.yml") == []
+
+
+@pytest.mark.parametrize("field", ["name", "status"])
+@pytest.mark.parametrize("invalid", ["missing", "empty"])
+def test_admin_surface_requires_presentation_fields(tmp_path: Path, field: str, invalid: str) -> None:
+    shipped = Path(__file__).resolve().parents[1] / "registry" / "admin_surfaces.yml"
+    document = yaml.safe_load(shipped.read_text(encoding="utf-8"))
+    row = document["records"][0]
+    if invalid == "missing":
+        del row[field]
+    else:
+        row[field] = ""
+    path = tmp_path / "admin_surfaces.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ValueError) as error:
+        load_admin_surfaces_catalog(path)
+    assert row["id"] in str(error.value)
+    assert field in str(error.value)
+
+
+def test_shipped_admin_surface_projection_is_unchanged() -> None:
+    shipped = Path(__file__).resolve().parents[1] / "registry" / "admin_surfaces.yml"
+    expected = [{"name": "Admin API", "route_base": "/admin/api", "status": "live",
+                 "profile_gates": ["admin session", "oak_"],
+                 "clients": ["operators", "automation"],
+                 "description": "Control-plane API for Apps, Profiles, keys, audit, and policy simulation."}]
+    actual = load_admin_surfaces_catalog(shipped)
+    assert actual == expected
+    assert json.dumps(actual).encode("utf-8") == json.dumps(expected).encode("utf-8")
