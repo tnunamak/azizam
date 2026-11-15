@@ -297,3 +297,104 @@ The current deliverable only records this safe boundary; functionality is
 unverified and no tests ran. Confidence: 0.95 in the schema-only blocker;
 0.75 in the proposed contract pending the ownership decision and executable
 synthetic tests. It does not establish shipped-policy equivalence.
+
+
+## Authority cutover ledger (contract slice; not an authority switch)
+
+Pinned implementation input: `45ce7a9f7967027f23098e7e5201c1063f660fb1`.
+The older pin quoted in the brief is not the patch base. **Operations remains
+bootstrap output.** No source is deleted, no reader is migrated, and no generated
+output is refreshed by this slice. “Represented” below means a particular field
+has a pure view, not that every consumer has adopted it.
+
+Status vocabulary: **represented** = existing ordered projection; **retained** =
+original authority still required; **owner-blocked** = replacement contract or
+last-reader evidence is missing. Proposed views below are specification names,
+not implemented APIs. The existing bootstrap equality test must not survive as
+the canonical-authoring gate: it runs the old source-to-catalog CLI and would
+overwrite newly authored facts.
+
+| Original authority / section | Represented fields | Unrepresented fields / status | Current consumer | Exact replacement view | Owner regeneration action | Last-reader / deletion proof | Acceptance gate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| capability words / protocol_words | represented: word, family, context=protocol, order | retained until reader adoption | family projection; bootstrap generator; downstream reader adoption owner-blocked | existing project_capability_words(catalog)["protocol_words"] ordered mapping | compare ordered entries, then derive this section from catalog after switch | owner supplies all remaining reader bindings; none proved removed here | typed-family roundtrip node below plus owner equality on real rows |
+| capability words / route_intents | represented: word, family, context=route, order | retained until reader adoption | family projection; bootstrap generator | existing project_capability_words(catalog)["route_intents"] ordered mapping | same section-specific ordered comparison | same word in another context must not merge; owner last-reader proof | typed-family roundtrip plus real-row equality |
+| capability words / type_capabilities | represented: word, family, context=type, order | retained until reader adoption | family projection; bootstrap generator | existing project_capability_words(catalog)["type_capabilities"] ordered mapping | same section-specific ordered comparison | owner proves no direct reader remains | typed-family roundtrip plus real-row equality |
+| capability words / schema_version | none as a legacy document contract | retained: source format version; catalog version is not its replacement | source parser and bootstrap | owner-blocked: versioned derived-document envelope | choose version explicitly; do not copy catalog version by inference | all envelope readers need version acceptance proof | owner parser roundtrip |
+| capability words / modality_words | none | retained: complete ordered modality vocabulary | legacy display/type readers; exact bindings need owner | owner-blocked: ordered modality vocabulary view | populate provenance and define view before regeneration | owner identifies authorized reader bindings | exact ordered vocabulary including unknown-value behavior |
+| capability words / media_type_modalities | none | retained: media-type-to-modality mapping | legacy media-type readers; bindings need owner | owner-blocked: exact media-type mapping view | preserve keys, values and unknown behavior | owner verifies final direct reader | mapping equality and unknown-key cases |
+| capability words / capabilities | none as complete display policy | retained: all nested presentation, recommendation and suppression fields | legacy display readers; prior display-contract proposal is not adoption | owner-blocked: closed display-policy view, not admission | settle prior proposal and provenance first | owner supplies actual display consumer evidence | nested ordered policy equality; no execution grant |
+| capability words / audio_rule | none as rule contract | retained: entire audio rule | gateway/media_job_intents.py imports legacy audio rule through its dependency | owner-blocked: explicit audio-rule view | obtain authorized dependency evidence before replacing | imported dependency and downstream readers must be proven migrated | rule equality; unknown input behavior preserved |
+| media rows / intents | represented: ordered intent, modality, submittable and route/component/execution_route | retained: explicit legacy-document validation boundary and envelope; no broader policy inferred | gateway/media_job_intents.py load_rows defaults to project_media_job_intents; explicit-path parse remains | existing project_media_job_intents(catalog), preserving each optional field and row order | owner compares existing pure view to authorized source; no generator here | owner resolves explicit-path clients and validation dependency before source deletion | ordered rows and route grouping, malformed/unknown behavior, no extra admission |
+| local rows / schema_version | none as source envelope | retained: local format version | gateway/local_capabilities.py loader/parser | owner-blocked: versioned local view envelope | define version and validation contract | parser and direct readers need owner proof | same accepted/rejected envelope cases |
+| local rows / alias_operations | represented: non-null intent identity and declared legacy spellings; some operation facts | retained: name/shared_operations shape, null intent, input/output modalities, execution, capability, engine_operation, publish_capability; no runtime equivalence inferred | gateway/local_capabilities.py parser and row consumers; bootstrap alias projection | owner-blocked: ordered full alias-row view, not spelling map alone | populate every retained field with provenance, then compare complete rows | identity projection is not permission to delete alias source; prove each runtime reader | exact rows, null/unknown behavior, flags, modalities and execution unchanged |
+| local rows / workflow_families | identity overlap only, not a complete view | retained: section, enabled_flag, intent, input/output modalities, resource_tier | gateway/local_capabilities.py | owner-blocked: ordered workflow-family view | define and populate full contract separately | owner proves workflow readers migrated | full ordered rows and disabled/unknown cases |
+| local rows / backend_rows | identity overlap only | retained: group, triggers, flag, intent, inputs/outputs, streaming, execution, gpu_required, vision, resources_from, capability, tags, action_label, recordable_inputs, caveats | gateway/local_capabilities.py | owner-blocked: ordered backend-row view including all optional fields | preserve optional-field absence and ordering, not inferred defaults | owner proves backend reader behavior, not just operation membership | complete row equality; flags/triggers and nested fields preserved |
+| local rows / image_rows | identity overlap only | retained: intent, input_modalities, ordered model_sources | gateway/local_capabilities.py | owner-blocked: ordered image-row view | preserve source preference order exactly | owner proves image selection readers migrated | selection precedence and missing/unknown cases |
+| local rows / image_defaults | none as defaults contract | retained: section, enabled_flag, section_required, backend_presence, backend_capability, output_modalities, execution, streaming, resource_tier, gpu_required | gateway/local_capabilities.py | owner-blocked: exact image-defaults mapping | define independent defaults contract before populating | owner proves defaults consumers migrated | exact values and absence semantics |
+| local rows / workflow_defaults | none as defaults contract | retained: section_required, backend_presence, backend_capabilities, execution, streaming, gpu_required | gateway/local_capabilities.py | owner-blocked: exact workflow-defaults mapping | preserve nested capability map and defaults | owner proves workflow defaults consumers migrated | exact mapping and unknown/disabled cases |
+| models rows / schema_version and row_id_placeholder | none as full envelope/template contract | retained: format version and placeholder semantics | gateway/models_catalog.py source loading and template use | owner-blocked: versioned models envelope/template contract | preserve placeholder identity, no substitution by operation ID | owner proves every template consumer migrated | envelope and substitution examples |
+| models rows / operations | represented: declared id/words spellings only for singleton known-intent examples with exact prefix | retained: row order, id/words, intent_prefixes, ordered examples and their full request templates/extra fields | gateway/models_catalog.py, including startswith filtering at 606–618 | owner-blocked: ordered models-row view retaining open prefixes; finite catalog_group is not equivalent | preserve open-prefix contract or explicitly version a semantic change; do not invent future operation membership | owner proves full reader equivalence including unknown operation fallback returning existing capabilities | selector contract nodes below plus owner full-row/template equality |
+| frontend, admission and receipt policy evidence | bootstrap records gaps/identity only; not full policy | owner-blocked: all policy facts, consumers and authorization outside this slice | not inspected; needs owner-bound evidence | owner must specify exact consumer/view contracts and authorized inputs | no guessed regeneration; no runtime policy inferred from display/group membership | owner must supply last-reader and policy evidence before switch | real consumer evidence, not a schema example or authored screen |
+
+### Executable invariants and their boundary
+
+The new `test_authority_cutover_contract_*` nodes use synthetic documents and
+existing pure family projections only. They do not read legacy source files,
+execute the bootstrap generator, or alter production readers. The selector
+helper is deliberately test-only: it rejects replacing an open selector with a
+finite set without an explicit nonempty semantic-change version. An explicit
+version acknowledges changed semantics; it does **not** prove equivalent behavior.
+
+For example, an existing finite group containing `decision.current` cannot
+represent the open `decision.` prefix when `decision.example` arrives. Both
+match the prefix; only one belongs to the finite group. The test also rejects
+reordering retained prefixes. The family test reverses storage order and checks
+recovery by explicit order in each typed context, including different meanings
+for the same word and absence of unknown words. It creates no admission rows.
+
+The models reader's unknown operation behavior must remain independently
+specified: currently a missing prefix mapping returns existing capabilities,
+whereas a known prefix filters with startswith. This slice does not replace or
+validate that reader. A passing ledger helper is not a production bug fix.
+
+### Owner sequence and safe stopping point
+
+1. Integrate sibling readers and return a new pinned input. Resolve which reader
+   versions are actually present before any generation-direction change.
+2. Settle capability display, open-prefix and operation identity contracts.
+   Classify every retained field above, including nulls and unknown inputs.
+   Request only the missing consumer/evidence bindings above, not a repository scan.
+3. Populate all required facts with source provenance. Prove each ordered
+   projection against its complete source view, including optional fields and
+   defaults. Missing unexpressed operation IDs alone are not deletion evidence.
+4. After owner approval and complete evidence, designate operations.yml as
+   hand-edited canonical input. In the same cutover, **replace** bootstrap
+   reproducibility with catalog-to-derived-view equality. Do not leave two
+   editable authorities or a silent fallback.
+5. Owner regenerates approved legacy views and marks them generated/read-only,
+   or deletes each only after its specific last-reader proof. Preserve unrelated
+   retained sections; moving alias identity does not remove local runtime rows.
+6. Retire the bootstrap CLI and its obsolete gate once no regeneration client
+   relies on the old direction. Owner provides the resulting pinned input and
+   consumer validation evidence.
+
+Until unresolved rows are classified and missing consumers are authorized,
+stop before step 4: catalog is bootstrap output and manual canonical edits are
+not accepted. Frontend/admission/receipt policy evidence and final switch
+approval remain owner requirements. This patch supplies a ledger and authored
+executable specification, **not tested migration or one-source-of-truth completion**.
+
+Owner-only bounded acceptance command (not run here; do not run the whole file,
+which includes a script-spawning bootstrap test and other source agreements):
+
+```text
+pytest -q tests/test_operation_catalog_agreement.py::test_authority_cutover_contract_typed_family_roundtrip tests/test_operation_catalog_agreement.py::test_authority_cutover_contract_open_selector_requires_versioned_change tests/test_operation_catalog_agreement.py::test_authority_cutover_contract_preserves_prefix_order_and_unknowns
+```
+
+Expect it to work because: separate, ordered view contracts prevent projected
+identity from being mistaken for full runtime authority, while explicit
+generation-direction gates prevent the bootstrap CLI overwriting hand-authored
+facts. Evidence against the likeliest wrong assumption is the generator's local
+alias gap accounting, its retained models prefixes/examples, and the actual
+startswith reader. Confidence: 0.85 in this bounded contract design. No tests,
+scripts, generators, runtime checks or consumer migrations were executed.
