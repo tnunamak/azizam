@@ -74,7 +74,7 @@ def test_models_single_intent_rows_project_each_word():
 
 
 def test_models_ambiguous_examples_stay_gaps(tmp_path):
-    from scripts.gen_operation_catalog import generate, MODELS_GAP_REASON
+    from scripts.gen_operation_catalog import generate
 
     source, local = _alias_fixture_sources(tmp_path, [
         {"name": "first", "intent": "sample.first"},
@@ -91,7 +91,8 @@ def test_models_ambiguous_examples_stay_gaps(tmp_path):
     assert not [row for row in document["relations"]
                 if row["kind"] == "spelling" and row["context"] == "catalog"]
     assert document["unexpressed"][-1] == {
-        "source": models.name, "key": "operations[0]:ambiguous", "reason": MODELS_GAP_REASON,
+        "source": models.name, "key": "operations[0]:ambiguous",
+        "reason": "Missing operation identity needs one exact singleton selector.",
     }
 
 
@@ -629,3 +630,86 @@ def test_capability_reader_catalog_conflict_and_no_fallback(tmp_path, monkeypatc
     catalog.unlink()
     with pytest.raises(CatalogError):
         ids.load_capability_words(source)
+
+
+def _missing_projection_input(tmp_path, selectors=None, examples=None):
+    models = tmp_path / "models.json"
+    models.write_text(json.dumps({
+        "schema_version": 1, "row_id_placeholder": "$row",
+        "operations": [{"id": "display", "words": ["literal"],
+                        "intent_prefixes": ["sample.exact"] if selectors is None else selectors,
+                        "examples": ([{"intent": "sample.exact"}, {"intent": "sample.exact"}]
+                                     if examples is None else examples)}],
+    }), encoding="utf-8")
+    return models
+
+
+def test_missing_operation_projection_exact_and_null_local(tmp_path):
+    from scripts.gen_operation_catalog import (
+        missing_model_operations, models_catalog_projection, local_alias_operations,
+    )
+
+    source, local = _alias_fixture_sources(tmp_path, [
+        {"name": "unpublished", "intent": None, "input_modalities": None,
+         "output_modalities": None, "execution": None, "publish_capability": False},
+    ], {})
+    vocabulary = yaml.safe_load(source.read_text(encoding="utf-8"))
+    vocabulary["route_intents"] = {"sample.exact": "display"}
+    models = _missing_projection_input(tmp_path)
+    local_operations, local_relations = local_alias_operations(local, {}, [])
+    assert local_operations == local_relations == []
+    operations, missing = missing_model_operations(models, vocabulary, local_operations)
+    gaps, spellings = models_catalog_projection(models, operations)
+    output = tmp_path / "result.json"
+    output.write_text(json.dumps({"schema_version": 1, "operations": operations,
+                                 "relations": spellings, "unexpressed": gaps + missing}))
+    catalog = load(output)
+    assert set(catalog.operations) == {"sample.exact"}
+    assert dict(catalog.operations["sample.exact"]) == {
+        "id": "sample.exact", "family": "display",
+        "request": {"schema": "undeclared"}, "result": {"schema": "undeclared"},
+        "submittable_as_job": False,
+    }
+    assert {row["operation"] for row in catalog.relations("spelling")} == {"sample.exact"}
+    for kind in ("admission", "binding", "runtime_policy", "receipt"):
+        assert catalog.relations(kind) == ()
+    assert missing == []
+
+
+@pytest.mark.parametrize("selectors,examples,vocabulary,reason", [
+    ([], [{"intent": "sample.exact"}], {"route_intents": {"sample.exact": "display"}}, "singleton"),
+    (["sample.exact", "sample.other"], [{"intent": "sample.exact"}], {}, "singleton"),
+    (["sample."], [{"intent": "sample.exact"}], {}, "singleton"),
+    (["sample."], [{"intent": "sample."}], {"route_intents": {"sample.": "display"}}, "singleton"),
+    (["sample.exact"], [{"intent": "sample.other"}], {}, "agree"),
+    (["sample.exact"], [], {}, "agree"),
+    (["sample.exact"], [{"intent": "sample.exact"}], {}, "family"),
+    (["sample.exact"], [{"intent": "sample.exact"}],
+     {"protocol_words": {"sample.exact": "first"}, "route_intents": {"sample.exact": "second"}}, "family"),
+])
+def test_missing_operation_projection_gaps(tmp_path, selectors, examples, vocabulary, reason):
+    from scripts.gen_operation_catalog import missing_model_operations, models_catalog_projection
+
+    models = _missing_projection_input(tmp_path, selectors, examples)
+    operations, gaps = missing_model_operations(models, vocabulary, [])
+    assert operations == [] and reason in gaps[0]["reason"]
+    _, spellings = models_catalog_projection(models, operations)
+    output = tmp_path / "result.json"
+    output.write_text(json.dumps({"schema_version": 1, "operations": operations,
+                                 "relations": spellings, "unexpressed": gaps}))
+    catalog = load(output)
+    assert not catalog.operations and not catalog.relations("spelling")
+    for kind in ("admission", "binding", "runtime_policy", "receipt"):
+        assert catalog.relations(kind) == ()
+
+
+def test_missing_operation_projection_conflicting_declaration(tmp_path):
+    from scripts.gen_operation_catalog import missing_model_operations
+
+    models = _missing_projection_input(tmp_path)
+    existing = [{"id": "sample.exact", "family": "different",
+                 "request": {"schema": "undeclared"}, "result": {"schema": "undeclared"},
+                 "submittable_as_job": False}]
+    with pytest.raises(ValueError, match="Conflicting declared operation"):
+        missing_model_operations(models, {"route_intents": {"sample.exact": "display"}}, existing)
+    assert existing[0]["family"] == "different"

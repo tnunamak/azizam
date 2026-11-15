@@ -252,3 +252,34 @@ def test_unquoted_timestamp_refused(tmp_path):
     path.write_text(path.read_text().replace('"requests.work"', '2026-11-14', 1))
     with pytest.raises(CatalogError, match="rule parse"):
         load(path)
+
+
+def test_missing_operation_projection_loader_boundaries(tmp_path):
+    from scripts.gen_operation_catalog import missing_model_operations, models_catalog_projection
+
+    models = tmp_path / "models.json"
+    models.write_text(json.dumps({
+        "schema_version": 1, "row_id_placeholder": "$row",
+        "operations": [{"id": "display", "words": ["word"],
+                        "intent_prefixes": ["sample.exact"],
+                        "examples": [{"intent": "sample.exact"}, {"intent": "sample.exact"}]}],
+    }))
+    operations, gaps = missing_model_operations(
+        models, {"protocol_words": {"sample.exact": "sample"}}, [])
+    _, spellings = models_catalog_projection(models, operations)
+    document = {"schema_version": 1, "operations": operations,
+                "relations": spellings, "unexpressed": gaps}
+    catalog = load(_write(tmp_path, document))
+    assert set(catalog.operations) == {"sample.exact"}
+    assert catalog.operations["sample.exact"]["submittable_as_job"] is False
+    assert catalog.operations["sample.exact"]["request"]["schema"] == "undeclared"
+    assert catalog.operations["sample.exact"]["result"]["schema"] == "undeclared"
+    for kind in ("admission", "binding", "runtime_policy", "receipt"):
+        assert catalog.relations(kind) == ()
+    document["relations"][0]["operation"] = "missing"
+    with pytest.raises(CatalogError, match="defined_operation"):
+        load(_write(tmp_path, document))
+    document["relations"][0]["operation"] = "sample.exact"
+    document["operations"][0]["request"] = {}
+    with pytest.raises(CatalogError, match="schema"):
+        load(_write(tmp_path, document))

@@ -191,6 +191,39 @@
         "schema": "undeclared"
       },
       "submittable_as_job": false
+    },
+    {
+      "id": "text.completions",
+      "family": "chat",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false
+    },
+    {
+      "id": "speech.translation",
+      "family": "transcribe",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false
+    },
+    {
+      "id": "text.rerank",
+      "family": "rerank",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false
     }
   ],
   "relations": [
@@ -852,121 +885,170 @@
     {
       "kind": "spelling",
       "context": "catalog",
+      "word": "completions",
+      "operation": "text.completions",
+      "order": 0
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
+      "word": "completion",
+      "operation": "text.completions",
+      "order": 1
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
+      "word": "text",
+      "operation": "text.completions",
+      "order": 2
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
       "word": "embeddings",
       "operation": "text.embeddings",
-      "order": 0
+      "order": 3
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "embedding",
       "operation": "text.embeddings",
-      "order": 1
+      "order": 4
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "images",
       "operation": "image.generate",
-      "order": 2
+      "order": 5
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "image",
       "operation": "image.generate",
-      "order": 3
+      "order": 6
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "image.generations",
       "operation": "image.generate",
-      "order": 4
+      "order": 7
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "image_edits",
       "operation": "image.edit",
-      "order": 5
+      "order": 8
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "image.edits",
       "operation": "image.edit",
-      "order": 6
+      "order": 9
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "images.edit",
       "operation": "image.edit",
-      "order": 7
+      "order": 10
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "edits",
       "operation": "image.edit",
-      "order": 8
+      "order": 11
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "audio_generate",
       "operation": "audio.generate",
-      "order": 9
+      "order": 12
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "audio",
       "operation": "audio.generate",
-      "order": 10
+      "order": 13
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "speech",
       "operation": "speech.synthesis",
-      "order": 11
+      "order": 14
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "tts",
       "operation": "speech.synthesis",
-      "order": 12
+      "order": 15
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "transcriptions",
       "operation": "speech.transcription",
-      "order": 13
+      "order": 16
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "transcription",
       "operation": "speech.transcription",
-      "order": 14
+      "order": 17
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "stt",
       "operation": "speech.transcription",
-      "order": 15
+      "order": 18
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
+      "word": "translations",
+      "operation": "speech.translation",
+      "order": 19
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
+      "word": "translation",
+      "operation": "speech.translation",
+      "order": 20
     },
     {
       "kind": "spelling",
       "context": "catalog",
       "word": "video_generate",
       "operation": "video.generate",
-      "order": 16
+      "order": 21
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
+      "word": "rerank",
+      "operation": "text.rerank",
+      "order": 22
+    },
+    {
+      "kind": "spelling",
+      "context": "catalog",
+      "word": "reranking",
+      "operation": "text.rerank",
+      "order": 23
     }
   ],
   "unexpressed": [
@@ -1123,12 +1205,12 @@
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[0]:chat",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Missing operation identity needs one exact singleton selector."
     },
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[1]:completions",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Words are projected; intent_prefixes and examples are not expressed."
     },
     {
       "source": "models_catalog_operations.yml",
@@ -1163,12 +1245,12 @@
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[8]:translations",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Words are projected; intent_prefixes and examples are not expressed."
     },
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[9]:videos",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Missing operation identity needs one exact singleton selector."
     },
     {
       "source": "models_catalog_operations.yml",
@@ -1178,17 +1260,17 @@
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[11]:video_edit",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Exact selector and every example intent must agree."
     },
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[12]:rerank",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Words are projected; intent_prefixes and examples are not expressed."
     },
     {
       "source": "models_catalog_operations.yml",
       "key": "operations[13]:decisions",
-      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+      "reason": "Missing operation identity needs one exact singleton selector."
     },
     {
       "source": "protocol_frontends.yml",
