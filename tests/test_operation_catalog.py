@@ -176,13 +176,15 @@ def test_yaml_fixture_loads(tmp_path):
 
 
 def test_shipped_catalog_holds_media_operations_and_word_family_rows():
-    # Media job intents are the first operations; the other relation kinds come in later steps.
+    # Media job intents come first, then the local alias operations; the other relation kinds come in later steps.
     path = Path(__file__).resolve().parents[1] / "registry" / "operations.yml"
     catalog = load(path)
-    assert len(catalog.operations) == 11
+    assert len(catalog.operations) == 16
     assert len(catalog.relations("admission")) == 11
     assert catalog.relations("binding")
-    for kind in ("spelling", "runtime_policy", "receipt", "catalog_group"):
+    spellings = catalog.relations("spelling")
+    assert len(spellings) == 11 and {row["context"] for row in spellings} == {"legacy"}
+    for kind in ("runtime_policy", "receipt", "catalog_group"):
         assert catalog.relations(kind) == ()
     families = catalog.relations("family")
     assert families and all("word" in row and "operation" not in row for row in families)
