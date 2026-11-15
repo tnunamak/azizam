@@ -56,7 +56,7 @@ def _models_spellings():
         if len(intents) != 1:
             continue
         intent = next(iter(intents))
-        if intent not in known:
+        if intent not in known or row["intent_prefixes"] != [intent]:
             continue
         spellings.extend((word, intent) for word in dict.fromkeys([row["id"], *row["words"]])
                          if word != intent)
@@ -95,6 +95,28 @@ def test_models_ambiguous_examples_stay_gaps(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    "prefixes",
+    [["sample."], [], ["sample.first", "sample.second"], ["sample.first", "sample.first"]],
+    ids=["broad", "empty", "multiple", "duplicate"],
+)
+def test_models_non_exact_selectors_stay_gaps(tmp_path, prefixes):
+    from scripts.gen_operation_catalog import models_catalog_projection, MODELS_GAP_REASON
+
+    source = tmp_path / "models.yml"
+    source.write_text(yaml.safe_dump({
+        "schema_version": 1, "row_id_placeholder": "$row",
+        "operations": [{"id": "first", "words": ["spelling"],
+                        "intent_prefixes": prefixes,
+                        "examples": [{"intent": "sample.first"}]}],
+    }), encoding="utf-8")
+    gaps, spellings = models_catalog_projection(source, [{"id": "sample.first"}])
+    assert spellings == []
+    assert gaps[-1] == {
+        "source": source.name, "key": "operations[0]:first", "reason": MODELS_GAP_REASON,
+    }
+
+
 def test_models_word_projection_deduplicates_and_preserves_gaps(tmp_path):
     from scripts.gen_operation_catalog import (
         models_catalog_projection, MODELS_GAP_REASON, MODELS_WORDS_GAP_REASON,
@@ -103,7 +125,7 @@ def test_models_word_projection_deduplicates_and_preserves_gaps(tmp_path):
     source = tmp_path / "models.yml"
     rows = [
         {"id": "first", "words": ["first", "spelling", "spelling", "sample.first"],
-         "intent_prefixes": ["ignored."],
+         "intent_prefixes": ["sample.first"],
          "examples": [{"intent": "sample.first"}, {"intent": "sample.first"}]},
         {"id": "empty", "words": ["empty"], "intent_prefixes": []},
         {"id": "unknown", "words": ["unknown"], "intent_prefixes": [],

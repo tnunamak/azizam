@@ -203,7 +203,12 @@ def models_catalog_projection(source: Path, existing: list[dict]) -> tuple[list[
             raise ValueError("Models examples must be mappings")
         intents = {example.get("intent") for example in row.get("examples", [])}
         intent = next(iter(intents)) if len(intents) == 1 else None
-        projected = isinstance(intent, str) and intent in known
+        # An example alone cannot narrow a selector covering several operations.
+        projected = (
+            isinstance(intent, str)
+            and intent in known
+            and row["intent_prefixes"] == [intent]
+        )
         if projected:
             for word in dict.fromkeys([identifier, *row["words"]]):
                 if word == intent:
