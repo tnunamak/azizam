@@ -41,6 +41,7 @@ from gateway.provider_model_catalog import (
     remote_provider_model_metadata,
 )
 from gateway.service_registry import runtime_backend_from_service
+from gateway.operation_catalog import load as load_operation_catalog
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
 MODEL_DISPLAY_NAMES: Mapping[str, str] = json.loads(
@@ -55,6 +56,8 @@ MODELS_CATALOG_OPERATIONS_PATH = (
 
 def load_models_catalog_operations(
     path: Path = MODELS_CATALOG_OPERATIONS_PATH,
+    *,
+    catalog_path: Path = MODELS_CATALOG_OPERATIONS_PATH.with_name("operations.yml"),
 ) -> tuple[Mapping[str, tuple[str, ...]], Mapping[str, Mapping[str, Any]], str]:
     """Validate shipped catalog facts before publishing read-only maps."""
     def invalid(row: object, reason: str) -> ValueError:
@@ -105,6 +108,15 @@ def load_models_catalog_operations(
     if not isinstance(rows, list):
         raise invalid("<document>", "operations must be a list")
 
+    # Use the reader's folding, not the catalog's literal-word identity.
+    catalog_prefixes: dict[str, tuple[str, ...]] = {}
+    for spelling in load_operation_catalog(catalog_path).relations("spelling", "catalog"):
+        normalized = spelling["word"].strip().lower().replace("_", ".")
+        target = (spelling["operation"],)
+        if normalized in catalog_prefixes and catalog_prefixes[normalized] != target:
+            raise invalid(normalized, "has conflicting normalized catalog spellings")
+        catalog_prefixes[normalized] = target
+
     prefixes: dict[str, tuple[str, ...]] = {}
     intents: dict[str, Mapping[str, Any]] = {}
     row_ids: set[str] = set()
@@ -121,7 +133,8 @@ def load_models_catalog_operations(
             normalized = word.strip().lower().replace("_", ".")
             if normalized in prefixes:
                 raise invalid(row_id, f"has duplicate synonym {word!r}")
-            prefixes[normalized] = row_prefixes
+            # Keep the source vocabulary and its order; only migrate known words.
+            prefixes[normalized] = catalog_prefixes.get(normalized, row_prefixes)
         examples = row.get("examples", [])
         if not isinstance(examples, list):
             raise invalid(row_id, "examples must be a list")
