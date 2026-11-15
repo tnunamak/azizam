@@ -380,3 +380,57 @@ def test_all_preexisting_backend_triggers_keep_literal_rows():
     ]
     for capabilities, expected in cases:
         assert _rows_for_voice_one(capabilities) == expected, capabilities
+
+def test_catalog_edit_changes_served_alias_intent(tmp_path, monkeypatch):
+    catalog_path = ROWS.with_name("operations.yml")
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    for relation in catalog["relations"]:
+        if (relation["kind"], relation.get("context"), relation.get("word")) == (
+            "spelling", "legacy", "chat",
+        ):
+            relation["operation"] = "text.embeddings"
+    edited = tmp_path / "edited-catalog.yml"
+    edited.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+    loaded = local._load_catalog_local_capability_rows(catalog_path=edited)
+    monkeypatch.setattr(local, "_ALIAS_INTENTS", loaded[0])
+    monkeypatch.setattr(local, "_ALIAS_ROWS", loaded[6])
+    caps = local.build_alias_capabilities({
+        "chat": {"stable": [{"alias": "custom-default", "resolves_to": "model"}]},
+    })
+    assert len(caps) == 1
+    assert caps[0].intent == "text.embeddings"
+    assert caps[0].input_modalities == ("text",)
+    assert caps[0].output_modalities == ("text",)
+    assert caps[0].execution == "sync"
+    rows = {row["name"]: row for row in local.alias_operation_rows()}
+    assert rows["chat"]["intent"] == "text.embeddings"
+    assert rows["rerank"]["intent"] is None
+
+
+def test_shipped_alias_intents_agree_with_catalog_spellings():
+    from gateway.operation_catalog import load
+
+    rows = yaml.safe_load(ROWS.read_text(encoding="utf-8"))["alias_operations"]
+    catalog = load(ROWS.with_name("operations.yml"))
+    spellings = {
+        row["word"]: row["operation"]
+        for row in catalog.relations("spelling", "legacy")
+    }
+    served = {row["name"]: row for row in local.alias_operation_rows()}
+    for row in rows:
+        assert served[row["name"]]["intent"] == row["intent"]
+        for word in [row["name"], *row.get("shared_operations", [])]:
+            if row["intent"] is None:
+                assert word not in spellings
+            else:
+                assert spellings[word] == row["intent"], word
+
+
+def test_catalog_runtime_loader_is_independent_of_working_directory(tmp_path, monkeypatch):
+    expected = local._load_local_capability_rows()
+    monkeypatch.chdir(tmp_path)
+    actual = local._load_catalog_local_capability_rows()
+    assert actual == expected
+    assert isinstance(actual[0], MappingProxyType)
+    with pytest.raises(TypeError):
+        actual[6][0]["intent"] = "changed"
