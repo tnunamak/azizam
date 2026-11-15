@@ -515,3 +515,86 @@ def test_journey_catalog_missing_legacy_spelling_names_exact_row_and_path(tmp_pa
         f"{copied}: alias_operations row 1: missing legacy spelling for 'chat'"
     )
     assert ROWS.read_text(encoding="utf-8") == source_text
+
+def test_journey_import_binds_catalog_alias_intents(tmp_path):
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    # Only the scoped production module and catalog are copied. The row document
+    # is a minimal synthetic fixture, not a copy of another registry source.
+    package = tmp_path / "gateway"
+    registry = tmp_path / "registry"
+    package.mkdir()
+    registry.mkdir()
+    copied_module = package / "local_capabilities.py"
+    copied_module.write_text(Path(local.__file__).read_text(encoding="utf-8"), encoding="utf-8")
+    defaults = {
+        "section_required": False, "backend_presence": "declared",
+        "execution": "job", "streaming": False, "gpu_required": False,
+    }
+    raw = {
+        "schema_version": 1,
+        "alias_operations": [{
+            "name": "chat", "intent": "chat.completions",
+            "input_modalities": ["text"], "output_modalities": ["text"],
+            "execution": "sync",
+        }],
+        "workflow_families": [],
+        "image_defaults": {
+            **defaults, "section": "images", "enabled_flag": "images",
+            "output_modalities": ["image"], "resource_tier": "batch",
+            "backend_capability": "images",
+        },
+        "image_rows": [],
+        "workflow_defaults": {**defaults, "backend_capabilities": {}},
+    }
+    source = registry / local._LOCAL_CAPABILITY_ROWS_PATH.name
+    source.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    source_before = source.read_text(encoding="utf-8")
+    shipped_catalog = Path(local.__file__).resolve().parents[1] / "registry" / "operations.yml"
+    catalog_before = shipped_catalog.read_text(encoding="utf-8")
+    catalog = yaml.safe_load(catalog_before)
+    assert {"chat.completions", "text.embeddings"} <= {
+        operation["id"] for operation in catalog["operations"]
+    }
+    matches = [
+        relation for relation in catalog["relations"]
+        if (relation["kind"], relation.get("context"), relation.get("word")) == (
+            "spelling", "legacy", "chat",
+        )
+    ]
+    assert len(matches) == 1
+    assert matches[0]["operation"] == "chat.completions"
+    matches[0]["operation"] = "text.embeddings"
+    (registry / "operations.yml").write_text(
+        yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8",
+    )
+    original_intents = local._ALIAS_INTENTS
+    original_rows = local._ALIAS_ROWS
+
+    # Execute the unchanged module source under a fresh name. Its own __file__
+    # selects our tree; no loader call or global assignment activates the catalog.
+    spec = spec_from_file_location("isolated_catalog_alias_journey", copied_module)
+    assert spec is not None and spec.loader is not None
+    imported = module_from_spec(spec)
+    spec.loader.exec_module(imported)
+    assert imported._LOCAL_CAPABILITY_ROWS_PATH == source
+    capabilities = imported.build_alias_capabilities({
+        "chat": {"stable": [{"alias": "journey-default", "resolves_to": "model"}]},
+    })
+    assert len(capabilities) == 1
+    assert (
+        capabilities[0].intent, capabilities[0].input_modalities,
+        capabilities[0].output_modalities, capabilities[0].execution,
+        capabilities[0].model,
+    ) == ("text.embeddings", ("text",), ("text",), "sync", "journey-default")
+    served = imported.alias_operation_rows()
+    assert len(served) == 1
+    assert served[0]["name"] == "chat"
+    assert served[0]["intent"] == "text.embeddings"
+    # The raw reader remains different: reverting the module's activation to it
+    # would serve chat.completions and fail BOTH public-facing assertions above.
+    assert imported.load_local_capability_rows(source)[0]["chat"][0] == "chat.completions"
+    assert source.read_text(encoding="utf-8") == source_before
+    assert shipped_catalog.read_text(encoding="utf-8") == catalog_before
+    assert local._ALIAS_INTENTS is original_intents
+    assert local._ALIAS_ROWS is original_rows
