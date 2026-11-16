@@ -107,3 +107,42 @@ def test_connect_failure_survives_client_cleanup_error(monkeypatch):
     assert str(caught.value) == "The engine could not be reached (ConnectError)."
     assert caught.value.__cause__ is primary
     assert calls == ["client"]
+
+
+@pytest.mark.parametrize("waiting_close", ["response", "client"])
+def test_error_reply_does_not_swallow_close_cancellation(monkeypatch, waiting_close):
+    calls = []
+
+    async def exercise():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        response = FakeResponse(calls, status=429)
+        client = FakeClient(calls, response)
+        install_client(monkeypatch, client)
+        target = response if waiting_close == "response" else client
+
+        async def suspended_close():
+            calls.append(waiting_close)
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(target, "aclose", suspended_close)
+        task = asyncio.create_task(streamed())
+        try:
+            # Cancel only once the buffered 429 has reached the selected close.
+            # An Event provides a real suspension point, not a timing sleep.
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            assert calls == (["response"] if waiting_close == "response"
+                             else ["response", "client"])
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+            assert task.cancelled()
+            assert calls == ["response", "client"]
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(exercise())

@@ -145,8 +145,9 @@ class InlineTtsAdapter:
                             await upstream.aclose()
                     finally:
                         await client.aclose()
-                except BaseException:
-                    # Cleanup must not replace a pending reply or propagating failure.
+                except Exception:
+                    # Ordinary cleanup errors must not replace a reply or failure.
+                    # Cancellation, interrupt and exit must always propagate.
                     if not primary_error and reply is None:
                         raise
 
