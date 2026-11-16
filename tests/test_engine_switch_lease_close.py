@@ -301,3 +301,61 @@ def test_concurrent_closes_wait_for_one_source_cleanup_and_one_release():
             await asyncio.gather(reading, first, second, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(check(), timeout=3))
+
+
+@pytest.mark.parametrize(
+    "close_error",
+    [None, RuntimeError("held cleanup failed")],
+    ids=["success", "error"],
+)
+def test_cancelled_close_waiter_preserves_shared_cleanup_and_result(close_error):
+    async def check():
+        cleaning, finish_cleanup = asyncio.Event(), asyncio.Event()
+        first_started, second_started = asyncio.Event(), asyncio.Event()
+        serving = CountingLease()
+
+        class HeldSource(Source):
+            async def aclose(self):
+                cleaning.set()
+                await finish_cleanup.wait()
+                assert serving.releases == 0
+                await super().aclose()
+
+        source = HeldSource(close_error=close_error)
+        wrapped = SwitchLease(serving).hand_off(source)
+
+        async def close(started):
+            started.set()
+            await wrapped.aclose()
+
+        first = asyncio.create_task(close(first_started))
+        second = asyncio.create_task(close(second_started))
+        try:
+            await first_started.wait()
+            await second_started.wait()
+            await cleaning.wait()
+            assert not first.done() and not second.done()
+            assert serving.releases == 0
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert not second.done(), "cancelling one waiter must not cancel cleanup"
+            assert serving.releases == 0, "the lease must outlive blocked cleanup"
+            finish_cleanup.set()
+            if close_error is None:
+                await second
+            else:
+                with pytest.raises(RuntimeError) as raised:
+                    await second
+                assert raised.value is close_error
+            assert source.reads == 0
+            assert source.closes == 1
+            assert serving.releases == 1
+            await wrapped.aclose()
+            assert source.closes == 1
+            assert serving.releases == 1
+        finally:
+            finish_cleanup.set()
+            await asyncio.gather(first, second, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), timeout=3))
