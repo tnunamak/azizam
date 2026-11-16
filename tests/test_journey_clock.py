@@ -124,3 +124,29 @@ def test_invalid_half_preserves_existing_cost_json(tmp_path, body):
     result, out = run(tmp_path, body, {"elapsed_seconds": 1})
     assert result.returncode != 0
     assert out.read_bytes() == original
+
+
+@pytest.mark.parametrize("existing", [True, False], ids=["existing-cost", "no-cost"])
+def test_finite_halves_with_overflowing_sum_leave_output_untouched(tmp_path, existing):
+    original = b'{ "journey": {"total_s": 17}, "keep": [1, 2] }\n'
+    cost_path = tmp_path / "cost.json"
+    if existing:
+        cost_path.write_bytes(original)
+    result, out = run(tmp_path, {"bringup_s": 1e308}, {"elapsed_seconds": 1e308})
+    assert result.returncode != 0
+    assert "not finite" in result.stderr
+    assert str(tmp_path / "compose.json") in result.stderr
+    assert str(tmp_path / "browser.json") in result.stderr
+    assert "Traceback" not in result.stderr
+    if existing:
+        assert out.read_bytes() == original
+    else:
+        assert not out.exists()
+
+
+def test_strict_serialization_preserves_existing_nonfinite_cost_json(tmp_path):
+    original = b'{"keep": NaN, "journey": {"total_s": 17}}\n'
+    (tmp_path / "cost.json").write_bytes(original)
+    result, out = run(tmp_path, {"bringup_s": 10.0}, {"elapsed_seconds": 5.0})
+    assert result.returncode != 0
+    assert out.read_bytes() == original
