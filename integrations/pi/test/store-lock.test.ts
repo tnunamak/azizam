@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { after, mock, test, type TestContext } from "node:test";
 import { createRepairingModelsStore } from "../src/models-store.ts";
 
+mkdirSync(join(homedir(), ".tmp"), { recursive: true });
 const root = mkdtempSync(join(homedir(), ".tmp", "pi-store-lock-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -66,7 +67,7 @@ test("orphaned lock from a crashed holder is reclaimed without stalling", async 
 	child.kill("SIGKILL"); // dies holding an unrefreshed lock directory
 	await new Promise((resolve) => child.once("exit", resolve));
 	assert.ok(existsSync(lock));
-	const old = new Date(Date.now() - 20_000);
+	const old = new Date(Date.now() - 31_000);
 	utimesSync(lock, old, old);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
@@ -82,6 +83,30 @@ test("orphaned lock from a crashed holder is reclaimed without stalling", async 
 			}),
 		]);
 	} finally { if (timer) clearTimeout(timer); }
+});
+
+
+test("a 20-second-old lock from a delayed live holder is preserved within the core stale age", { timeout: 30_000 }, async (t) => {
+	const { path, lock } = freshDir("delayed-live");
+	mkdirSync(lock);
+	const delayed = new Date(Date.now() - 20_000);
+	utimesSync(lock, delayed, delayed);
+	const originalMtime = statSync(lock).mtimeMs;
+	const logged = mock.method(console, "error", () => {});
+	const controlled = controlledBudgets(t);
+	try {
+		const store = await createRepairingModelsStore(path, { lockBudgetMs: 800 });
+		const write = store.write("azizam", { models: [model] });
+		await controlled.nextBudget(0);
+		// Reclaim runs before the budget is created; the default must not have removed this lock.
+		const survivedReclaim = existsSync(lock) && statSync(lock).mtimeMs === originalMtime;
+		controlled.budgets[0].abort(new DOMException("delayed holder lock budget", "TimeoutError"));
+		await write;
+		assert.ok(survivedReclaim, "a delayed holder still owns its 20-second-old lock");
+		assert.ok(existsSync(lock), "the core-valid lock survives the bounded fallback");
+		assert.equal(readFileSync(path, "utf8"), "{}", "the competing write is skipped");
+		assert.deepEqual(controlled.durations, [800]);
+	} finally { logged.mock.restore(); }
 });
 
 test("a lock refreshed by a live holder is never removed; the store degrades within budget and logs the lock path", { timeout: 30_000 }, async (t) => {
