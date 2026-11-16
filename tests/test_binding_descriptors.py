@@ -674,6 +674,38 @@ def test_two_inputs_may_not_write_one_node_and_input() -> None:
     assert comfy_places({"prompt": [{"node": "1", "input": "text"}], "seed": [{"node": "1", "input": "seed"}]}, GRAPH) == []
 
 
+
+@pytest.mark.parametrize("first, second", [
+    ("n.inputs", "n.inputs.x"),
+    ("n.inputs.x", "n.inputs"),
+], ids=["parent-first", "child-first"])
+def test_graph_targets_refuse_parent_child_overlap_at_the_later_target(first: str, second: str) -> None:
+    graph = {"n": {"inputs": {"x": "", "y": ""}}}
+    targets = {"prompt": [{"path": first}], "seed": [{"path": second}]}
+    expected = [(MAP_AT + ("seed", 0), "target_duplicate")]
+    assert comfy_places(targets, graph) == expected
+    assert comfy_places(targets, None) == expected
+
+
+def test_graph_targets_allow_sibling_paths() -> None:
+    graph = {"n": {"inputs": {"x": "", "y": ""}}}
+    targets = {"prompt": [{"path": "n.inputs.x"}], "seed": [{"path": "n.inputs.y"}]}
+    assert comfy_places(targets, graph) == []
+    assert comfy_places(targets, None) == []
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["node-first", "path-first"])
+def test_graph_targets_refuse_equal_node_input_and_dotted_path(reverse: bool) -> None:
+    graph = {"n": {"inputs": {"x": ""}}}
+    pair = [{"node": "n", "input": "x"}, {"path": "n.inputs.x"}]
+    if reverse:
+        pair.reverse()
+    targets = {"prompt": [pair[0]], "seed": [pair[1]]}
+    expected = [(MAP_AT + ("seed", 0), "target_duplicate")]
+    assert comfy_places(targets, graph) == expected
+    assert comfy_places(targets, None) == expected
+
+
 @pytest.mark.parametrize("template, expected", [
     ({"1": {"inputs": 7}}, [(MAP_AT + ("prompt", 0, "node"), "template_node_invalid")]),
     ({"1": {"inputs": []}}, [(MAP_AT + ("prompt", 0, "node"), "template_node_invalid")]),
