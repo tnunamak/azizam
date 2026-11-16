@@ -17,6 +17,7 @@ malformed half is a failure with no section written, never a pass.
 """
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def seconds(path: Path, key: str, label: str) -> float:
         value = json.loads(path.read_text(encoding="utf-8"))[key]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         sys.exit(f"journey-clock: no usable {label} time in {path} ({type(exc).__name__})")
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         sys.exit(f"journey-clock: {label} time in {path} is not a number of seconds")
     return float(value)
 

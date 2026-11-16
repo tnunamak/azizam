@@ -5,6 +5,9 @@ journey (web/e2e/first-run.spec.ts) each write their seconds to a file. The
 gate adds them into the "journey" section of cost.json and fails at the limit.
 """
 import json
+import math
+
+import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -85,3 +88,39 @@ def test_a_non_number_fails(tmp_path):
 def test_the_budget_can_be_lowered(tmp_path):
     result, _ = run(tmp_path, {"bringup_s": 50.0}, {"elapsed_seconds": 1.0}, "--budget", "30")
     assert result.returncode == 1
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("half", ["compose", "browser"])
+def test_nonfinite_half_preserves_existing_cost_json(tmp_path, literal, half):
+    original = b'{ "schema": 1, "journey": {"total_s": 17}, "keep": [1, 2] }\n'
+    (tmp_path / "cost.json").write_bytes(original)
+    compose = '{"bringup_s": ' + literal + '}' if half == "compose" else {"bringup_s": 10.0}
+    browser = '{"elapsed_seconds": ' + literal + '}' if half == "browser" else {"elapsed_seconds": 5.0}
+    result, out = run(tmp_path, compose, browser)
+    assert result.returncode != 0
+    assert "not a number of seconds" in result.stderr
+    assert out.read_bytes() == original
+
+
+def test_finite_pair_writes_strict_json_with_finite_total(tmp_path):
+    result, out = run(tmp_path, {"bringup_s": 12.25}, {"elapsed_seconds": 3.25})
+    assert result.returncode == 0, result.stderr
+
+    def reject_constant(value):
+        raise AssertionError("non-standard JSON constant: " + value)
+
+    journey = json.loads(out.read_text(), parse_constant=reject_constant)["journey"]
+    assert journey["total_s"] == 15.5
+    assert all(math.isfinite(journey[key]) for key in
+               ("compose_bringup_s", "first_run_ui_s", "total_s"))
+    assert journey["passed"] is True
+
+
+@pytest.mark.parametrize("body", [{}, {"bringup_s": -1}, {"bringup_s": "1"}, {"bringup_s": True}])
+def test_invalid_half_preserves_existing_cost_json(tmp_path, body):
+    original = b'{"keep":true}\n'
+    (tmp_path / "cost.json").write_bytes(original)
+    result, out = run(tmp_path, body, {"elapsed_seconds": 1})
+    assert result.returncode != 0
+    assert out.read_bytes() == original
