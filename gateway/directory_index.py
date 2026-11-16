@@ -24,6 +24,7 @@ SETTLE_S = 2.0
 _LOCK = threading.Lock()
 _NAMES: dict[str, tuple[tuple[int, int, int], frozenset[str]]] = {}
 _HIGH_WATER_NS = 0
+_GENERATION = 0
 
 
 def names(directory: Path) -> frozenset[str] | None:
@@ -31,14 +32,14 @@ def names(directory: Path) -> frozenset[str] | None:
 
     None also means the directory is missing or unreadable: the caller keeps its own check.
     """
-    global _HIGH_WATER_NS
+    global _HIGH_WATER_NS, _GENERATION
     key = str(directory)
-    # Serialize listing with clock validation so a concurrent backward reading
-    # cannot clear the cache and then have an earlier listing repopulate it.
+    # Capture invalidation under the lock, but do directory listing outside it.
     with _LOCK:
         now_ns = time.time_ns()
         if now_ns < _HIGH_WATER_NS:
             _NAMES.clear()
+            _GENERATION += 1
             return None
         _HIGH_WATER_NS = now_ns
         try:
@@ -51,21 +52,26 @@ def names(directory: Path) -> frozenset[str] | None:
         hit = _NAMES.get(key)
         if hit is not None and hit[0] == identity:
             return hit[1]
-        try:
-            listed = frozenset(os.listdir(key))
-            after = os.stat(key)
-            if (after.st_dev, after.st_ino, after.st_mtime_ns) != identity:
-                return None
-        except OSError:
+        generation = _GENERATION
+    try:
+        listed = frozenset(os.listdir(key))
+        after = os.stat(key)
+        if (after.st_dev, after.st_ino, after.st_mtime_ns) != identity:
             return None
-        _NAMES[key] = (identity, listed)
-        return listed
+    except OSError:
+        return None
+    with _LOCK:
+        if generation == _GENERATION:
+            _NAMES[key] = (identity, listed)
+    return listed
 
 
 def forget(directory: Path | None = None) -> None:
+    global _GENERATION
     with _LOCK:
         if directory is None:
             _NAMES.clear()
+            _GENERATION += 1
         else:
             _NAMES.pop(str(directory), None)
 

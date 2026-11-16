@@ -118,3 +118,78 @@ def test_directory_replaced_during_listing_is_not_cached(cache, monkeypatch):
     monkeypatch.setattr(directory_index.os, "listdir", replace_after_listing)
     assert directory_index.names(directory) is None
     assert str(directory) not in directory_index._NAMES
+
+
+def test_cold_listing_does_not_block_another_cached_directory(cache, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    cold, warm = cache / "cold", cache / "warm"
+    for directory in (cold, warm):
+        directory.mkdir()
+        (directory / "entry.txt").write_bytes(b"x")
+        settle(directory)
+    expected = frozenset({"entry.txt"})
+    assert directory_index.names(warm) == expected
+    entered, release = Event(), Event()
+    original_listdir = directory_index.os.listdir
+
+    def blocked_listdir(path):
+        if str(path) == str(cold):
+            entered.set()
+            release.wait()
+        return original_listdir(path)
+
+    monkeypatch.setattr(directory_index.os, "listdir", blocked_listdir)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(directory_index.names, cold)
+        try:
+            assert entered.wait(5), "cold listing did not start"
+            second = workers.submit(directory_index.names, warm)
+            assert second.result(timeout=5) == expected
+            assert not first.done(), "cold listing must still be blocked"
+        finally:
+            release.set()
+        assert first.result(timeout=5) == expected
+
+
+@pytest.mark.parametrize("clear_kind", ["forget", "rollback"])
+def test_clear_during_listing_returns_without_refilling(cache, monkeypatch, clear_kind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    (cache / "entry.txt").write_bytes(b"x")
+    settle(cache)
+    now = time.time_ns()
+    monkeypatch.setattr(directory_index, "_HIGH_WATER_NS", 0)
+    monkeypatch.setattr(directory_index.time, "time_ns", lambda: now)
+    entered, release = Event(), Event()
+    original_listdir = directory_index.os.listdir
+    calls = []
+
+    def blocked_listdir(path):
+        calls.append(str(path))
+        if len(calls) == 1:
+            entered.set()
+            release.wait()
+        return original_listdir(path)
+
+    monkeypatch.setattr(directory_index.os, "listdir", blocked_listdir)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(directory_index.names, cache)
+        try:
+            assert entered.wait(5), "listing did not start"
+            if clear_kind == "forget":
+                cleared = workers.submit(directory_index.forget)
+            else:
+                now -= 3_000_000_000
+                cleared = workers.submit(directory_index.names, cache)
+            assert cleared.result(timeout=5) is None
+            assert not first.done(), "clear must finish while listing is blocked"
+        finally:
+            release.set()
+        assert first.result(timeout=5) == frozenset({"entry.txt"})
+    assert str(cache) not in directory_index._NAMES
+    now += 4_000_000_000
+    assert directory_index.names(cache) == frozenset({"entry.txt"})
+    assert calls == [str(cache), str(cache)], "the in-flight listing was not cached"
