@@ -83,9 +83,11 @@ def detect(fa: FaceAnalysis, frame: np.ndarray, min_score: float) -> list[Found]
     height, width = frame.shape[:2]
     det = fa.det_model
     candidates: list[Found] = []
-    for scale in SCALES:
-        if max(height, width) * scale > MAX_CANVAS:
-            continue
+    longest_side = max(height, width)
+    scales = tuple(scale for scale in SCALES if longest_side * scale <= MAX_CANVAS)
+    if not scales:
+        scales = (MAX_CANVAS / longest_side,)
+    for scale in scales:
         resized = frame if scale == 1.0 else cv2.resize(
             frame, None, fx=scale, fy=scale,
             interpolation=cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA,
