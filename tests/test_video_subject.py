@@ -374,6 +374,17 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
                 self.comfy.submitted.clear()
                 self.assert_refused(self._create(subject_index=index), param="subject_index")
 
+    def test_index_with_point_is_refused_before_any_upload(self) -> None:
+        for index in ("1", "0"):
+            with self.subTest(index=index):
+                self.comfy.uploads.clear()
+                self.comfy.submitted.clear()
+                r = self._create(subject_index=index, source_point_x=0.5, source_point_y=0.25)
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertTrue(r.json()["error"]["param"].endswith("subject_index"), r.json())
+                self.assertEqual(self.comfy.uploads, [])
+                self.assertEqual(self.comfy.submitted, [])
+
     def test_half_a_point_is_refused_before_any_upload(self) -> None:
         # One coordinate cannot select a person; the refusal must not wait for the
         # uploads to finish.
