@@ -127,6 +127,47 @@ def test_duplicate_patch_results_are_not_a_pair(monkeypatch):
     assert chat(history + [history[-1]], monkeypatch)["content"].startswith("AZIZAM_E2E_FAILURE:")
 
 
+@pytest.mark.parametrize("call_index, arguments", [
+    pytest.param(0, json.dumps({"input": backend.PATCH.replace(
+        "+hello", "+wrong bytes", 1,
+    )}), id="wrong-patch"),
+    pytest.param(0, "{", id="malformed-json"),
+    pytest.param(0, None, id="null-arguments"),
+    pytest.param(0, {}, id="non-string-arguments"),
+    pytest.param(0, "[]", id="array-json"),
+    pytest.param(0, "null", id="null-json"),
+    pytest.param(0, '"patch"', id="string-json"),
+    pytest.param(0, "1", id="number-json"),
+    pytest.param(0, "true", id="boolean-json"),
+    pytest.param(0, "{}", id="missing-input"),
+    pytest.param(0, json.dumps({"input": backend.PATCH, "extra": True}), id="extra-input"),
+    pytest.param(2, '{"extra": true}', id="nonempty-namespace"),
+    pytest.param(2, "{", id="malformed-namespace"),
+    pytest.param(2, "[]", id="array-namespace"),
+])
+def test_assistant_arguments_must_match_expected_input(monkeypatch, call_index, arguments):
+    history = pair(monkeypatch)
+    history[call_index]["tool_calls"][0]["function"]["arguments"] = arguments
+    # Keep both successful result strings: only the assistant arguments change.
+    assert history[1]["content"] == PATCH_OK
+    assert history[3]["content"] == "azizam namespace probe"
+    delta = chat(history, monkeypatch)
+    assert delta["content"].startswith("AZIZAM_E2E_FAILURE:")
+    assert SUCCESS not in delta["content"]
+
+
+@pytest.mark.parametrize("call_index", [
+    pytest.param(0, id="patch"),
+    pytest.param(2, id="namespace"),
+])
+def test_missing_assistant_arguments_fail(monkeypatch, call_index):
+    history = pair(monkeypatch)
+    del history[call_index]["tool_calls"][0]["function"]["arguments"]
+    assert history[1]["content"] == PATCH_OK
+    assert history[3]["content"] == "azizam namespace probe"
+    assert chat(history, monkeypatch)["content"].startswith("AZIZAM_E2E_FAILURE:")
+
+
 def test_json_wrapped_success_pair(monkeypatch):
     history = pair(monkeypatch)
     history[1]["content"] = json.dumps({"output": PATCH_OK, "metadata": {"exit_code": 0}})

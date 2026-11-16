@@ -76,6 +76,16 @@ def _decision(messages: list[object], namespace_name: str | None) -> tuple[dict,
                         or not isinstance(function, dict)
                         or not expected[call_id] or function.get("name") != expected[call_id]):
                     return failure("unexpected or duplicate tool call")
+                arguments = function.get("arguments")
+                if not isinstance(arguments, str):
+                    return failure("malformed tool arguments")
+                try:
+                    decoded = json.loads(arguments)
+                except ValueError:
+                    return failure("malformed tool arguments")
+                expected_arguments = {"input": PATCH} if call_id == "call_apply_patch" else {}
+                if not isinstance(decoded, dict) or decoded != expected_arguments:
+                    return failure("unexpected tool arguments")
                 issued.add(call_id)
         if message.get("role") == "tool":
             call_id = message.get("tool_call_id")
