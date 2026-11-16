@@ -87,7 +87,8 @@ export function Combobox({
                 {options.map((o) => (
                   <CommandItem
                     key={o.value}
-                    value={o.label}
+                    value={o.value}
+                    keywords={[o.label]}
                     disabled={o.disabled}
                     onSelect={() => {
                       onValueChange(o.value);

@@ -1,11 +1,19 @@
+"use client";
+
 import * as React from "react";
 import { cn } from "@/lib/cn";
+import { useFieldContext } from "./field";
 
 /**
  * Min 80 (96 below 640 px), text `text-body`. `cn` does not merge classes, so
  * a caller's own min height or text size replaces these at every width.
  */
 function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+  const field = useFieldContext();
+  const invalid =
+    field?.invalid ||
+    props["aria-invalid"] === true ||
+    props["aria-invalid"] === "true";
   const ownMin = /(?:^|\s)min-h-/.test(className ?? "");
   const ownSize = /(?:^|\s)text-(?:2xs|xs|sm|base|lg|xl|heading|body|meta|label|badge)\b/.test(
     className ?? "",
@@ -20,6 +28,9 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
         className,
       )}
       {...props}
+      id={props.id ?? field?.id}
+      aria-describedby={props["aria-describedby"] ?? field?.describedBy}
+      aria-invalid={invalid || undefined}
     />
   );
 }
