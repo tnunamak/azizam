@@ -139,12 +139,23 @@ class InlineTtsAdapter:
             raise
         finally:
             if not handed_over:
+                control_error: BaseException | None = None
                 try:
                     try:
                         if upstream is not None:
                             await upstream.aclose()
+                    except BaseException as error:
+                        if isinstance(error, Exception):
+                            raise
+                        control_error = error
                     finally:
-                        await client.aclose()
+                        try:
+                            await client.aclose()
+                        except Exception:
+                            if control_error is None:
+                                raise
+                    if control_error is not None:
+                        raise control_error
                 except Exception:
                     # Ordinary cleanup errors must not replace a reply or failure.
                     # Cancellation, interrupt and exit must always propagate.

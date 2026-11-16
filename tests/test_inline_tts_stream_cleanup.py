@@ -109,15 +109,22 @@ def test_connect_failure_survives_client_cleanup_error(monkeypatch):
     assert calls == ["client"]
 
 
-@pytest.mark.parametrize("waiting_close", ["response", "client"])
-def test_error_reply_does_not_swallow_close_cancellation(monkeypatch, waiting_close):
+@pytest.mark.parametrize(
+    ("waiting_close", "client_fails"),
+    [("response", False), ("response", True), ("client", False)],
+    ids=["response", "response-client-error", "client"],
+)
+def test_error_reply_does_not_swallow_close_cancellation(monkeypatch, waiting_close, client_fails):
     calls = []
 
     async def exercise():
         entered = asyncio.Event()
         release = asyncio.Event()
         response = FakeResponse(calls, status=429)
-        client = FakeClient(calls, response)
+        client = FakeClient(
+            calls, response,
+            close_error=RuntimeError("client cleanup") if client_fails else None,
+        )
         install_client(monkeypatch, client)
         target = response if waiting_close == "response" else client
 
