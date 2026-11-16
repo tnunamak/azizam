@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import weakref
-from contextlib import aclosing
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping
 
 from fastapi import HTTPException
@@ -34,23 +33,51 @@ class SwitchLease:
     def __init__(self, serving: ServingLease) -> None:
         self._serving = serving
         self.handed_off = False
+        self._released = False
 
     def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
         self._serving.release()
 
     def hand_off(self, stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-        self.handed_off = True
-        async def owned() -> AsyncIterator[bytes]:
-            try:
-                async with aclosing(stream) as source:
-                    async for chunk in source:
-                        yield chunk
-            finally:
-                self.release()
-
-        wrapped = owned()
+        wrapped = _LeaseStream(stream, self)
         weakref.finalize(wrapped, self.release)
+        self.handed_off = True
         return wrapped
+
+
+class _LeaseStream:
+    """A closeable iterator whose cleanup also runs before its first read."""
+
+    def __init__(self, source: AsyncIterator[bytes], lease: SwitchLease) -> None:
+        self._source = source
+        self._lease = lease
+        self._closed = False
+
+    def __aiter__(self) -> _LeaseStream:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            return await self._source.__anext__()
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            close = getattr(self._source, "aclose", None)
+            if close is not None:
+                await close()
+        finally:
+            self._lease.release()
 
 
 def _identity(offering: Mapping[str, Any]) -> Any:
@@ -131,8 +158,9 @@ class SwitchController:
                 # Already selected and verified: admit beside the requests in flight.
                 if prepare is not None and not await prepare():
                     raise SwitchUnavailable("residency could not be prepared")
+                lease = SwitchLease(self._drain.lease(scope, on_release=on_release))
                 handed_off = True
-                return SwitchLease(self._drain.lease(scope, on_release=on_release))
+                return lease
             if not may_switch:
                 raise SwitchUnavailable("The plan permits only the already selected offering.")
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
@@ -147,8 +175,9 @@ class SwitchController:
                     raise SwitchUnavailable("selection could not be verified")
             except (asyncio.CancelledError, Exception) as exc:
                 await self._fail(service, spec, op, args, observation, previous, selected_identity, exc)
+            lease = SwitchLease(self._drain.lease(scope, on_release=on_release))
             handed_off = True
-            return SwitchLease(self._drain.lease(scope, on_release=on_release))
+            return lease
         except SwapDeferred as exc:
             raise SwitchUnavailable(str(exc)) from exc
         finally:
