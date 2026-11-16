@@ -175,6 +175,8 @@ def unlayer(
 
     ``previous`` is the stored document being replaced. A patch that did not change keeps the release digest it was
     written against (``bases``), so the drift report still shows a release change the owner has not looked at.
+    Writers must pass ``previous`` to preserve tombstones for ids absent from the current release; only an id
+    present in ``effective`` restores such a record and ends its tombstone.
     ``undeletable(collection, id, release_record)`` names a release record that no write may hide: a write that omits
     it leaves it inherited, as the managed LiteLLM row always was (the registry route refuses to remove it).
     """
@@ -208,8 +210,13 @@ def unlayer(
             old_base = _collection(_collection(before, BASES_KEY), name).get(record_id)
             was_hidden = record_id in tombstones_of(before, name)
             named_bases[record_id] = old_base if old_base and was_hidden else digest(base[record_id])
-        if gone:
-            tombstones[name] = gone
+        carried = tombstones_of(before, name) - base.keys() - kept.keys()
+        for record_id in carried:
+            old_bases = _collection(_collection(before, BASES_KEY), name)
+            if record_id in old_bases:
+                named_bases[record_id] = old_bases[record_id]
+        if gone or carried:
+            tombstones[name] = sorted(set(gone) | carried)
         if named_bases:
             bases[name] = named_bases
         stored[name] = out
@@ -323,6 +330,9 @@ def from_owner_layer(layer_document: Mapping[str, Any], schema_version: int) -> 
     for name, ids in hidden.items():
         if name not in COLLECTIONS or not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
             raise ValueError(f"registry.tombstones.{name} must be a list of record ids")
+        overlap = sorted(set(ids) & stored[name].keys())
+        if overlap:
+            raise ValueError(f"registry.{name}: record id {overlap[0]!r} appears in both records and tombstones")
         if ids:
             stored[TOMBSTONES_KEY][name] = sorted(set(ids))
     return stored
