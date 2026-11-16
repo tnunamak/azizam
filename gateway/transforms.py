@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional, Protocol, TypeAlias, runtime_checkable
 
+import jsonschema
 import yaml
 
 from .strict_yaml import safe_load_strict
@@ -811,21 +812,13 @@ class ReasoningEffortTransform:
 
     # The valid set — matches _REASONING_EFFORT_VALUES in proxy.py:5235
     _VALID: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
-    # Efforts that suppress thinking
-    _DEFAULT_BUDGETS: dict[str, int | str] = {
-        "none": 0,
-        "minimal": 2048,
-        "low": 4096,
-        "medium": 6144,
-        "high": 8192,
-        "xhigh": "unlimited",
-    }
 
     def __init__(self, policy: dict[str, Any] | None = None) -> None:
         policy = policy or {}
         raw_budgets = policy.get("effort_budgets")
-        budgets = raw_budgets if isinstance(raw_budgets, dict) else self._DEFAULT_BUDGETS
-        self._budgets: dict[str, int | str] = dict(budgets)
+        self._budgets: dict[str, int | str] = dict(_REASONING_DEFAULT_BUDGETS)
+        if isinstance(raw_budgets, dict):
+            self._budgets.update(raw_budgets)
         self._default_effort = policy.get("default_effort")
 
     def apply(self, body: dict[str, Any]) -> str | None:
@@ -877,6 +870,33 @@ class ReasoningEffortTransform:
 
     def on_response(self, payload: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
         return payload
+
+
+_REASONING_DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "registry" / "defaults" / "reasoning.yml"
+
+
+def _load_reasoning_default_budgets(
+    path: Path = _REASONING_DEFAULTS_PATH,
+) -> dict[str, int | str]:
+    """Validate the release data once; a malformed release must not guess budgets."""
+    schema_path = path.with_suffix(".schema.json")
+    try:
+        document = safe_load_strict(path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator.check_schema(schema)
+        jsonschema.Draft202012Validator(schema).validate(document)
+        budgets = document.get("effort_budgets")
+        # The schema also accepts sparse owner overrides. Release defaults must
+        # cover the full public vocabulary without another numeric fallback.
+        if not isinstance(budgets, dict) or set(budgets) != ReasoningEffortTransform._VALID:
+            raise ValueError("release effort_budgets must cover every accepted effort")
+        return dict(budgets)
+    except (OSError, UnicodeError, ValueError, yaml.YAMLError,
+            jsonschema.ValidationError, jsonschema.SchemaError) as error:
+        raise ValueError(f"{path} (schema {schema_path}): invalid reasoning defaults: {error}") from error
+
+
+_REASONING_DEFAULT_BUDGETS = _load_reasoning_default_budgets()
 
 
 class FinalChatReasoningEffortTransform(ReasoningEffortTransform):
