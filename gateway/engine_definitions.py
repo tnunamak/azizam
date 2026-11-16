@@ -17,7 +17,7 @@ from typing import Any, Mapping
 
 import jsonschema
 
-from gateway.capability_ids import MODEL_KIND_LABELS, offered_model_kinds
+from gateway.capability_ids import MODEL_KIND_LABELS, PROTOCOL_CAPABILITIES, offered_model_kinds
 
 _REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
 DEFINITIONS_PATH = _REGISTRY_DIR / "engine_definitions.json"
@@ -109,6 +109,9 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         test = cap.get("real_test")
         if test and test not in data["real_tests"]:
             errors.append(f"capabilities.{cap_id}.real_test: no real test named {test!r}")
+        for index, word in enumerate(cap["record_capabilities"]):
+            if word not in PROTOCOL_CAPABILITIES:  # it would serve no kind, so the page would offer nothing for it
+                errors.append(f"capabilities.{cap_id}.record_capabilities[{index}]: {word!r} is not a known capability word")
     for index, rule in enumerate(data["model_rules"]):
         if rule["capability"] not in capabilities:
             errors.append(f"model_rules[{index}].capability: no capability named {rule['capability']!r}")
@@ -204,10 +207,14 @@ def load_engine_catalog(path: Path = DEFINITIONS_PATH, schema_path: Path = SCHEM
         return cached[1]
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:  # removed or unreadable between the stat above and this read
+        raise EngineDefinitionError(f"{path}: cannot read the engine definitions ({exc.strerror or exc})") from None
     except json.JSONDecodeError as exc:
         raise EngineDefinitionError(f"{path}: not valid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}") from None
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise EngineDefinitionError(f"{schema_path}: cannot read the schema ({exc.strerror or exc})") from None
     except json.JSONDecodeError as exc:
         raise EngineDefinitionError(f"{schema_path}: the schema is not valid JSON at line {exc.lineno}: {exc.msg}") from None
     catalog = parse_engine_catalog(data, schema=schema, source=str(path))

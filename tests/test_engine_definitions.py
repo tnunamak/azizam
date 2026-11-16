@@ -137,6 +137,8 @@ def test_detection_rules_name_api_shapes_not_engines():
     (lambda d: d["model_rules"].append({"field": "task", "matches": "([", "capability": "chat"}), "is not a 'regex'"),
     (lambda d: d["definitions"][0]["probes"]["metadata"].append("no-such-row"), "no metadata row named 'no-such-row'"),
     (lambda d: d.update(surprise=True), "Additional properties are not allowed"),
+    (lambda d: d["capabilities"]["chat"]["record_capabilities"].append("synthetic_unknown"),
+     "capabilities.chat.record_capabilities[2]: 'synthetic_unknown' is not a known capability word"),
 ])
 def test_a_malformed_definition_fails_at_load_with_a_clear_message(break_it, says):
     data = copy.deepcopy(SEED)
@@ -153,6 +155,27 @@ def test_a_definitions_file_that_is_not_json_names_the_line(tmp_path):
     broken.write_text('{\n  "format_version": 1,\n  oops\n}', encoding="utf-8")
     with pytest.raises(EngineDefinitionError, match=r"defs\.json: not valid JSON at line 3"):
         load_engine_catalog(broken, SCHEMA_PATH)
+
+
+def test_a_missing_definitions_file_names_the_path():
+    missing = Path("/nonexistent-synthetic/defs.json")
+    with pytest.raises(EngineDefinitionError, match=r"defs\.json: cannot read the engine definitions"):
+        load_engine_catalog(missing, SCHEMA_PATH)
+
+
+def test_a_file_that_vanishes_after_the_stat_still_fails_with_a_clear_message(tmp_path, monkeypatch):
+    path = tmp_path / "defs.json"
+    path.write_text(json.dumps(SEED), encoding="utf-8")
+    real = Path.read_text
+
+    def vanish(self, *args, **kwargs):
+        if self == path:
+            raise FileNotFoundError(2, "No such file or directory")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", vanish)
+    with pytest.raises(EngineDefinitionError, match=r"defs\.json: cannot read the engine definitions"):
+        load_engine_catalog(path, SCHEMA_PATH)
 
 
 def test_a_changed_file_is_read_again(tmp_path):
