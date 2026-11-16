@@ -5,6 +5,7 @@ import { AdjustmentsEditor } from "./adjustment-forms";
 import type { TransformRow } from "@/lib/engines-api";
 import {
   ADJUSTMENT_KINDS,
+  cardProblem,
   cardsFromTransforms,
   newCard,
   sayAdjustment,
@@ -17,6 +18,49 @@ function roundTrip(rows: TransformRow[]) {
 }
 
 describe("request adjustments: stored rows <-> typed forms", () => {
+
+  it("preserves an unknown stored phase until the card phase changes", () => {
+    const rows = [
+      { kind: "value-map", param: "mode", map: { a: "b" }, phase: "both" },
+      { kind: "param-map", from: "a", to: "b", phase: "both" },
+      { kind: "param-map", from: "c", to: "d" },
+      { kind: "drop-params", drop: ["unused"], phase: "both" },
+      { kind: "clamp", param: "count", min: 1, max: 5, phase: "both" },
+    ] as unknown as TransformRow[];
+    const cards = cardsFromTransforms(rows);
+    expect(transformsFromCards(cards)).toEqual(rows);
+    expect(JSON.stringify(transformsFromCards(cards))).toBe(JSON.stringify(rows));
+    for (const card of cards) if ("phase" in card) card.phase = "response";
+    expect(transformsFromCards(cards)).toEqual(rows.map((row) => ({ ...row as object, phase: "response" })));
+    expect(rows[0]).toHaveProperty("phase", "both");
+  });
+
+  it("round-trips an own __proto__ value-map key byte-identically", () => {
+    const bytes = '[{"kind":"value-map","param":"mode","map":{"__proto__":"kept","normal":"value"}}]';
+    const rows = JSON.parse(bytes) as TransformRow[];
+    const saved = roundTrip(rows);
+    expect(JSON.stringify(saved)).toBe(bytes);
+    const map = (saved[0] as { map: Record<string, unknown> }).map;
+    expect(Object.prototype.hasOwnProperty.call(map, "__proto__")).toBe(true);
+    expect(map["__proto__"]).toBe("kept");
+    expect(Object.getPrototypeOf(map)).toBe(Object.prototype);
+  });
+
+  it.each([
+    ["5", "1", "The minimum must not be more than the maximum."],
+    ["1", "5", null],
+    ["5", "5", null],
+    [" 5 ", " 1 ", "The minimum must not be more than the maximum."],
+    ["", "1", null],
+    ["5", "", null],
+    ["", "", "Type a minimum, a maximum, or both."],
+    ["no", "1", "Type the minimum and the maximum as numbers, for example 0 and 1."],
+  ])("validates clamp bounds %s through %s without changing prior messages", (min, max, problem) => {
+    const card = newCard("clamp") as Extract<AdjustmentCard, { kind: "clamp" }>;
+    card.min = min as string;
+    card.max = max as string;
+    expect(cardProblem(card)).toBe(problem);
+  });
   it("names the six primitives in plain words", () => {
     expect(ADJUSTMENT_KINDS.map((k) => k.name)).toEqual([
       "Replace values",
