@@ -14,7 +14,7 @@ export function assignHandoffFiles(
   slots: HandoffFileSlot[],
   fileInputs?: string[],
 ): Record<string, File | null> {
-  const chosen: Record<string, File | null> = {};
+  const chosen: Record<string, File | null> = Object.create(null);
   const ordered = [...slots].sort((a, b) => Number(b.required) - Number(a.required));
   const fits = (file: File, slot: HandoffFileSlot) =>
     !slot.family || slot.family === file.type.split("/")[0];
@@ -24,13 +24,13 @@ export function assignHandoffFiles(
     const slot = name ? slots.find((item) => item.inputName === name) : undefined;
     if (!slot) {
       fallback.push(file);
-    } else if (!chosen[slot.inputName] && fits(file, slot)) {
+    } else if (!(Object.hasOwn(chosen, slot.inputName) && chosen[slot.inputName]) && fits(file, slot)) {
       chosen[slot.inputName] = file;
     }
     // A known name with the wrong family (or a duplicate) cannot move elsewhere.
   });
   for (const file of fallback) {
-    const slot = ordered.find((item) => !chosen[item.inputName] && fits(file, item));
+    const slot = ordered.find((item) => !(Object.hasOwn(chosen, item.inputName) && chosen[item.inputName]) && fits(file, item));
     if (slot) chosen[slot.inputName] = file;
   }
   return chosen;
@@ -41,7 +41,7 @@ export function hasRequiredHandoffFiles(
   slots: readonly { inputName: string; required?: boolean }[],
   chosen: Readonly<Record<string, File | null | undefined>>,
 ): boolean {
-  return slots.every((slot) => !slot.required || Boolean(chosen[slot.inputName]));
+  return slots.every((slot) => !slot.required || (Object.hasOwn(chosen, slot.inputName) && Boolean(chosen[slot.inputName])));
 }
 
 /**
