@@ -4,9 +4,13 @@
 wait_ready() {
   local url=$1 deadline_s=$2
   [[ "$deadline_s" =~ ^[0-9]+$ ]] || return 2
-  local end=$((SECONDS + deadline_s))
+  local end=$((SECONDS + deadline_s)) remaining
   while (( SECONDS < end )); do
-    if curl --fail --silent --connect-timeout 1 --max-time 2 "$url" >/dev/null; then
+    remaining=$((end - SECONDS))
+    (( remaining > 2 )) && remaining=2
+    (( remaining < 1 )) && remaining=1
+    if curl --fail --silent --connect-timeout 1 --max-time "$remaining" "$url" >/dev/null; then
+      (( SECONDS < end )) || return 1
       return 0
     fi
     (( SECONDS < end )) || break
@@ -27,7 +31,15 @@ stop_group() {
   done
   if kill -0 -- "-$pid" 2>/dev/null; then
     kill -KILL -- "-$pid" 2>/dev/null || true
+    end=$((SECONDS + 2))
+    while kill -0 -- "-$pid" 2>/dev/null; do
+      if (( SECONDS >= end )); then
+        printf 'Process group %s still alive after KILL\n' "$pid" >&2
+        return 1
+      fi
+      sleep .1
+    done
   fi
-  # Owned child is now exiting; a non-child/reaped PID is harmless.
+  # The group is gone; a non-child/reaped PID is harmless.
   wait "$pid" 2>/dev/null || true
 }
