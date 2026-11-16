@@ -231,3 +231,80 @@ def test_video_grid_reasons_keep_the_published_values_and_read_data(monkeypatch)
     monkeypatch.setattr(video_grid, "_STRIDE_REASONS", {"default": "generic", "by_step": {8: "selected"}})
     assert video_grid.stride_reason(8) == "selected"
     assert video_grid.stride_reason(17) == "generic"
+
+
+# --- cached parsing follows file contents and never lends mutable state to callers ----------------------------------
+
+@pytest.fixture
+def local_words_file(tmp_path):
+    path = tmp_path / "words.yml"
+    document = yaml.safe_load(status_words.BUNDLED_PATH.read_text(encoding="utf-8"))
+    document["status_words"]["images"]["label"] = "Before"
+    document["status_words"]["images"]["backend_names"] = ["sample"]
+    document["status_words"]["audio.speech"]["exec_labels"] = [{"contains": "sample", "label": "Sample"}]
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return path, document
+
+
+def test_words_observe_content_changes_with_preserved_mtime(local_words_file):
+    import os
+
+    path, document = local_words_file
+    before = path.stat()
+    assert status_words.words("images", path)["label"] == "Before"
+    document["status_words"]["images"]["label"] = "After"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+    assert status_words.words("images", path)["label"] == "After"
+
+
+def test_words_isolate_top_level_lists_and_nested_dicts(local_words_file):
+    path, document = local_words_file
+    answer = status_words.words("images", path)
+    answer["label"] = "Changed by caller"
+    answer["backend_names"].append("caller")
+    speech = status_words.words("audio.speech", path)
+    speech["exec_labels"][0]["label"] = "Changed nested label"
+    speech["exec_labels"].append({"contains": "caller", "label": "Caller"})
+    assert status_words.words("images", path) == document["status_words"]["images"]
+    assert status_words.words("audio.speech", path) == document["status_words"]["audio.speech"]
+
+
+def test_words_revalidate_invalid_content_with_preserved_mtime(local_words_file):
+    import os
+
+    path, document = local_words_file
+    before = path.stat()
+    assert status_words.words("images", path)["label"] == "Before"
+    del document["status_words"]["images"]["label"]
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+    with pytest.raises(jsonschema.ValidationError):
+        status_words.words("images", path)
+
+
+def test_words_revalidate_schema_content_at_same_path(local_words_file, tmp_path, monkeypatch):
+    import json
+    import os
+
+    path, _ = local_words_file
+    schema_path = tmp_path / "schema.json"
+    schema = json.loads(status_words.SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    monkeypatch.setattr(status_words, "SCHEMA_PATH", schema_path)
+    before = schema_path.stat()
+    assert status_words.words("images", path)["label"] == "Before"
+    schema["properties"]["status_words"]["properties"]["images"]["properties"]["label"]["const"] = "Required"
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    os.utime(schema_path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert schema_path.stat().st_mtime_ns == before.st_mtime_ns
+    with pytest.raises(jsonschema.ValidationError):
+        status_words.words("images", path)
+
+
+def test_words_unknown_role_still_raises_key_error(local_words_file):
+    path, _ = local_words_file
+    with pytest.raises(KeyError, match="absent"):
+        status_words.words("absent", path)
