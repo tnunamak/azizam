@@ -74,16 +74,17 @@ export function useAudioPeaks(
   sizeBytes?: number | null,
 ): number[] | null {
   const cacheKey = JSON.stringify([key, bins]);
-  const [peaks, setPeaks] = useState<number[] | null>(
-    () => cache.get(cacheKey) ?? null,
-  );
+  const [peaks, setPeaks] = useState<{
+    cacheKey: string;
+    value: number[] | null;
+  }>(() => ({ cacheKey, value: cache.get(cacheKey) ?? null }));
   useEffect(() => {
-    setPeaks(cache.get(cacheKey) ?? null);
+    setPeaks({ cacheKey, value: cache.get(cacheKey) ?? null });
     if (!enabled || !src) return;
     if (sizeBytes != null && sizeBytes > TILE_PEAKS_MAX_BYTES) return;
     if (typeof window === "undefined" || !("AudioContext" in window)) return;
     if (cache.has(cacheKey)) {
-      setPeaks(cache.get(cacheKey) ?? null);
+      setPeaks({ cacheKey, value: cache.get(cacheKey) ?? null });
       return;
     }
     let cancelled = false;
@@ -96,11 +97,11 @@ export function useAudioPeaks(
     void job.then((result) => {
       if (cancelled || result === undefined) return;
       cache.set(cacheKey, result);
-      setPeaks(result);
+      setPeaks({ cacheKey, value: result });
     });
     return () => {
       cancelled = true;
     };
   }, [cacheKey, src, enabled, bins, sizeBytes]);
-  return peaks;
+  return peaks.cacheKey === cacheKey ? peaks.value : cache.get(cacheKey) ?? null;
 }
