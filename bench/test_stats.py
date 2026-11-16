@@ -1,6 +1,7 @@
 import contextlib
 import io
 import unittest
+from unittest.mock import patch
 
 from bench.compare import compare_documents, main
 from bench.report import aggregate_documents
@@ -146,6 +147,59 @@ class StatsTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stderr(output):
             self.assertEqual(main([]), 2)
+
+    def test_comparison_rejects_empty_metrics_on_both_sides(self):
+        baseline, candidate = run([1]), run([1])
+        baseline["metrics"] = []
+        candidate["metrics"] = []
+        for aggregate in (False, True):
+            with self.subTest(aggregate=aggregate):
+                left = {"runs": [baseline]} if aggregate else baseline
+                right = {"runs": [candidate]} if aggregate else candidate
+                with self.assertRaisesRegex(ValueError, "baseline.*missing metrics"):
+                    compare_documents(left, right)
+
+    def test_comparison_rejects_undeclared_metric_mix_before_split(self):
+        for side in ("baseline", "new"):
+            for aggregate in (False, True):
+                with self.subTest(side=side, aggregate=aggregate):
+                    baseline, candidate = run([1]), run([1])
+                    for document in (baseline, candidate):
+                        document["metadata"]["mix_hashes"]["test"] = "heldout"
+                        document["metrics"].append({
+                            **document["metrics"][0], "mix": "test",
+                        })
+                    bad = baseline if side == "baseline" else candidate
+                    bad["metrics"].append({**bad["metrics"][0], "mix": "basci"})
+                    left = {"runs": [baseline]} if aggregate else baseline
+                    right = {"runs": [candidate]} if aggregate else candidate
+                    with self.assertRaisesRegex(ValueError, side + ".*undeclared mix.*basci"):
+                        compare_documents(left, right)
+
+    def test_comparison_rejects_declared_mix_without_metrics(self):
+        for side in ("baseline", "new", "both"):
+            with self.subTest(side=side):
+                baseline, candidate = run([1]), run([1])
+                for label, document in (("baseline", baseline), ("new", candidate)):
+                    document["metadata"]["mix_hashes"]["test"] = "heldout"
+                    if side not in (label, "both"):
+                        document["metrics"].append({
+                            **document["metrics"][0], "mix": "test",
+                        })
+                label = "baseline" if side == "both" else side
+                with self.assertRaisesRegex(ValueError, label + ".*missing metrics.*test"):
+                    compare_documents(baseline, candidate)
+
+    def test_invalid_comparison_cli_has_no_header_and_exits_nonzero(self):
+        baseline, candidate = run([1]), run([1])
+        baseline["metrics"] = []
+        candidate["metrics"] = []
+        output, errors = io.StringIO(), io.StringIO()
+        with patch("bench.compare._load", side_effect=[baseline, candidate]):
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                self.assertEqual(main(["baseline.json", "new.json"]), 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("baseline: missing metrics", errors.getvalue())
 
     def test_duplicate_metric_rejected_inside_aggregate_run(self):
         duplicate = run([1])

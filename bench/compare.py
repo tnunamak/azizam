@@ -50,6 +50,19 @@ def _check_run(run, label):
         raise ValueError(f"{label}: provenance network_namespace must be boolean")
     if not isinstance(run.get("metrics"), list):
         raise ValueError(f"{label}: metrics must be a list")
+    if not run["metrics"]:
+        raise ValueError(f"{label}: missing metrics: metrics must be a nonempty list")
+    # Check the original run, before the multi-mix split can discard a row.
+    declared = metadata["mix_hashes"]
+    present = set()
+    for metric in run["metrics"]:
+        mix = metric.get("mix") if isinstance(metric, dict) else None
+        if not isinstance(mix, str) or mix not in declared:
+            raise ValueError(f"{label}: metric has undeclared mix {mix!r}")
+        present.add(mix)
+    for mix in declared:
+        if mix not in present:
+            raise ValueError(f"{label}: missing metrics for mix {mix!r}")
 
 
 def _blocks(document, label):
