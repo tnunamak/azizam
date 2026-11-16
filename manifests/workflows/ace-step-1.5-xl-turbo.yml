@@ -24,6 +24,7 @@ inputs:
     type: number
     minimum: 1
     maximum: 300
+    default: 30
   seed:
     label: variation number
     help: Reuse this number and the same settings for a similar result.
