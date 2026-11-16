@@ -234,4 +234,25 @@ describe("request adjustments: stored rows <-> typed forms", () => {
     expect(html.match(/class="text-meta mb-1 block sm:hidden"/g)).toHaveLength(2);
     expect(html).toMatch(/<button[^>]*class="[^"]*justify-self-end[^"]*"[^>]*aria-label="Remove row 1"/);
   });
+
+  it.each([
+    ["minimum", "9".repeat(400), ""],
+    ["maximum", "", "9".repeat(400)],
+    ["both bounds", "9".repeat(400), "9".repeat(400)],
+  ])("rejects overflowing clamp %s with the numbers message", (_label, min, max) => {
+    const card = newCard("clamp") as Extract<AdjustmentCard, { kind: "clamp" }>;
+    card.min = min;
+    card.max = max;
+    expect(cardProblem(card)).toBe("Type the minimum and the maximum as numbers, for example 0 and 1.");
+  });
+
+  it("saves overflowing default digits as text rather than JSON null", () => {
+    const card = newCard("default-params") as Extract<AdjustmentCard, { kind: "default-params" }>;
+    const digits = "9".repeat(400);
+    card.rows = [{ a: "limit", b: digits }];
+    const saved = transformsFromCards([card]);
+    const expected = [{ kind: "default-params", set: { limit: digits } }];
+    expect(saved).toEqual(expected);
+    expect(JSON.parse(JSON.stringify(saved))).toEqual(expected);
+  });
 });

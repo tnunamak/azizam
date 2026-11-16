@@ -141,7 +141,10 @@ function typedValue(row: PairRow, parse: boolean): unknown {
   if (row.orig !== undefined && valueText(row.orig) === row.b) return row.orig;
   if (!parse) return row.b;
   const text = row.b.trim();
-  if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const number = Number(text);
+    return Number.isFinite(number) ? number : row.b;
+  }
   if (text === "true") return true;
   if (text === "false") return false;
   return row.b;
@@ -167,7 +170,7 @@ const NUMBER = /^-?\d+(\.\d+)?$/;
 /** What stops the adjustment from saving, in plain words; null when it can save. */
 export function cardProblem(card: AdjustmentCard): string | null {
   if (card.kind === "clamp") {
-    if ([card.min, card.max].some((x) => x.trim() !== "" && !NUMBER.test(x.trim()))) return "Type the minimum and the maximum as numbers, for example 0 and 1.";
+    if ([card.min, card.max].some((x) => x.trim() !== "" && (!NUMBER.test(x.trim()) || !Number.isFinite(Number(x))))) return "Type the minimum and the maximum as numbers, for example 0 and 1.";
     if (card.min.trim() === "" && card.max.trim() === "") return "Type a minimum, a maximum, or both.";
     if (card.min.trim() !== "" && card.max.trim() !== "" && Number(card.min) > Number(card.max)) {
       return "The minimum must not be more than the maximum.";
