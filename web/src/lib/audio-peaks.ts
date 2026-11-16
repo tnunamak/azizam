@@ -19,6 +19,28 @@ const cache = new Map<string, number[] | null>();
 export const TILE_PEAKS_MAX_BYTES = 1_500_000;
 let queue: Promise<unknown> = Promise.resolve();
 
+/** Pure waveform envelope: proportional buckets, with every channel contributing. */
+export function peaksFrom(channels: Float32Array[], bins: number): number[] | null {
+  const length = channels[0]?.length ?? 0;
+  if (!length || !Number.isSafeInteger(bins) || bins <= 0) return null;
+  const peaks: number[] = [];
+  let loudest = 0;
+  for (let bin = 0; bin < bins; bin += 1) {
+    const start = Math.floor(bin * length / bins);
+    const end = Math.max(start + 1, Math.floor((bin + 1) * length / bins));
+    let peak = 0;
+    for (const channel of channels) {
+      for (let index = start; index < end; index += 1) {
+        const value = Math.abs(channel[index]);
+        if (value > peak) peak = value;
+      }
+    }
+    peaks.push(peak);
+    if (peak > loudest) loudest = peak;
+  }
+  return loudest > 0 ? peaks.map((peak) => Math.sqrt(peak / loudest)) : null;
+}
+
 async function measure(src: string, bins: number): Promise<number[] | null> {
   const AudioCtx =
     typeof window === "undefined"
@@ -33,20 +55,12 @@ async function measure(src: string, bins: number): Promise<number[] | null> {
   const context = new AudioCtx();
   try {
     const audio = await context.decodeAudioData(buffer);
-    const data = audio.getChannelData(0);
-    const size = Math.max(1, Math.floor(data.length / bins));
-    const peaks: number[] = [];
-    for (let bin = 0; bin < bins; bin += 1) {
-      let peak = 0;
-      const end = bin === bins - 1 ? data.length : Math.min(data.length, (bin + 1) * size);
-      for (let index = bin * size; index < end; index += 1) {
-        const value = Math.abs(data[index]);
-        if (value > peak) peak = value;
-      }
-      peaks.push(peak);
-    }
-    const loudest = Math.max(...peaks);
-    return loudest > 0 ? peaks.map((peak) => Math.sqrt(peak / loudest)) : null;
+    return peaksFrom(
+      Array.from({ length: audio.numberOfChannels }, (_, channel) =>
+        audio.getChannelData(channel),
+      ),
+      bins,
+    );
   } finally {
     void context.close();
   }
@@ -59,30 +73,34 @@ export function useAudioPeaks(
   bins = 40,
   sizeBytes?: number | null,
 ): number[] | null {
+  const cacheKey = JSON.stringify([key, bins]);
   const [peaks, setPeaks] = useState<number[] | null>(
-    () => cache.get(key) ?? null,
+    () => cache.get(cacheKey) ?? null,
   );
   useEffect(() => {
+    setPeaks(cache.get(cacheKey) ?? null);
     if (!enabled || !src) return;
     if (sizeBytes != null && sizeBytes > TILE_PEAKS_MAX_BYTES) return;
     if (typeof window === "undefined" || !("AudioContext" in window)) return;
-    if (cache.has(key)) {
-      setPeaks(cache.get(key) ?? null);
+    if (cache.has(cacheKey)) {
+      setPeaks(cache.get(cacheKey) ?? null);
       return;
     }
     let cancelled = false;
     // One decode at a time keeps a long grid from stalling the page.
-    const job = queue.then(() =>
-      measure(src, bins).catch(() => null),
-    );
+    const job = queue.then(() => {
+      if (cancelled) return undefined;
+      return measure(src, bins).catch(() => null);
+    });
     queue = job;
     void job.then((result) => {
-      cache.set(key, result);
-      if (!cancelled) setPeaks(result);
+      if (cancelled || result === undefined) return;
+      cache.set(cacheKey, result);
+      setPeaks(result);
     });
     return () => {
       cancelled = true;
     };
-  }, [key, src, enabled, bins, sizeBytes]);
+  }, [cacheKey, src, enabled, bins, sizeBytes]);
   return peaks;
 }
