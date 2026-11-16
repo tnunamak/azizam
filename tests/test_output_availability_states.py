@@ -52,14 +52,44 @@ def test_two_missing_are_missing(resolve):
     assert all(asset["available"] is False for asset in view["assets"])
 
 
-def test_present_and_missing_are_partial(resolve):
-    job = {"status": "succeeded", "assets": [
-        {"asset_id": "present", "url": "https://fixture.invalid/present"},
-        {"asset_id": "missing"}]}
+@pytest.mark.parametrize("siblings, expected", [
+    pytest.param(["missing"], ["missing"], id="missing"),
+    pytest.param(["unreadable"], ["unavailable"], id="unreadable"),
+    pytest.param(["malformed"], ["unavailable"], id="malformed"),
+    pytest.param(
+        ["missing", "unreadable", "malformed"],
+        ["missing", "unavailable", "unavailable"],
+        id="all-non-present",
+    ),
+])
+def test_present_and_non_present_are_partial(resolve, siblings, expected):
+    fields = ("url", "asset_url", "content_url", "download_url",
+              "thumbnail_url", "workflow_download_url")
+    present = {"asset_id": "present", **{
+        field: "https://fixture.invalid/present/" + field for field in fields}}
+    others = [
+        # Non-mapping data is classified as unavailable, not a fourth state.
+        "https://fixture.invalid/malformed" if sibling == "malformed" else {
+            "asset_id": sibling, **{
+                field: "https://fixture.invalid/" + sibling + "/" + field
+                for field in fields}}
+        for sibling in siblings
+    ]
+    job = {"status": "succeeded", "assets": [present, *others]}
     view = checked(job, resolve)
     assert view["output_state"] == "partial"
-    assert view["assets"][0] == job["assets"][0]
-    assert view["assets"][1]["availability"] == "missing"
+    assert len(view["assets"]) == 1 + len(siblings)
+    assert view["assets"][0] == present
+    for field in fields:
+        assert view["assets"][0][field] == present[field]
+    for sibling, asset, state in zip(siblings, view["assets"][1:], expected):
+        assert asset["available"] is False
+        assert asset["availability"] == state
+        assert not any(field in asset for field in fields)
+        if sibling == "malformed":
+            assert asset == {"available": False, "availability": "unavailable"}
+        else:
+            assert asset["asset_id"] == sibling
 
 
 def test_present_drops_stale_asset_hints(resolve):
