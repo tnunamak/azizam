@@ -115,6 +115,8 @@ def validate_selection(block: Mapping[str, Any]) -> None:
     picture, so a selection it refuses leaves no files in the graph engine's
     input directory. `apply_point` reads the point through the same helper.
     """
+    if "subject_index" in block and ("source_point_x" in block or "source_point_y" in block):
+        raise SubjectError("send subject_index or a source point, not both", "subject_index")
     index_text = str(block.get("subject_index", "0")).strip()
     if not re.fullmatch(r"\d+(,\d+)*", index_text):
         raise SubjectError("subject_index must be a number like 0 or a list like 0,2", "subject_index")
@@ -124,6 +126,7 @@ def validate_selection(block: Mapping[str, Any]) -> None:
 def apply_point(workflow: dict[str, Any], block: Mapping[str, Any], width: int, height: int,
                 roles: Mapping[str, Any]) -> bool:
     """Rewire the graph to track only the person under a point. Return True if applied."""
+    validate_selection(block)
     point = _point(block)
     if point is None:
         return False

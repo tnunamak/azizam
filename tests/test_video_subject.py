@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 import sys
 import unittest
@@ -190,6 +191,46 @@ class SubjectHelperTests(unittest.TestCase):
         self.assertEqual(g[PROBE]["class_type"], "PreviewAny")
         self.assertEqual(g[PROBE]["inputs"]["source"], [TRACK, 0])
 
+    def test_index_and_point_are_mutually_exclusive(self) -> None:
+        for index in (1, "0", 0, None, False, 1.5, ""):
+            for point in (
+                {"source_point_x": 0.5, "source_point_y": 0.25},
+                {"source_point_x": 0.5},
+                {"source_point_y": 0.25},
+            ):
+                with self.subTest(index=index, point=point):
+                    block = {"subject_index": index, **point}
+                    with self.assertRaises(vs.SubjectError) as caught:
+                        vs.validate_selection(block)
+                    self.assertEqual(str(caught.exception), "send subject_index or a source point, not both")
+                    self.assertEqual(caught.exception.param, "subject_index")
+
+    def test_apply_point_refuses_conflicting_selection_without_mutation(self) -> None:
+        for index in (1, "0"):
+            with self.subTest(index=index):
+                graph = _graph()
+                before = deepcopy(graph)
+                with self.assertRaises(vs.SubjectError) as caught:
+                    vs.apply_point(graph, {"subject_index": index, "source_point_x": 0.5,
+                                           "source_point_y": 0.25}, 832, 448, ROLES)
+                self.assertEqual(str(caught.exception), "send subject_index or a source point, not both")
+                self.assertEqual(caught.exception.param, "subject_index")
+                self.assertEqual(graph, before)
+
+    def test_nonconflicting_selection_remains_valid(self) -> None:
+        for block in ({}, {"subject_index": 1}, {"subject_index": "0"}, {"subject_index": "0,2"}):
+            with self.subTest(block=block):
+                self.assertIsNone(vs.validate_selection(block))
+                graph = _graph()
+                before = deepcopy(graph)
+                self.assertFalse(vs.apply_point(graph, block, 832, 448, ROLES))
+                self.assertEqual(graph, before)
+        point = {"source_point_x": 0.5, "source_point_y": 0.25}
+        self.assertIsNone(vs.validate_selection(point))
+        graph = _graph()
+        self.assertTrue(vs.apply_point(graph, point, 832, 448, ROLES))
+        self.assertEqual(json.loads(graph[POINT_DETECT]["inputs"]["positive_coords"]), [{"x": 416, "y": 112}])
+
     def test_point_rewires_tracking_to_one_person(self) -> None:
         g = _graph()
         self.assertTrue(vs.apply_point(g, {"source_point_x": 0.5, "source_point_y": 0.25}, 832, 448, ROLES))
@@ -314,6 +355,8 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
 
     def test_invalid_selection_is_a_400_with_the_param(self) -> None:
         for extra, param in (({"subject_index": "left"}, "subject_index"),
+                             ({"subject_index": 1, "source_point_x": 0.5, "source_point_y": 0.25}, "subject_index"),
+                             ({"subject_index": "0", "source_point_x": 0.5, "source_point_y": 0.25}, "subject_index"),
                              ({"source_point_x": 0.5}, "source_point_x"),
                              ({"source_point_x": 3, "source_point_y": 0.5}, "source_point_x")):
             r = self._create(**extra)
