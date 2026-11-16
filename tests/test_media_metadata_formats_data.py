@@ -1,5 +1,6 @@
 """Independent base pins and a data-only extension for media metadata formats."""
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -167,22 +168,37 @@ def test_added_bmff_suffix_gets_movflags(tmp_path, monkeypatch):
     value["formats"].append({
         "handler": "video", "suffixes": [".3gp"], "mime_types": [], "muxer": "mp4",
     })
-    suffix_kind, mime_kind, muxers, mime_suffix = mm.load_media_metadata_formats(write_rows(tmp_path, value))
-    derived = mm._bmff_suffixes(muxers)
-    assert derived == {".mp4", ".m4v", ".m4a", ".mov", ".3gp"}
-    for name, table in (
-        ("_SUFFIX_KIND", suffix_kind), ("_MIME_KIND", mime_kind),
-        ("_MUXER", muxers), ("_MIME_SUFFIX", mime_suffix), ("_MP4_LIKE", derived),
-    ):
-        monkeypatch.setattr(mm, name, table)
+    synthetic_rows = write_rows(tmp_path, value)
+    original_read_text = Path.read_text
+    reads = []
+
+    def read_text(path, *args, **kwargs):
+        if path == ROWS:
+            reads.append(path)
+            path = synthetic_rows
+        return original_read_text(path, *args, **kwargs)
+
+    spec = importlib.util.spec_from_file_location("_media_metadata_formats_probe", mm.__file__)
+    assert spec is not None and spec.loader is not None
+    isolated = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as registry_patch:
+        registry_patch.setattr(Path, "read_text", read_text)
+        spec.loader.exec_module(isolated)
+    assert reads == [ROWS]
+    assert isolated._MP4_LIKE == {".mp4", ".m4v", ".m4a", ".mov", ".3gp"}
+    assert mm._MP4_LIKE == {".mp4", ".m4v", ".m4a", ".mov"}
     calls = []
 
     def rewrite(content, suffix, workdir, extra):
         calls.append((content, suffix, workdir, extra))
         return b"rewritten"
 
-    monkeypatch.setattr(mm, "_ffmpeg_rewrite", rewrite)
-    assert mm.embed_media_tags(b"synthetic", ".3gp", {"title": "sample"}) == b"rewritten"
+    monkeypatch.setattr(isolated, "_ffmpeg_rewrite", rewrite)
+    assert isolated.embed_media_tags(b"synthetic", ".3gp", {"title": "sample"}) == b"rewritten"
     assert calls == [(b"synthetic", ".3gp", None, [
         "-metadata", "title=sample", "-movflags", "+use_metadata_tags",
     ])]
+
+
+def test_bmff_suffixes_ignore_unknown_muxer():
+    assert mm._bmff_suffixes({".3gp": "mp4", ".bad": "unknown"}) == {".3gp"}

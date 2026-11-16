@@ -978,7 +978,7 @@ def embed_image_metadata(content: bytes, suffix_or_mime: str,
 
 def _bmff_suffixes(muxers: Mapping[str, str]) -> frozenset[str]:
     """Aliases whose validated muxer uses ISO-BMFF metadata flags."""
-    return frozenset(suffix for suffix, muxer in muxers.items() if _MUXER_FAMILY[muxer] == "bmff")
+    return frozenset(suffix for suffix, muxer in muxers.items() if _MUXER_FAMILY.get(muxer) == "bmff")
 
 
 _MP4_LIKE = _bmff_suffixes(_MUXER)
