@@ -23,7 +23,9 @@ Two checks run for each `*.ui.json`:
      the twin in the current frontend sees shifted values. It never changes
      the exit code, because the gateway executes the API JSON.
 
-Exit codes: 0 no drift, 1 drift in the name check, 2 usage or input error.
+Exit codes: 0 no drift, 1 name-check drift or an orphan UI twin, 2 usage or
+input error. Read errors do not stop the remaining files; 2 takes precedence
+when both drift and input errors are found.
 A missing Playwright or ComfyUI only skips check 2 and prints a notice.
 
 Usage:
@@ -53,9 +55,7 @@ def find_ui_workflows() -> list[Path]:
         if not d.is_dir():
             continue
         for p in sorted(d.glob("*.ui.json")):
-            api = p.with_name(p.name[: -len(".ui.json")] + ".json")
-            if api.exists():
-                out.append(p)
+            out.append(p)
     return out
 
 
@@ -186,7 +186,7 @@ def ui_inputs_by_name(ui_wf: dict) -> dict[str, dict]:
 
 
 def name_diff(ui_wf: dict, api_wf: dict) -> list[str]:
-    """Diff the named inputs of a UI twin against its API JSON.
+    """Diff node types and named inputs of a UI twin against its API JSON.
 
     Only inputs the UI twin states are compared. API inputs that the UI twin
     has no widget for (for example a dynamic-combo child such as
@@ -195,6 +195,7 @@ def name_diff(ui_wf: dict, api_wf: dict) -> list[str]:
     api = normalize_api(api_wf)
     diffs: list[str] = []
     ui_nodes = ui_inputs_by_name(ui_wf)
+    ui_types = {str(node["id"]): node.get("type") for node in ui_wf.get("nodes", [])}
     for node_id in sorted(set(api) - set(ui_nodes), key=str):
         diffs.append(f"  - node {node_id} in API JSON but not in UI twin")
     for node_id, ui_inputs in ui_nodes.items():
@@ -202,6 +203,9 @@ def name_diff(ui_wf: dict, api_wf: dict) -> list[str]:
         if node is None:
             diffs.append(f"  + node {node_id} in UI twin but not in API JSON")
             continue
+        api_type, ui_type = node.get("class_type"), ui_types[node_id]
+        if api_type != ui_type:
+            diffs.append(f"  ~ node {node_id} type: api {api_type} != ui {ui_type}")
         api_inputs = node.get("inputs", {})
         for name, ui_val in sorted(ui_inputs.items()):
             if name not in api_inputs:
@@ -277,17 +281,24 @@ async def main(argv: list[str]) -> int:
         return 0
 
     drifted = 0
+    errors = 0
     entries: list[tuple[str, dict, dict]] = []
     for ui_path in ui_paths:
         api_path = ui_path.with_name(ui_path.name[: -len(".ui.json")] + ".json")
         label = api_path.name
         if not api_path.exists():
-            print(f"[skip] {label}: no API sibling")
+            print(f"[orphan] {label}: no API sibling")
+            drifted += 1
             continue
-        with open(ui_path) as f:
-            ui_wf = json.load(f)
-        with open(api_path) as f:
-            api_disk = json.load(f)
+        try:
+            with open(ui_path) as f:
+                ui_wf = json.load(f)
+            with open(api_path) as f:
+                api_disk = json.load(f)
+        except (OSError, ValueError) as error:
+            print(f"[error] {label}: {error}")
+            errors += 1
+            continue
         entries.append((label, ui_wf, api_disk))
         diffs = name_diff(ui_wf, api_disk)
         if diffs:
@@ -310,6 +321,9 @@ async def main(argv: list[str]) -> int:
         if skipped:
             print(f"[note] frontend layout check skipped: {skipped}", file=sys.stderr)
 
+    if errors:
+        print(f"\n{errors} workflow(s) could not be read; {drifted} workflow(s) drifted")
+        return 2
     if drifted:
         print(f"\n{drifted} workflow(s) drifted")
         return 1
