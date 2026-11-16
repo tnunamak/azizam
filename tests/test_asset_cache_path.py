@@ -193,3 +193,90 @@ def test_clear_during_listing_returns_without_refilling(cache, monkeypatch, clea
     now += 4_000_000_000
     assert directory_index.names(cache) == frozenset({"entry.txt"})
     assert calls == [str(cache), str(cache)], "the in-flight listing was not cached"
+
+
+def test_settled_directory_warm_hit_lists_once(cache, monkeypatch):
+    (cache / "entry.txt").write_bytes(b"x")
+    settle(cache)
+    now = time.time_ns()
+    monkeypatch.setattr(directory_index, "_HIGH_WATER_NS", 0)
+    monkeypatch.setattr(directory_index.time, "time_ns", lambda: now)
+    original_listdir = directory_index.os.listdir
+    calls = []
+
+    def counted_listdir(path):
+        calls.append(str(path))
+        return original_listdir(path)
+
+    monkeypatch.setattr(directory_index.os, "listdir", counted_listdir)
+    expected = frozenset({"entry.txt"})
+    assert directory_index.names(cache) == expected
+    assert calls == [str(cache)]
+    assert directory_index.names(cache) == expected
+    assert calls == [str(cache)]
+
+
+def test_clock_rollback_then_recovery_recaches_first_listing(cache, monkeypatch):
+    (cache / "entry.txt").write_bytes(b"x")
+    settle(cache)
+    high_water = time.time_ns()
+    now = high_water
+    # The high-water mark is process-wide, not part of a directory entry.
+    monkeypatch.setattr(directory_index, "_HIGH_WATER_NS", 0)
+    monkeypatch.setattr(directory_index.time, "time_ns", lambda: now)
+    original_listdir = directory_index.os.listdir
+    calls = []
+
+    def counted_listdir(path):
+        calls.append(str(path))
+        return original_listdir(path)
+
+    monkeypatch.setattr(directory_index.os, "listdir", counted_listdir)
+    expected = frozenset({"entry.txt"})
+    assert directory_index.names(cache) == expected
+    assert directory_index.names(cache) == expected
+    assert calls == [str(cache)]
+
+    now = high_water - 3_000_000_000
+    assert directory_index.names(cache) is None
+    assert calls == [str(cache)], "rollback must return before listing"
+    now = high_water - 1
+    assert directory_index.names(cache) is None
+    assert calls == [str(cache)], "time is still below the high-water mark"
+
+    now = high_water + 1_000_000_000
+    assert directory_index.names(cache) == expected
+    assert calls == [str(cache), str(cache)], "first recovered call must list"
+    assert directory_index.names(cache) == expected
+    assert calls == [str(cache), str(cache)], "first recovered listing must be cached"
+
+
+def test_forget_one_directory_preserves_another_warm_listing(cache, monkeypatch):
+    first, second = cache / "first", cache / "second"
+    for directory, name in ((first, "first.txt"), (second, "second.txt")):
+        directory.mkdir()
+        (directory / name).write_bytes(b"x")
+        settle(directory)
+    now = time.time_ns()
+    monkeypatch.setattr(directory_index, "_HIGH_WATER_NS", 0)
+    monkeypatch.setattr(directory_index.time, "time_ns", lambda: now)
+    original_listdir = directory_index.os.listdir
+    calls = []
+
+    def counted_listdir(path):
+        calls.append(str(path))
+        return original_listdir(path)
+
+    monkeypatch.setattr(directory_index.os, "listdir", counted_listdir)
+    assert directory_index.names(first) == frozenset({"first.txt"})
+    assert directory_index.names(second) == frozenset({"second.txt"})
+    assert calls == [str(first), str(second)]
+
+    directory_index.forget(first)
+    assert directory_index.names(second) == frozenset({"second.txt"})
+    assert calls == [str(first), str(second)], "the other folder must remain cached"
+    assert directory_index.names(first) == frozenset({"first.txt"})
+    assert calls == [str(first), str(second), str(first)]
+    assert directory_index.names(first) == frozenset({"first.txt"})
+    assert directory_index.names(second) == frozenset({"second.txt"})
+    assert calls == [str(first), str(second), str(first)]
