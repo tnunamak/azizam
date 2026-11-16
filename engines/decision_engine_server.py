@@ -410,12 +410,19 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         try:
-            raw_length = self.headers.get("content-length")
+            raw_lengths = self.headers.get_all("content-length") or []
             try:
-                value = "0" if raw_length is None else raw_length.strip()
-                if not value.isascii() or not value.isdecimal():
-                    raise ValueError("invalid content length")
-                value = value.lstrip("0") or "0"
+                values = [part.strip() for field in raw_lengths for part in field.split(",")]
+                if not values:
+                    values = ["0"]
+                normalized = []
+                for value in values:
+                    if not value.isascii() or not value.isdecimal():
+                        raise ValueError("invalid content length")
+                    normalized.append(value.lstrip("0") or "0")
+                value = normalized[0]
+                if any(other != value for other in normalized[1:]):
+                    raise ValueError("conflicting content lengths")
                 # Compare the digit count before int(), including headers beyond
                 # Python's integer-conversion limit.
                 length = MAX_REQUEST_BYTES + 1 if len(value) > len(str(MAX_REQUEST_BYTES)) else int(value)
