@@ -248,19 +248,52 @@ def test_status_shipped_workload_strings_and_bucket_names(monkeypatch, tmp_path)
     ]
 
 
-@pytest.mark.parametrize("defect", ["missing", "duplicate", "selector"])
+@pytest.mark.parametrize("defect", [
+    "missing", "duplicate", "selector", "duplicate-role", "unknown-bucket",
+    "queue-selector", "queue-null-selector", "invalid-bucket-value",
+    "invalid-buckets-shape", "extra-bucket",
+])
 def test_registry_rejects_invalid_attribution_bindings(tmp_path, defect):
     from gateway.gpu_observation import display_config
 
     config = load_registry()
+    device = next(row for row in config["devices"] if row["workload"] == "slots")
+    code = "observation_attribution_buckets_invalid"
+    identity = ["bucket total"]
     if defect == "missing":
         del config["attribution_buckets"]["total"]
     elif defect == "duplicate":
         config["attribution_buckets"]["total"] = config["attribution_buckets"]["headroom"]
+        identity.append(config["attribution_buckets"]["headroom"])
+    elif defect == "invalid-bucket-value":
+        config["attribution_buckets"]["total"] = []
+    elif defect == "invalid-buckets-shape":
+        config["attribution_buckets"] = []
+        identity = ["attribution_buckets", "list"]
+    elif defect == "extra-bucket":
+        config["attribution_buckets"]["extra"] = "extra-output"
+        identity = ["bucket extra"]
+    elif defect == "duplicate-role":
+        role = device["roles"][0]
+        device["roles"].append(dict(role))
+        code = "observation_device_role_duplicate"
+        identity = [f"device {device['index']}", f"role {role['key']}"]
+    elif defect == "unknown-bucket":
+        role = device["roles"][0]
+        role["bucket"] = "missing-bucket"
+        code = "observation_role_bucket_invalid"
+        identity = [f"device {device['index']}", f"role {role['key']}",
+                    "bucket missing-bucket"]
     else:
-        next(device for device in config["devices"]
-             if device["workload"] == "slots")["workload_role"] = "missing-role"
+        if defect.startswith("queue-"):
+            device = next(row for row in config["devices"] if row["workload"] == "queue")
+        device["workload_role"] = None if defect == "queue-null-selector" else "missing-role"
+        code = "observation_workload_role_invalid"
+        identity = [f"device {device['index']}", f"role {device['workload_role']}"]
     path = tmp_path / "invalid-observation.yml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    with pytest.raises(ValueError, match="observation_"):
+    with pytest.raises(ValueError) as exc:
         display_config(path)
+    message = str(exc.value)
+    assert message.startswith(code + ":")
+    assert all(part in message for part in identity)

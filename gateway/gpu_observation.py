@@ -76,11 +76,24 @@ def display_config(path=DEFAULT_REGISTRY):
     config = load_registry(path)
     devices, runtime = config.get("devices"), config.get("runtime_display")
     buckets = config.get("attribution_buckets")
-    if (not isinstance(buckets, dict)
-            or set(buckets) != {"unowned", "headroom", "unattributed", "total"}
-            or any(not isinstance(value, str) or not value for value in buckets.values())
-            or len(set(buckets.values())) != len(buckets)):
-        raise ValueError("observation_attribution_buckets_invalid")
+    bucket_error = "observation_attribution_buckets_invalid"
+    if not isinstance(buckets, dict):
+        raise ValueError(f"{bucket_error}: attribution_buckets must be a mapping, got {type(buckets).__name__}")
+    expected_buckets = {"unowned", "headroom", "unattributed", "total"}
+    for key in sorted(expected_buckets - set(buckets)):
+        raise ValueError(f"{bucket_error}: missing bucket {key}")
+    for key in buckets:
+        if key not in expected_buckets:
+            raise ValueError(f"{bucket_error}: unknown bucket {key}")
+    bucket_names = {}
+    for key, value in buckets.items():
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{bucket_error}: bucket {key} has invalid name {value!r}")
+        if value in bucket_names:
+            raise ValueError(
+                f"{bucket_error}: bucket {key} duplicates bucket {bucket_names[value]} name {value}"
+            )
+        bucket_names[value] = key
     if not isinstance(devices, list) or not devices:
         raise ValueError("observation_devices_invalid")
     indexes, orders = set(), set()
@@ -107,18 +120,22 @@ def display_config(path=DEFAULT_REGISTRY):
             ):
                 raise ValueError("observation_device_role_invalid")
             if role["key"] in role_keys:
-                raise ValueError("observation_device_role_duplicate")
+                raise ValueError(f"observation_device_role_duplicate: device {index} role {role['key']}")
             role_keys.add(role["key"])
             if "bucket" in role and (not isinstance(role["bucket"], str) or role["bucket"] not in buckets):
-                raise ValueError("observation_role_bucket_invalid")
+                raise ValueError(
+                    f"observation_role_bucket_invalid: device {index} role {role['key']} bucket {role['bucket']}"
+                )
             if ("{" in role["label"] or "}" in role["label"]) and role["label"] != "{label}":
                 raise ValueError("observation_device_role_template_invalid")
             if ("{" in role["key"] or "}" in role["key"]) and role["key"] != "{gpu_budget_key}":
                 raise ValueError("observation_device_role_template_invalid")
-        if device.get("workload") == "slots" and (
+        if ("workload_role" in device or device.get("workload") == "slots") and (
                 not isinstance(device.get("workload_role"), str)
                 or device["workload_role"] not in role_keys):
-            raise ValueError("observation_workload_role_invalid")
+            raise ValueError(
+                f"observation_workload_role_invalid: device {index} role {device.get('workload_role')}"
+            )
     if (not isinstance(runtime, dict) or type(runtime.get("device_index")) is not int
             or runtime["device_index"] not in indexes
             or any(not isinstance(runtime.get(key), str) or not runtime[key]
