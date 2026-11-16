@@ -244,6 +244,44 @@ def test_paired_total_free_and_total_used_readings_agree(total, managed, include
         assert residual_of(by_used, "pool") == residual_of(by_free, "pool")
 
 
+@pytest.mark.parametrize("total,free,want", [(10, 20, 11), (0, 1, 1)])
+def test_free_above_total_beyond_uncertainty_is_unknown(total, free, want) -> None:
+    r = ref("pool")
+    observations = [reading(r, ObservationMeaning.TOTAL, total),
+                    reading(r, ObservationMeaning.FREE, free)]
+    envelope = decide(claim_of(demand(r, want)), {"pool": stock(r)}, observations)
+    assert envelope.outcome is Outcome.UNKNOWN
+    assert envelope.resources[0].reason == "free reading exceeds the total"
+
+
+@pytest.mark.parametrize("free", [11, 12])
+def test_free_within_combined_uncertainty_is_capped_at_total(free) -> None:
+    r = ref("pool")
+    observations = [reading(r, ObservationMeaning.TOTAL, 10, uncertainty=1),
+                    reading(r, ObservationMeaning.FREE, free, uncertainty=1)]
+    envelope = decide(claim_of(demand(r, 11)), {"pool": stock(r)}, observations)
+    assert envelope.outcome is Outcome.NO_FIT
+    assert residual_of(envelope, "pool") == 8
+
+
+def test_free_beyond_combined_uncertainty_is_unknown() -> None:
+    r = ref("pool")
+    observations = [reading(r, ObservationMeaning.TOTAL, 10, uncertainty=1),
+                    reading(r, ObservationMeaning.FREE, 13, uncertainty=1)]
+    envelope = decide(claim_of(demand(r, 1)), {"pool": stock(r)}, observations)
+    assert envelope.outcome is Outcome.UNKNOWN
+    assert envelope.resources[0].reason == "free reading exceeds the total"
+
+
+def test_consistent_free_reading_still_fits() -> None:
+    r = ref("pool")
+    observations = [reading(r, ObservationMeaning.TOTAL, 10),
+                    reading(r, ObservationMeaning.FREE, 4)]
+    envelope = decide(claim_of(demand(r, 3)), {"pool": stock(r)}, observations)
+    assert envelope.outcome is Outcome.FITS
+    assert residual_of(envelope, "pool") == 4
+
+
 def test_two_readings_of_one_resource_use_the_more_conservative_residual() -> None:
     r = ref("pool")
     observations = [

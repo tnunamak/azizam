@@ -131,7 +131,7 @@ def _evaluate_demand(
 
     if isinstance(demand.amount, NotApplicable):
         # An availability predicate: the resource must advertise capacity, but no quantity is charged.
-        if total_value == 0:
+        if total_value <= 0:
             return stop(Outcome.NO_FIT, "availability predicate fails: no capacity advertised", None, 0,
                         used=(total.evidence,))
         return stop(Outcome.FITS, "availability predicate holds", used=(total.evidence,))
@@ -152,10 +152,14 @@ def _evaluate_demand(
         uncertainty = _uncertainty(reading)
         if value is None or uncertainty is None:
             return stop(Outcome.UNKNOWN, "a used or free reading is unknown or stale")
+        slack = total_uncertainty + uncertainty
+        if reading.meaning is ObservationMeaning.FREE:
+            if value > total_value + slack:
+                return stop(Outcome.UNKNOWN, "free reading exceeds the total")
+            value = min(value, total_value)
         # Included use can never exceed the managed total or what the reading itself shows as used.
         shown_used = value if reading.meaning is ObservationMeaning.USED else max(0, total_value - value)
         included = min(managed, _included(reading), shown_used)
-        slack = total_uncertainty + uncertainty
         if reading.meaning is ObservationMeaning.USED:
             outside_upper = max(0, value - included)
             residuals.append((total_value - managed - outside_upper - reserve - slack, reading))
