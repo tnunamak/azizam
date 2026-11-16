@@ -35,14 +35,21 @@ args, _ = parser.parse_known_args()
 
 app = FastAPI(title="face-service")
 _lock = threading.Lock()
+_activity_lock = threading.Lock()
+_active_requests = 0
 _last_used = time.monotonic()
+
+
+def idle_exit_due(now: float, last_used: float, active: int, idle_exit_s: int) -> bool:
+    return bool(idle_exit_s and active == 0 and now - last_used > idle_exit_s)
 
 
 def _idle_watchdog() -> None:
     while True:
         time.sleep(30)
-        if args.idle_exit_s and time.monotonic() - _last_used > args.idle_exit_s:
-            os._exit(0)  # status 0: systemd Restart=on-failure leaves the unit stopped
+        with _activity_lock:
+            if idle_exit_due(time.monotonic(), _last_used, _active_requests, args.idle_exit_s):
+                os._exit(0)  # status 0: systemd Restart=on-failure leaves the unit stopped
 
 
 threading.Thread(target=_idle_watchdog, daemon=True).start()
@@ -59,26 +66,31 @@ async def analyze(
     model: str = Form("buffalo_l"),
     min_det_score: float = Form(0.5),
 ) -> dict:
-    global _last_used
-    _last_used = time.monotonic()
-    data = await image.read()
-    frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-    if frame is None:
-        raise HTTPException(400, "image could not be decoded")
-    height, width = frame.shape[:2]
-    if model not in KNOWN_MODELS:
-        raise HTTPException(400, f"model must be one of {', '.join(KNOWN_MODELS)}")
-    def _run() -> list[dict]:
-        with _lock:
-            return analyze_faces(model, frame, min_det_score)
-
+    global _last_used, _active_requests
+    with _activity_lock:
+        _active_requests += 1
     try:
-        faces = await run_in_threadpool(_run)
-    except ModelRootMissing as exc:
-        # A setup fault, not a bad request: say so instead of a bare 500.
-        raise HTTPException(503, str(exc)) from exc
-    _last_used = time.monotonic()
-    return {"width": width, "height": height, "model": model, "faces": faces}
+        data = await image.read()
+        frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(400, "image could not be decoded")
+        height, width = frame.shape[:2]
+        if model not in KNOWN_MODELS:
+            raise HTTPException(400, f"model must be one of {', '.join(KNOWN_MODELS)}")
+        def _run() -> list[dict]:
+            with _lock:
+                return analyze_faces(model, frame, min_det_score)
+
+        try:
+            faces = await run_in_threadpool(_run)
+        except ModelRootMissing as exc:
+            # A setup fault, not a bad request: say so instead of a bare 500.
+            raise HTTPException(503, str(exc)) from exc
+        return {"width": width, "height": height, "model": model, "faces": faces}
+    finally:
+        with _activity_lock:
+            _active_requests -= 1
+            _last_used = time.monotonic()
 
 
 if __name__ == "__main__":
