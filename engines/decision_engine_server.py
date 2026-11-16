@@ -37,6 +37,7 @@ from gateway import decision_engine
 
 DEFAULT_REQUEST_TIMEOUT_S = 15.0
 MIN_UPSTREAM_TIMEOUT_S = 0.001
+MAX_REQUEST_BYTES = 1024 * 1024
 
 
 class DecisionThreadingHTTPServer(ThreadingHTTPServer):
@@ -409,7 +410,25 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         try:
-            length = int(self.headers.get("content-length") or "0")
+            raw_length = self.headers.get("content-length")
+            try:
+                value = "0" if raw_length is None else raw_length.strip()
+                if not value.isascii() or not value.isdecimal():
+                    raise ValueError("invalid content length")
+                value = value.lstrip("0") or "0"
+                # Compare the digit count before int(), including headers beyond
+                # Python's integer-conversion limit.
+                length = MAX_REQUEST_BYTES + 1 if len(value) > len(str(MAX_REQUEST_BYTES)) else int(value)
+            except ValueError:
+                self._json(400, decision_engine.error_body(
+                    "Content-Length must be a non-negative integer.", code="invalid_request",
+                ))
+                return
+            if length > MAX_REQUEST_BYTES:
+                self._json(413, decision_engine.error_body(
+                    "Request body is too large.", code="request_too_large",
+                ))
+                return
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
