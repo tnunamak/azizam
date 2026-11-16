@@ -85,6 +85,10 @@ def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s
         seconds = client_errors.retry_after(str(retry_after_s))
         if seconds:
             response.headers["Retry-After"] = seconds
+    # Prevent client SDK status-based retries when the job explicitly forbids retry.
+    if failure.retryable is False and (
+            response.status_code in (408, 409, 429) or response.status_code >= 500):
+        response.headers["x-should-retry"] = "false"
     return response
 
 
