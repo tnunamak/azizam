@@ -73,6 +73,16 @@ class JsonCompressionMiddleware:
                 if not compressible:
                     passthrough = True
                     return await send(message)
+                if not accepts_gzip:
+                    headers = list(message.get("headers") or ())
+                    if not any(
+                        token.strip().lower() == b"accept-encoding"
+                        for name, value in headers if name.lower() == b"vary"
+                        for token in value.split(b",")
+                    ):
+                        headers.append((b"vary", b"Accept-Encoding"))
+                    passthrough = True
+                    return await send({**message, "headers": headers})
                 start = message
                 return None
             if message["type"] == "http.response.body" and start is not None:

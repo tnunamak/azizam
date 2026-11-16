@@ -156,3 +156,58 @@ def test_exact_compression_threshold_and_strong_etag(size, compressed):
 def test_excluded_responses_keep_every_message_and_header(options, accepts):
     _, original, captured = _capture(accepts, **options)
     assert captured == original
+
+
+@pytest.mark.parametrize("accepts", [b"identity", b"gzip;q=0"], ids=["identity", "gzip-refused"])
+@pytest.mark.parametrize("with_length", [False, True], ids=["no-length", "length"])
+@pytest.mark.parametrize("vary", [
+    [],
+    [(b"vary", b"Origin")],
+    [(b"vary", b"Origin"), (b"VaRy", b"Cookie, aCcEpT-EnCoDiNg")],
+], ids=["no-vary", "origin", "already-negotiated"])
+def test_refused_gzip_delivers_start_and_chunk_before_final_body(accepts, with_length, vary):
+    async def exercise():
+        final_allowed = asyncio.Event()
+        waiting_for_final = asyncio.Event()
+        captured = []
+        first = b'{"value":"' + b"x" * 2048
+        last = b'"}'
+        headers = [(b"content-type", b"application/json"), (b"etag", b'"os-7"'),
+                   (b"x-fixture", b"unchanged"), *vary]
+        if with_length:
+            headers.append((b"content-length", str(len(first) + len(last)).encode()))
+        start = {"type": "http.response.start", "status": 200, "headers": headers}
+        chunk = {"type": "http.response.body", "body": first, "more_body": True}
+        final = {"type": "http.response.body", "body": last, "more_body": False}
+
+        async def app(scope, receive, send):
+            await send(start)
+            await send(chunk)
+            waiting_for_final.set()
+            await final_allowed.wait()
+            await send(final)
+
+        async def receive():
+            raise AssertionError("response-only middleware must not read requests")
+
+        async def send(message):
+            captured.append(message)
+
+        task = asyncio.create_task(JsonCompressionMiddleware(app)(
+            {"type": "http", "method": "GET", "path": "/me/api/streaming-json",
+             "headers": [(b"accept-encoding", accepts)]}, receive, send))
+        try:
+            await asyncio.wait_for(waiting_for_final.wait(), timeout=2)
+            assert not final_allowed.is_set()
+            expected_headers = list(headers)
+            if not any(b"accept-encoding" == token.strip().lower()
+                       for _, value in vary for token in value.split(b",")):
+                expected_headers.append((b"vary", b"Accept-Encoding"))
+            assert captured == [{**start, "headers": expected_headers}, chunk]
+            assert start["headers"] == headers
+        finally:
+            final_allowed.set()
+            await asyncio.wait_for(task, timeout=2)
+        assert captured == [{**start, "headers": expected_headers}, chunk, final]
+
+    asyncio.run(exercise())
