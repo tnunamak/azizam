@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LongAudioControls } from "./long-audio-controls";
@@ -404,4 +404,86 @@ it("discards draft settings when the selected engine changes", async () => {
   ));
   expect(await screen.findByLabelText("Distance between cuts (seconds)")).toHaveValue(30);
   expect(screen.getByRole("button", { name: "Save long-audio settings" })).toBeDisabled();
+});
+
+it("rejects blank trial tokens but preserves explicit zero search width", async () => {
+  const user = mount();
+  await user.click(await screen.findByText("Measurement samples and trials"));
+  const widths = screen.getByLabelText("Search widths, seconds (comma-separated)");
+  const lengths = screen.getByLabelText("Piece lengths, seconds (comma-separated)");
+  const measure = screen.getByRole("button", { name: "Measure long-audio settings" });
+  for (const text of ["2,", "2, ", ",2", "2,,0"]) {
+    await user.clear(widths);
+    await user.type(widths, text);
+    expect(measure).toBeDisabled();
+    await user.click(measure);
+  }
+  expect(request.mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
+  await user.clear(widths);
+  await user.type(widths, "2,0");
+  expect(measure).toBeEnabled();
+  for (const text of ["20,", "20, ", ",20", "20,,30"]) {
+    await user.clear(lengths);
+    await user.type(lengths, text);
+    expect(measure).toBeDisabled();
+  }
+  await user.clear(lengths);
+  await user.type(lengths, "20,30");
+  expect(measure).toBeEnabled();
+  await user.click(measure);
+  const writes = request.mock.calls.filter(([, init]) => init?.method);
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0][1].body)).toEqual({
+    sample_ids: ["sample"], lengths: [20, 30], search_widths: [2, 0],
+  });
+});
+
+it("keeps cleared search seconds invalid until an explicit number is entered", async () => {
+  const user = mount();
+  const search = await screen.findByLabelText("Search either side of each cut (seconds)");
+  const save = screen.getByRole("button", { name: "Save long-audio settings" });
+  await user.clear(search);
+  expect(search).toHaveValue(null);
+  expect(save).toBeDisabled();
+  await user.click(save);
+  expect(request.mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
+  await user.type(search, "0");
+  expect(save).toBeEnabled();
+  await user.click(save);
+  const writes = request.mock.calls.filter(([, init]) => init?.method);
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0][1].body)).toEqual({ search_seconds: 0 });
+});
+
+it("never shows job A commands for job B when B command loading fails", async () => {
+  const job = { id: "job-A", status: "succeeded", phase: "Job A complete", completed: 1, total: 1, report: null };
+  request.mockImplementation(async (path: string) => {
+    if (path.endsWith("/job-A")) return { commands: { result: "synthetic-job-A-command" } };
+    if (path.endsWith("/job-B")) throw new Error("synthetic command read failure");
+    return { ...options, job };
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><LongAudioControls serviceId="speech" /></QueryClientProvider>);
+  try {
+    const user = userEvent.setup();
+    await user.click(await screen.findByText("Owner REST commands"));
+    expect(await screen.findByText("synthetic-job-A-command")).toBeVisible();
+    await act(async () => {
+      client.setQueryData(["sttMeasurement", "speech"], {
+        ...options, job: { ...job, id: "job-B", phase: "Job B complete" },
+      });
+    });
+    await screen.findByText(/Job B complete/);
+    expect(screen.queryByText("synthetic-job-A-command")).toBeNull();
+    await waitFor(() => expect(request).toHaveBeenCalledWith("/admin/api/engines/speech/stt-measurements/job-B"));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByText("synthetic-job-A-command")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy result command" })).toBeNull();
+    expect(screen.getByText("curl owner configure")).toBeVisible();
+    await act(async () => { client.setQueryData(["sttMeasurement", "speech"], options); });
+    expect(screen.queryByText("synthetic-job-A-command")).toBeNull();
+  } finally {
+    cleanup();
+    client.clear();
+  }
 });
