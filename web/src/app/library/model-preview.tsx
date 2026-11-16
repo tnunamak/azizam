@@ -25,9 +25,10 @@ export default function ModelPreview({
     failed.current = onFailed;
   }, [onFailed]);
   useEffect(() => {
+    const controller = new AbortController();
     let active = true;
     setBlob(null);
-    networkFetch(src)
+    networkFetch(src, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error("model download failed");
         return response.blob();
@@ -36,10 +37,11 @@ export default function ModelPreview({
         if (active) setBlob(file);
       })
       .catch(() => {
-        if (active) failed.current();
+        if (active && !controller.signal.aborted) failed.current();
       });
     return () => {
       active = false;
+      controller.abort();
     };
   }, [src]);
   if (!blob) return <p role="status">Opening 3D model…</p>;
