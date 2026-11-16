@@ -185,6 +185,39 @@ def ui_inputs_by_name(ui_wf: dict) -> dict[str, dict]:
     return out
 
 
+def validate_workflow_shapes(ui_wf: object, api_wf: object) -> None:
+    """Validate the containers consumed by the name-based comparison."""
+    if not isinstance(ui_wf, dict) or not isinstance(api_wf, dict):
+        raise ValueError("workflow documents must be objects")
+    nodes = ui_wf.get("nodes", [])
+    links = ui_wf.get("links", [])
+    if not isinstance(nodes, list) or not isinstance(links, list):
+        raise ValueError("UI nodes and links must be lists")
+    for link in links:
+        if isinstance(link, list) and (
+            len(link) < 3 or not isinstance(link[0], (str, int))
+        ):
+            raise ValueError("UI link must contain an identifier, origin and slot")
+    for node in nodes:
+        if not isinstance(node, dict) or "id" not in node:
+            raise ValueError("UI nodes must be objects with an id")
+        inputs = node.get("inputs")
+        if inputs is None:
+            inputs = []
+        if not isinstance(inputs, list):
+            raise ValueError("UI node inputs must be a list")
+        for item in inputs:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                raise ValueError("UI inputs must be objects with a name")
+            if item.get("link") is not None and not isinstance(item["link"], (str, int)):
+                raise ValueError("UI input link must be an identifier")
+    for key, node in api_wf.items():
+        if key in ("_meta", "__ui_workflow__"):
+            continue
+        if not isinstance(node, dict) or not isinstance(node.get("inputs", {}), dict):
+            raise ValueError("API nodes and their inputs must be objects")
+
+
 def name_diff(ui_wf: dict, api_wf: dict) -> list[str]:
     """Diff node types and named inputs of a UI twin against its API JSON.
 
@@ -286,15 +319,16 @@ async def main(argv: list[str]) -> int:
     for ui_path in ui_paths:
         api_path = ui_path.with_name(ui_path.name[: -len(".ui.json")] + ".json")
         label = api_path.name
-        if not api_path.exists():
-            print(f"[orphan] {label}: no API sibling")
-            drifted += 1
-            continue
         try:
             with open(ui_path) as f:
                 ui_wf = json.load(f)
+            if not api_path.exists():
+                print(f"[orphan] {label}: no API sibling")
+                drifted += 1
+                continue
             with open(api_path) as f:
                 api_disk = json.load(f)
+            validate_workflow_shapes(ui_wf, api_disk)
         except (OSError, ValueError) as error:
             print(f"[error] {label}: {error}")
             errors += 1
