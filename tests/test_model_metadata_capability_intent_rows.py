@@ -137,7 +137,7 @@ def test_test_only_family_and_exact_precedence_are_data(tmp_path, monkeypatch):
     }
     _activate(monkeypatch, _loader()(_write(tmp_path, document)))
     assert _view(mm.from_capability("test.new")) == ("language", ("text",), ("text",))
-    assert _view(mm.from_capability("test.specific.other")) == ("language", ("text",), ("text",))
+    assert mm.from_capability("test.specific.other") is None
     assert _view(mm.from_capability("test.specific")) == ("decision", ("text",), ("text",))
 
 
