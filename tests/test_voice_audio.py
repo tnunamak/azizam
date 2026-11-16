@@ -60,6 +60,49 @@ class ProcessSampleTests(unittest.TestCase):
             "Record a clear voice in a quiet room.",
         )
 
+    def test_selected_window_with_nonzero_insufficient_speech_is_refused(self) -> None:
+        from unittest.mock import patch
+
+        # The upload passes the total-speech check; only the chosen window fails.
+        # Pin the chooser because its quiet-edge snap can move a real boundary.
+        kept = samples_of(speechlike(3.0, burst=0.5, period=0.5, noise=0))
+        silence = array.array("h", [0]) * (int(LIMITS.target_seconds * RATE) - len(kept))
+        outside = samples_of(speechlike(5, burst=0.5, period=0.5, noise=0))
+        uploaded = wav_of(kept + silence + outside)
+        with patch.object(va, "_best_window", return_value=0) as choose:
+            with self.assertRaises(va.VoiceSampleError) as ctx:
+                va.process_sample(uploaded, LIMITS)
+        choose.assert_called_once()
+        self.assertEqual(ctx.exception.code, "insufficient_speech")
+        self.assertRegex(ctx.exception.message, r"^Only [0-9]+\.[0-9]+ seconds of speech")
+        reported = float(ctx.exception.message.split()[1])
+        self.assertGreater(reported, 0.0)
+        self.assertLess(reported, LIMITS.min_speech_seconds)
+        self.assertAlmostEqual(reported, 3.0)
+
+    def test_selected_window_at_the_speech_minimum_is_accepted(self) -> None:
+        from unittest.mock import patch
+
+        minimum_frames = round(LIMITS.min_speech_seconds / va.FRAME_SECONDS)
+        # At this limit, 175 complete 20 ms frames are exactly 3.5 seconds.
+        # Include the next frame too, without weakening the exact-boundary case.
+        self.assertEqual(minimum_frames * va.FRAME_SECONDS, LIMITS.min_speech_seconds)
+        for frames in (minimum_frames, minimum_frames + 1):
+            with self.subTest(frames=frames):
+                continuous = samples_of(speechlike(5, burst=0.5, period=0.5, noise=0))
+                kept = continuous[:frames * va.FRAME_SAMPLES]
+                silence = array.array("h", [0]) * (int(LIMITS.target_seconds * RATE) - len(kept))
+                uploaded = wav_of(kept + silence + continuous)
+                with patch.object(va, "_best_window", return_value=0) as choose:
+                    result = va.process_sample(uploaded, LIMITS)
+                choose.assert_called_once()
+                self.assertEqual(result.window_start_seconds, 0.0)
+                self.assertEqual(result.duration_seconds, LIMITS.target_seconds)
+                self.assertIn("trimmed_to_best_window", result.warnings)
+                self.assertGreaterEqual(result.speech_seconds, LIMITS.min_speech_seconds)
+                self.assertLessEqual(result.speech_seconds, LIMITS.min_speech_seconds + va.FRAME_SECONDS)
+                self.assertEqual(result.speech_seconds, frames * va.FRAME_SECONDS)
+
     def test_five_seconds_of_continuous_speech_still_passes_whole(self) -> None:
         result = va.process_sample(speechlike(5, burst=0.5, period=0.5, noise=0), LIMITS)
         self.assertEqual(result.source_seconds, 5.0)
