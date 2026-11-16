@@ -348,7 +348,9 @@ one helper). The module names no workflow, engine, model, intent or modality.
   `max_concurrent_fetches` (8). They are trusted deployment config under `workflow_execution.result_limits` with code
   defaults, never manifest values. `collect` refuses a history answer over `max_history_bytes` (`history_too_large`)
   before it reads it and a binding over `max_selectors`. `FetchGate` holds at most `max_concurrent_fetches` fetches per
-  event loop, and the time limit covers the wait for a slot.
+  event loop, and the time limit covers the wait for a slot. Later change: `max_selectors` left `ResultLimits` and the
+  config schema. The selector count is the contract bound `output_selectors.DEFAULT_MAX_SELECTORS`, used by both the
+  save check and `collect`, so an owner value can no longer disagree with the save check.
 
 Goldens: in `tests/fixtures/adapter_differential/` 21 traces moved on purpose, and only inside the internal stores: the
 receipt's `manifest_hash` (the manifests now hold selectors), and, for the four job scenarios that pin a definition,
