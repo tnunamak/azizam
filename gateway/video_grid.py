@@ -51,6 +51,12 @@ def _load_document(path: Path) -> dict[str, Any]:
                     }
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator(schema).validate(checked)
+        defaults = document["grid_defaults"]
+        for key in ("length_step", "length_offset", "minimum_side"):
+            if type(defaults[key]) is not int:
+                raise ValueError(f"grid_defaults.{key} must be an exact integer (not bool or float)")
+        if any(type(side) is not int for side in defaults["size_when_unparsed"]):
+            raise ValueError("grid_defaults.size_when_unparsed must contain exact integers (not bools or floats)")
     except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError, jsonschema.ValidationError) as error:
         raise ValueError(f"{path}: invalid video grid registry: {error}") from error
     return document

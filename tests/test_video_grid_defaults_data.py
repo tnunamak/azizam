@@ -87,6 +87,29 @@ def test_invalid_defaults_name_file(tmp_path, case):
     assert str(path) in str(caught.value)
 
 
+@pytest.mark.parametrize(("key", "value"), [
+    pytest.param("length_step", 4.0, id="float-length-step"),
+    pytest.param("length_offset", 0.0, id="float-length-offset"),
+    pytest.param("minimum_side", 32.0, id="float-minimum-side"),
+    pytest.param("size_when_unparsed", [512.0, 512], id="float-size-first"),
+    pytest.param("size_when_unparsed", [512, 512.0], id="float-size-second"),
+    pytest.param("size_when_unparsed", [512.0, 512.0], id="float-size-both"),
+    pytest.param("length_step", True, id="bool-length-step"),
+])
+def test_defaults_require_exact_integers(tmp_path, key, value):
+    data = document()
+    data["grid_defaults"][key] = value
+    path = tmp_path / "non-integer-grid.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(ValueError) as caught:
+        video_grid.load_stride_reasons(path)
+
+    message = str(caught.value)
+    assert str(path) in message
+    assert key in message
+
+
 def test_shipped_defaults_preserve_base_behavior():
     data = yaml.safe_load(video_grid.BUNDLED_PATH.read_text(encoding="utf-8"))["grid_defaults"]
     assert data == {
