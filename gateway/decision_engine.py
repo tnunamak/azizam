@@ -18,6 +18,7 @@ from typing import Any, Mapping, Protocol
 DEFAULT_MODEL = "decide"
 DEFAULT_LOCAL_MODEL_ID = "decider-2b-v11"
 MAX_OPTIONS = 255
+MIN_LEVELS = 1
 MAX_LEVELS = 10
 LETTER_TOKEN_IDS = tuple(ord("A") + i for i in range(26))
 
@@ -169,9 +170,9 @@ def _question_options(kind: str, raw: Mapping[str, Any], key: str) -> tuple[tupl
     if kind == "score":
         if isinstance(criteria, Mapping):
             criteria = [criteria[k] for k in sorted(criteria, key=float)]
-        if not isinstance(criteria, list) or not 1 <= len(criteria) <= MAX_LEVELS:
+        if not isinstance(criteria, list) or not MIN_LEVELS <= len(criteria) <= MAX_LEVELS:
             raise DecisionInputError(
-                f"questions.{key}.criteria must list 1 to {MAX_LEVELS} score levels.",
+                f"questions.{key}.criteria must list {MIN_LEVELS} to {MAX_LEVELS} score levels.",
                 param=f"questions.{key}.criteria",
             )
         legend = tuple(_text(value) for value in criteria)
