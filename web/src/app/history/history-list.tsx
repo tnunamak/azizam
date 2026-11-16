@@ -82,6 +82,7 @@ export function HistoryList() {
   const removeAll = useMutation({
     mutationFn: accountApi.deleteAllRequestHistory,
     onSuccess: (result) => {
+      setOpenId(null);
       toast.success(
         result.pending
           ? "Deletion pending. Azizam will keep retrying."
@@ -116,8 +117,13 @@ export function HistoryList() {
       />
     );
 
+  const seen = new Set<string>();
   const rows: RequestHistoryItem[] =
-    listPages?.pages.flatMap((page) => page.requests) ?? [];
+    listPages?.pages.flatMap((page) => page.requests).filter((item) => {
+      if (seen.has(item.record_id)) return false;
+      seen.add(item.record_id);
+      return true;
+    }) ?? [];
   // The owner's switch comes first: when it is off for everyone, the member's own choice changes nothing.
   const householdOff = choice?.household_off === true;
   const keeps = !householdOff && (choice?.keep ?? true);

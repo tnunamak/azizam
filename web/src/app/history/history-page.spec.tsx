@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { requestHistoryListKey } from "@/lib/request-history";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HistoryPage from "./page";
@@ -81,10 +82,9 @@ const recordBody = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function renderPage() {
-  const client = new QueryClient({
+function renderPage(client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  })) {
   return render(
     <QueryClientProvider client={client}>
       <HistoryPage />
@@ -114,6 +114,29 @@ afterEach(() => {
 });
 
 describe("History list", () => {
+  it("keeps the first occurrence of overlapping page records in page order", async () => {
+    mocks.requestHistoryPage
+      .mockResolvedValueOnce({
+        requests: [item("a", "chat-a"), item("b", "chat-b")], next_cursor: "cursor-1",
+      })
+      .mockResolvedValueOnce({
+        requests: [item("b", "later-b"), item("c", "chat-c")], next_cursor: null,
+      });
+    renderPage();
+    await screen.findByRole("button", { name: /chat-a/ });
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: /chat-c/ });
+    const rows = within(screen.getByRole("list", { name: "Kept requests" })).getAllByRole("button");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("chat-a"),
+      expect.stringContaining("chat-b"),
+      expect.stringContaining("chat-c"),
+    ]);
+    expect(screen.queryByText("later-b")).not.toBeInTheDocument();
+    expect(mocks.requestHistoryPage).toHaveBeenLastCalledWith("cursor-1");
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
   it("lists the person's own requests newest first and pages with the server cursor", async () => {
     mocks.requestHistoryPage
       .mockResolvedValueOnce({
@@ -415,6 +438,42 @@ describe("a run of a workflow that made a file", () => {
 });
 
 describe("deleting", () => {
+  it.each([false, true])("does not reopen deleted details when new history arrives (pending=%s)", async (pending) => {
+    mocks.requestHistoryPage.mockResolvedValue({
+      requests: [item("a", "chat-a")], next_cursor: null,
+    });
+    mocks.deleteAllRequestHistory.mockResolvedValue({ deleted: 1, pending });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    renderPage(client);
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    expect(await screen.findByText("Hello from history")).toBeVisible();
+    await waitFor(() => expect(mocks.requestHistoryRecord).toHaveBeenCalledWith("a"));
+    const readsBeforeDelete = mocks.requestHistoryRecord.mock.calls.length;
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [], next_cursor: null });
+    // Exercise the bulk-delete control with detail state still open; do not close
+    // the sheet first, which would mask a stale openId in the delete callback.
+    fireEvent.click(screen.getByText("Delete all history"));
+    const confirm = await screen.findByText("Delete all request history?");
+    const dialog = confirm.closest('[role="dialog"]') as HTMLElement;
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete all" }));
+    await screen.findByText("No requests yet");
+    expect(mocks.toast.success).toHaveBeenCalledWith(pending
+      ? "Deletion pending. Azizam will keep retrying."
+      : "Deleted all request history.");
+    mocks.requestHistoryPage.mockResolvedValue({
+      requests: [item("b", "chat-b")], next_cursor: null,
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: requestHistoryListKey });
+    });
+    expect(await screen.findByRole("button", { name: /chat-b/ })).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hello from history")).not.toBeInTheDocument();
+    expect(mocks.requestHistoryRecord).toHaveBeenCalledTimes(readsBeforeDelete);
+  });
+
   it("deletes one request after a confirm, then refreshes the list", async () => {
     mocks.requestHistoryPage
       .mockResolvedValueOnce({ requests: [item("a", "chat-a"), item("b", "chat-b")], next_cursor: null })
