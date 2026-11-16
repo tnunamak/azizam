@@ -175,6 +175,13 @@ def process_sample(data: bytes, limits: SampleLimits, *, denoise: bool = False) 
         warnings.append("trimmed_to_best_window")
     window = samples[first * FRAME_SAMPLES : (last + 1) * FRAME_SAMPLES]
     window_speech = speech[first : last + 1]
+    speech_seconds_kept = sum(window_speech) * FRAME_SECONDS
+    if speech_seconds_kept < limits.min_speech_seconds:
+        raise VoiceSampleError(
+            "insufficient_speech",
+            f"Only {speech_seconds_kept:.1f} seconds of speech were found; at least {limits.min_speech_seconds:g} are needed. "
+            "Record a clear voice in a quiet room.",
+        )
     clipped_samples = sum(1 for s in window if abs(s) >= CLIP_LEVEL)
     clipping_fraction = clipped_samples / max(1, len(window))
     speech_levels = sorted(level for level, flag in zip(levels[first : last + 1], window_speech) if flag)
@@ -208,7 +215,7 @@ def process_sample(data: bytes, limits: SampleLimits, *, denoise: bool = False) 
         wav=buffer.getvalue(),
         duration_seconds=len(scaled) / SAMPLE_RATE,
         source_seconds=source_seconds,
-        speech_seconds=sum(window_speech) * FRAME_SECONDS,
+        speech_seconds=speech_seconds_kept,
         snr_db=snr_db,
         clipping_fraction=clipping_fraction,
         window_start_seconds=first * FRAME_SECONDS,

@@ -45,6 +45,32 @@ class ProcessSampleTests(unittest.TestCase):
         self.assertGreaterEqual(result.window_start_seconds, 5.5)
         self.assertGreater(result.speech_seconds / result.duration_seconds, 0.6)
 
+    def test_clipped_speech_at_both_ends_cannot_leave_a_silent_reference(self) -> None:
+        # Five seconds pass the whole-upload check, but clipping penalizes both
+        # ends so the best twelve-second window lies in the silent middle.
+        end = array.array("h", (32767 if i % 2 == 0 else -32768 for i in range(int(2.5 * RATE))))
+        silence = array.array("h", [0]) * (55 * RATE)
+        uploaded = wav_of(end + silence + end)
+        with self.assertRaises(va.VoiceSampleError) as ctx:
+            va.process_sample(uploaded, LIMITS)
+        self.assertEqual(ctx.exception.code, "insufficient_speech")
+        self.assertEqual(
+            ctx.exception.message,
+            "Only 0.0 seconds of speech were found; at least 3.5 are needed. "
+            "Record a clear voice in a quiet room.",
+        )
+
+    def test_five_seconds_of_continuous_speech_still_passes_whole(self) -> None:
+        result = va.process_sample(speechlike(5, burst=0.5, period=0.5, noise=0), LIMITS)
+        self.assertEqual(result.source_seconds, 5.0)
+        self.assertEqual(result.duration_seconds, 5.0)
+        self.assertEqual(result.speech_seconds, 5.0)
+        self.assertEqual(result.window_start_seconds, 0.0)
+        self.assertEqual(result.warnings, [])
+        self.assertEqual(len(samples_of(result.wav)), 5 * RATE)
+        self.assertGreater(rms_dbfs(samples_of(result.wav)), -21)
+        self.assertLess(rms_dbfs(samples_of(result.wav)), -19)
+
     def test_leading_and_trailing_silence_is_trimmed(self) -> None:
         pad = array.array("h", samples_of(speechlike(2, amplitude=0, noise=20)))
         body = array.array("h", samples_of(speechlike(8)))
