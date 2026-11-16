@@ -21,6 +21,6 @@ def resolve_intent(
         return None
     if intent in exact:
         return exact[intent]
-    if any(".".join(parts[:length]) in exact for length in range(2, len(parts))):
+    if any("." in name and intent.startswith(name + ".") for name in exact):
         return None
     return families.get(parts[0])
