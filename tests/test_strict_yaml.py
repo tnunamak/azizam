@@ -50,11 +50,52 @@ def test_ordinary_yaml_matches_safe_load(text: str) -> None:
     ],
     ids=["mapping-merge", "sequence-merge"],
 )
-def test_merge_keys_match_safe_load(text: str) -> None:
-    assert safe_load_strict(text) == yaml.safe_load(text)
+def test_refuses_merge_keys_at_the_merge_key_mark(text: str) -> None:
+    with pytest.raises(yaml.constructor.ConstructorError, match="merge keys are not allowed") as caught:
+        safe_load_strict(text)
+    expected_line = next(i for i, line in enumerate(text.splitlines()) if line.lstrip().startswith("<<:"))
+    assert caught.value.problem_mark.line == expected_line
 
 
 def test_refuses_an_unhashable_key_as_a_yaml_error() -> None:
     with pytest.raises(yaml.YAMLError, match="a mapping key must be a plain value") as caught:
         safe_load_strict("? [one, two]\n: value\n")
     assert isinstance(caught.value, yaml.constructor.ConstructorError)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1: a\ntrue: b\n",
+        "1: a\n1.0: b\n",
+        "1: a\n1: b\n",
+        "a: 1\na: 2\n",
+        "row: {nested: {a: 1, a: 2}}\n",
+    ],
+    ids=["int-bool", "int-float", "int-int", "string-string", "nested-flow"],
+)
+def test_refuses_python_equal_keys(text: str) -> None:
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key"):
+        safe_load_strict(text)
+
+
+@pytest.mark.parametrize("second", ["true", "1.0"], ids=["bool", "float"])
+def test_cross_type_duplicate_names_both_source_lines(second: str) -> None:
+    text = f"row:\n  1: a\n  {second}: b\n"
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key") as caught:
+        safe_load_strict(text)
+    message = str(caught.value)
+    assert "first key '1' at line 2" in message
+    assert f"conflicting key {second!r} at line 3" in message
+    assert caught.value.problem_mark.line == 2
+
+
+def test_integer_and_quoted_string_keys_remain_distinct() -> None:
+    loaded = safe_load_strict("1: a\n'1': b\n")
+    assert len(loaded) == 2
+    assert loaded[1] == "a"
+    assert loaded["1"] == "b"
+
+
+def test_quoted_merge_spelling_is_an_ordinary_key() -> None:
+    assert safe_load_strict("'<<': literal\n") == {"<<": "literal"}
