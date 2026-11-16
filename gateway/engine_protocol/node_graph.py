@@ -859,7 +859,7 @@ class NodeGraphAdapter:
         if self.result_selectors is None:
             raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
         try:
-            selectors = output_selectors.check_binding(self.result_selectors, outputs, block, max_selectors=limits.max_selectors)
+            selectors = output_selectors.check_binding(self.result_selectors, outputs, block)
         except output_selectors.SelectorError as exc:
             raise SelectionRefused(exc.code, str(exc)) from exc
         chosen = select_outputs(job, selectors)

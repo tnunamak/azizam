@@ -7,6 +7,8 @@ engine's answer is never read by guessing which files are the result.
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -174,13 +176,28 @@ def test_an_adapter_with_no_selector_descriptor_refuses_selectors():
 
 
 def test_the_selector_count_limit_is_enforced_when_the_results_are_read():
-    outputs = {f"r{i}": {} for i in range(3)}
-    block = {"selectors": {name: sel(node=str(i)) for i, name in enumerate(outputs)}}
-    history = job(n0={"images": [file("a")]}, n1={"images": [file("b")]}, n2={"images": [file("c")]})
-    assert len(ADAPTER.collect(history, block, outputs, limits=ResultLimits(max_selectors=3))) == 3
+    DEFAULT_MAX_SELECTORS = output_selectors.DEFAULT_MAX_SELECTORS
+
+    def read(count: int) -> Any:
+        outputs = {f"r{i}": {} for i in range(count)}
+        block = {"selectors": {name: sel(node=str(i)) for i, name in enumerate(outputs)}}
+        history = job(**{f"n{i}": {"images": [file(f"f{i}")]} for i in range(count)})
+        return ADAPTER.collect(history, block, outputs, limits=ResultLimits())
+
+    assert len(read(DEFAULT_MAX_SELECTORS)) == DEFAULT_MAX_SELECTORS
     with pytest.raises(SelectionRefused) as caught:
-        ADAPTER.collect(history, block, outputs, limits=ResultLimits(max_selectors=2))
+        read(DEFAULT_MAX_SELECTORS + 1)
     assert caught.value.code == "selector_count"
+
+
+def test_the_selector_count_is_not_an_owner_setting():
+    # One home: the save check and the read check share output_selectors.DEFAULT_MAX_SELECTORS, so the owner config
+    # has no second value that could let a manifest save and then fail to read, or the reverse.
+    from gateway import result_bundle
+
+    assert not hasattr(result_bundle.ResultLimits(), "max_selectors")
+    schema = json.loads((Path(__file__).resolve().parents[1] / "registry" / "defaults" / "workflow_execution.schema.json").read_text(encoding="utf-8"))
+    assert "max_selectors" not in json.dumps(schema)
 
 
 def test_a_history_answer_over_the_byte_limit_is_refused_before_anything_is_read():
@@ -198,11 +215,11 @@ def test_the_limits_for_fetching_come_from_trusted_config_with_code_defaults():
     from gateway import result_bundle
 
     defaults = result_bundle.limits_from_config({})
-    assert (defaults.max_selectors, defaults.max_history_bytes, defaults.fetch_timeout_s, defaults.max_concurrent_fetches) == (
-        16, 8 * 1024 * 1024, 300, 8)
+    assert (defaults.max_history_bytes, defaults.fetch_timeout_s, defaults.max_concurrent_fetches) == (
+        8 * 1024 * 1024, 300, 8)
     tuned = result_bundle.limits_from_config({"workflow_execution": {"result_limits": {
-        "max_selectors": 3, "max_history_bytes": 10, "fetch_timeout_s": 7, "max_concurrent_fetches": 2}}})
-    assert (tuned.max_selectors, tuned.max_history_bytes, tuned.fetch_timeout_s, tuned.max_concurrent_fetches) == (3, 10, 7, 2)
+        "max_history_bytes": 10, "fetch_timeout_s": 7, "max_concurrent_fetches": 2}}})
+    assert (tuned.max_history_bytes, tuned.fetch_timeout_s, tuned.max_concurrent_fetches) == (10, 7, 2)
 
 
 # ------------------------------------------------------------------------------------------------- JSON files

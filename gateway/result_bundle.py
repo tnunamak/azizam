@@ -75,9 +75,9 @@ class ResultLimits:
     json_max_depth: int = 32
     json_max_items: int = 100_000
     json_max_string_length: int = 1_000_000
-    # Reading the engine's answer (D6): selectors in one binding, bytes of the history answer, seconds for one fetch,
-    # and result fetches in flight at once.
-    max_selectors: int = 16
+    # Reading the engine's answer (D6): bytes of the history answer, seconds for one fetch, and result fetches in flight
+    # at once. The selector count per binding is a contract bound, output_selectors.DEFAULT_MAX_SELECTORS, checked the
+    # same way when a manifest is saved and when its results are read.
     max_history_bytes: int = 8 * 1024 * 1024
     fetch_timeout_s: int = 300
     max_concurrent_fetches: int = 8

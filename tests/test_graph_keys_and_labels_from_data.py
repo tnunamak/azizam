@@ -34,7 +34,7 @@ def adapter_for(document=None):
 
 
 def limits():
-    return SimpleNamespace(max_history_bytes=10000, max_selectors=8, max_assets=8)
+    return SimpleNamespace(max_history_bytes=10000, max_assets=8)
 
 
 def finished(job, adapter):

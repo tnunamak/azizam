@@ -40,7 +40,6 @@
         "json_max_depth": {"type": "integer", "minimum": 1},
         "json_max_items": {"type": "integer", "minimum": 1},
         "json_max_string_length": {"type": "integer", "minimum": 1},
-        "max_selectors": {"type": "integer", "minimum": 1},
         "max_history_bytes": {"type": "integer", "minimum": 1},
         "fetch_timeout_s": {"type": "integer", "minimum": 1},
         "max_concurrent_fetches": {"type": "integer", "minimum": 1}
