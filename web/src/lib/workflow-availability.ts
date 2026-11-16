@@ -114,7 +114,7 @@ export function workflowAvailabilityView(
 ): WorkflowAvailabilityView {
   const status = String(availability?.status ?? "").toLowerCase();
   const reason = availability?.reason?.trim() || null;
-  if (status === "idle")
+  if (status === "idle" && availability?.available !== false)
     return {
       readiness: "ready_to_start",
       runnable: true,
