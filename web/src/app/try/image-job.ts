@@ -54,10 +54,12 @@ export async function runImageJob<Content>(
     if (deps.stopped()) return { kind: "stopped" };
     try {
       job = await deps.submit();
+      if (deps.stopped()) return { kind: "stopped" };
     } catch (error) {
       if (!deps.isNetworkFailure(error)) throw error;
       if (attempt === SUBMIT_ATTEMPTS - 1) return { kind: "lost" };
       await deps.wait(POLL_MS * (attempt + 1));
+      if (deps.stopped()) return { kind: "stopped" };
     }
   }
   if (!job) return { kind: "lost" };
@@ -73,6 +75,7 @@ export async function runImageJob<Content>(
     if (TERMINAL_OK.has(status)) {
       try {
         const content = await deps.content(job.id);
+        if (deps.stopped()) return { kind: "stopped" };
         return { kind: "done", content, jobId: job.id, requestId };
       } catch (error) {
         if (!deps.isNetworkFailure(error)) throw error;
@@ -89,6 +92,7 @@ export async function runImageJob<Content>(
     if (deps.stopped()) return { kind: "stopped" };
     try {
       const next = await deps.poll(job.id);
+      if (deps.stopped()) return { kind: "stopped" };
       lastAnswer = deps.now();
       status = next.status;
       requestId = next.requestId ?? requestId;
