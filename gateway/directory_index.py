@@ -69,9 +69,9 @@ def names(directory: Path) -> frozenset[str] | None:
 def forget(directory: Path | None = None) -> None:
     global _GENERATION
     with _LOCK:
+        _GENERATION += 1
         if directory is None:
             _NAMES.clear()
-            _GENERATION += 1
         else:
             _NAMES.pop(str(directory), None)
 

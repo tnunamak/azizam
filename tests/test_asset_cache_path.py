@@ -153,7 +153,7 @@ def test_cold_listing_does_not_block_another_cached_directory(cache, monkeypatch
         assert first.result(timeout=5) == expected
 
 
-@pytest.mark.parametrize("clear_kind", ["forget", "rollback"])
+@pytest.mark.parametrize("clear_kind", ["forget", "targeted-forget", "rollback"])
 def test_clear_during_listing_returns_without_refilling(cache, monkeypatch, clear_kind):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -181,6 +181,8 @@ def test_clear_during_listing_returns_without_refilling(cache, monkeypatch, clea
             assert entered.wait(5), "listing did not start"
             if clear_kind == "forget":
                 cleared = workers.submit(directory_index.forget)
+            elif clear_kind == "targeted-forget":
+                cleared = workers.submit(directory_index.forget, cache)
             else:
                 now -= 3_000_000_000
                 cleared = workers.submit(directory_index.names, cache)
