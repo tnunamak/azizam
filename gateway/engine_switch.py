@@ -49,35 +49,65 @@ class SwitchLease:
 
 
 class _LeaseStream:
-    """A closeable iterator whose cleanup also runs before its first read."""
+    """A closeable iterator whose lease outlives reads and source cleanup."""
 
     def __init__(self, source: AsyncIterator[bytes], lease: SwitchLease) -> None:
         self._source = source
         self._lease = lease
         self._closed = False
+        self._closing = False
+        self._reading = False
+        self._read_done = asyncio.Event()
+        self._read_done.set()
+        self._close_task: asyncio.Task[None] | None = None
 
     def __aiter__(self) -> _LeaseStream:
         return self
 
     async def __anext__(self) -> bytes:
-        if self._closed:
+        if self._closing or self._closed:
             raise StopAsyncIteration
+        if self._reading:
+            raise RuntimeError("stream read is already running")
+        self._reading = True
+        self._read_done.clear()
         try:
-            return await self._source.__anext__()
+            try:
+                chunk = await self._source.__anext__()
+            finally:
+                # Signal before awaiting our own cleanup: close waits on this.
+                self._reading = False
+                self._read_done.set()
         except BaseException:
             await self.aclose()
             raise
+        if self._closing:
+            await self.aclose()
+            raise StopAsyncIteration
+        return chunk
 
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+    async def _finish_close(self) -> None:
+        await self._read_done.wait()
         try:
             close = getattr(self._source, "aclose", None)
             if close is not None:
                 await close()
         finally:
+            self._closed = True
             self._lease.release()
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        if self._close_task is None:
+            self._closing = True
+            self._close_task = asyncio.create_task(self._finish_close())
+            # A cancelled waiter must neither cancel cleanup nor leave its error
+            # unobserved. Active waiters still receive the task's original error.
+            self._close_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+        await asyncio.shield(self._close_task)
 
 
 def _identity(offering: Mapping[str, Any]) -> Any:

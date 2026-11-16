@@ -192,3 +192,112 @@ def test_select_lease_construction_failure_balances_activity(already_selected):
         assert not lock.locked()
 
     asyncio.run(check())
+
+
+
+@pytest.mark.parametrize("cancel_read", [False, True], ids=["yield", "cancel"])
+def test_close_waits_for_inflight_read_and_discards_late_chunk(cancel_read):
+    async def check():
+        entered, release, closing = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        events = []
+        serving = CountingLease()
+
+        async def source():
+            try:
+                entered.set()
+                await release.wait()
+                yield b"late chunk"
+            finally:
+                events.append("source cleaned")
+                assert serving.releases == 0
+
+        wrapped = SwitchLease(serving).hand_off(source())
+        reading = asyncio.create_task(wrapped.__anext__())
+        await entered.wait()
+
+        async def close():
+            closing.set()
+            await wrapped.aclose()
+
+        closer = asyncio.create_task(close())
+        await closing.wait()
+        try:
+            assert serving.releases == 0
+            assert not closer.done()
+            if cancel_read:
+                reading.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await reading
+            else:
+                release.set()
+                with pytest.raises(StopAsyncIteration):
+                    await reading
+            await closer
+            assert events == ["source cleaned"]
+            assert serving.releases == 1
+            await wrapped.aclose()
+            assert serving.releases == 1
+            with pytest.raises(StopAsyncIteration):
+                await wrapped.__anext__()
+        finally:
+            release.set()
+            if not reading.done():
+                reading.cancel()
+            await asyncio.gather(reading, closer, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), timeout=3))
+
+
+def test_concurrent_closes_wait_for_one_source_cleanup_and_one_release():
+    async def check():
+        entered, release = asyncio.Event(), asyncio.Event()
+        cleaning, finish_cleanup = asyncio.Event(), asyncio.Event()
+        first_started, second_started = asyncio.Event(), asyncio.Event()
+        events = []
+        serving = CountingLease()
+
+        async def source():
+            try:
+                entered.set()
+                await release.wait()
+                yield b"late"
+            finally:
+                events.append("cleaning")
+                cleaning.set()
+                await finish_cleanup.wait()
+                assert serving.releases == 0
+                events.append("cleaned")
+
+        wrapped = SwitchLease(serving).hand_off(source())
+        reading = asyncio.create_task(wrapped.__anext__())
+        await entered.wait()
+
+        async def close(started):
+            started.set()
+            await wrapped.aclose()
+
+        first = asyncio.create_task(close(first_started))
+        await first_started.wait()
+        second = asyncio.create_task(close(second_started))
+        await second_started.wait()
+        try:
+            assert not first.done() and not second.done()
+            assert serving.releases == 0
+            release.set()
+            await cleaning.wait()
+            assert not first.done() and not second.done()
+            assert serving.releases == 0
+            finish_cleanup.set()
+            with pytest.raises(StopAsyncIteration):
+                await reading
+            await asyncio.gather(first, second)
+            assert events == ["cleaning", "cleaned"]
+            assert serving.releases == 1
+        finally:
+            release.set()
+            finish_cleanup.set()
+            if not reading.done():
+                reading.cancel()
+            await asyncio.gather(reading, first, second, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), timeout=3))
