@@ -28276,7 +28276,9 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                      "seconds": seconds, "actual_seconds": round(submission["actual_seconds"], 4),
                      "length_frames": submission["length"], "frame_rate": spec.fps, "seed": spec.seed,
                      "total_seconds": submission["payload_extra"]["total_seconds"],
-                     "segments": submission["payload_extra"]["segments"]}
+                     "segments": submission["payload_extra"]["segments"],
+                     "requested_seconds": _seconds_text(submission["seconds_val"]),
+                     "duration_adjustment_reason": submission["duration_adjustment_reason"]}
             options = {"size": size, "seconds_frames": submission["length"], "frame_rate": spec.fps,
                        "chain_plan": {"template": engine.document(), "spec": asdict(spec)}}
             controls = video_controls.parse_video_controls(body)

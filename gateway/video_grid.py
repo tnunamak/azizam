@@ -109,7 +109,7 @@ _LENGTH_STEP = _GRID_DEFAULTS["length_step"]
 _LENGTH_OFFSET = _GRID_DEFAULTS["length_offset"]
 
 
-def stride_reason(step: int) -> str:
+def stride_reason(step: int | None) -> str:
     """Published duration-adjustment reason for the frame grid used by a request."""
     return _STRIDE_REASONS["by_step"].get(step, _STRIDE_REASONS["default"])
 

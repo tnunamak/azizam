@@ -352,7 +352,7 @@ def test_the_facts_hold_no_prompt_no_person_and_only_the_keys_the_design_names()
     assert "private secret sentence" not in json.dumps(run_request.facts, default=str)
     assert set(run_request.facts) <= {"model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate",
                                       "seed", "audio", "metadata_mode", "provenance", "remixed_from_video_id",
-                                      "extended_from_video_id", "source_asset_id", "total_seconds", "warnings"}
+                                      "extended_from_video_id", "source_asset_id", "total_seconds", "warnings", "duration_adjustment_reason", "requested_seconds"}
     assert run_request.facts["provenance"]["kind"] == "video"
     assert "private secret sentence" not in json.dumps(run_request.facts["provenance"], default=str)
 

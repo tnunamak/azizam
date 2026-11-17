@@ -385,3 +385,29 @@ def test_missing_config_row_is_not_a_present_row_with_optional_facts_omitted(wor
             await submitted(world, 2)
             assert json.dumps(world.engine.prompts["p1"], sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
     asyncio.run(drive())
+
+
+@pytest.mark.parametrize("model,reason", [("video-ltx-2.5-keyframes", "ltx_latent_8np1_stride"),
+                                          ("video-minimax-h3-keyframes", "frame_count_stride")])
+def test_duration_reason_matches_the_old_handler_for_configured_and_generic_grids(world, model, reason):
+    uri = "data:image/png;base64," + base64.b64encode(png_bytes()).decode()
+    world.rig.set(proxy, "_WORKFLOW_JOB_SPOOL", None)
+    body = {"model": model, "prompt": "same duration header", "seconds": 3.2, "seed": 7,
+            "input_reference": uri, "extensions": {"com.azizam.workflow": {"last_frame": uri}}}
+    async def drive():
+        old = await proxy.proxy_graph_video_create(json_request(body), access_context(), body_override=body)
+        new = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert new.status_code == old.status_code == 200
+        assert new.headers["x-duration-adjusted"] == old.headers["x-duration-adjusted"]
+        assert new.headers["x-duration-adjusted"].endswith("reason=" + reason)
+    asyncio.run(drive())
+
+
+def test_existing_row_duration_reason_keeps_the_main_public_answer(world):
+    # Measured on fd30cbfca through POST /v1/videos, not the unmounted old handler.
+    async def drive():
+        answer = await world.rig.call("POST", "/v1/videos", json_body={
+            "model": "video-ltx-2.5-t2v", "prompt": "main reference", "seconds": 3.2, "seed": 7})
+        assert answer.status_code == 200, answer.text
+        assert answer.headers["x-duration-adjusted"] == "requested=3.2 actual=3.3750 reason=frame_count_stride"
+    asyncio.run(drive())

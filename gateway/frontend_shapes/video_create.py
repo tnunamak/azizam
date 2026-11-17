@@ -372,6 +372,8 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
             kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
             seed=seed, parameters=parameters, created_at=now)}
+    if prepared.get("wire_frame_rate"):
+        facts["duration_adjustment_reason"] = video_grid.stride_reason(grid.step)
     if seed is not None:
         facts["seed"] = seed
     refs: list[FactRef] = []

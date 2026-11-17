@@ -651,12 +651,16 @@ class OpenAIVideoCreate(VideoViews, Shape):
         if facts.get("segments") is not None:
             body.update(total_seconds=facts["total_seconds"], segments=facts["segments"],
                         extended_from_video_id=facts.get("extended_from_video_id"))
-        requested = facts.get("seconds")
+        requested = facts.get("requested_seconds", facts.get("seconds"))
+        if facts.get("segments") is not None and not facts.get("duration_adjustment_reason"):
+            requested = None
         adjusted = None
         try:
             actual = float(facts["length_frames"]) / float(facts["frame_rate"])
             if requested is not None and actual != float(requested):
-                adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason=frame_count_stride"
+                from gateway import video_grid
+                reason = facts.get("duration_adjustment_reason") or video_grid.stride_reason(None)
+                adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason={reason}"
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             adjusted = None
         headers = _wire.result_headers(row.result_headers, {"duration_adjusted": adjusted})
