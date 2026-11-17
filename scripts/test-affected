@@ -118,8 +118,16 @@ def imports_of(path: Path) -> set[Path]:
     return found
 
 
+def removed_python_file(changed: list[str]) -> bool:
+    # --no-renames includes the old path of a rename. Missing modules cannot
+    # appear in the HEAD import graph, so their dependants need the full suite.
+    return any(name.endswith(".py") and not (ROOT / name).is_file() for name in changed)
+
+
 def affected_python_tests(changed: list[str]) -> list[str] | None:
     """Return selected test paths, or None when the whole suite is affected."""
+    if removed_python_file(changed):
+        return None
     if any(name in WHOLE_SUITE for name in changed):
         return None
     files = python_files()
@@ -156,7 +164,10 @@ def main() -> int:
     selected = affected_python_tests(changed)
     web_changed = any(name.startswith("web/") for name in changed)
     if selected is None:
-        print("python: shared test harness changed; selecting the whole suite")
+        if removed_python_file(changed):
+            print("python: deleted or renamed-away Python file; selecting the whole suite")
+        else:
+            print("python: shared test harness changed; selecting the whole suite")
     else:
         print(f"python: {len(selected)} test module(s)")
         if args.list:
