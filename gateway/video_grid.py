@@ -295,8 +295,9 @@ def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, A
     meta = config.get("node_roles") or {}
     roles = {}
     for role, rule in _DOCUMENT["workflow_fact_source"]["roles"].items():
-        nodes = next((meta[key] for key in rule["keys"] if meta.get(key)), [])
-        if isinstance(nodes, (list, tuple)) and "index" in rule:
+        selected = next((key for key in rule["keys"] if meta.get(key)), None)
+        nodes = meta.get(selected, [])
+        if isinstance(nodes, (list, tuple)) and selected == rule.get("indexed_key") and "index" in rule:
             nodes = nodes[rule["index"]:rule["index"] + 1]
         nodes = nodes if isinstance(nodes, (list, tuple)) else [nodes]
         for binding in (contract.get("bindings") or {}).values():

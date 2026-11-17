@@ -145,6 +145,22 @@ def test_workflow_fact_rules_are_refused_at_load(tmp_path, case):
         video_grid.load_stride_reasons(path)
 
 
+def test_dedicated_singleton_height_does_not_take_the_pair_index():
+    contract = {"bindings": {"graph": {"map": {"canvas_height": [{"node": "H", "input": "value"}]}}}}
+    facts = video_grid.configured_facts({"node_roles": {"height_node": ["H"]}}, contract)
+    assert facts.roles["height"] == "canvas_height"
+
+
+def test_paired_size_nodes_select_width_and_height_by_position():
+    contract = {"bindings": {"graph": {"map": {
+        "canvas_width": [{"node": "W", "input": "value"}],
+        "canvas_height": [{"node": "H", "input": "value"}],
+    }}}}
+    facts = video_grid.configured_facts({"node_roles": {"size_node": ["W", "H"]}}, contract)
+    assert facts.roles["width"] == "canvas_width"
+    assert facts.roles["height"] == "canvas_height"
+
+
 @pytest.mark.parametrize("case,path_name", [("empty", "size"), ("size", "max"), ("grid", "fps"), ("length", "max_seconds")])
 def test_fact_groups_and_keys_fail_at_load_even_without_schema_validation(tmp_path, monkeypatch, case, path_name):
     data = document()

@@ -27,8 +27,8 @@ workflow_fact_source:
       step: {key: length_step, default: 8}
       offset: {key: length_offset, default: 1}
   roles:
-    width: {keys: [width_node, size_node], index: 0, fields: [width, value]}
-    height: {keys: [height_node, size_node], index: 1, fields: [height, value]}
+    width: {keys: [width_node, size_node], index: 0, indexed_key: size_node, fields: [width, value]}
+    height: {keys: [height_node, size_node], index: 1, indexed_key: size_node, fields: [height, value]}
     length: {keys: [length_nodes, length_node], fields: [length, value, frames_number]}
     frame_rate: {keys: [frame_rate_nodes, frame_rate_node], fields: [frame_rate, value]}
     image: {keys: [image_node], fields: [image]}
