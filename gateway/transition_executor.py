@@ -42,7 +42,7 @@ from gateway import log_scrub
 from gateway.swap_drain import SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.transition_gate import TransitionUnavailable
 from gateway.transition_ops import (
-    FINISHED_STATES, STEP_ORDER, BeginResult, Begun, Conflict, EffectResult, Evidence, Operation, OperationStore,
+    EFFECT_STEPS, FINISHED_STATES, STEP_ORDER, BeginResult, Begun, Conflict, EffectResult, Evidence, Operation, OperationStore,
     SameOperation, Step, StepContext, StepIntent, StepName, StepVerdict, TransitionAdapter, TransitionKind,
 )
 from gateway.transition_profiles import attests_no_change
@@ -51,7 +51,6 @@ from gateway.transition_store import StaleOutcome, request_hash
 REVALIDATE = "revalidate:"
 """Prefix of the evidence a revalidation hold keeps from the outcome it re-judges."""
 
-EFFECT_STEPS: frozenset[str] = frozenset({"checkpoint", "release", "load", "restore"})
 
 DEFAULTS: dict[str, float] = {
     "drain_deadline_s": 60.0,
