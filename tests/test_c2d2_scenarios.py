@@ -69,7 +69,7 @@ def _job(public, key, engine):
         if job["status"] in {"succeeded", "failed", "cancelled"}:
             break
         time.sleep(0.1)
-    assert job["status"] == "succeeded", job
+    assert job["status"] == "succeeded", json.dumps(job, sort_keys=True)
     assert engine.posts == [{"input": {"vector": VECTOR}}]
     return submitted, job
 
@@ -332,7 +332,7 @@ def test_s6_owner_opted_in_remote_engine_serves_a_job(owner, gateway, fake_upstr
     records = client.get("/admin/api/activity/requests")
     assert records.status_code == 200, records.text
     receipts = [row["receipt"] for row in records.json()["records"]
-                if row["receipt"].get("job_id") == job["id"]]
+                if row["receipt"].get("job_id") == submitted["id"]]
     assert len(receipts) == 1
     assert receipts[0]["status"] == "succeeded"
     assert receipts[0]["backend"] == "smell-box"
@@ -478,3 +478,102 @@ def test_s2_partial_conservative_single_wav_result_is_audio(owner, gateway, fake
         assert asset["media_type"] == "audio/wav", asset
         assert asset["size_bytes"] == len(wav), asset
         assert asset["kind"] == "audio", asset
+
+
+def test_s6_remote_policy_owner_authentication_production_path(owner, gateway):
+    """Store policy data on a local record; this grants no remote egress."""
+    from tests.test_signin_who_can_enter import signed_in
+
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    state = client.get("/admin/api/operator/service-registry").json()
+    connection = dict(state["service_registry"]["services"]["smell-box"]["config"]["connection"])
+    connection["remote_dispatch"] = {"enabled": True}
+    path = "/admin/api/operator/services/smell-box"
+    body = {"connection": connection}
+    with gateway.client() as anonymous:
+        assert anonymous.patch(path, json=body).status_code in {401, 403}
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        assert public.patch(path, headers=_headers(key), json=body).status_code in {401, 403}
+    admin, _ = signed_in(gateway, sub="remote-policy-admin", email="admin@example.test", groups=["/Trusted"])
+    denied = admin.patch(path, headers=_write_headers(admin), json=body)
+    assert denied.status_code == 403, denied.text
+    assert client.get("/admin/api/operator/service-registry").json() == state
+    accepted = client.patch(path, headers=_write_headers(client), json=body)
+    assert accepted.status_code == 200, accepted.text
+    from gateway import admin_store
+    stored = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]["services"]["smell-box"]
+    assert stored["config"]["connection"]["remote_dispatch"] == {"enabled": True}
+
+
+def test_s6_remote_without_owner_opt_in_keeps_existing_refusal(owner):
+    client, *_ = owner
+    assert _install_description(client).status_code == 201
+    response = _add_engine(client, values={
+        "address": "https://remote.example.test", "dispatch": "protocol",
+        "protocol_description": "d0-smell"})
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "protocol dispatch does not enforce paid-provider access or spend limits; "
+        "use the existing provider route")
+    state = client.get("/admin/api/operator/service-registry")
+    assert "smell-box" not in state.json()["service_registry"]["services"]
+
+
+def test_s6_remote_generic_job_lifecycle_and_leases_production_path(owner, gateway, fake_upstreams):
+    """Qualify the local generic runner before giving it any remote authority."""
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    created = _add_engine(client, capabilities=["smell.infer"],
+                          values={"address": "http://127.0.0.1:18303", "dispatch": "protocol", "protocol_description": "d0-smell"},
+                          models=[{"id": "smell-1", "public_name": "smell-1"}])
+    assert created.status_code == 201, created.text
+    configured = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={
+        "protocol": "d0-smell",
+        "residency": {"domain": "scenario-domain", "transition": {"enabled": True, "activation": "pass_through"}},
+        "enabled": True})
+    assert configured.status_code == 200, configured.text
+    proxy = gateway.proxy
+    policy = proxy._transition_policy("smell-box")
+    assert policy.enabled and policy.pass_through
+    seen = []
+
+    class LeasedEngine(SmellEngine):
+        async def __call__(self, scope, receive, send):
+            proxy._require_egress_lease("smell-box")
+            seen.append((scope["method"], scope["path"], proxy._swap_drain.in_flight("smell-box")))
+            await super().__call__(scope, receive, send)
+
+    engine = LeasedEngine()
+    fake_upstreams.router.add("127.0.0.1:18303", engine)
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        # A closed serving gate must terminate the admitted job before any upstream request.
+        submitted, job = _job(public, key, engine)
+        content = public.get(submitted["content_url"], headers=_headers(key))
+        assert content.status_code == 200 and content.content == MOLECULE
+        successful_requests = list(seen)
+        gates = proxy._transition_gates()
+        gates.force("scenario-domain", "closed")
+        denied = public.post("/gateway/v1/media/jobs", headers=_headers(key), json={
+            "intent": "smell.infer", "model": "smell-1", "input": {"vector": VECTOR}})
+        assert denied.status_code == 202, denied.text
+        for _ in range(100):
+            refused = public.get("/gateway/v1/media/jobs/" + denied.json()["id"], headers=_headers(key))
+            assert refused.status_code == 200, refused.text
+            if refused.json()["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.1)
+        assert refused.json()["status"] == "failed", refused.text
+        assert seen == successful_requests
+    assert [(method, path) for method, path, _ in seen] == [
+        ("POST", "/v1/infer"), ("GET", "/v1/infer/smell-1"), ("GET", "/v1/infer/smell-1/molecule")]
+    assert all(count == 1 for _, _, count in seen), seen
+    assert proxy._swap_drain.in_flight("smell-box") == 0
+    records = client.get("/admin/api/activity/requests")
+    assert records.status_code == 200, records.text
+    receipts = [row["receipt"] for row in records.json()["records"] if row["receipt"].get("job_id") == submitted["id"]]
+    assert len(receipts) == 1
+    assert (receipts[0]["status"], receipts[0]["backend"]) == ("succeeded", "smell-box")
