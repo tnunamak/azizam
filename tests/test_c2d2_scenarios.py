@@ -767,3 +767,30 @@ def test_s6_non_owner_cannot_write_remote_policy_through_any_api(owner, gateway,
     response = admin.request(method, path, headers=_write_headers(admin), json=body)
     assert response.status_code == 403, response.text
     assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before
+
+
+def test_s6_public_job_get_strips_remote_binding_for_non_internal_audiences(owner, gateway, fake_upstreams, monkeypatch):
+    from gateway import media_jobs
+    from tests.support.remote_protocol import gateway_case, add_remote
+    client, _, owner_id, plan_id = owner
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    enabled = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, _ = _job(public, key, recorder)
+        response = public.get('/gateway/v1/media/jobs/' + submitted['id'], headers=_headers(key))
+        assert response.status_code == 200, response.text
+        internal = media_jobs.get(submitted['id'], audience='internal', path=media_jobs.DB_PATH)
+        binding = internal['metadata']['remote_binding']
+        assert binding['origin'] == 'https://engine.example:443'
+        assert binding['service_id'] == 'smell-box'
+        assert 'metadata' not in response.json()
+        assert 'remote_binding' not in response.text and 'engine.example' not in response.text
+        assert 'service_id' not in response.json()
+        for audience in ('client', 'admin'):
+            visible = media_jobs.get(submitted['id'], audience=audience, path=media_jobs.DB_PATH)
+            assert 'metadata' not in visible
+            assert 'remote_binding' not in json.dumps(visible)
