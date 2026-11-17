@@ -128,3 +128,64 @@ was made. Confidence: 95% in the reproduced boundary; the audio port is not impl
 The continuation adds five tests: four from the duration cherry-pick and one boundary probe. Proposed budget delta is
 +5 on top of the accepted 3D delta of +18: at the original tests/budgets.toml line 678, `pytest = 29830` would become
 `pytest = 29853` (+23 total), before reconciling other lanes. The owner oracle remains unedited.
+
+## Post-publication delivery implementation and receipt stop
+
+The owner approved a generic post-publication `deliver` hook. `declared_operation_job.run` now accepts an explicit
+optional hook or uses the prepared runtime's `deliver` method. It passes the published ResultBundle to that hook and
+returns its client answer. A delivery exception propagates without changing the succeeded job or its Library result.
+No modality-specific words or branches were added to that module. A terminal replay performs no second delivery.
+The existing no-hook callers, including 3D, retain their behavior.
+
+Expect it to work because the versioned runner returns its bundle only after the completion transaction. The two new
+hook tests read the real job and bundle inside delivery, then prove both successful delivery and a raised exception
+leave publication succeeded. Before implementation they reported `2 failed in 7.76s` (the hook was never called).
+
+The audio candidate separates prepared request/engine state, typed result collection/storage, and post-publication
+wire delivery. It calls the existing normalization, storage and metadata functions. At commit 261fb7b50, old/new
+comparisons passed for success, delivery failure, engine failure, omitted duration and normalization. They compare
+responses, headers, engine requests and stored receipts. The unchanged 30-second pin also passed for both shipped
+workflows. Command:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-port-proved.xml -n 4 \
+  tests/test_w4_audio_declared.py tests/test_declared_delivery.py tests/test_declared_operation_job.py \
+  tests/test_w4_mesh_declared.py tests/test_audio_duration_publication.py -o junit_logging=all
+```
+
+Output: `56 passed in 12.26s`. The wire expectations captured from the old path are in
+`tests/fixtures/w4_audio_wire.json`; no existing golden was changed.
+
+The old body was then deleted and the queued worker's duplicate storage/publication removed in commit 91207e14d.
+The required checks plus architectural guards, selector tests, publication boundary and both unchanged 3D suites
+reported `305 passed in 31.42s` (`w4-audio-port-final.xml`). However the existing queued audio bundle tests exposed a
+receipt invariant and triggered the owner's explicit stop condition:
+
+```text
+test_the_receipt_carries_the_summary_for_the_operator_only
+> assert internal["metadata"]["result_bundle"] == result_bundle.bundle_summary(...)
+E KeyError: 'result_bundle'
+```
+
+Command:
+`nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-bundle-checks.xml -n 4 tests/test_result_bundle_audio.py`
+reported `3 failed, 5 passed in 9.27s`. The other two failures were result-limit refusals changing from `result_refused`
+to `upstream_error` (per-file limit and publication-total limit). These tests were not changed.
+
+Named receipt invariant: a queued audio job's internal/operator receipt retains its published result-bundle summary;
+client and admin projections omit it. `result_bundle.complete_job` links the summary at publication. Moving that before
+request completion means `media_ingestion.finish_response` subsequently calls `receipt_store.finalize` with the
+in-memory receipt, overwriting the linked metadata. The old queued worker completed its receipt before publishing
+and linking the bundle. This ordering change does not affect the five synchronous comparison cases, so their passing
+parity did not establish the queued invariant.
+
+Implementation stopped without changing receipt finalization or the invariant. The active audio route and queued
+worker were restored to the old implementation; the candidate and its passing old/new comparison remain available as
+`proxy_audio_generate_declared` and `tests/test_w4_audio_declared.py`. The generic hook is implemented. Audio is
+**parity only**, not ported, and the old body remains. The unsuccessful deletion attempt and failing evidence remain
+in history at 91207e14d. No live service, registry, reviewed oracle, budget or existing parity test was changed.
+
+Budget proposal: this turn adds two hook cases and five audio comparison cases (+7). Combined with accepted 3D (+18)
+and the duration/boundary continuation (+5), the branch adds +30: original tests/budgets.toml line 678 would change
+`pytest = 29830` to `pytest = 29860`, before reconciling other lanes. Confidence: 95% in the generic hook and reproduced
+receipt failure; the audio port is not complete.
