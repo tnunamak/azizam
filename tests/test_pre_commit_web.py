@@ -71,6 +71,33 @@ def hook_repo(tmp_path):
     return repo, git, run
 
 
+def test_staged_non_ascii_web_file_runs_check(hook_repo):
+    repo, git, run = hook_repo
+    source = "web/café.ts"
+    (repo / source).write_text("export const a = 1;\n")
+    git("config", "core.quotePath", "true")
+    git("add", source)
+    assert git("diff", "--cached", "--name-status", "-z") == f"A\0{source}\0"
+    assert '"web/' in git("diff", "--cached", "--name-status")
+    run(True)
+
+
+def test_rename_non_ascii_out_of_web_runs_check(hook_repo):
+    repo, git, run = hook_repo
+    source = "web/café.ts"
+    (repo / source).write_text("export const a = 1;\n")
+    git("config", "core.quotePath", "true")
+    git("add", source)
+    git("commit", "-qm", "seed non-ASCII rename")
+    (repo / "src").mkdir()
+    git("mv", source, "src/a.ts")
+    assert git("diff", "--cached", "--name-status", "-z") == (
+        f"R100\0{source}\0src/a.ts\0"
+    ), "exercise the quoted source column of a real rename"
+    assert '"web/' in git("diff", "--cached", "--name-status")
+    run(True)
+
+
 def test_staged_web_file_runs_check(hook_repo):
     repo, git, run = hook_repo
     (repo / "web" / "a.ts").write_text("export const a = 1;\n")
