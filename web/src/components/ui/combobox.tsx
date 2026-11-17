@@ -76,7 +76,7 @@ export function Combobox({
           className="w-[var(--radix-popover-trigger-width)] p-0"
           align="start"
         >
-          <Command>
+          <Command label={`Search ${label.toLowerCase()}`}>
             <CommandInput
               placeholder={`Search ${label.toLowerCase()}…`}
               aria-label={`Search ${label.toLowerCase()}`}
