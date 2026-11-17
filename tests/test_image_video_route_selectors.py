@@ -310,3 +310,19 @@ def test_a_video_file_over_the_asset_limit_is_refused_while_it_is_read(tmp_path:
         status, _ = await refused_video(world, result_limits={"max_asset_bytes": 10})
         refusal_of(status, "asset_too_large", 502)
     run_video(tmp_path, exercise)
+
+
+def test_image_number_input_keeps_a_json_integer_in_the_engine_submission(tmp_path):
+    rig, made = build(tmp_path, NOISY_IMAGE, PNG)
+    try:
+        response = asyncio.run(made.call("POST", "/v1/images/generations", json_body={
+            **IMAGE_BODY, "model": "flux2-klein",
+            "extensions": {"com.azizam.workflow": {"guidance": 4, "seed": 7}}}))
+        assert response.status_code == 200, response.text
+        posts = [call for call in made.recorder.engine if call["method"] == "POST" and call["path"] == "/prompt"]
+        assert len(posts) == 1
+        graph = json.loads(posts[0]["body"]["text"])["prompt"]
+        value = graph["35"]["inputs"]["guidance"]
+        assert type(value) is int and value == 4
+    finally:
+        rig.__exit__(None, None, None)

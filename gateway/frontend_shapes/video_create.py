@@ -334,6 +334,13 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     for key, value in block.items():
         if _wire.declared(chosen, key) and key not in edge_only and not _is_asset(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height"), rate_key):
             inputs[key] = coerce(chosen, key, value)
+    # This wire writes number nodes as floats. Keep that choice out of the
+    # generic compiler and the other frontend shapes, including JSON integers.
+    for key, spec in chosen.contract.get("inputs", {}).items():
+        if spec.get("type") == "number":
+            value = inputs.get(key, spec.get("default"))
+            if type(value) in (int, float):
+                inputs[key] = float(value)
     if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:

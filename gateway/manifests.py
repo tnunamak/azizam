@@ -708,8 +708,6 @@ def bind_backend_request(
             # inside a list or object yet, so one would be handed to the engine as the caller wrote it.
             raise refusal(("inputs", input_name), "media_not_resolved",
                           f"{input_name} holds media inside a list or object, which no route resolves yet")
-        if spec is not None and spec.get("type") == "number" and type(value) in (int, float):
-            value = float(value)
         # Each mapping gets its own copy, so the request does not share a caller's mutable value.
         value = copy.deepcopy(value)
         if input_name not in binding_map:

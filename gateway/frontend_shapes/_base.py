@@ -43,8 +43,6 @@ def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
     """A form value (always text) read as the type the contract declares for the input. A value that does not read is
     left as sent, and the core's validation names it."""
     spec = (entry.contract.get("inputs") or {}).get(name)
-    if isinstance(spec, Mapping) and spec.get("type") == "number" and type(value) in (int, float):
-        return float(value)
     if not isinstance(value, str) or not isinstance(spec, Mapping):
         return value
     kind = spec.get("type")
