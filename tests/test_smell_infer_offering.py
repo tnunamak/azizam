@@ -149,6 +149,13 @@ def _without_web_comments(source: str) -> str:
             chars[index:index + 2] = [" ", " "]
             comment = "line" if pair == "//" else "block"
             index += 2
+        elif pair in ("++", "--"):
+            previous = context["previous"]
+            postfix = previous.isalnum() or previous in ("_", "$", ")", "]")
+            # A postfix operator ends an expression; a prefix keeps slash context.
+            context["previous"] = ")" if postfix else char
+            context["word"] = ""
+            index += 2
         elif char == "/" and (
             not context["previous"]
             or context["previous"] in regex_prefixes
@@ -283,6 +290,13 @@ def test_no_web_source_names_the_smell_offering():
         ("web/src/regex-escape.ts", "const marker = /a\\/b/; const offering = \"smell\";\n", True, [1]),
         ("web/src/real-block.ts", "const value = 1; /* smell documentation */\n", True, []),
         ("web/src/division.ts", "const r = a / b; // smell\n", True, []),
+        ("web/src/postfix-inc-line.ts", "let x = 4; const r = x++ / 2; // smell documentation\n", True, []),
+        ("web/src/postfix-dec-line.ts", "let x = 4; const r = x-- / 2; // smell documentation\n", True, []),
+        ("web/src/postfix-inc-block.ts", "let x = 4; const r = x++ / 2; /* smell documentation */\n", True, []),
+        ("web/src/postfix-dec-block.ts", "let x = 4; const r = x-- / 2; /* smell documentation */\n", True, []),
+        ("web/src/postfix-inc-string.ts", 'let x = 4; const r = x++ / 2; const text = "smell documentation";\n', True, [1]),
+        ("web/src/postfix-dec-string.ts", 'let x = 4; const r = x-- / 2; const text = "smell documentation";\n', True, [1]),
+        ("web/src/prefix-inc-regex.ts", 'const r = ++ /[/*]/; const text = "smell documentation";\n', True, [1]),
         ("web/src/template-expression.ts", "const text = `${1 /* smell documentation */}`;\n", True, []),
         ("web/src/template-text.ts", "const text = `smell ${1}`;\n", True, [1]),
         ("web/src/nested-template.ts", "const text = `${{value: `${1 /* smell docs */}`}.value}`;\n", True, []),
@@ -324,6 +338,13 @@ def test_no_web_source_names_the_smell_offering():
         "regex-escape",
         "real-block",
         "division",
+        "postfix-inc-line",
+        "postfix-dec-line",
+        "postfix-inc-block",
+        "postfix-dec-block",
+        "postfix-inc-string",
+        "postfix-dec-string",
+        "prefix-inc-regex",
         "template-expression",
         "template-text",
         "nested-template",
