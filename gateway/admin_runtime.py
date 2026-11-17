@@ -402,7 +402,9 @@ class AdminSQLiteStore:
         """Create an App with its accountable person and its access plan.
 
         ``access_plan`` is required: a plan id, or ``"person"`` for "Same as
-        its person". The accountable person defaults to the signed-in person,
+        its person". Only an administrator may create a service app or pick a
+        plan other than that; a member's App is personal and follows their own
+        plan. The accountable person defaults to the signed-in person,
         or, for an owner key, to the gateway owner. Only the owner may name
         someone else; an administrator's App always answers to the
         administrator, so its spend stays inside the administrator's own plan.
@@ -426,6 +428,10 @@ class AdminSQLiteStore:
         access_plan = str(data.get("access_plan") or "").strip()
         if not access_plan:
             raise ValueError("access_plan is required: an access plan id or \"person\"")
+        # A service app and a plan other than "Same as its person" are an administrator's choice. A member
+        # creates a personal app that follows their own plan.
+        if (kind != "personal" or access_plan != admin_store.PERSON_ASSIGNMENT) and not actor.is_admin:
+            raise PermissionError("Only an administrator can create a service app or pick its access plan.")
         record = admin_store.create_app(
             name,
             kind=kind,
