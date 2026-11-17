@@ -954,7 +954,7 @@ esac""")
     result, calls = run()
     warmed = "hermetic pytest: warming the uv cache online: uv 9.9.9 has no cached copy of the lock"
     if offline_error == "the lock file is malformed":
-        assert result.returncode == 1, result.stderr
+        assert result.returncode == 2, result.stderr  # uv's own exit status
         assert "error: the lock file is malformed" in result.stderr
         assert calls == ["venv", "sync offline"]
         assert warmed not in result.stderr and not (cache / "warm").exists()

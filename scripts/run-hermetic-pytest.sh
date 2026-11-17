@@ -16,6 +16,12 @@ python_version=3.12.13
 platform=linux-x86_64
 python_root="$python_store/cpython-$python_version-linux-x86_64-gnu"
 created_cache_mount_dir=0
+# uv's package cache. AZIZAM_HERMETIC_UV_CACHE names another one (an empty one proves the warm-up below).
+uv_cache=${AZIZAM_HERMETIC_UV_CACHE:-$state_root/hermetic-uv-cache}
+# uv with no operator environment or configuration: the same cache, home and PATH for every call.
+uv_hermetic() {
+  env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$uv_cache" UV_NO_CONFIG=1 uv "$@"
+}
 
 # --junit-xml-out PATH: pytest writes JUnit XML inside the sandbox, which
 # cannot write to the host; the runner copies it to PATH afterwards, also
@@ -38,7 +44,7 @@ done
 
 if [[ ! -x $python_root/bin/python3.12 ]]; then
   echo "hermetic pytest: reinstalling Python $python_version in $python_store" >&2
-  env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv python install "$python_version" --install-dir "$python_store"
+  uv_hermetic python install "$python_version" --install-dir "$python_store"
 fi
 if [[ $("$python_root/bin/python3.12" --version) != "Python $python_version" ]]; then
   echo "error: hermetic pytest requires Python $python_version at $python_root/bin/python3.12" >&2
@@ -47,7 +53,7 @@ fi
 # tmp-reaper (and the low-disk guard, which runs it with a 1-day age) deletes any ~/.tmp folder whose newest
 # file is old. An installed Python keeps its archive dates, so a run marks both stores as used before it starts.
 touch "$python_store/.last-used"
-[[ ! -d $state_root/hermetic-uv-cache ]] || touch "$state_root/hermetic-uv-cache/.last-used"
+[[ ! -d $uv_cache ]] || touch "$uv_cache/.last-used"
 
 lock_sha256=$(sha256sum "$lock_file" | awk '{print $1}')
 manifest_sha256=$(sha256sum "$repo_root/requirements.txt" | awk '{print $1}')
@@ -86,8 +92,22 @@ mkdir -- "$checkout_root/venv" "$checkout_root/cache"
 # The startup file of the run: the startup keys of a deployment (the suite seeds its sections into the run's admin.db).
 cp -- "$checkout_root/tests/fixtures/config_homes/deployment_startup.yml" "$state_dir/proxy_config.yml"
 fresh_env="$state_dir/fresh-venv"
-env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$fresh_env" >/dev/null
-env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --offline --no-build --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null
+uv_hermetic venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$fresh_env" >/dev/null
+sync_offline() {
+  uv_hermetic pip sync --offline --no-build --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null 2>"$state_dir/uv-sync.err"
+}
+sync_status=0
+sync_offline || sync_status=$?
+if ((sync_status)); then
+  # Each uv version reads its own cache layout, so a uv upgrade leaves a full cache cold. Fill the
+  # cache once online from the same lock: --require-hashes accepts only the pinned files and
+  # --no-build only wheels. The throwaway env is discarded; the test env still installs offline.
+  if ! grep -q 'in the cache' "$state_dir/uv-sync.err"; then cat "$state_dir/uv-sync.err" >&2; exit "$sync_status"; fi
+  echo "hermetic pytest: warming the uv cache online: $(uv_hermetic --version) has no cached copy of the lock" >&2
+  uv_hermetic venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$state_dir/warm-venv" >/dev/null
+  uv_hermetic pip sync --no-build --strict --require-hashes --link-mode copy --python "$state_dir/warm-venv/bin/python" "$lock_file" >/dev/null
+  sync_offline || { sync_status=$?; cat "$state_dir/uv-sync.err" >&2; exit "$sync_status"; }
+fi
 find "$fresh_env" -type f -name '*.pth' -delete
 mkdir -p -- "$state_dir"/{tmp,cache,pycache,home,disk}
 
