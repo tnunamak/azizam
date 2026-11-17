@@ -139,8 +139,12 @@ def _layout(widget_names: list[str], linked: set[str], values: list) -> list[str
         if name in linked:
             continue
         slots.append(name)
-        if name in _SEED_WIDGETS and len(slots) < len(values) and values[len(slots)] in _CONTROL_VALUES:
+        if (name in _SEED_WIDGETS and len(slots) < len(values)
+                and isinstance(values[len(slots)], str)
+                and values[len(slots)] in _CONTROL_VALUES):
             slots.append(None)
+    if len(slots) < len(values):
+        raise ValueError("UI widget values cannot be consumed by the layout")
     return slots[: len(values)]
 
 
@@ -201,6 +205,8 @@ def validate_workflow_shapes(ui_wf: object, api_wf: object) -> None:
     for node in nodes:
         if not isinstance(node, dict) or "id" not in node:
             raise ValueError("UI nodes must be objects with an id")
+        if "widgets_values" in node and not isinstance(node["widgets_values"], list):
+            raise ValueError("UI node widgets_values must be a list")
         inputs = node.get("inputs")
         if inputs is None:
             inputs = []
@@ -329,12 +335,12 @@ async def main(argv: list[str]) -> int:
             with open(api_path) as f:
                 api_disk = json.load(f)
             validate_workflow_shapes(ui_wf, api_disk)
+            diffs = name_diff(ui_wf, api_disk)
         except (OSError, ValueError) as error:
             print(f"[error] {label}: {error}")
             errors += 1
             continue
         entries.append((label, ui_wf, api_disk))
-        diffs = name_diff(ui_wf, api_disk)
         if diffs:
             drifted += 1
             print(f"[drift] {label}")
