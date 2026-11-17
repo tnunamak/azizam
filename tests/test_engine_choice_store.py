@@ -230,7 +230,7 @@ def test_failure_recorded_between_snapshot_and_clear_survives(tmp_path):
     assert store.read_failure('s', 'node', 'k')['at'] == 201
 
 
-def _child(path, key, barrier, rounds, no_lock, results):
+def _child(path, key, barrier, rounds, no_lock):
     import time
     from gateway.engine_protocol import choice_store
 
@@ -255,7 +255,7 @@ def _run_children(path, *, no_lock, rounds=10, count=4):
 
     ctx = multiprocessing.get_context('spawn')
     barrier = ctx.Barrier(count)
-    procs = [ctx.Process(target=_child, args=(path, f'p{i}', barrier, rounds, no_lock, None))
+    procs = [ctx.Process(target=_child, args=(path, f'p{i}', barrier, rounds, no_lock))
              for i in range(count)]
     for proc in procs:
         proc.start()

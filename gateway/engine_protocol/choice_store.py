@@ -114,13 +114,40 @@ class ChoiceStore:
         finally:
             os.close(lock_fd)
 
+    def _store_snapshot(self, service, node_type, input, choices, fetched_at):
+        """Store under the held lock unless a newer entry exists; True when stored."""
+        entries = self._load()
+        key = (service, node_type, input)
+        for entry in entries:
+            if (entry['service'], entry['node_type'], entry['input']) == key and entry['fetched_at'] > fetched_at:
+                return False
+        entries = [e for e in entries if (e['service'], e['node_type'], e['input']) != key]
+        entries.append(dict(service=service, node_type=node_type, input=input, choices=choices, fetched_at=fetched_at))
+        private_io.atomic_write_text(self.path, json.dumps({'version': 1, 'entries': entries}, allow_nan=False))
+        return True
+
     def write(self, service, node_type, input, choices, *, fetched_at):
+        """Newest fetch wins: False when a stored entry for the key is newer."""
         self._validate(service, node_type, input, choices, fetched_at)
         with self._locked():
-            entries = self._load()
-            entries = [e for e in entries if (e['service'], e['node_type'], e['input']) != (service, node_type, input)]
-            entries.append(dict(service=service, node_type=node_type, input=input, choices=choices, fetched_at=fetched_at))
-            private_io.atomic_write_text(self.path, json.dumps({'version': 1, 'entries': entries}, allow_nan=False))
+            return self._store_snapshot(service, node_type, input, choices, fetched_at)
+
+    def write_clearing_failure(self, service, node_type, input, choices, *, fetched_at):
+        """Store the snapshot and drop a failure no newer than it, under one lock.
+
+        Returns False, changing nothing, when a newer snapshot exists.
+        """
+        self._validate(service, node_type, input, choices, fetched_at)
+        with self._locked():
+            if not self._store_snapshot(service, node_type, input, choices, fetched_at):
+                return False
+            key = self._failure_key(service, node_type, input)
+            failures = self._load_failures()
+            failure = failures.get(key)
+            if isinstance(failure, dict) and not (failure.get('at', math.inf) > fetched_at):
+                del failures[key]
+                private_io.atomic_write_text(self.failures_path, json.dumps(failures, allow_nan=False))
+            return True
 
     # Refresh failures live beside the snapshots so the snapshot schema stays unchanged.
     @property
@@ -147,23 +174,17 @@ class ChoiceStore:
             return entry
         return None
 
-    def _update_failures(self, key, entry):
-        with self._locked():
-            failures = self._load_failures()
-            if entry is None and key not in failures:
-                return
-            if entry is None:
-                del failures[key]
-            else:
-                failures[key] = entry
-            private_io.atomic_write_text(self.failures_path, json.dumps(failures, allow_nan=False))
-
     def record_failure(self, service, node_type, input, reason, *, at):
+        """Record a failure; False when a snapshot newer than ``at`` exists."""
         if not all(isinstance(x, str) and x for x in (service, node_type, input, reason)):
             raise ValueError('invalid failure record')
         if isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at) or at < 0:
             raise ValueError('invalid timestamp')
-        self._update_failures(self._failure_key(service, node_type, input), {'at': at, 'reason': reason})
-
-    def clear_failure(self, service, node_type, input):
-        self._update_failures(self._failure_key(service, node_type, input), None)
+        with self._locked():
+            snapshot = self.read(service, node_type, input)
+            if snapshot is not None and snapshot.fetched_at > at:
+                return False
+            failures = self._load_failures()
+            failures[self._failure_key(service, node_type, input)] = {'at': at, 'reason': reason}
+            private_io.atomic_write_text(self.failures_path, json.dumps(failures, allow_nan=False))
+            return True
