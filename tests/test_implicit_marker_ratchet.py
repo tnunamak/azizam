@@ -133,6 +133,11 @@ def ratchet_violations(
     allowed = _allowed_rises(counts, baseline, adapter_files)
     transferred = {marker for _, marker in allowed}
     violations: list[str] = []
+    now_totals, base_totals = _totals(counts), _totals(baseline)
+    for marker in sorted(transferred):
+        n, b = now_totals.get(marker, 0), base_totals.get(marker, 0)
+        if n < b:
+            violations.append(f"total: {marker!r} fell {b} -> {n}; {_LOWER}")
     for rel in sorted(set(counts) | set(baseline)):
         now, base = counts.get(rel, {}), baseline.get(rel)
         if base is None:
@@ -235,6 +240,24 @@ def test_adapter_rise_with_equal_fall_passes() -> None:
     base = {"adapter.py": {"class_type": 3}, "core.py": {"class_type": 7}}
     now = {"adapter.py": {"class_type": 8}, "core.py": {"class_type": 2}}
     assert ratchet_violations(now, base, ["adapter.py"]) == []
+
+
+def test_adapter_transfer_with_net_fall_requires_lowering() -> None:
+    base = {"adapter_file": {"class_type": 3}, "core_file": {"class_type": 7}}
+    now = {"adapter_file": {"class_type": 8}, "core_file": {"class_type": 1}}
+    adapters = ["adapter_file"]
+    assert ratchet_violations(now, base, adapters) == [
+        f"total: 'class_type' fell 10 -> 9; {_LOWER}"
+    ]
+
+    lowered = lower_baseline(now, base, adapters)
+    assert lowered == {"adapter_files": adapters, "files": now}
+    assert ratchet_violations(now, lowered["files"], lowered["adapter_files"]) == []
+
+    restored = {"adapter_file": {"class_type": 8}, "core_file": {"class_type": 2}}
+    assert ratchet_violations(restored, lowered["files"], lowered["adapter_files"]) == [
+        "core_file: 'class_type' rose 1 -> 2; move it into an adapter or record data"
+    ]
 
 
 def test_adapter_rise_without_fall_fails() -> None:

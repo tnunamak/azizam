@@ -60,6 +60,7 @@ import time
 from typing import Any, Optional
 
 from gateway import client_errors
+from gateway.transforms import apply_thinking_suppression
 
 
 HOSTED_TOOL_TYPES = {
@@ -648,16 +649,12 @@ def _apply_reasoning_effort_messages(messages: list[dict], reasoning: Any) -> li
 
 
 def _apply_reasoning_effort_kwargs(cc: dict, reasoning: Any) -> None:
-    """If reasoning.effort=none/minimal, request that the chat template suppress
-    thinking via the llama-server-recognized `chat_template_kwargs.enable_thinking`
-    flag. Other backends will ignore unknown fields."""
+    """Apply registry-defined suppression without overriding explicit values."""
     if not isinstance(reasoning, dict):
         return
     if reasoning.get("effort") not in _REASONING_EFFORT_SUPPRESS:
         return
-    cc.setdefault("chat_template_kwargs", {})
-    if isinstance(cc["chat_template_kwargs"], dict):
-        cc["chat_template_kwargs"].setdefault("enable_thinking", False)
+    apply_thinking_suppression(cc)
 
 
 def to_chat_completions(

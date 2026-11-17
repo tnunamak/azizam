@@ -79,10 +79,6 @@
       "nvidia-smi": 4,
       "x-litellm": 7
     },
-    "responses_translator.py": {
-      "chat_template_kwargs": 3,
-      "enable_thinking": 1
-    },
     "status_endpoint.py": {
       "/props": 1,
       "/system_stats": 1,
