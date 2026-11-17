@@ -82,3 +82,30 @@ def test_fetch_fresh_raises_instead_of_falling_back(monkeypatch):
     monkeypatch.setitem(node_info._CACHE, ('h', 'node'), {'cached': True})
     with pytest.raises(OSError):
         node_info.fetch_fresh('h', 'node')
+
+
+def test_overlapped_refresh_older_one_is_superseded(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    newer = refresh_service(store, 'svc', DECLS, fetch=fetcher(info(['b'])), now=200)
+    older = refresh_service(store, 'svc', DECLS, fetch=fetcher(info(['a'])), now=100)
+    assert newer == {('node', 'pick'): None}
+    assert older == {('node', 'pick'): 'superseded by a newer snapshot'}
+    snap = store.read('svc', 'node', 'pick')
+    assert (snap.choices, snap.fetched_at) == (['b'], 200)
+    assert store.read_failure('svc', 'node', 'pick') is None
+
+
+def test_superseded_success_clears_no_failure(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    refresh_service(store, 'svc', DECLS, fetch=fetcher(info(['b'])), now=200)
+    store.record_failure('svc', 'node', 'pick', 'later failure', at=250)
+    refresh_service(store, 'svc', DECLS, fetch=fetcher(info(['a'])), now=100)
+    assert store.read_failure('svc', 'node', 'pick')['at'] == 250
+
+
+def test_failure_older_than_snapshot_is_reported_superseded(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    refresh_service(store, 'svc', DECLS, fetch=fetcher(info(['b'])), now=200)
+    report = refresh_service(store, 'svc', DECLS, fetch=fetcher(RuntimeError('x')), now=100)
+    assert report == {('node', 'pick'): 'superseded by a newer snapshot'}
+    assert store.read_failure('svc', 'node', 'pick') is None
