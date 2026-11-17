@@ -312,7 +312,11 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         ext = {"source_video": {"video_id": SOURCE_ID},
                "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}
         ext.update(extra)
-        return self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "a woman", "extensions": {NS: ext}})
+        count = len(self.comfy.submitted)
+        response = self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "a woman", "extensions": {NS: ext}})
+        if response.status_code == 200:
+            self.comfy.wait_for_graphs(count + 1)
+        return response
 
     def test_reference_fit_is_on_by_default_and_can_be_turned_off(self) -> None:
         self.assertEqual(self._create().status_code, 200)
@@ -327,14 +331,18 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         self.assertEqual(self.graph["95"]["inputs"]["object_indices"], "1")
 
     def test_default_replaces_the_largest_person(self) -> None:
-        self.assertEqual(self._create().status_code, 200)
+        response = self._create()
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(self.graph[COLOR_MASK]["inputs"]["object_indices"], "0")
-        self.assertFalse(proxy._video_job_records[NEW_PROMPT_ID]["subject"]["explicit"])
+        payload = proxy._WORKFLOW_RUN_PORT.load_payload(response.json()["id"].removeprefix("video_"))
+        self.assertFalse(vs.explicit_selection(payload["body"]["options"]["subject_plan"]["block"]))
 
     def test_subject_index_is_bound(self) -> None:
-        self.assertEqual(self._create(subject_index="1").status_code, 200)
+        response = self._create(subject_index="1")
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(self.graph[COLOR_MASK]["inputs"]["object_indices"], "1")
-        self.assertTrue(proxy._video_job_records[NEW_PROMPT_ID]["subject"]["explicit"])
+        payload = proxy._WORKFLOW_RUN_PORT.load_payload(response.json()["id"].removeprefix("video_"))
+        self.assertTrue(vs.explicit_selection(payload["body"]["options"]["subject_plan"]["block"]))
 
     def test_point_uses_the_output_size(self) -> None:
         r = self._create(source_point_x=0.5, source_point_y=0.5)
@@ -406,22 +414,24 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         self.assertEqual(self.comfy.submitted, [])
 
     def test_finished_job_carries_the_warning(self) -> None:
-        self._create()
+        response = self._create()
         self.comfy.history[NEW_PROMPT_ID] = {
             "status": {"completed": True, "status_str": "success", "messages": []},
-            "outputs": {"60": {"videos": [{"filename": "x.mp4", "subfolder": "video", "type": "output"}]},
+            # Node 60 is a SaveVideo node, which lists its file under "images"; the shipped manifest selector reads that key.
+            "outputs": {"60": {"images": [{"filename": "x.mp4", "subfolder": "video", "type": "output"}]},
                         PROBE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
-        status = self.client.get(f"/v1/videos/{NEW_ID}").json()
+        self.comfy.view_bytes["x.mp4"] = b"fake video"
+        status = self.comfy.wait_for_status(self.client, response.json()["id"], "completed")
         self.assertEqual(status["status"], "completed")
         self.assertEqual(len(status["azizam_warnings"]), 1)
         self.assertIn("3 people", status["azizam_warnings"][0])
 
     def test_no_warning_when_the_person_was_chosen(self) -> None:
-        self._create(subject_index="1")
+        response = self._create(subject_index="1")
         self.comfy.history[NEW_PROMPT_ID] = {
             "status": {"completed": True, "status_str": "success", "messages": []},
             "outputs": {PROBE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
-        self.assertNotIn("azizam_warnings", self.client.get(f"/v1/videos/{NEW_ID}").json())
+        self.assertNotIn("azizam_warnings", self.client.get(f"/v1/videos/{response.json()['id']}").json())
 
 
 if __name__ == "__main__":

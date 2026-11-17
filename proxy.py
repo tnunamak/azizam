@@ -13176,12 +13176,11 @@ async def _submit_video_chain(
         payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
                        "segments": len(segments), "seconds": _seconds_text(total_seconds)},
         progress_units=built.units,
-        admission_intent=admission_intent,
     )
 
     if prepare is not None:
         return prepare(engine, spec, submission)
-    return await _submit_video_graph(**submission)
+    return await _submit_video_graph(**submission, admission_intent=admission_intent)
 
 
 def _seconds_text(value: float) -> str:
@@ -27512,8 +27511,12 @@ class _WorkflowRunPort:
             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
         staged: dict[str, str] = {}
         kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
-        filenames = ((ctx.payload.get("body") or {}).get("options") or {}).get("input_filenames") or {}
-        for name, refs in ctx.media.items():
+        options = ((ctx.payload.get("body") or {}).get("options") or {})
+        filenames = options.get("input_filenames") or {}
+        order = options.get("input_order") or []
+        names = [name for name in order if name in ctx.media] + [name for name in ctx.media if name not in order]
+        for name in names:
+            refs = ctx.media[name]
             if name in kept_off_engine:
                 continue
             if len(refs) != 1:
@@ -27757,6 +27760,17 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
 
     def observed(ctx, status, graph):
         from dataclasses import replace
+        options = (ctx.payload.get("body") or {}).get("options") or {}
+        subject = options.get("subject_plan")
+        if isinstance(subject, Mapping) and status.state.value == "succeeded":
+            block = subject.get("block") or {}
+            roles = subject.get("roles") or {}
+            record = {"subject": {"probe_node": roles.get("probe_node"),
+                                  "explicit": video_subject.explicit_selection(block),
+                                  "subject": str(block.get("source_subject") or "person")}}
+            warnings = _video_job_warnings(record, getattr(status.record, "job", None))
+            if warnings:
+                ctx.record_result_metadata({"azizam_warnings": warnings})
         chain = chain_record(ctx)
         if not isinstance(chain, Mapping):
             return status
@@ -28196,7 +28210,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         if target is not None:
             return target
         cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
-        return (video_grid.configured_input_targets(cfg, chosen.contract).get("image") or {}).get("input")
+        return (video_grid.configured_input_targets(cfg, chosen.contract).get(domain_rows.IMAGE) or {}).get("input")
 
     async def prepare_inputs(self, request, body, chosen):
         caller = request.state.caller
@@ -28242,7 +28256,9 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                     return _json_error(400, f"Workflow {frontend_video_create.short_name(chosen)} does not support I2V.")
                 data, filename = await _resolve_input_reference(
                     reference, caller, request=request, accepts=_input_accepts(manifest, target))
-                assets = {target: (data, filename, "image/png"), **assets}
+                mime = (request_spool.measured_type(data[:512], None)
+                        if frontend_video_create._reference_bytes(reference) is not None else None) or "image/png"
+                assets = {target: (data, filename, mime), **assets}
         except _InputReferenceError as exc:
             return _json_error(400, str(exc))
         except _VideoAssetError as exc:
@@ -28261,8 +28277,8 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             return None
         found = video_grid.configured_facts(cfg, chosen.contract)
         variants = {role: workflow_id_for_video_key(cfg[key]) for role, key in
-                    (("image", "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
-        requires = {"image"} if cfg.get("requires_input_reference") else set()
+                    ((domain_rows.IMAGE, "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
+        requires = {domain_rows.IMAGE} if cfg.get("requires_input_reference") else set()
         if cfg.get("requires_extensions"):
             requires.add("extensions")
         if cfg.get("source_video_input"):

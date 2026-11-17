@@ -289,7 +289,8 @@ def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> 
            for group, fields in rules.items()}
     roles = {role: item["input"] for role, item in configured_input_targets(config, contract).items()}
     raw["roles"] = roles
-    return video_facts({"capability": "video", "video": raw})
+    capability = contract["capability"]
+    return video_facts({"capability": capability, capability: raw})
 
 
 def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:

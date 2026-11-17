@@ -529,12 +529,13 @@ class CreateLongVideoTests(H3RouteBase):
         self.assertLessEqual(last, 92)
 
     def test_failure_names_the_segment_and_what_finished(self) -> None:
-        self._create(model="h3-long", prompt="x", seconds=22)
-        record = proxy._video_job_records[NEW_PROMPT_ID]
+        response = self._create(model="h3-long", prompt="x", seconds=22)
+        self.comfy.wait_for_graphs()
         job = {"status": {"status_str": "error", "messages": [
             ["execution_error", {"node_id": "s1_ctx", "node_type": "MiniMaxH3MotionContext",
                                  "exception_message": "h3_motion_context: layout changed"}]]}}
-        error = proxy._chain_failure_error(record, job, "ComfyUI node s1_ctx: layout changed")
+        self.comfy.history[NEW_PROMPT_ID] = job
+        error = self.comfy.wait_for_status(self.client, response.json()["id"], "failed")["error"]
         self.assertEqual(error["code"], "video_generation_failed")
         self.assertEqual((error["failed_segment"], error["segments_completed"], error["segments_total"]), (2, 1, 3))
         self.assertIn("no partial video", error["message"])

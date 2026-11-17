@@ -103,6 +103,8 @@ class VideoViews:
         for key in ("segments_total", "segments_completed"):
             if key in view.result_metadata:
                 body[key] = view.result_metadata[key]
+        if view.result_metadata.get("azizam_warnings"):
+            body["azizam_warnings"] = view.result_metadata["azizam_warnings"]
         if view.failure is not None:
             # The code is the wire's own word for any failed job, as it always was; the message keeps the cause.
             body["error"] = {"code": f"{self.wire_name}_generation_failed", "message": public_failure_message(view.failure)}
