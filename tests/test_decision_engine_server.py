@@ -1087,3 +1087,169 @@ def test_cancellable_post_rechecks_cancel_after_connect_before_post(monkeypatch)
     assert sent == []
     assert fake_socket.shutdown_called
     assert fake_socket.closed
+
+
+@pytest.mark.parametrize("deadline_header", [None, "500"])
+def test_incomplete_bodies_release_all_admission_slots(monkeypatch, deadline_header):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    monkeypatch.setattr(server, "DEFAULT_REQUEST_TIMEOUT_S", 0.5)
+    class Admission(_CountingSemaphore):
+        def __init__(self):
+            super().__init__(5, target=5)
+            self.released = 0
+            self.all_released = threading.Event()
+
+        def release(self, n=1):
+            super().release(n)
+            with self._count_lock:
+                self._held -= n
+                self.released += n
+                if self.released == 5:
+                    self.all_released.set()
+
+    admission = Admission()
+    scorer = UsageScorer()
+    connections = []
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        parsed = urlparse(base_url)
+        try:
+            for _ in range(5):
+                conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+                connections.append(conn)
+                conn.putrequest("POST", "/v1/systemone")
+                conn.putheader("Content-Length", "100")
+                if deadline_header is not None:
+                    conn.putheader("x-decision-deadline-ms", deadline_header)
+                conn.endheaders()
+            assert admission.at_target.wait(timeout=2)
+            assert admission.all_released.wait(timeout=2)
+            assert scorer.total_calls == 0
+            for conn in connections:
+                response = conn.getresponse()
+                assert response.status == 504
+                assert json.loads(response.read())["error"]["code"] == "deadline_exceeded"
+            status, _, _ = _post_json(base_url, "/v1/systemone", _systemone_body("after"))
+            assert status == 200
+            assert scorer.total_calls == 1
+        finally:
+            for conn in connections:
+                conn.close()
+
+
+def test_trickled_body_cannot_extend_absolute_deadline(monkeypatch):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    received, advance = threading.Event(), threading.Event()
+    now = [100.0]
+    # Replace only this module's clock object, not the shared time module.
+    clock = SimpleNamespace(**vars(time))
+    clock.monotonic = lambda: now[0]
+    monkeypatch.setattr(server, "time", clock)
+    handler = _handler_for(scorer)
+    original = handler._read_request_body
+    chunks = []
+
+    class ObservedReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read1(self, size):
+            chunk = self.stream.read1(size)
+            if chunk:
+                chunks.append(chunk)
+                received.set()
+                assert advance.wait(timeout=3), "test did not advance the clock"
+            return chunk
+
+    def observed_read(self, deadline):
+        stream = self.rfile
+        self.rfile = ObservedReader(stream)
+        try:
+            return original(self, deadline)
+        finally:
+            self.rfile = stream
+
+    monkeypatch.setattr(handler, "_read_request_body", observed_read)
+    with _ThreadedServer(handler) as base_url:
+        parsed = urlparse(base_url)
+        conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+        try:
+            conn.putrequest("POST", "/v1/systemone")
+            conn.putheader("Content-Length", "1000")
+            conn.putheader("x-decision-deadline-ms", "200")
+            conn.endheaders(b" ")
+            assert received.wait(timeout=3), "handler never returned a body chunk"
+            assert chunks == [b" "]
+            # More traffic is queued before the reader resumes past its deadline.
+            conn.send(b" ")
+            now[0] += 0.201
+            advance.set()
+            response = conn.getresponse()
+            assert response.status == 504
+            assert json.loads(response.read())["error"]["code"] == "deadline_exceeded"
+            assert scorer.total_calls == 0
+        finally:
+            advance.set()
+            conn.close()
+
+
+@pytest.mark.parametrize("length", ["-1", "bad", "17", "1, 1"])
+def test_invalid_or_oversize_body_length_is_rejected(length):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    handler = _handler_for(scorer)
+    handler.max_request_body_bytes = 16
+    with _ThreadedServer(handler) as base_url:
+        parsed = urlparse(base_url)
+        conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+        try:
+            conn.putrequest("POST", "/v1/systemone")
+            conn.putheader("Content-Length", length)
+            conn.endheaders()
+            response = conn.getresponse()
+            assert response.status == 422
+            assert json.loads(response.read())["error"]["code"] == "invalid_content_length"
+            assert scorer.total_calls == 0
+        finally:
+            conn.close()
+
+
+@pytest.mark.parametrize("framing", ["duplicate", "transfer-encoding"])
+def test_ambiguous_body_framing_is_rejected_and_connection_closed(framing):
+    from http.client import HTTPResponse
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    body = json.dumps(_systemone_body()).encode("utf-8")
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        parsed = urlparse(base_url)
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=3) as conn:
+            headers = [
+                "POST /v1/systemone HTTP/1.1",
+                "Host: localhost",
+                "Connection: keep-alive",
+                f"Content-Length: {len(body)}",
+            ]
+            if framing == "duplicate":
+                headers.append(f"Content-Length: {len(body)}")
+            else:
+                headers.append("Transfer-Encoding: chunked")
+            conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body)
+            response = HTTPResponse(conn)
+            try:
+                response.begin()
+                assert response.status == 422
+                assert json.loads(response.read())["error"]["code"] == "invalid_content_length"
+                assert conn.recv(1) == b"", "rejected framing must close the same connection"
+                assert scorer.total_calls == 0
+            finally:
+                response.close()
