@@ -113,3 +113,46 @@ describe("Home files bound by workflow input name", () => {
     expect(hasRequiredHandoffFiles([{ inputName: "mask", required: false }], {})).toBe(true);
   });
 });
+
+describe("workflow names that collide with object properties", () => {
+  for (const inputName of ["toString", "constructor", "__proto__"]) {
+    it.each([false, true])(`assigns ${inputName} as an own key (named: %s)`, (named) => {
+      const slots = [{ inputName, required: true, family: "image" }];
+      const chosen = assignHandoffFiles([png], slots, named ? [inputName] : undefined);
+      expect(Object.getPrototypeOf(chosen)).toBe(null);
+      expect(Object.hasOwn(chosen, inputName)).toBe(true);
+      expect(chosen[inputName]).toBe(png);
+      expect(Object.entries(chosen)).toHaveLength(1);
+      expect({ ...chosen }[inputName]).toBe(png);
+      expect(hasRequiredHandoffFiles(slots, chosen)).toBe(true);
+    });
+    it(`requires an own truthy file for ${inputName}`, () => {
+      const slots = [{ inputName, required: true }];
+      expect(hasRequiredHandoffFiles(slots, {})).toBe(false);
+      expect(hasRequiredHandoffFiles(slots, Object.create({ [inputName]: png }))).toBe(false);
+      expect(hasRequiredHandoffFiles(slots, { [inputName]: null })).toBe(false);
+      expect(hasRequiredHandoffFiles(slots, { [inputName]: undefined })).toBe(false);
+      expect(hasRequiredHandoffFiles(slots, { [inputName]: png })).toBe(true);
+    });
+  }
+  it("reserves the special named slot before fallback and never overwrites it", () => {
+    const other = new File(["o"], "other.png", { type: "image/png" });
+    const slots = [
+      { inputName: "toString", required: true, family: "image" },
+      { inputName: "constructor", required: true, family: "image" },
+    ];
+    const chosen = assignHandoffFiles([other, png, other], slots, ["", "toString", "toString"]);
+    expect(chosen.toString).toBe(png);
+    expect(chosen.constructor).toBe(other);
+    expect(Object.keys(chosen)).toEqual(["toString", "constructor"]);
+  });
+  it("still refuses an incompatible named file instead of moving it elsewhere", () => {
+    const slots = [
+      { inputName: "__proto__", required: true, family: "image" },
+      { inputName: "constructor", required: true, family: "audio" },
+    ];
+    const chosen = assignHandoffFiles([wav], slots, ["__proto__"]);
+    expect(Object.keys(chosen)).toEqual([]);
+    expect(hasRequiredHandoffFiles(slots, chosen)).toBe(false);
+  });
+});
