@@ -1,5 +1,6 @@
 """Independent base pins and a data-only extension for media metadata formats."""
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -68,14 +69,14 @@ def test_shipped_tables_equal_complete_literal_base():
 def test_extra_container_row_reaches_exactly_the_four_expected_tables(tmp_path):
     value = yaml.safe_load(ROWS.read_text(encoding="utf-8"))
     value["formats"].append({
-        "handler": "audio", "suffixes": [".wv"],
-        "mime_types": ["audio/x-wavpack"], "muxer": "wv",
+        "handler": "audio", "suffixes": [".wave"],
+        "mime_types": ["audio/x-wave-alias"], "muxer": "wav",
     })
     assert mm.load_media_metadata_formats(write_rows(tmp_path, value)) == (
-        {**EXPECTED_SUFFIX_KIND, ".wv": "audio"},
-        {**EXPECTED_MIME_KIND, "audio/x-wavpack": "audio"},
-        {**EXPECTED_MUXER, ".wv": "wv"},
-        {**EXPECTED_MIME_SUFFIX, "audio/x-wavpack": ".wv"},
+        {**EXPECTED_SUFFIX_KIND, ".wave": "audio"},
+        {**EXPECTED_MIME_KIND, "audio/x-wave-alias": "audio"},
+        {**EXPECTED_MUXER, ".wave": "wav"},
+        {**EXPECTED_MIME_SUFFIX, "audio/x-wave-alias": ".wave"},
     )
     # An explicit test-only load must not replace the once-loaded module tables.
     assert (mm._SUFFIX_KIND, mm._MIME_KIND, mm._MUXER, mm._MIME_SUFFIX) == EXPECTED_TABLES
@@ -91,8 +92,8 @@ def test_extra_container_row_reaches_exactly_the_four_expected_tables(tmp_path):
 ])
 def test_invalid_rows_name_file_and_location(tmp_path, case, where, message):
     value = {"schema_version": 1, "formats": [{
-        "handler": "audio", "suffixes": [".wv"],
-        "mime_types": ["audio/x-wavpack"], "muxer": "wv",
+        "handler": "audio", "suffixes": [".wave"],
+        "mime_types": ["audio/x-wave-alias"], "muxer": "wav",
     }]}
     row = value["formats"][0]
     if case == "document-key":
@@ -100,10 +101,10 @@ def test_invalid_rows_name_file_and_location(tmp_path, case, where, message):
     elif case == "row-key":
         row["extra"] = True
     elif case == "duplicate-suffix":
-        value["formats"].append({"handler": None, "suffixes": [".wv"], "mime_types": []})
+        value["formats"].append({"handler": None, "suffixes": [".wave"], "mime_types": []})
     elif case == "duplicate-mime":
         value["formats"].append({
-            "handler": None, "suffixes": [], "mime_types": ["audio/x-wavpack"],
+            "handler": None, "suffixes": [], "mime_types": ["audio/x-wave-alias"],
         })
     elif case == "unknown-handler":
         row["handler"] = "pgn"
@@ -148,3 +149,56 @@ def test_stream_handler_requires_muxer(tmp_path, handler):
     ]})
     with pytest.raises(ValueError, match="formats row 1.*muxer"):
         mm.load_media_metadata_formats(path)
+
+
+def test_unknown_muxer_names_row_and_muxer(tmp_path):
+    path = write_rows(tmp_path, {"schema_version": 1, "formats": [
+        {"handler": "audio", "suffixes": [".asf"], "mime_types": [], "muxer": "asf"},
+    ]})
+    with pytest.raises(ValueError, match="formats row 1.*unsupported muxer.*asf"):
+        mm.load_media_metadata_formats(path)
+
+
+def test_shipped_bmff_suffixes_are_literal():
+    assert mm._MP4_LIKE == {".mp4", ".m4v", ".m4a", ".mov"}
+
+
+def test_added_bmff_suffix_gets_movflags(tmp_path, monkeypatch):
+    value = yaml.safe_load(ROWS.read_text(encoding="utf-8"))
+    value["formats"].append({
+        "handler": "video", "suffixes": [".3gp"], "mime_types": [], "muxer": "mp4",
+    })
+    synthetic_rows = write_rows(tmp_path, value)
+    original_read_text = Path.read_text
+    reads = []
+
+    def read_text(path, *args, **kwargs):
+        if path == ROWS:
+            reads.append(path)
+            path = synthetic_rows
+        return original_read_text(path, *args, **kwargs)
+
+    spec = importlib.util.spec_from_file_location("_media_metadata_formats_probe", mm.__file__)
+    assert spec is not None and spec.loader is not None
+    isolated = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as registry_patch:
+        registry_patch.setattr(Path, "read_text", read_text)
+        spec.loader.exec_module(isolated)
+    assert reads == [ROWS]
+    assert isolated._MP4_LIKE == {".mp4", ".m4v", ".m4a", ".mov", ".3gp"}
+    assert mm._MP4_LIKE == {".mp4", ".m4v", ".m4a", ".mov"}
+    calls = []
+
+    def rewrite(content, suffix, workdir, extra):
+        calls.append((content, suffix, workdir, extra))
+        return b"rewritten"
+
+    monkeypatch.setattr(isolated, "_ffmpeg_rewrite", rewrite)
+    assert isolated.embed_media_tags(b"synthetic", ".3gp", {"title": "sample"}) == b"rewritten"
+    assert calls == [(b"synthetic", ".3gp", None, [
+        "-metadata", "title=sample", "-movflags", "+use_metadata_tags",
+    ])]
+
+
+def test_bmff_suffixes_ignore_unknown_muxer():
+    assert mm._bmff_suffixes({".3gp": "mp4", ".bad": "unknown"}) == {".3gp"}

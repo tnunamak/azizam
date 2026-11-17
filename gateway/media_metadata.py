@@ -71,6 +71,11 @@ _FORMAT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "media_me
 _HANDLERS = frozenset({"png", "jpeg", "webp", "gif", "glb", "content", "audio", "video"})
 
 
+# Muxer families are coupled to the sniffing and stripping algorithms below.
+_MUXER_FAMILY = {"mp4": "bmff", "mov": "bmff", "webm": "ebml", "matroska": "ebml", "avi": "avi",
+                 "wav": "wav", "flac": "flac", "mp3": "mp3", "ogg": "ogg", "adts": "adts"}
+
+
 def load_media_metadata_formats(
     path: Path | str = _FORMAT_ROWS_PATH,
 ) -> tuple[dict[str, str | None], dict[str, str | None], dict[str, str], dict[str, str]]:
@@ -135,6 +140,8 @@ def load_media_metadata_formats(
             if mime_type.count("/") != 1 or not all(mime_type.split("/")) or ";" in mime_type:
                 fail(where, f"invalid MIME type: {mime_type!r}")
         muxer = token(row["muxer"], where, "muxer") if "muxer" in row else None
+        if muxer is not None and muxer not in _MUXER_FAMILY:
+            fail(where, f"unsupported muxer: {muxer!r}")
         if handler in {"audio", "video"} and muxer is None:
             fail(where, "stream handler requires a muxer")
         if muxer is not None and not suffixes:
@@ -623,8 +630,6 @@ _HEIF_BRANDS = frozenset({b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", 
                           b"mif1", b"mif2", b"msf1", b"miaf", b"MiHE", b"MiHB", b"MiHA",
                           b"avif", b"avis", b"avci", b"avcs"})
 _DIRECT_FAMILIES = frozenset({"png", "jpeg", "webp", "gif", "glb"})
-_MUXER_FAMILY = {"mp4": "bmff", "mov": "bmff", "webm": "ebml", "matroska": "ebml", "avi": "avi",
-                 "wav": "wav", "flac": "flac", "mp3": "mp3", "ogg": "ogg", "adts": "adts"}
 
 METADATA_REMOVED = "removed"
 METADATA_UNCHANGED = "unchanged"
@@ -971,7 +976,12 @@ def embed_image_metadata(content: bytes, suffix_or_mime: str,
 
 # ------------------------------------------------------------ embed / read
 
-_MP4_LIKE = {".mp4", ".m4v", ".m4a", ".mov"}
+def _bmff_suffixes(muxers: Mapping[str, str]) -> frozenset[str]:
+    """Aliases whose validated muxer uses ISO-BMFF metadata flags."""
+    return frozenset(suffix for suffix, muxer in muxers.items() if _MUXER_FAMILY.get(muxer) == "bmff")
+
+
+_MP4_LIKE = _bmff_suffixes(_MUXER)
 _WAV_INFO_FALLBACK_KEY = "comment"
 _ARG_LIMIT = 100_000  # bytes in one ``-metadata key=value`` argument; the kernel allows 131072
 # Leave headroom below Linux's usual 2 MiB argv + environment limit for the
