@@ -914,7 +914,7 @@ playwright = 748
 # ceiling falls by 20 (107 -> 87).
 # Train r106 (2026-10-24): node:test 5 compatibility + 82 Pi = 87, unchanged (no node test file changed on this train).
 # Train r107 (2026-10-24): node:test 5 compatibility + 82 Pi = 87, measured on the merged tree (no node test file changed).
-node = 87  # -20: tests/showcase/core.test.mjs is deleted with the /showcase site. Earlier: +3: pi store-lock tests (orphan reclaimed, live holder kept, fresh orphan degrades)
+node = 88  # +1 (2026-11-17, train 66): the pi store lock keeps a delayed live holder's 20-second-old lock within the core stale age. Earlier: -20: tests/showcase/core.test.mjs is deleted with the /showcase site. Earlier: +3: pi store-lock tests (orphan reclaimed, live holder kept, fresh orphan degrades)
 
 # Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
 # new upstream fakes belong in tests/support/fake_upstream/). It may only fall:
