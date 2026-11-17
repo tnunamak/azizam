@@ -13007,6 +13007,7 @@ async def _submit_video_chain(
     source_video_id: str | None = None,
     media_holder: media_inputs.Holder | None = None,
     admission_intent: str,
+    prepare: Any = None,
 ) -> Response:
     """Plan, build and queue a long-video chain (create with shots or long
     seconds, or an extension of `source`). ``admission_intent`` is the intent the calling route admits under."""
@@ -13151,7 +13152,7 @@ async def _submit_video_chain(
     }
     seconds_requested = sum(s for _, s in shots) + source_frames / fps
     reason = engine.stride_reason if abs(total_seconds - seconds_requested) > 0.05 else None
-    return await _submit_video_graph(
+    submission = dict(
         workflow=built.graph,
         auth_context=auth_context,
         workflow_name=workflow_name,
@@ -13174,6 +13175,10 @@ async def _submit_video_chain(
         progress_units=built.units,
         admission_intent=admission_intent,
     )
+
+    if prepare is not None:
+        return prepare(engine, spec, submission)
+    return await _submit_video_graph(**submission)
 
 
 def _seconds_text(value: float) -> str:
@@ -27789,6 +27794,22 @@ async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Vari
     """Which graph a run of a picture workflow submits: the one with the cutout step, or the one without. The caller's
     ``background`` choice (or the language model's answer when it left the choice open) decides; a request with a mask never
     asks for a cutout. A workflow whose template has no second graph reports that, and runs the one it has."""
+    options = (ctx.payload.get("body") or {}).get("options") or {}
+    plan = options.get("chain_plan")
+    if plan is not None:
+        from gateway import segment_chain
+        engine = video_extend.ChainEngine(segment_chain.load(plan["template"]))
+        values = dict(plan["spec"])
+        values["segments"] = [video_extend.Segment(**item) for item in values["segments"]]
+        if values.get("source") is not None:
+            values["source"] = video_extend.SourceVideo(**values["source"])
+        built = engine.build(video_extend.ChainSpec(**values))
+
+        def composed(graph):
+            graph.clear()
+            graph.update(copy.deepcopy(built.graph))
+
+        return node_graph_runner.Variant(composed, {})
     media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
     if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
         return None
@@ -28076,6 +28097,45 @@ def _row_route_policy(path: str) -> dict[str, Any] | None:
 class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
     controls of the body, and the prompt memory."""
+
+    async def chain_request(self, request, body, row, chosen, public_model):
+        from dataclasses import asdict
+        from gateway.workflow_runtime_types import RunRequest
+        name = frontend_video_create.short_name(chosen)
+        chain_name, _ = _chain_workflow_for(public_model)
+        if chain_name is None:
+            original_name, cfg = _resolve_video_workflow(public_model)
+            return _gateway_input_error(
+                gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                    model=original_name, max_seconds=f"{cfg.get('max_seconds', 8):g}"),
+                param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
+
+        def prepared(engine, spec, submission):
+            size = f"{spec.width}x{spec.height}"
+            seconds = _seconds_text(submission["seconds_val"])
+            facts = {"model": public_model, "resolved_model": name, "size": size,
+                     "seconds": seconds, "actual_seconds": round(submission["actual_seconds"], 4),
+                     "length_frames": submission["length"], "frame_rate": spec.fps, "seed": spec.seed}
+            options = {"size": size, "seconds_frames": submission["length"], "frame_rate": spec.fps,
+                       "chain_plan": {"template": engine.document(), "spec": asdict(spec)}}
+            controls = video_controls.parse_video_controls(body)
+            if controls.get(video_controls.AUDIO_CONTROL) is False:
+                options[video_controls.AUDIO_CONTROL] = False
+                facts[video_controls.AUDIO_CONTROL] = False
+            inputs = {"prompt": submission["prompt"], "width": spec.width, "height": spec.height, "seed": spec.seed}
+            if "negative_prompt" in chosen.contract["inputs"]:
+                inputs["negative_prompt"] = spec.negative
+            request.state.video_facts = facts
+            request.state.video_prompt = submission["prompt"]
+            return RunRequest(workflow_id=chosen.id, inputs=inputs, options=options, facts=facts,
+                              frontend_id=row.id, retries=row.job_retries, failure_text=row.job_failure_text,
+                              idempotency_key=request.headers.get("Idempotency-Key"),
+                              prompt_retention=self.prompt_retention(request.state.caller, body),
+                              job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True}})
+
+        return await _submit_video_chain(request, request.state.caller, body=body, workflow_name=name,
+                                        requested_model=public_model, public_model=public_model,
+                                        admission_intent=domain_rows.VIDEO_GENERATE, prepare=prepared)
 
     def resolve_model(self, name: str) -> Any:
         try:

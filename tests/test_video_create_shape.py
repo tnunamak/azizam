@@ -358,9 +358,7 @@ def test_the_facts_hold_no_prompt_no_person_and_only_the_keys_the_design_names()
 
 
 def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_its_parsed_body() -> None:
-    for body in ({"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]},                   # a storyboard
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 20},                   # past the native length: the long variant
-                 {"prompt": "x", "model": "ltx-2.5-long"},                                 # a chain manifest
+    for body in ({"prompt": "x", "model": "ltx-2.5-long"},                                 # a chain manifest
                  {"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
                  {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
         handoff = read(body)
@@ -566,8 +564,6 @@ def test_a_chain_create_reaches_the_old_handler_with_no_row_policy_and_no_row_re
     assert calls["auth"] == ["/v1/videos"]                    # authenticated once, by the row
     assert calls["policy"] == [] and calls["receipt"] == [] and calls["report"] == []     # the old handler owns both
     assert [body["prompt"] for _, body in calls["legacy"]] == ["x"]
-    shots = client.post("/openai/v1/videos", json={"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]})
-    assert shots.text == "old" and len(calls["legacy"]) == 2 and calls["receipt"] == []
 
 
 def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_receipt_after_the_policy() -> None:

@@ -185,7 +185,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     shots = body.get("shots") is not None
     if shots or (_beyond(seconds, limit) and manifest.variants.get("long")):
         if manifest.variants.get("long"):
-            return LegacyRoute(LEGACY_CREATE, body)
+            chosen = snapshot.get(manifest.variants["long"])
+            manifest = video_grid.video_facts(chosen)
+            return chosen, manifest, short_name(chosen), public_model
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
                       param="shots", code="long_video_not_supported")
     block = _workflow_block(body)
@@ -248,6 +250,8 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     if isinstance(picked, (Response, LegacyRoute)):
         return picked
     chosen, manifest, name, public_model = picked
+    if manifest.chain:
+        return await hooks.chain_request(request, body, row, chosen, public_model)
     reference, seconds = body.get("input_reference"), body.get("seconds")
 
     grid, limits = manifest.grid, manifest.length

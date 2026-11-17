@@ -21,7 +21,7 @@ from tests.media_test_bytes import png_bytes
 from gateway.manifests import enforce_contract, ManifestError
 from tests.support.access import access_context, everything
 from tests.test_frontend_shapes import json_request
-from tests.test_s7_parity_video_create import world  # noqa: F401
+from tests.test_s7_parity_video_create import submitted, world  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -69,7 +69,9 @@ def test_public_handoff_submits_the_old_handlers_graph(world, body):
         assert len(world.engine.prompts) == 1
         response = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert response.status_code == 200, response.text
-        assert len(world.engine.prompts) == 2
+        if body["model"] == "ltx-2.5-t2v":
+            assert response.json()["id"].startswith("video_mj_")
+        await submitted(world, 2)
         assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
 
     asyncio.run(drive())
