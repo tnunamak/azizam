@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.fake_upstream.audio import audio_engine
 from tests.support.access import access_context  # noqa: E402
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
@@ -70,18 +71,6 @@ class PeakNormalizeTests(unittest.TestCase):
         self.assertEqual(proxy._peak_normalize_audio(b"not audio", "audio/flac", -1.0), b"not audio")
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int, payload=None, content: bytes = b"", headers=None) -> None:
-        self.status_code = status_code
-        self._payload = payload or {}
-        self.content = content
-        self.headers = headers or {}
-        self.text = ""
-
-    def json(self):
-        return self._payload
-
-
 class _JsonRequest:
     headers = {"content-type": "application/json"}
 
@@ -94,38 +83,15 @@ class _JsonRequest:
 
 class AudioGenerateGraphTests(unittest.IsolatedAsyncioTestCase):
     async def _generate(self, body: dict, *, content_type: str, raw: bytes = b"RAW"):
-        submitted: list[dict] = []
-
-        class FakeClient:
-            def __init__(self, **_kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_args):
-                return False
-
-            async def post(self, url, **kwargs):
-                submitted.append(kwargs["json"]["prompt"])
-                return _FakeResponse(200, {"prompt_id": "p1"})
-
-            async def get(self, url, **kwargs):
-                if "/history/" in url:
-                    # The history names the node and key of the submitted graph's save node, as the engine does.
-                    saved = {"SaveAudio": "audio", "SaveAudioMP3": "audio", "TangoFluxVAEDecodeAndPlay": "audios"}
-                    outputs = {node_id: {saved[node["class_type"]]: [{"filename": "o.bin", "type": "output"}]}
-                               for node_id, node in submitted[-1].items() if node.get("class_type") in saved}
-                    return _FakeResponse(200, {"p1": {"status": {"status_str": "success"}, "outputs": outputs}})
-                return _FakeResponse(200, content=raw, headers={"content-type": content_type})
-
-        with patch.object(proxy.httpx, "AsyncClient", FakeClient), patch.object(
+        captured = {}
+        with audio_engine(captured, content=raw, content_type=content_type, prompt_id='p1',
+                          filename='o.bin', discover_outputs=True), patch.object(
             proxy, "_service_availability_response", return_value=None
         ), patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy.proxy_audio_generate(
                 _JsonRequest(body), access_context()  # type: ignore[arg-type]
             )
-        return response, (submitted[0] if submitted else None)
+        return response, (captured.get("payload") or {}).get("prompt")
 
     def test_aliases_resolve(self) -> None:
         self.assertEqual(proxy._resolve_audio_workflow("sfx")[0], "sa3-small-sfx")
