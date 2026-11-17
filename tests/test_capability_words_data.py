@@ -92,6 +92,26 @@ def _document():
     }
 
 
+def _write_catalog(data):
+    # Derive the sibling catalog from the exact serialized presentation fixture.
+    # Malformed presentation documents must still reach the production validator.
+    try:
+        document = yaml.safe_load(data.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        document = {}
+    if not isinstance(document, dict):
+        document = {}
+    relations = [
+        {"kind": "family", "context": context, "word": word, "family": family, "order": order}
+        for section, context in (("protocol_words", "protocol"), ("route_intents", "route"),
+                                 ("type_capabilities", "type"))
+        for order, (word, family) in enumerate(document.get(section, {}).items())
+    ]
+    data.with_name("operations.yml").write_text(yaml.safe_dump({
+        "schema_version": 1, "operations": [], "relations": relations,
+    }, sort_keys=False), encoding="utf-8")
+
+
 def _tree(tmp_path, document):
     source = tmp_path / "gateway" / "capability_ids.py"
     source.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +120,7 @@ def _tree(tmp_path, document):
     data.parent.mkdir(parents=True, exist_ok=True)
     text = document if isinstance(document, str) else yaml.safe_dump(document, sort_keys=False)
     data.write_text(text, encoding="utf-8")
+    _write_catalog(data)
     return source, data
 
 
@@ -164,9 +185,19 @@ def test_exported_maps_are_read_only(tmp_path, name):
     ({**_document(), "route_intents": None}, "route_intents"),
 ])
 def test_invalid_document_fails_import_with_file_and_key(tmp_path, document, word):
-    source, _ = _tree(tmp_path, document)
+    if word in {"protocol_words", "route_intents"}:
+        source, _ = _tree(tmp_path, _document())
+        module = _import(source)
+        custom = tmp_path / "custom" / "capability_words.yml"
+        custom.parent.mkdir()
+        custom.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    else:
+        source, _ = _tree(tmp_path, document)
     with pytest.raises(ValueError) as error:
-        _import(source)
+        if word in {"protocol_words", "route_intents"}:
+            module.load_capability_words(custom, catalog=None)
+        else:
+            _import(source)
     assert "capability_words.yml" in str(error.value)
     assert word in str(error.value)
 
@@ -176,9 +207,13 @@ def test_invalid_document_fails_import_with_file_and_key(tmp_path, document, wor
 def test_invalid_word_fails_import_with_file_and_word(tmp_path, section, word):
     document = _document()
     document[section] = {word: "chat"}
-    source, _ = _tree(tmp_path, document)
+    source, _ = _tree(tmp_path, _document())
+    module = _import(source)
+    custom = tmp_path / "custom" / "capability_words.yml"
+    custom.parent.mkdir()
+    custom.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     with pytest.raises(ValueError) as error:
-        _import(source)
+        module.load_capability_words(custom, catalog=None)
     assert "capability_words.yml" in str(error.value)
     assert repr(word) in str(error.value)
 
@@ -188,9 +223,13 @@ def test_invalid_word_fails_import_with_file_and_word(tmp_path, section, word):
 def test_invalid_capability_fails_import_with_file_and_word(tmp_path, section, capability):
     document = _document()
     document[section] = {"unfamiliar.word": capability}
-    source, _ = _tree(tmp_path, document)
+    source, _ = _tree(tmp_path, _document())
+    module = _import(source)
+    custom = tmp_path / "custom" / "capability_words.yml"
+    custom.parent.mkdir()
+    custom.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     with pytest.raises(ValueError) as error:
-        _import(source)
+        module.load_capability_words(custom, catalog=None)
     assert "capability_words.yml" in str(error.value)
     assert "unfamiliar.word" in str(error.value)
 
@@ -198,9 +237,13 @@ def test_invalid_capability_fails_import_with_file_and_word(tmp_path, section, c
 def test_conflicting_word_in_both_maps_fails_import(tmp_path):
     document = _document()
     document["route_intents"]["tts"] = "music"
-    source, _ = _tree(tmp_path, document)
+    source, _ = _tree(tmp_path, _document())
+    module = _import(source)
+    custom = tmp_path / "custom" / "capability_words.yml"
+    custom.parent.mkdir()
+    custom.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     with pytest.raises(ValueError) as error:
-        _import(source)
+        module.load_capability_words(custom, catalog=None)
     assert "capability_words.yml" in str(error.value)
     assert "tts" in str(error.value)
 
@@ -225,6 +268,7 @@ def test_changed_data_changes_capability_lookup_on_import_only(tmp_path):
     assert module.capability_of_word(None) == ""
     assert module.capability_of_word("  ") == ""
     data.write_text(yaml.safe_dump(_document(), sort_keys=False), encoding="utf-8")
+    _write_catalog(data)
     assert module.capability_of_word("tts") == "music", "the import-time table must not hot-reload"
     assert _import(source).capability_of_word("tts") == "speech"
     data.unlink()

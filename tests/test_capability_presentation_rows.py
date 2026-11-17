@@ -68,6 +68,26 @@ def _load(source, name):
     return module
 
 
+def _write_catalog(data):
+    # Derive the sibling catalog from the exact serialized presentation fixture.
+    # Malformed presentation documents must still reach the production validator.
+    try:
+        document = yaml.safe_load(data.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        document = {}
+    if not isinstance(document, dict):
+        document = {}
+    relations = [
+        {"kind": "family", "context": context, "word": word, "family": family, "order": order}
+        for section, context in (("protocol_words", "protocol"), ("route_intents", "route"),
+                                 ("type_capabilities", "type"))
+        for order, (word, family) in enumerate(document.get(section, {}).items())
+    ]
+    data.with_name("operations.yml").write_text(yaml.safe_dump({
+        "schema_version": 1, "operations": [], "relations": relations,
+    }, sort_keys=False), encoding="utf-8")
+
+
 def _tree(tmp_path, document):
     source = tmp_path / "gateway" / "capability_ids.py"
     source.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +96,7 @@ def _tree(tmp_path, document):
     data.parent.mkdir(parents=True, exist_ok=True)
     text = document if isinstance(document, str) else yaml.safe_dump(document, sort_keys=False)
     data.write_text(text, encoding="utf-8")
+    _write_catalog(data)
     return source, data
 
 
@@ -208,6 +229,7 @@ def test_presentation_maps_load_once_and_reload_only_explicitly(tmp_path):
     module = _load(source, "_capability_presentation_rows")
     document["capabilities"][1].update(icon="chat", recommended_alias="say", summary="Speak changed words.")
     data.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    _write_catalog(data)
     assert module.CAPABILITY_ICON_KEYS["speech"] == "sfx"
     assert module.RECOMMENDED_ALIASES["speech"] == "voice"
     assert module.CAPABILITY_DESCRIPTIONS["speech"] == "Read text aloud."

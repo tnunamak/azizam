@@ -45,6 +45,7 @@ import yaml
 from gateway.capabilities import Capability, ResourceEstimate
 from gateway.engine_protocol.reviewed import adapter_serves, speaks_serving_adapter
 from gateway.model_files import missing_model_file_caveat, model_file_availability
+from gateway.operation_catalog import load as load_operation_catalog
 from gateway.service_priority import selected_service, service_priority
 
 if TYPE_CHECKING:  # model_metadata imports this module through stable_aliases; read it at call time
@@ -114,6 +115,19 @@ _LOCAL_CAPABILITY_ROWS_PATH = (
 
 def _load_local_capability_rows(
     path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+):
+    """Load package rows, retaining the legacy read-error boundary."""
+    source = Path(path)
+    try:
+        document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{source}: document row 0: could not read rows: {error}")
+    return _parse_local_capability_rows(document, source)
+
+
+def _parse_local_capability_rows(
+    document: Any,
+    path: str | Path,
 ) -> tuple[
     Mapping[str, tuple[str, tuple[str, ...], tuple[str, ...], str, str | None]],
     tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
@@ -123,7 +137,7 @@ def _load_local_capability_rows(
     Mapping[str, Any],
     tuple[Mapping[str, Any], ...],
 ]:
-    """Load ordered package facts; errors identify the file and logical row."""
+    """Validate ordered decoded facts without reading a table or probing a backend."""
     source = Path(path)
 
     def fail(where: str, message: str) -> None:
@@ -155,10 +169,6 @@ def _load_local_capability_rows(
             fail(where, f"{key} must be a non-empty list of non-empty strings")
         return tuple(value)
 
-    try:
-        document = yaml.safe_load(source.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as error:
-        fail("document row 0", f"could not read rows: {error}")
     fields(
         document, {
             "schema_version", "alias_operations", "workflow_families",
@@ -391,10 +401,42 @@ def load_local_capability_image_rows(
     return _load_local_capability_rows(path)[3:6]
 
 
+def _load_catalog_local_capability_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+    *,
+    catalog_path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH.with_name("operations.yml"),
+):
+    """Project runtime alias intents; keep raw row loaders as compatibility APIs."""
+    loaded = _load_local_capability_rows(path)
+    catalog = load_operation_catalog(catalog_path)
+    spellings = {
+        row["word"]: row["operation"]
+        for row in catalog.relations("spelling", "legacy")
+    }
+    alias_rows = []
+    for number, row in enumerate(loaded[6], start=1):
+        intent = None
+        if row["intent"] is not None:
+            name = row["name"]
+            if name not in spellings:
+                raise ValueError(
+                    f"{catalog_path}: alias_operations row {number}: "
+                    f"missing legacy spelling for {name!r}"
+                )
+            intent = spellings[name]
+        alias_rows.append(MappingProxyType({**row, "intent": intent}))
+    intents = {row["name"]: row["intent"] for row in alias_rows}
+    aliases = MappingProxyType({
+        name: (intents[name], *spec[1:])
+        for name, spec in loaded[0].items()
+    })
+    return (aliases, *loaded[1:6], tuple(alias_rows))
+
+
 (
     _ALIAS_INTENTS, _WORKFLOW_FAMILIES, _BACKEND_ROWS,
     _IMAGE_DEFAULTS, _IMAGE_ROWS, _WORKFLOW_DEFAULTS, _ALIAS_ROWS,
-) = _load_local_capability_rows()
+) = _load_catalog_local_capability_rows()
 
 
 def alias_operation_rows() -> tuple[Mapping[str, Any], ...]:

@@ -186,3 +186,133 @@ def test_loaded_maps_are_deeply_read_only_and_examples_are_fresh(tmp_path, monke
         "body": {"model": "second", "options": [{"label": "literal"}]},
         "files": ["canvas"],
     }]
+
+
+def test_assumption_legacy_folding_and_insertion_order_remain_until_catalog_migration(tmp_path):
+    """Characterize the existing contract, not a completed catalog migration."""
+    document = _document()
+    document["operations"][0]["words"] = [" Z_PAINT ", "Paint_PREVIEW"]
+    second = copy.deepcopy(document["operations"][0])
+    second["id"] = "other"
+    second["words"] = [" A_PAINT "]
+    second["intent_prefixes"] = ["other.second.", "other.first."]
+    second["examples"][0]["intent"] = "other.preview"
+    document["operations"].append(second)
+
+    prefixes, intents, placeholder = catalog.load_models_catalog_operations(
+        _write(tmp_path, document)
+    )
+
+    assert list(prefixes.items()) == [
+        ("z.paint", ("test.paint.", "test.brush.")),
+        ("paint.preview", ("test.paint.", "test.brush.")),
+        ("a.paint", ("other.second.", "other.first.")),
+    ]
+    assert list(intents) == ["test.paint.preview", "other.preview"]
+    for entry in intents.values():
+        assert list(entry) == ["kind", "body", "path", "files"]
+        assert entry["kind"] == "paint-preview"
+        assert list(entry["body"]) == ["model", "options"]
+        assert entry["body"]["model"] == "$row_id"
+        assert tuple(entry["body"]["options"][0].items()) == (("label", "literal"),)
+        assert entry["path"] == "/v1/test-paint"
+        assert entry["files"] == ("canvas",)
+    assert placeholder == "$row_id"
+
+
+def test_catalog_spelling_retarget_changes_normalized_reader_prefixes(tmp_path):
+    document = yaml.safe_load(
+        catalog.MODELS_CATALOG_OPERATIONS_PATH.with_name("operations.yml").read_text(encoding="utf-8")
+    )
+    spelling = next(row for row in document["relations"]
+                    if row["kind"] == "spelling" and row.get("context") == "catalog"
+                    and "." in row["word"])
+    word = spelling["word"]
+    original = spelling["operation"]
+    target = next(row["id"] for row in document["operations"] if row["id"] != original)
+    spelling["word"] = " " + word.upper().replace(".", "_") + " "
+    path = tmp_path / "operations.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    before, _, _ = catalog.load_models_catalog_operations(catalog_path=path)
+    normalized = word.strip().lower().replace("_", ".")
+    assert before[normalized] == (original,)
+
+    spelling["operation"] = target
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    after, _, _ = catalog.load_models_catalog_operations(catalog_path=path)
+    assert after[normalized] == (target,)
+    assert {key: value for key, value in after.items() if key != normalized} == {
+        key: value for key, value in before.items() if key != normalized
+    }
+
+
+def test_shipped_catalog_words_preserve_every_legacy_row_prefix():
+    document = yaml.safe_load(catalog.MODELS_CATALOG_OPERATIONS_PATH.read_text(encoding="utf-8"))
+    expected = {
+        word.strip().lower().replace("_", "."): tuple(row["intent_prefixes"])
+        for row in document["operations"] for word in row["words"]
+    }
+    prefixes, _, _ = catalog.load_models_catalog_operations()
+    assert dict(prefixes) == expected
+    assert list(prefixes) == list(expected)
+
+
+def _catalog_spelling_collision_copy(tmp_path):
+    source = catalog.MODELS_CATALOG_OPERATIONS_PATH.with_name("operations.yml")
+    path = tmp_path / "operations.yml"
+    path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    return path, yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _catalog_spelling_collision_relations(document, same_target, reverse):
+    targets = list(dict.fromkeys(row["id"] for row in document["operations"]))
+    assert len(targets) >= 2
+    relations = [
+        {"kind": "spelling", "context": "catalog", "word": "sample_word",
+         "operation": targets[0]},
+        {"kind": "spelling", "context": "catalog", "word": "sample.word",
+         "operation": targets[0] if same_target else targets[1]},
+    ]
+    if reverse:
+        relations.reverse()
+    # Reverse both physical order and the catalog's explicit relation ordering.
+    first_order = 1 + max(row["order"] for row in document["relations"]
+                          if row["kind"] == "spelling" and row.get("context") == "catalog")
+    for offset, row in enumerate(relations):
+        row["order"] = first_order + offset
+    document["relations"].extend(relations)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["underscore-first", "dot-first"])
+def test_catalog_spelling_collision_conflicting_targets(tmp_path, reverse):
+    path, document = _catalog_spelling_collision_copy(tmp_path)
+    # Fail before mutation if the shipped copy is not independently valid.
+    catalog.load_models_catalog_operations(catalog_path=path)
+    _catalog_spelling_collision_relations(document, same_target=False, reverse=reverse)
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ValueError) as error:
+        catalog.load_models_catalog_operations(catalog_path=path)
+
+    assert str(error.value) == (
+        f"{catalog.MODELS_CATALOG_OPERATIONS_PATH.name}: "
+        "row 'sample.word' has conflicting normalized catalog spellings"
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["underscore-first", "dot-first"])
+def test_catalog_spelling_collision_same_target(tmp_path, reverse):
+    path, document = _catalog_spelling_collision_copy(tmp_path)
+    baseline = catalog.load_models_catalog_operations(catalog_path=path)
+    _catalog_spelling_collision_relations(document, same_target=True, reverse=reverse)
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    assert catalog.load_models_catalog_operations(catalog_path=path) == baseline
+
+
+def test_catalog_spelling_collision_unchanged_copy(tmp_path):
+    path, _ = _catalog_spelling_collision_copy(tmp_path)
+
+    assert catalog.load_models_catalog_operations(catalog_path=path) == (
+        catalog.load_models_catalog_operations()
+    )
