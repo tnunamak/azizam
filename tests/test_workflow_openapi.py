@@ -207,9 +207,9 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_route_inputs_cover_what_manifests_omit(self) -> None:
         by_name = {n: {r["name"] for r in e["route_inputs"]} for n, e in self.catalog.items()}
-        # A video manifest that declares width, height and length takes size and seconds from them (CODE_TO_DATA S7, V5a);
-        # the chain workflow has no length input, so the route still owns its seconds.
-        self.assertNotIn("seconds", by_name["video.generate.ltx-2.5-t2v"])
+        # A video manifest that declares width and height takes `size` from them. Its frame-count `length` is not a
+        # request field: the route owns the clip length in `seconds`, so every video workflow is advertised it.
+        self.assertIn("seconds", by_name["video.generate.ltx-2.5-t2v"])
         self.assertNotIn("size", by_name["video.generate.ltx-2.5-t2v"])
         self.assertIn("seconds", by_name["video.generate.ltx-2.5-long"])
         self.assertNotIn("size", by_name["image.generate.krea2-turbo"])  # has width/height
@@ -1244,6 +1244,11 @@ class ExecutionDataTests(unittest.TestCase):
             "content"]["multipart/form-data"]["schema"], form_ref)
         self.assertEqual(published[ROOT_EXTENSION][0]["execution"]["recommended"], "async")
 
+    @staticmethod
+    def served(value):
+        """A field row's value as a caller sees it: the keys that name a manifest source of the bounds are not served."""
+        return {k: v for k, v in value.items() if k not in ("minimum_from", "maximum_from")}
+
     def test_route_inputs_follow_ordered_guards_and_settable_dimensions(self):
         from gateway.workflow_openapi import route_inputs
 
@@ -1260,9 +1265,10 @@ class ExecutionDataTests(unittest.TestCase):
             ("audio.generate", {}, []),
             ("mesh.generate", {}, ["size_body"]),
             ("video.generate", {}, ["duration", "size_body"]),
-            ("video.generate", {"length": {}}, ["size_body"]),
+            # The route takes the clip length in seconds whether or not the manifest has a frame-count `length`.
+            ("video.generate", {"length": {}}, ["duration", "size_body"]),
             ("video.generate", {"length": {"settable": False}}, ["duration", "size_body"]),
-            ("video.generate", {"width": {}, "height": {}, "length": {}}, []),
+            ("video.generate", {"width": {}, "height": {}, "length": {}}, ["duration"]),
         ]
         for intent, inputs, refs in cases:
             with self.subTest(intent=intent, inputs=inputs):
@@ -1270,7 +1276,7 @@ class ExecutionDataTests(unittest.TestCase):
                 record.contract["inputs"] = {
                     name: {"type": "number", **spec} for name, spec in inputs.items()
                 }
-                self.assertEqual(route_inputs(record), [fields[ref]["value"] for ref in refs])
+                self.assertEqual(route_inputs(record), [self.served(fields[ref]["value"]) for ref in refs])
 
     def test_route_inputs_use_unfamiliar_data_rows_and_return_fresh_fields(self):
         from gateway.workflow_openapi import route_inputs
@@ -1331,7 +1337,7 @@ class ExecutionDataTests(unittest.TestCase):
                 record = self.record("video.edit")
                 record.contract["typical_seconds"] = typical
                 expected = [] if typical is not None and typical <= 30 else [
-                    fields[ref]["value"] for ref in ("duration", "size_body")
+                    self.served(fields[ref]["value"]) for ref in ("duration", "size_body")
                 ]
                 self.assertEqual(route_inputs(record), expected)
 

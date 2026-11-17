@@ -7926,7 +7926,7 @@
       "sha256": "88b6f9d5ef1b80c420b607c3dbbb14544b2856cb6ba9a5887c216a9e1fdf177b"
     },
     "video.edit.scail-2-replace": {
-      "bytes": 15825,
+      "bytes": 15818,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7952,8 +7952,7 @@
                   "in": "body"
                 },
                 "length": {
-                  "field": "seconds",
-                  "in": "body"
+                  "in": "none"
                 },
                 "prompt": {
                   "field": "prompt",
@@ -8104,7 +8103,17 @@
               "name": "video"
             }
           ],
-          "route_inputs": [],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 4,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
           "short_id": "scail-2-replace",
           "status": "current",
           "superseded_by": null,
@@ -8263,13 +8272,6 @@
                 "description": "Video height in pixels.",
                 "maximum": 1024,
                 "minimum": 256,
-                "type": "integer"
-              },
-              "length": {
-                "default": 81,
-                "description": "Number of frames in the video.",
-                "maximum": 81,
-                "minimum": 5,
                 "type": "integer"
               },
               "prompt": {
@@ -8447,7 +8449,7 @@
           }
         }
       },
-      "sha256": "86c58b199a3b3bf6763d9ff7176a294e6b17a95dfe6ef237957283ec89900522"
+      "sha256": "a102a23d6fcd0b4a29d40787c74f4d8ed743918585a8ec8fda24ab58fdfdfa09"
     },
     "video.edit.video-mux": {
       "bytes": 9066,
@@ -8720,7 +8722,7 @@
       "sha256": "81f7d78194caf955b353af86db1ec009da648f4829f946631884ffefedd6f9ca"
     },
     "video.generate.ltx-2.5-i2v": {
-      "bytes": 4792,
+      "bytes": 4749,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8757,8 +8759,7 @@
                   "in": "body"
                 },
                 "length": {
-                  "field": "seconds",
-                  "in": "body"
+                  "in": "none"
                 },
                 "negative_prompt": {
                   "field": "negative_prompt",
@@ -8817,7 +8818,17 @@
               "name": "video"
             }
           ],
-          "route_inputs": [],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
           "short_id": "ltx-2.5-i2v",
           "status": "current",
           "superseded_by": null,
@@ -8854,14 +8865,6 @@
                 "minimum": 0,
                 "type": "number"
               },
-              "length": {
-                "description": "Frame count on the 8N+1 grid.",
-                "maximum": 241,
-                "minimum": 9,
-                "type": "integer",
-                "x-azizam-offset": 1,
-                "x-azizam-step": 8
-              },
               "negative_prompt": {
                 "description": "Describe anything you want left out.",
                 "type": "string"
@@ -8895,10 +8898,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v",
         "run_path": null
       },
-      "sha256": "935f86a60d1f454e1487220b26ae93440c0c5fd398ae58d3184a2818775efd25"
+      "sha256": "aab4ba7cf6dc4976cc2b46f4fa82b1505decd00049f12e0aee71dd78b4690e1e"
     },
     "video.generate.ltx-2.5-keyframes": {
-      "bytes": 7304,
+      "bytes": 7327,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -9012,6 +9015,7 @@
               "description": "Clip length in seconds.",
               "field": "seconds",
               "in": "body",
+              "maximum": 10,
               "minimum": 1,
               "name": "seconds",
               "type": "number"
@@ -9145,10 +9149,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes",
         "run_path": null
       },
-      "sha256": "66a09b2ddbc8a96e7d85823c6363fa8d60017cc9d7e4257371b5b0e471bdea46"
+      "sha256": "9f322cbe75e22b95d07371ff0075e3ea744ee57f07ca4a8879d809744256553e"
     },
     "video.generate.ltx-2.5-keyframes-mid": {
-      "bytes": 9329,
+      "bytes": 9352,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -9274,6 +9278,7 @@
               "description": "Clip length in seconds.",
               "field": "seconds",
               "in": "body",
+              "maximum": 10,
               "minimum": 1,
               "name": "seconds",
               "type": "number"
@@ -9445,10 +9450,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid",
         "run_path": null
       },
-      "sha256": "fd5dd6c6f12c339dac93d0e501322bca2198bacd621cc6a5faae0c83038e3a96"
+      "sha256": "7aa6ab4fee6f86d31842ef25ca9a9750ed9954a090469f5c3a5baa62ed235e5c"
     },
     "video.generate.ltx-2.5-long": {
-      "bytes": 3879,
+      "bytes": 3902,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -9541,6 +9546,7 @@
               "description": "Clip length in seconds.",
               "field": "seconds",
               "in": "body",
+              "maximum": 40,
               "minimum": 1,
               "name": "seconds",
               "type": "number"
@@ -9599,10 +9605,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_long",
         "run_path": null
       },
-      "sha256": "2690cee5c29efa18d8d8280f81f466cfa4e342aec8bc88914c0fb815a50371f2"
+      "sha256": "15f36d52086c12ce9cf96299f50477c3ba1724c09f315637e7946b62a2194997"
     },
     "video.generate.ltx-2.5-t2v": {
-      "bytes": 4057,
+      "bytes": 4014,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -9633,8 +9639,7 @@
                   "in": "body"
                 },
                 "length": {
-                  "field": "seconds",
-                  "in": "body"
+                  "in": "none"
                 },
                 "negative_prompt": {
                   "field": "negative_prompt",
@@ -9693,7 +9698,17 @@
               "name": "video"
             }
           ],
-          "route_inputs": [],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
           "short_id": "ltx-2.5-t2v",
           "status": "current",
           "superseded_by": null,
@@ -9717,14 +9732,6 @@
                 "maximum": 704,
                 "minimum": 64,
                 "type": "integer"
-              },
-              "length": {
-                "description": "Frame count on the 8N+1 grid.",
-                "maximum": 241,
-                "minimum": 9,
-                "type": "integer",
-                "x-azizam-offset": 1,
-                "x-azizam-step": 8
               },
               "negative_prompt": {
                 "description": "Describe anything you want left out.",
@@ -9758,10 +9765,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v",
         "run_path": null
       },
-      "sha256": "f23ccfcab2c4f4efdff0e63c1ab6a6bfae1606a5c46a2e56a485db02e2e17ca3"
+      "sha256": "7b899a80c5a1a0747bf3f7f9bf691997901e9583a14dd89d001f7e907c06a273"
     },
     "video.generate.minimax-h3-i2v": {
-      "bytes": 4714,
+      "bytes": 4668,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -9794,8 +9801,7 @@
                   "in": "body"
                 },
                 "length": {
-                  "field": "seconds",
-                  "in": "body"
+                  "in": "none"
                 },
                 "prompt": {
                   "field": "prompt",
@@ -9854,7 +9860,17 @@
               "name": "video"
             }
           ],
-          "route_inputs": [],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
           "short_id": "minimax-h3-i2v",
           "status": "current",
           "superseded_by": null,
@@ -9892,14 +9908,6 @@
                 "type": "string",
                 "x-azizam-asset": true
               },
-              "length": {
-                "description": "Frame count on the 17N+5 grid.",
-                "maximum": 362,
-                "minimum": 22,
-                "type": "integer",
-                "x-azizam-offset": 5,
-                "x-azizam-step": 17
-              },
               "prompt": {
                 "description": "Describe the scene, action, and mood.",
                 "type": "string"
@@ -9936,10 +9944,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v",
         "run_path": null
       },
-      "sha256": "dce9b3018663d4ee549c431adcfd738dafac5f5607cef6d47f91d1026f180238"
+      "sha256": "7d8a56057a07bcbf45ce179bb0ecb5830e7b15a91e40e097a98965ef2b2a2093"
     },
     "video.generate.minimax-h3-keyframes": {
-      "bytes": 6007,
+      "bytes": 6030,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10041,7 +10049,8 @@
               "description": "Clip length in seconds.",
               "field": "seconds",
               "in": "body",
-              "minimum": 1,
+              "maximum": 10,
+              "minimum": 2,
               "name": "seconds",
               "type": "number"
             }
@@ -10149,10 +10158,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes",
         "run_path": null
       },
-      "sha256": "a34926ab04ea709e5d4e6ad1b567ec45db560dfc00fcca5b464bde303b89c450"
+      "sha256": "51a93dd82ecd35488f0fb32e74fac50404bb15fc5855cbfbe5d36f97e8e16bfe"
     },
     "video.generate.minimax-h3-keyframes-mid": {
-      "bytes": 7477,
+      "bytes": 7500,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10262,7 +10271,8 @@
               "description": "Clip length in seconds.",
               "field": "seconds",
               "in": "body",
-              "minimum": 1,
+              "maximum": 10,
+              "minimum": 2,
               "name": "seconds",
               "type": "number"
             }
@@ -10394,10 +10404,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid",
         "run_path": null
       },
-      "sha256": "675ecae62734b4fd494acda04e3d87d10887317813a7a107faf7f84f076e72aa"
+      "sha256": "bdc4dac0dd1606817a49984bc0a5d78fa8cd33c79cb5fc278ef9a8e49fe3fbef"
     },
     "video.generate.minimax-h3-long": {
-      "bytes": 3601,
+      "bytes": 3624,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10480,7 +10490,8 @@
               "description": "Clip length in seconds.",
               "field": "seconds",
               "in": "body",
-              "minimum": 1,
+              "maximum": 40,
+              "minimum": 2,
               "name": "seconds",
               "type": "number"
             }
@@ -10534,10 +10545,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_long",
         "run_path": null
       },
-      "sha256": "4e8c02bcfeb4bc77ad9534e3fcff8964891fe2d716185cab3e4aeac2352d63ef"
+      "sha256": "6edeea815f520bdcfa5d82a31bbc5a03a53ef0466d52882fe788b54b013aa014"
     },
     "video.generate.minimax-h3-t2v": {
-      "bytes": 4295,
+      "bytes": 4249,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10566,8 +10577,7 @@
                   "in": "body"
                 },
                 "length": {
-                  "field": "seconds",
-                  "in": "body"
+                  "in": "none"
                 },
                 "prompt": {
                   "field": "prompt",
@@ -10626,7 +10636,17 @@
               "name": "video"
             }
           ],
-          "route_inputs": [],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
           "short_id": "minimax-h3-t2v",
           "status": "current",
           "superseded_by": null,
@@ -10658,14 +10678,6 @@
                 "maximum": 768,
                 "minimum": 64,
                 "type": "integer"
-              },
-              "length": {
-                "description": "Frame count on the 17N+5 grid.",
-                "maximum": 362,
-                "minimum": 22,
-                "type": "integer",
-                "x-azizam-offset": 5,
-                "x-azizam-step": 17
               },
               "prompt": {
                 "description": "Describe the scene, action, and mood.",
@@ -10702,7 +10714,7 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v",
         "run_path": null
       },
-      "sha256": "f94a2b6978b7f06ea3f79ff66e7365287c24e04418497a2844e845c3c3d65be3"
+      "sha256": "a3944105266922aa05a27b2a92959f73578fd225d7bd68442114ba9f9dd5ee74"
     }
   }
 }
