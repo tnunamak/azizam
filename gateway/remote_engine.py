@@ -54,6 +54,12 @@ def refuse_unbound(service: Mapping[str, Any]) -> None:
         raise refused()
 
 
+def refuse_unbound_connection(connection) -> None:
+    from gateway.engine_egress import is_remote_destination
+    if connection.remote_capability is not None or connection.remote_enabled or is_remote_destination(connection.address):
+        raise refused()
+
+
 def origin(address: str) -> str:
     if (not isinstance(address, str) or any(c.isspace() or ord(c) < 32 for c in address)
             or '\\' in address or '#' in address or '?' in address):

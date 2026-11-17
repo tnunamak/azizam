@@ -21431,6 +21431,11 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     if (not service or not service.get("port") or not service.get("host")
             or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
+    from gateway.remote_engine import refuse_unbound
+    try:
+        refuse_unbound(service)
+    except ProtocolError as error:
+        return await _deny_realtime(websocket, _protocol_failure(error))
     admission = _dispatch_admission_response(
         f"{domain_rows.AUDIO_PREFIX}realtime", auth_context=auth_context, resource_class=domain_rows.AUDIO,
         service_id=_REALTIME_SERVICE_ID, service_available=True,

@@ -221,6 +221,27 @@ Implement these top-level functions; run `python -m pytest <full node IDs>`.
    | Polling | Record exact file + function | Rtest_remote_factory_polling |
    | Assets | Record exact file + function | Rtest_remote_factory_assets |
 
+   These six rows cover the generic protocol path only. Every other engine
+   client must refuse remote-enabled records before credential lookup or I/O:
+
+   | Additional engine path | Enforcement | Regression |
+   | --- | --- | --- |
+   | Legacy switch/residency control | engine_control.EngineControlRuntime observe/invoke/select/load/unload/sleep/wake refuse | test_remote_legacy_switch_refuses_before_client_or_credential |
+   | Lifecycle readiness/health and standalone observation | lifecycle_drivers driver selection, ensure_ready and _poll_health; engine_observations.ObservationReader.read refuse | test_remote_legacy_health_refuses_before_client_or_credential |
+   | Buffered/chunked transcription and speech | chunked_stt/inline_tts invoke refuse marked Connection | test_remote_unbound_adapters_refused |
+   | Node graph HTTP sessions, attached sessions and WebSocket events | node_graph open/_use/GraphSession/watch refuse marked Connection | test_remote_unbound_adapters_refused |
+   | Realtime WebSocket | proxy._handle_realtime refuses the record before readiness or upgrade | GateRefusalTests.test_remote_enabled_service_refuses_before_readiness_or_websocket |
+   | Other legacy proxy inference, metadata, health, capacity and transition HTTP reads/writes | engine_egress project records remote destinations even without transition policy; sync/async send hooks require bound authority, including probes | test_remote_unbound_egress_hook_refuses_probe_and_inference |
+
+   AdapterRegistry also refuses every reviewed custom adapter for remote
+   capabilities: only the generic HTTP executor accepts the bound transport.
+   Connection conversion retains the remote-enabled marker for direct adapter
+   callers. Destination checks also cover connections constructed without the
+   service marker, including graph event subscriptions. A default HTTP client has no remote authority. A destination shared
+   with a remote record is conservatively denied to an unbound caller as well.
+   This inventory supersedes any claim that the six generic factory tests alone
+   cover every engine egress path.
+
    Each test traces the real caller into the mandatory factory, verifies service/
    origin/generation binding and refusal without the capability before any socket.
    Missing bindings or missing owner/lifecycle/lease evidence keep stage 1 blocked.

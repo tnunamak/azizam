@@ -73,7 +73,7 @@ class RemoteNetworkTransport:
         wire = engine_check.checked_transport(destination)
         wire._pool._network_backend = _BoundNetwork(wire._pool._network_backend, self.bound)
         client = engine_egress.async_client(
-            transport=wire, follow_redirects=False, trust_env=False,
+            _remote_bound=self.bound, transport=wire, follow_redirects=False, trust_env=False,
             timeout=httpx.Timeout(connect=min(limits['connect_s'], limits['tls_s']),
                                   read=limits['first_byte_s'], write=limits['connect_s'], pool=limits['connect_s']))
         self.bound.clients.add(client)

@@ -61,3 +61,57 @@ def test_remote_legacy_health_refuses_before_client_or_credential(monkeypatch, p
             drivers.driver_for_service('remote-box', {'remote-box': service})
     asyncio.run(check())
     assert not recorder.connections and not recorder.writes
+
+
+@pytest.mark.parametrize('marked', [True, False])
+@pytest.mark.parametrize('adapter_kind', ['chunked_stt', 'inline_tts', 'node_graph'])
+def test_remote_unbound_adapters_refused(monkeypatch, adapter_kind, marked):
+    from gateway import engine_egress
+    from gateway.engine_protocol.adapter import connection_from_record
+    from gateway.engine_protocol.types import CanonicalRequest
+    from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter
+    from gateway.engine_protocol.inline_tts import InlineTtsAdapter
+    from gateway.engine_protocol.node_graph import NodeGraphAdapter
+    registry, _, _, _, _, _ = case()
+    connection = registry['services']['remote-box']['config']['connection']
+    conn = connection_from_record(connection, lambda _: 'synthetic-adapter-review')
+    monkeypatch.setattr(engine_egress, '_live', engine_egress.project(registry['services']))
+    if not marked:
+        from dataclasses import replace
+        conn = replace(conn, remote_enabled=False)
+    recorder = SocketRecorder(monkeypatch)
+    def unbound(*args, **kwargs):
+        raise AssertionError('unbound adapter client')
+    monkeypatch.setattr(engine_egress, 'async_client', unbound)
+    adapters = {'chunked_stt': (ChunkedSttAdapter(), 'stt.transcribe'),
+                'inline_tts': (InlineTtsAdapter(), 'speech.synthesize'),
+                'node_graph': (NodeGraphAdapter(), 'graph.stats')}
+    adapter, operation = adapters[adapter_kind]
+    async def check():
+        with pytest.raises(ProtocolError):
+            await adapter.invoke(conn, operation, CanonicalRequest(operation))
+        if adapter_kind == 'node_graph':
+            with pytest.raises(ProtocolError):
+                adapter.attach(conn, object())
+            with pytest.raises(ProtocolError):
+                await anext(adapter.watch(conn))
+    asyncio.run(check())
+    assert not recorder.connections and not recorder.writes
+
+
+def test_remote_unbound_egress_hook_refuses_probe_and_inference(monkeypatch):
+    import httpx
+    from gateway import engine_egress
+    registry, _, _, _, _, _ = case()
+    monkeypatch.setattr(engine_egress, '_live', engine_egress.project(registry['services']))
+    recorder = SocketRecorder(monkeypatch)
+    async def check():
+        async with engine_egress.async_client() as client:
+            for path in ('/health', '/state', '/v1/infer'):
+                with pytest.raises(ProtocolError):
+                    await client.get('https://engine.example' + path, extensions=engine_egress.probe())
+        with engine_egress.client() as client:
+            with pytest.raises(ProtocolError):
+                client.get('https://engine.example/health')
+    asyncio.run(check())
+    assert not recorder.connections and not recorder.writes

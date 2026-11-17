@@ -233,11 +233,12 @@ class Projection:
     whole projection once and never combines the maps of two projections.
     """
 
-    __slots__ = ("destinations", "probe_paths")
+    __slots__ = ("destinations", "probe_paths", "remote_destinations")
 
-    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]]) -> None:
+    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]], remote_destinations: frozenset[str] = frozenset()) -> None:
         self.destinations = destinations
         self.probe_paths = probe_paths
+        self.remote_destinations = remote_destinations
 
 
 # The live projection: one reference, replaced whole by ``install``. Read it once per check.
@@ -258,10 +259,14 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
     """
     built: dict[str, list[str]] = {}
     paths: dict[str, set[str]] = {}
+    remote_destinations = set()
     observer_paths = observer_paths_declared_by(services or {})
     for service_id, record in (services or {}).items():
         if not isinstance(record, Mapping):
             continue
+        from gateway.engine_contract_view import connection_config
+        if (connection_config(record).get("remote_dispatch") or {}).get("enabled") is True:
+            remote_destinations.update(destinations_of(record))
         policy = policy_for(str(service_id), services)
         if not policy.enabled:
             continue
@@ -275,7 +280,7 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
             paths.setdefault(key, set()).update(prefix + path for prefix in prefixes | {""} for path in declared)
             paths[key].update(rooted)
     return Projection(MappingProxyType({key: tuple(domains) for key, domains in built.items()}),
-                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}))
+                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}), frozenset(remote_destinations))
 
 
 def install(projection: Projection) -> None:
@@ -293,11 +298,22 @@ def mapped_destinations() -> Mapping[str, tuple[str, ...]]:
     return _live.destinations
 
 
-def check_request(request: httpx.Request) -> None:
+def is_remote_destination(address: str) -> bool:
+    """Also guard legacy connections constructed without their service marker."""
+    return _key_of_url(address) in _live.remote_destinations
+
+
+def check_request(request: httpx.Request, *, remote_bound=None) -> None:
     """Refuse a request to a transition-enabled domain's address unless the task holds a lease for it."""
     marked = request.extensions.pop(PROBE_EXTENSION, False) is True and request.method == "GET"
     key = destination_key(request.url.host, request.url.port, request.url.scheme)
     live = _live  # one read: the destination map and the probe paths must come from the same projection
+    if key in live.remote_destinations:
+        from gateway.remote_engine import refused
+        if remote_bound is None:
+            raise refused()
+        remote_bound.factory.check(remote_bound.capability, service_id=remote_bound.capability.service_id,
+                                   address=str(request.url))
     domains = live.destinations.get(key)
     if not domains or (marked and request.url.path in live.probe_paths.get(key, ())):
         return
@@ -320,9 +336,13 @@ def _guard(created: Any, hook: Any) -> Any:
     return created
 
 
-def async_client(**kwargs: Any) -> httpx.AsyncClient:
+def async_client(*, _remote_bound=None, **kwargs: Any) -> httpx.AsyncClient:
     """An ``httpx.AsyncClient`` whose every request passes the lease check."""
-    return _guard(httpx.AsyncClient(**kwargs), _check_async)
+    if _remote_bound is None:
+        return _guard(httpx.AsyncClient(**kwargs), _check_async)
+    async def check(request):
+        check_request(request, remote_bound=_remote_bound)
+    return _guard(httpx.AsyncClient(**kwargs), check)
 
 
 def client(**kwargs: Any) -> httpx.Client:

@@ -168,6 +168,9 @@ class AdapterRegistry:
             built: EngineAdapter = HttpV1Adapter(HttpV1Executor(description, transport=self._transport, assets=self._assets,
                                                                remote_capability=self._remote_capability))
         else:
+            if self._remote_capability is not None:
+                from gateway.remote_engine import refused
+                raise refused()
             factory = self._factories.get(description.adapter_id)
             if factory is None:
                 raise ProtocolError(f"The protocol '{protocol_id}' needs the adapter '{description.adapter_id}', which is not registered.",
@@ -217,4 +220,5 @@ def connection_from_record(connection: Mapping[str, Any], secret: Callable[[str]
             total_s=float(timeouts.get("total_s", defaults.total_s)),
         ),
         headers=headers,
+        remote_enabled=(connection.get("remote_dispatch") or {}).get("enabled") is True,
     )

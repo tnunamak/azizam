@@ -46,6 +46,7 @@ class Connection:
     timeouts: Timeouts = field(default_factory=Timeouts)
     headers: Mapping[str, str] = field(default_factory=dict)
     remote_capability: Any = field(default=None, repr=False, compare=False)
+    remote_enabled: bool = False
 
     def __post_init__(self) -> None:
         parts = urlsplit(self.address)

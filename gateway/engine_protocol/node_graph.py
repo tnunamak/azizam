@@ -415,6 +415,8 @@ class GraphSession:
     """One httpx client bound to one engine connection. Every method issues the call the gateway always made."""
 
     def __init__(self, conn: Connection, client: Any) -> None:
+        from gateway.remote_engine import refuse_unbound_connection
+        refuse_unbound_connection(conn)
         self.conn = conn
         self.client = client
 
@@ -516,6 +518,8 @@ class NodeGraphAdapter:
     @asynccontextmanager
     async def open(self, conn: Connection, **client_kwargs: Any) -> AsyncIterator[GraphSession]:
         """One client for several requests. ``client_kwargs`` go to ``httpx.AsyncClient`` as given (timeout, verify)."""
+        from gateway.remote_engine import refuse_unbound_connection
+        refuse_unbound_connection(conn)
         if "timeout" not in client_kwargs:
             client_kwargs["timeout"] = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
         async with engine_egress.async_client(**client_kwargs) as client:
@@ -527,6 +531,8 @@ class NodeGraphAdapter:
 
     @asynccontextmanager
     async def _use(self, conn: Connection, session: GraphSession | None) -> AsyncIterator[GraphSession]:
+        from gateway.remote_engine import refuse_unbound_connection
+        refuse_unbound_connection(conn)
         if session is not None:
             yield session
             return
@@ -802,6 +808,8 @@ class NodeGraphAdapter:
         the channel's URL once it is open, before any frame, so a caller can say it is connected. ``stop`` is asked
         after every frame, binary ones included, and ends the channel when it answers true.
         """
+        from gateway.remote_engine import refuse_unbound_connection
+        refuse_unbound_connection(conn)
         try:
             from websockets.asyncio.client import connect as ws_connect
         except Exception as error:  # noqa: BLE001 - the optional dependency is absent

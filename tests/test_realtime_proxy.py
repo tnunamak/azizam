@@ -96,6 +96,21 @@ class RealtimeRouteCase(unittest.TestCase):
 
 
 class GateRefusalTests(RealtimeRouteCase):
+    def test_remote_enabled_service_refuses_before_readiness_or_websocket(self) -> None:
+        import pytest
+        from tests.support.remote_protocol import SocketRecorder
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            recorder = SocketRecorder(monkeypatch)
+            proxy.config['backends']['realtime']['connection'] = {
+                'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}}
+            with self.assertRaises(Exception) as caught:
+                with self.client.websocket_connect('/v1/realtime'):
+                    self.fail('remote legacy websocket was accepted')
+            self.assertEqual(caught.exception.json()['error']['code'], 'protocol_dispatch_refused')
+            self.ensure.assert_not_called()
+            self.connect.assert_not_called()
+            self.assertFalse(recorder.connections or recorder.writes)
+
     def test_a_gate_refusal_from_the_readiness_check_keeps_its_code(self) -> None:
         refusal = proxy._transition_unavailable_response(
             proxy.TransitionUnavailable("gpu1", reason="path_not_leased"))
