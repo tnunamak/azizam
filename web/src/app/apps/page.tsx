@@ -1118,7 +1118,7 @@ function AppsContents() {
                       {meta.map((part, index) => (
                         <Fragment key={index}>
                           {index > 0 ? <Separator /> : null}
-                          {part}
+                          {typeof part === "string" ? <span>{part}</span> : part}
                         </Fragment>
                       ))}
                     </p>

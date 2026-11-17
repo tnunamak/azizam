@@ -19,6 +19,7 @@ import {
   type MintedCredential,
 } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
+import { peopleApi } from "@/app/people/people-api";
 import type { ModelsCatalog } from "@/lib/product-api-types";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import {
@@ -113,6 +114,12 @@ const accessForCredential = (
 });
 
 beforeAll(() => {
+  // Radix radio groups measure their items with ResizeObserver, which jsdom lacks.
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
   Element.prototype.hasPointerCapture ??= () => false;
   Element.prototype.setPointerCapture ??= () => undefined;
   Element.prototype.releasePointerCapture ??= () => undefined;
@@ -818,7 +825,7 @@ it("lists the person's sign-in connections apart from their keyed apps, and disc
   expect(within(list).getByText("ChatGPT")).toBeVisible();
   // The keyed apps stay in their own list; a connection is not an app row.
   expect(
-    within(screen.getByRole("list", { name: "Apps" })).queryByText("ChatGPT"),
+    within(screen.getByRole("list", { name: "Your apps" })).queryByText("ChatGPT"),
   ).toBeNull();
   fireEvent.click(
     within(list).getByRole("button", { name: "Disconnect ChatGPT" }),
@@ -859,6 +866,9 @@ async function openNewApp(name: string) {
   await screen.findByText("Connect your first app");
   fireEvent.click(screen.getAllByRole("button", { name: "New app" })[0]);
   fireEvent.change(screen.getByLabelText("App name"), { target: { value: name } });
+  // An administrator must say what the app acts as; most tests here want a personal app.
+  const you = screen.queryByRole("radio", { name: /^You/ });
+  if (you) fireEvent.click(you);
 }
 async function choosePlan(label: string, option: string) {
   const user = userEvent.setup();
@@ -867,7 +877,7 @@ async function choosePlan(label: string, option: string) {
 }
 const minted = (name: string): MintedCredential => ({ ...mintedKey, display_name: name });
 
-it("lets an owner pick an access plan, and sets it before any key is minted", async () => {
+it("lets an owner pick an access plan, and makes the app with it in one request before any key", async () => {
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
   vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "new-app", name: "Dictation" });
   vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("Dictation"));
@@ -886,42 +896,126 @@ it("lets an owner pick an access plan, and sets it before any key is minted", as
   ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   expect(await screen.findByRole("heading", { name: "New key for Dictation" })).toBeVisible();
-  expect(api.apps.setAccessPlan).toHaveBeenCalledWith("new-app", "plan_local");
-  const order = (fn: unknown) => vi.mocked(fn as () => void).mock.invocationCallOrder[0];
-  expect(order(accountApi.createApp)).toBeLessThan(order(api.apps.setAccessPlan));
-  expect(order(api.apps.setAccessPlan)).toBeLessThan(order(accountApi.mintKey));
+  expect(accountApi.createApp).toHaveBeenCalledWith("Dictation", { kind: "personal", access_plan: "plan_local" });
+  // No follow-up call: the plan is in the create request, so the key can never run under another plan.
+  expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
   expect(accountApi.mintKey).toHaveBeenCalledWith("new-app", "Dictation");
 });
 
-it("does not call the plan endpoint when an owner keeps 'Same as you'", async () => {
+it("sends 'person' when an owner keeps 'Same as you'", async () => {
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
   vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(mintedKey);
   renderApps(owner);
   await openNewApp("My laptop");
   fireEvent.click(await screen.findByRole("button", { name: "Create app and key" }));
   await screen.findByRole("heading", { name: "New key for My laptop" });
+  expect(accountApi.createApp).toHaveBeenCalledWith("My laptop", { kind: "personal", access_plan: "person" });
   expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
 });
 
-it("mints no key when the plan cannot be saved, and finishes the app on retry", async () => {
+it("makes a service app when an administrator picks 'A service', and needs that choice first", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("admin") });
+  vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "svc", name: "Nightly job", kind: "service" });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("Nightly job"));
+  renderApps({ ...owner, role: "admin" });
+  await screen.findByText("Connect your first app");
+  fireEvent.click(screen.getAllByRole("button", { name: "New app" })[0]);
+  fireEvent.change(screen.getByLabelText("App name"), { target: { value: "Nightly job" } });
+  // Nothing is preselected, so the person must choose.
+  expect(screen.getByRole("radio", { name: /^You/ })).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: /^A service/ })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Create app and key" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("radio", { name: /^A service/ }));
+  expect(screen.getByText(/No person is behind it, and it keeps no prompt memory/)).toBeVisible();
+  // Only the owner names who answers for it.
+  expect(screen.queryByRole("combobox", { name: "Answers to" })).toBeNull();
+  await choosePlan("Access plan", "Local only");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  await screen.findByRole("heading", { name: "New key for Nightly job" });
+  expect(accountApi.createApp).toHaveBeenCalledWith("Nightly job", { kind: "service", access_plan: "plan_local" });
+});
+
+it("lets the owner pick who a service app answers to, from the people", async () => {
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
+  vi.spyOn(peopleApi, "people").mockReset().mockResolvedValue({
+    people: [
+      { id: "person", name: "Avery", email: null },
+      { id: "sam", name: "Sam", email: null },
+    ],
+    access_plans: [],
+  } as never);
+  vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "svc", name: "Door cam", kind: "service" });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("Door cam"));
+  renderApps(owner);
+  await screen.findByText("Connect your first app");
+  fireEvent.click(screen.getAllByRole("button", { name: "New app" })[0]);
+  fireEvent.change(screen.getByLabelText("App name"), { target: { value: "Door cam" } });
+  fireEvent.click(screen.getByRole("radio", { name: /^A service/ }));
+  await choosePlan("Answers to", "Sam");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  await screen.findByRole("heading", { name: "New key for Door cam" });
+  expect(accountApi.createApp).toHaveBeenCalledWith("Door cam", {
+    kind: "service",
+    access_plan: "person",
+    owner_user_id: "sam",
+  });
+});
+
+it("shows a member no 'Acts as' choice and sends only the name", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
   vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(mintedKey);
-  vi.mocked(api.apps.setAccessPlan)
-    .mockRejectedValueOnce(new Error("The plan could not be saved."))
-    .mockResolvedValue({} as never);
+  renderApps(member);
+  await openNewApp("My laptop");
+  expect(screen.queryByRole("radio")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  await screen.findByRole("heading", { name: "New key for My laptop" });
+  expect(accountApi.createApp).toHaveBeenCalledWith("My laptop", {});
+});
+
+it("lists service apps in their own section with who answers, the plan and no prompt memory", async () => {
+  const service: AccountApp = {
+    ...app,
+    id: "svc",
+    name: "Nightly job",
+    kind: "service",
+    access_plan: { ...familyPlan, same_as_person: false },
+    request_history: { keep: true, retention: "30d", manager_name: "Sam" },
+  };
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    user: person("owner"),
+    apps: [{ ...app, id: "mine", name: "Phone" }, service],
+  });
+  renderApps(owner);
+  const yours = await screen.findByRole("list", { name: "Your apps" });
+  const services = await screen.findByRole("list", { name: "Service apps" });
+  expect(within(yours).getByRole("heading", { name: "Phone" })).toBeVisible();
+  expect(within(yours).queryByText("Nightly job")).toBeNull();
+  const card = within(services);
+  expect(card.getByRole("heading", { name: "Nightly job" })).toBeVisible();
+  expect(card.getByText("Answers to Sam")).toBeVisible();
+  expect(card.getByText("No prompt memory")).toBeVisible();
+  expect(card.getByText(/Access plan:/)).toBeVisible();
+});
+
+it("keeps the app and finishes the key when minting fails after the one-request create", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
+  vi.mocked(accountApi.mintKey)
+    .mockReset()
+    .mockRejectedValueOnce(new Error("The key could not be made."))
+    .mockResolvedValue(mintedKey);
   renderApps(owner);
   await openNewApp("My laptop");
   await choosePlan("Access plan", "Local only");
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Your app was created");
-  expect(alert).toHaveTextContent("The plan could not be saved.");
-  expect(accountApi.mintKey).not.toHaveBeenCalled();
+  expect(alert).toHaveTextContent("The key could not be made.");
   fireEvent.click(screen.getByRole("button", { name: "Retry key creation" }));
   expect(await screen.findByRole("heading", { name: "New key for My laptop" })).toBeVisible();
   expect(accountApi.createApp).toHaveBeenCalledTimes(1);
-  expect(api.apps.setAccessPlan).toHaveBeenCalledTimes(2);
-  expect(accountApi.mintKey).toHaveBeenCalledTimes(1);
+  expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
+  expect(accountApi.mintKey).toHaveBeenCalledTimes(2);
 });
 
 it("shows a member their plan, read-only, and never sets one", async () => {
@@ -1232,9 +1326,9 @@ it("retains a rejected new app's name and access plan for a safe retry", async (
   await waitFor(() => expect(retry).toBeEnabled());
   fireEvent.click(retry);
   expect(await screen.findByRole("heading", { name: "New key for My laptop" })).toBeVisible();
-  expect(vi.mocked(accountApi.createApp).mock.calls).toEqual([["My laptop"], ["My laptop"]]);
-  expect(api.apps.setAccessPlan).toHaveBeenCalledWith(app.id, "plan_local");
-  expect(api.apps.setAccessPlan).toHaveBeenCalledTimes(1);
+  const sent = { kind: "personal", access_plan: "plan_local" };
+  expect(vi.mocked(accountApi.createApp).mock.calls).toEqual([["My laptop", sent], ["My laptop", sent]]);
+  expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
   expect(accountApi.mintKey).toHaveBeenCalledTimes(1);
 });
 
@@ -1245,7 +1339,7 @@ it("groups each app with its own keys under its name, and an app with none shows
     apps: [twoKeys, { ...app, id: "phone", name: "Phone" }],
   });
   renderApps(member);
-  const list = await screen.findByRole("list", { name: "Apps" });
+  const list = await screen.findByRole("list", { name: "Your apps" });
   // Each app is one direct item of the list; its keys are a nested list inside it.
   const [laptop, phone] = Array.from(list.children) as HTMLElement[];
   expect(within(laptop).getByRole("heading", { name: "My laptop" })).toBeVisible();
