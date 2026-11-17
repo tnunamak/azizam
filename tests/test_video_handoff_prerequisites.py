@@ -1,4 +1,4 @@
-"""Public video creates submit the same engine bodies as the direct old handler.
+"""Public video creates submit the same engine bodies as the frozen main handler.
 
 The session id is pinned; graphs, upload filenames and embedded workflow data
 are compared without normalization. Schema and queue probes cover fact sources
@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 import proxy
+from tests.support import video_main_oracle as main_video
 from gateway.engine_protocol.types import CanonicalRequest
 from tests.media_test_bytes import png_bytes
 from gateway.manifests import enforce_contract, ManifestError
@@ -62,7 +63,7 @@ def test_public_handoff_submits_the_old_handlers_graph(world, body):
     body = {"prompt": "a moving scene", "seed": 7, **body}
 
     async def drive():
-        old = await proxy.proxy_graph_video_create(
+        old = await main_video.create(
             json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")),
             body_override=body)
         assert old.status_code == 200, old.body
@@ -84,7 +85,7 @@ def test_static_declared_chain_is_not_the_planned_long_submission(world):
     enforce_contract(manifest)
 
     async def drive():
-        old = await proxy.proxy_graph_video_create(
+        old = await main_video.create(
             json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")),
             body_override=body)
         assert old.status_code == 200, old.body
@@ -113,7 +114,7 @@ def test_valid_reference_variant_matches_old_submission_without_a_handoff(world)
             "input_reference": "data:image/png;base64," + base64.b64encode(png_bytes()).decode()}
 
     async def drive():
-        old = await proxy.proxy_graph_video_create(
+        old = await main_video.create(
             json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")),
             body_override=body)
         assert old.status_code == 200, old.body
@@ -172,7 +173,7 @@ def test_missing_video_section_reads_the_same_configured_facts_as_the_old_handle
     body = {"model": "ltx-2.5-t2v", "prompt": "same configured facts", "seed": 7}
 
     async def drive():
-        old = await proxy.proxy_graph_video_create(
+        old = await main_video.create(
             json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")), body_override=body)
         assert old.status_code == 200, old.body
         response = await world.rig.call("POST", "/v1/videos", json_body=body)
@@ -255,7 +256,7 @@ def test_complex_inputs_submit_the_old_handlers_graph_on_the_declared_path(world
         body.update(model="video-scail-2-replace", extensions={"com.azizam.workflow": block})
 
     async def drive():
-        old = await proxy.proxy_graph_video_create(json_request(body), auth, body_override=body)
+        old = await main_video.create(json_request(body), auth, body_override=body)
         assert old.status_code == 200, old.body
         import re
         def upload_names():
@@ -292,7 +293,7 @@ def test_queued_chain_uses_accepted_template_and_options(world):
     world.rig.set(proxy, "_schedule_workflow_run", queued.append)
 
     async def drive():
-        old = await proxy.proxy_graph_video_create(
+        old = await main_video.create(
             json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")), body_override=body)
         assert old.status_code == 200, old.body
         response = await world.rig.call("POST", "/v1/videos", json_body=body)
@@ -321,7 +322,7 @@ def test_chain_post_and_get_keep_the_old_stitched_response(world, extra):
     auth = access_context(everything(media_metadata="none", receipt_detail="full"))
     fields = ("seconds", "total_seconds", "segments", "extended_from_video_id")
     async def drive():
-        old = await proxy.proxy_graph_video_create(json_request(body), auth, body_override=body)
+        old = await main_video.create(json_request(body), auth, body_override=body)
         assert old.status_code == 200, old.body
         old_body = json.loads(old.body)
         made = await world.rig.call("POST", "/v1/videos", json_body=body)
@@ -331,7 +332,7 @@ def test_chain_post_and_get_keep_the_old_stitched_response(world, extra):
         assert {key: value for key, value in made.json().items() if key not in independent} == {
             key: value for key, value in old_body.items() if key not in independent}
         await await_status(world, made.json()["id"])
-        before = json.loads((await proxy.proxy_graph_video_status(old_body["id"], auth)).body)
+        before = json.loads((await main_video.status(old_body["id"], auth)).body)
         after = (await world.rig.call("GET", "/v1/videos/" + made.json()["id"])).json()
         expected_get = {key: before.get(key) for key in fields}
         # The old GET calls the count segments_total; POST calls it segments.
@@ -371,7 +372,7 @@ def test_missing_config_row_is_not_a_present_row_with_optional_facts_omitted(wor
     publish_section(world.rig.monkeypatch, "videos", videos)
     body = {"model": "video-ltx-2.5-t2v", "prompt": "same facts source", "seed": 7}
     async def drive():
-        old = await proxy.proxy_graph_video_create(json_request(body), access_context(), body_override=body)
+        old = await main_video.create(json_request(body), access_context(), body_override=body)
         new = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert new.status_code == old.status_code, (new.text, old.body)
         if missing:
@@ -392,7 +393,7 @@ def test_duration_reason_matches_the_old_handler_for_configured_and_generic_grid
     body = {"model": model, "prompt": "same duration header", "seconds": 3.2, "seed": 7,
             "input_reference": uri, "extensions": {"com.azizam.workflow": {"last_frame": uri}}}
     async def drive():
-        old = await proxy.proxy_graph_video_create(json_request(body), access_context(), body_override=body)
+        old = await main_video.create(json_request(body), access_context(), body_override=body)
         new = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert new.status_code == old.status_code == 200
         assert new.headers["x-duration-adjusted"] == old.headers["x-duration-adjusted"]
@@ -417,8 +418,8 @@ def test_declared_chain_failure_matches_the_old_segment_error(world):
     body = {'model':'ltx-2.5-long', 'prompt':'failing chain', 'seconds':20, 'seed':7}
     auth = access_context(everything(media_metadata='none', receipt_detail='full'))
     async def drive():
-        old = await proxy.proxy_graph_video_create(json_request(body), auth, body_override=body)
-        before = json.loads((await proxy.proxy_graph_video_status(json.loads(old.body)['id'], auth)).body)
+        old = await main_video.create(json_request(body), auth, body_override=body)
+        before = json.loads((await main_video.status(json.loads(old.body)['id'], auth)).body)
         made = await world.rig.call('POST','/v1/videos',json_body=body)
         after = await await_status(world, made.json()['id'], status='failed')
         assert after['error'] == before['error']
@@ -487,7 +488,7 @@ def test_operator_chain_workflow_works_without_a_manifest_long_variant(world, ex
     world.rig.set(proxy, "WORKFLOW_SNAPSHOTS", type("Provider", (), {"current": lambda self: Snapshot()})())
     body = {"model": "ltx-2.5-t2v", "prompt": "configured chain", "seed": 7, **extra}
     async def drive():
-        old = await proxy.proxy_graph_video_create(json_request(body), access_context(), body_override=body)
+        old = await main_video.create(json_request(body), access_context(), body_override=body)
         new = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert new.status_code == old.status_code == 200, new.text
         await submitted(world, 2)
@@ -495,3 +496,7 @@ def test_operator_chain_workflow_works_without_a_manifest_long_variant(world, ex
         for field in ("seconds", "total_seconds", "segments", "extended_from_video_id"):
             assert new.json()[field] == json.loads(old.body)[field]
     asyncio.run(drive())
+
+
+def test_main_video_oracle_function_bytes_are_pinned():
+    main_video.checked_source()

@@ -12431,8 +12431,9 @@ async def _proxy_graph_video_create(
     if isinstance(prepared, Response):
         return prepared
     body, staged_assets, source_probe = prepared["body"], prepared["assets"], prepared["probe"]
-    requested_frames = (prepared["accepted"].get("frames")
-                        if "frames" in ((video_manifest or {}).get("inputs") or {}) else None)
+    supplied_frames = prepared["accepted"].get("frames")
+    requested_frames = (int(supplied_frames) if supplied_frames is not None
+                        and "frames" in ((video_manifest or {}).get("inputs") or {}) else None)
 
     # Validate / clamp request inputs.
     configured = video_grid.configured_facts(workflow_cfg, {})
