@@ -157,6 +157,7 @@ def reference_variants(
     manifest: VideoManifest,
     get_workflow: Callable[[str], Any | None],
     reference_input: Callable[[Any], str | None],
+    facts_for: Callable[[Any], VideoManifest | None] = video_facts,
 ) -> list[tuple[Any, VideoManifest]]:
     """Variants whose declared role is the input carried by the create protocol's reference field.
 
@@ -168,7 +169,7 @@ def reference_variants(
         candidate = get_workflow(workflow_id)
         if candidate is None:
             continue
-        candidate_manifest = video_facts(candidate)
+        candidate_manifest = facts_for(candidate)
         if candidate_manifest is None:
             continue
         candidate_input = reference_input(candidate)

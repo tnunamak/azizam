@@ -27491,6 +27491,7 @@ class _WorkflowRunPort:
             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
         staged: dict[str, str] = {}
         kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
+        filenames = ((ctx.payload.get("body") or {}).get("options") or {}).get("input_filenames") or {}
         for name, refs in ctx.media.items():
             if name in kept_off_engine:
                 continue
@@ -27500,7 +27501,7 @@ class _WorkflowRunPort:
             data = await self.read_media(ctx, ref)
             suffix = asset_types.suffix_for_media_type(ref.media_type)
             try:
-                staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                staged[name] = await stage(connection(), filename=filenames.get(name, "input" + suffix), data=data,
                                            media_type=ref.wire_media_type or ref.media_type)
             except (TransportFailure, ProtocolUpstreamError) as exc:
                 # An engine that answered 200 without a name for the file is told apart from one that refused it.
@@ -27791,9 +27792,10 @@ _RESULT_STAGES["post_composite_mask"] = _stage_post_composite_mask
 
 
 async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Variant | None:
-    """Which graph a run of a picture workflow submits: the one with the cutout step, or the one without. The caller's
-    ``background`` choice (or the language model's answer when it left the choice open) decides; a request with a mask never
-    asks for a cutout. A workflow whose template has no second graph reports that, and runs the one it has."""
+    """Apply the accepted composition, binding destinations or subject plan.
+
+    Picture workflows without such a plan retain their background decision.
+    """
     options = (ctx.payload.get("body") or {}).get("options") or {}
     plan = options.get("chain_plan")
     if plan is not None:
@@ -27811,15 +27813,21 @@ async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Vari
 
         return node_graph_runner.Variant(composed, {})
     targets = options.get("input_targets")
-    if targets is not None:
-        def configured(graph):
-            template = ctx.pin.graph()
-            for name, accepted in targets.items():
-                for target in (ctx.pin.binding.get("map") or {}).get(name, ()):
-                    if dict(target) not in accepted:
-                        node, field = target["node"], target["input"]
-                        graph[node]["inputs"][field] = copy.deepcopy(template[node]["inputs"][field])
-        return node_graph_runner.Variant(configured, {})
+    subject = options.get("subject_plan")
+    if targets is not None or subject is not None:
+        def selected(graph):
+            if targets is not None:
+                template = ctx.pin.graph()
+                for name, accepted in targets.items():
+                    for target in (ctx.pin.binding.get("map") or {}).get(name, ()):
+                        if dict(target) not in accepted:
+                            node, field = target["node"], target["input"]
+                            graph[node]["inputs"][field] = copy.deepcopy(template[node]["inputs"][field])
+            if subject is not None:
+                video_subject.apply_point(graph, subject["block"], subject["width"], subject["height"], subject["roles"])
+                if subject["block"].get("reference_fit", True) not in (False, "false", "False", 0):
+                    video_subject.add_reference_fit(graph, subject["roles"])
+        return node_graph_runner.Variant(selected, {})
     media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
     if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
         return None
@@ -28115,6 +28123,93 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         targets = video_grid.configured_input_targets(cfg, chosen.contract)
         return {"input_targets": workflow_run.plain({item["input"]: item["targets"] for item in targets.values()})}
 
+    def reference_input(self, chosen):
+        target = frontend_video_create._reference_input(chosen)
+        if target is not None:
+            return target
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        return (video_grid.configured_input_targets(cfg, chosen.contract).get("image") or {}).get("input")
+
+    async def prepare_inputs(self, request, body, chosen):
+        caller = request.state.caller
+        manifest = workflow_run.plain(chosen.contract)
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        block = frontend_video_create._workflow_block(body)
+        assets, probe = {}, None
+        manifest_facts = self.facts(chosen)
+        extended = video_grid.video_facts(chosen) is None or frontend_video_create.needs_resolution(
+            chosen, body, manifest_facts, frontend_video_create._reference_input(chosen))
+        if not extended:
+            return {"body": body, "probe": None, "assets": {}, "config": cfg}
+        requested = body.get("model") or _video_default_workflow()
+        resolution = resolve_model_for_operation("videos", requested)
+        effective = resolution.effective_model if resolution.is_openai_alias else requested
+        if _resolve_video_workflow(effective)[1] is None:
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{effective}' is not available for video generation.", code="model_not_found"))
+        try:
+            if cfg.get("requires_extensions") or body.get("inputs") or block:
+                body = merge_workflow_inputs(body)
+                if cfg.get("requires_extensions"):
+                    extensions = dict(body.get("extensions") or {})
+                    extensions[WORKFLOW_EXTENSION_NAMESPACE] = video_inputs.coerce_form_scalars(
+                        extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {}, manifest.get("inputs") or {})
+                    body = {**body, "extensions": extensions}
+                validation, unknown = validate_video_workflow_extensions(body, manifest, backend=DERIVED._GRAPH_BINDING)
+                for name, reason in validation.rejected.items():
+                    if reason == "required input missing" and (manifest["inputs"].get(name) or {}).get("type") == "asset":
+                        message = f"{name} is required for this model"
+                        if name == cfg.get("source_video_input"):
+                            message += ": pass a video id, URL or data URI"
+                        return _json_error(400, message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}")
+                rejected = {**validation.rejected, **unknown}
+                if rejected:
+                    name, reason = next(iter(rejected.items()))
+                    return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+                if cfg.get("source_video_input"):
+                    assets, probe = await _resolve_video_workflow_assets(body, manifest, cfg, caller, request=request)
+            if cfg.get("subject_select"):
+                video_subject.validate_selection(frontend_video_create._workflow_block(body))
+        except ExtensionError as exc:
+            return _json_error(400, str(exc), code="invalid_workflow_extension")
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
+        except video_subject.SubjectError as exc:
+            return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                               code="invalid_workflow_extension")
+        return {"body": body, "probe": probe, "assets": assets, "config": cfg}
+
+    async def resolve_inputs(self, request, prepared, chosen, spool):
+        from gateway.frontend_shapes import _wire
+        body, cfg = prepared["body"], prepared["config"]
+        prepared["preserve_names"] = bool(video_grid.video_facts(chosen) is None or cfg.get("requires_extensions") or
+            (body.get("input_reference") is not None and (frontend_video_create._reference_bytes(body["input_reference"]) is None or
+                                                       frontend_video_create._reference_input(chosen) is None)) or
+            any((chosen.contract.get("inputs", {}).get(key) or {}).get("type") == "asset"
+                for key in frontend_video_create._workflow_block(body)))
+        manifest = workflow_run.plain(chosen.contract)
+        assets = prepared["assets"]
+        caller = request.state.caller
+        try:
+            if not assets and any((manifest.get("inputs", {}).get(key) or {}).get("type") == "asset"
+                                  for key in frontend_video_create._workflow_block(body)):
+                assets, _ = await _resolve_video_workflow_assets(body, manifest, cfg, caller, request=request)
+            reference = body.get("input_reference")
+            if reference is not None:
+                target = self.reference_input(chosen)
+                if target is None:
+                    return _json_error(400, f"Workflow {frontend_video_create.short_name(chosen)} does not support I2V.")
+                data, filename = await _resolve_input_reference(
+                    reference, caller, request=request, accepts=_input_accepts(manifest, target))
+                assets = {target: (data, filename, "image/png"), **assets}
+        except _InputReferenceError as exc:
+            return _json_error(400, str(exc))
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
+        return await _wire.stage_uploads(spool, [
+            (name, frontend_video_create._BytesUpload(data, filename, mime))
+            for name, (data, filename, mime) in assets.items()], {name: name for name in assets})
+
     def facts(self, chosen):
         found = video_grid.video_facts(chosen)
         if found is not None:
@@ -28134,17 +28229,24 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         return replace(found, variants=variants, requires=frozenset(requires),
                        select_subject=bool(cfg.get("subject_select")), chain=bool(cfg.get("builder")))
 
-    async def chain_request(self, request, body, row, chosen, public_model):
+    async def chain_request(self, request, body, row, chosen, public_model, snapshot):
         from dataclasses import asdict
         from gateway.workflow_runtime_types import RunRequest
         name = frontend_video_create.short_name(chosen)
-        chain_name, _ = _chain_workflow_for(public_model)
+        resolution = resolve_model_for_operation("videos", public_model)
+        effective = resolution.effective_model if resolution.is_openai_alias else public_model
+        chain_name, _ = _chain_workflow_for(effective)
         if chain_name is None:
             original_name, cfg = _resolve_video_workflow(public_model)
             return _gateway_input_error(
                 gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
                     model=original_name, max_seconds=f"{cfg.get('max_seconds', 8):g}"),
                 param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
+
+        chosen = snapshot.get(workflow_id_for_video_key(chain_name))
+        if chosen is None:
+            return _json_error(503, "Chain workflow is not registered", code="workflow_unavailable")
+        name = chain_name
 
         def prepared(engine, spec, submission):
             size = f"{spec.width}x{spec.height}"
@@ -28161,6 +28263,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             inputs = {"prompt": submission["prompt"], "width": spec.width, "height": spec.height, "seed": spec.seed}
             if "negative_prompt" in chosen.contract["inputs"]:
                 inputs["negative_prompt"] = spec.negative
+            frontend_video_create._wire.fact("requested_model", public_model)
             request.state.video_facts = facts
             request.state.video_prompt = submission["prompt"]
             return RunRequest(workflow_id=chosen.id, inputs=inputs, options=options, facts=facts,
@@ -28170,7 +28273,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                               job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True}})
 
         return await _submit_video_chain(request, request.state.caller, body=body, workflow_name=name,
-                                        requested_model=public_model, public_model=public_model,
+                                        requested_model=effective, public_model=public_model,
                                         admission_intent=domain_rows.VIDEO_GENERATE, prepare=prepared)
 
     def resolve_model(self, name: str) -> Any:

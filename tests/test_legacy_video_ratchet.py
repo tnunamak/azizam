@@ -7,7 +7,7 @@ in the same commit; a test that equals the count means a removed hand-off cannot
 
 from pathlib import Path
 
-COUNT = 1
+COUNT = 0
 SOURCE = Path(__file__).resolve().parent.parent / "gateway" / "frontend_shapes" / "video_create.py"
 
 

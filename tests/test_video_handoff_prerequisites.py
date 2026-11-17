@@ -1,8 +1,8 @@
-"""Executable evidence for the remaining video-create migration prerequisites.
+"""Public video creates submit the same engine bodies as the direct old handler.
 
-The variant checks cover removal of the unreachable missing-facts handoff. The chain
-comparison deliberately compiles the static declared workflow independently of
-routing, to expose the planner/composer integration still needed by the run path.
+The session id is pinned; graphs, upload filenames and embedded workflow data
+are compared without normalization. Schema and queue probes cover fact sources
+and acceptance-time chain template capture.
 """
 from __future__ import annotations
 
@@ -119,17 +119,9 @@ def test_valid_reference_variant_matches_old_submission_without_a_handoff(world)
         assert old.status_code == 200, old.body
         assert len(world.engine.prompts) == 1
 
-        # legacy_route is normally consulted even for supported requests; return
-        # None after checking selection rather than bypassing the selection.
-        async def checked_selection(shape, request, row, snapshot):
-            body_read = await video_create.read_body(shape, request)
-            from gateway.frontend_shapes import shapes
-            picked = video_create.select(shape, body_read, row, snapshot, shapes.VIDEO_HOOKS)
-            from gateway.frontend_shapes._base import LegacyRoute
-            assert not isinstance(picked, LegacyRoute)
-            return None
-
-        world.rig.set(video_create, "legacy_route", checked_selection)
+        async def no_handoff(*args, **kwargs):
+            raise AssertionError("the declared create reached the old handler")
+        world.rig.monkeypatch.setitem(proxy._ROW_ROUTE_DEPS.legacy, video_create.LEGACY_CREATE, no_handoff)
         response = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert response.status_code == 200, response.text
         assert response.json()["id"].startswith("video_mj_")
@@ -186,5 +178,127 @@ def test_missing_video_section_reads_the_same_configured_facts_as_the_old_handle
         assert left == right, {key: (left.get(key), right.get(key)) for key in left.keys() | right.keys() if left.get(key) != right.get(key)}
         assert response.json()["size"] == "640x384"
         assert world.engine.prompts["p2"]["prompt"]["23"]["inputs"]["value"] == 12
+
+    asyncio.run(drive())
+
+
+@pytest.mark.parametrize("case", ["named-image", "named-image-object", "mapped-reference", "variant-no-facts", "url-image", "vision-object", "secondary-image", "subject-source", "subject-point", "subject-no-fit"])
+def test_complex_inputs_submit_the_old_handlers_graph_on_the_declared_path(world, case):
+    import subprocess
+    import httpx
+    from tests.support.fake_upstream import HandlerTransport
+
+    world.rig.set(proxy, "_WORKFLOW_JOB_SPOOL", None)
+    auth = access_context(everything(media_metadata="none", receipt_detail="full"))
+    image = png_bytes()
+    data_uri = "data:image/png;base64," + base64.b64encode(image).decode()
+    asset_id = proxy.store_asset_bytes(image, owner_key_hash=proxy._asset_owner_key(auth), keep_prompt=False)
+    body = {"model": "ltx-2.5-t2v", "prompt": "same resolved input", "seed": 7}
+    if case == "named-image":
+        body["input_reference"] = asset_id
+    elif case == "named-image-object":
+        body["input_reference"] = {"asset_id": asset_id}
+    elif case in ("mapped-reference", "variant-no-facts"):
+        from dataclasses import replace
+        from gateway.workflow_run import plain
+        original = proxy.WORKFLOW_SNAPSHOTS.current()
+        workflow_id = "video.generate.ltx-2.5-i2v"
+        chosen = original.get(workflow_id)
+        contract = plain(chosen.contract)
+        if case == "mapped-reference":
+            contract["inputs"]["first_frame"] = contract["inputs"].pop("image")
+            contract["bindings"]["comfyui"]["map"]["first_frame"] = contract["bindings"]["comfyui"]["map"].pop("image")
+            contract["video"]["roles"]["image"] = "first_frame"
+        else:
+            del contract["video"]
+        enforce_contract(contract)
+        changed = replace(chosen, contract=contract,
+                          bindings={key: replace(binding, binding=contract["bindings"][key])
+                                    for key, binding in chosen.bindings.items()})
+        class Snapshot:
+            workflows = {**original.workflows, workflow_id: changed}
+            def __getattr__(self, name): return getattr(original, name)
+            def get(self, key): return self.workflows.get(key)
+            def by_intent(self, intent): return tuple(entry for entry in self.workflows.values() if entry.intent == intent)
+        class Provider:
+            def current(self): return Snapshot()
+        world.rig.set(proxy, "WORKFLOW_SNAPSHOTS", Provider())
+        body.update(model="ltx-2.5-i2v" if case == "mapped-reference" else "ltx-2.5-t2v", input_reference=data_uri)
+    elif case == "url-image":
+        world.rig.fakes.router.add_transport("93.184.216.34", HandlerTransport(
+            lambda request: httpx.Response(200, stream=httpx.ByteStream(image), headers={"content-type": "image/png"})))
+        from gateway import media_fetch
+        async def addresses(host, port):
+            return ["93.184.216.34"]
+        world.rig.set(media_fetch, "_resolve_addresses", addresses)
+        body["input_reference"] = "https://media.fk.test/reference.png"
+    elif case == "vision-object":
+        body["input_reference"] = {"image_url": {"url": data_uri}}
+    elif case == "secondary-image":
+        body.update(model="ltx-2.5-keyframes", input_reference=data_uri,
+                    extensions={"com.azizam.workflow": {"last_frame": {"asset_id": asset_id}}})
+    else:
+        source = world.tmp / "source.mp4"
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=c=black:s=32x32:d=3:r=12", "-c:v", "libx264", "-threads", "1", str(source)], check=True)
+        video = "data:video/mp4;base64," + base64.b64encode(source.read_bytes()).decode()
+        block = {"reference_image": {"asset_id": asset_id}, "source_video": video}
+        if case == "subject-point":
+            block.update(source_point_x=0.4, source_point_y=0.6)
+        if case == "subject-no-fit":
+            block["reference_fit"] = False
+        body.update(model="video-scail-2-replace", extensions={"com.azizam.workflow": block})
+
+    async def drive():
+        old = await proxy.proxy_graph_video_create(json_request(body), auth, body_override=body)
+        assert old.status_code == 200, old.body
+        import re
+        def upload_names():
+            return [re.findall(rb'filename="([^"]+)"', data) for method, path, data in world.engine.calls
+                    if method == "POST" and path == "/upload/image"]
+        old_names = upload_names()
+        response = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"].startswith("video_mj_")
+        await submitted(world, 2)
+        left, right = (world.engine.prompts[key] for key in ("p1", "p2"))
+        assert left == right, {key: (left["prompt"].get(key), right["prompt"].get(key))
+                               for key in left["prompt"].keys() | right["prompt"].keys()
+                               if left["prompt"].get(key) != right["prompt"].get(key)}
+        assert upload_names()[len(old_names):] == old_names
+        if case.startswith("subject"):
+            assert response.json()["actual_seconds"] == 2.75
+            assert response.json()["seconds"] == "3"
+
+    asyncio.run(drive())
+
+
+def test_queued_chain_uses_accepted_template_and_options(world):
+    from tests.support.config_snapshot import publish_section
+    from gateway import video_extend
+    body = {"model": "ltx-2.5-t2v", "prompt": "accepted plan", "seconds": 16, "seed": 7,
+            "extensions": {"com.azizam.workflow": {"state_ledger": "same scene", "context_seconds": 1.0}}}
+    videos = copy.deepcopy(proxy.config["videos"])
+    # Select a different registered chain from operator data, rather than the
+    # short manifest's default variant. Both paths must honor that selection.
+    videos["workflows"]["video-ltx-2.5-t2v"]["chain_workflow"] = "video-minimax-h3-long"
+    publish_section(world.rig.monkeypatch, "videos", videos)
+    queued = []
+    world.rig.set(proxy, "_schedule_workflow_run", queued.append)
+
+    async def drive():
+        old = await proxy.proxy_graph_video_create(
+            json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")), body_override=body)
+        assert old.status_code == 200, old.body
+        response = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert response.status_code == 200, response.text
+        assert len(world.engine.prompts) == 1 and len(queued) == 1
+        # Remove the live template after acceptance. Execution must reconstruct
+        # its planner from the captured template document, not this lookup.
+        key = videos["workflows"]["video-minimax-h3-long"]["builder"]
+        world.rig.monkeypatch.delitem(video_extend.ENGINES, key)
+        await proxy._run_workflow_job(queued[0])
+        assert len(world.engine.prompts) == 2
+        assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
 
     asyncio.run(drive())

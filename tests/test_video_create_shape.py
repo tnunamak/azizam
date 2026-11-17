@@ -357,12 +357,9 @@ def test_the_facts_hold_no_prompt_no_person_and_only_the_keys_the_design_names()
     assert "private secret sentence" not in json.dumps(run_request.facts["provenance"], default=str)
 
 
-def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_its_parsed_body() -> None:
-    for body in ({"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
-        handoff = read(body)
-        assert isinstance(handoff, _base.LegacyRoute), body
-        assert handoff.name == "videos.create" and handoff.body.get("prompt") == body.get("prompt")
+def test_a_reference_without_a_configured_resolver_is_refused() -> None:
+    refused = read({"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"})
+    assert refused.status_code == 400
 
 
 def test_a_manifest_without_video_facts_needs_a_configured_facts_source() -> None:
@@ -554,16 +551,6 @@ def _base_legacy() -> str:
     return video_create.LEGACY_CREATE
 
 
-def test_an_unresolved_reference_reaches_the_old_handler_with_no_row_policy_and_no_row_receipt() -> None:
-    from starlette.testclient import TestClient
-    calls: dict[str, list] = {key: [] for key in ("auth", "policy", "receipt", "report", "legacy")}
-    client = TestClient(_row_app(calls))
-    answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"})
-    assert answer.status_code == 200 and answer.text == "old"
-    assert calls["auth"] == ["/v1/videos"]                    # authenticated once, by the row
-    assert calls["policy"] == [] and calls["receipt"] == [] and calls["report"] == []     # the old handler owns both
-    assert [body["prompt"] for _, body in calls["legacy"]] == ["x"]
-
 
 def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_receipt_after_the_policy() -> None:
     from starlette.testclient import TestClient
@@ -576,7 +563,7 @@ def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_rec
 
 def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     """An input the manifest declares is never refused as an extension, even when it fills a role: ``frames`` is the keyframes
-    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is left to the old pipeline, which refuses it."""
+    length role and callers send it today. It wins over ``seconds``; undeclared inputs are refused."""
     key = video_contract("ltx-2.5-keyframes", requires=["extensions"], image=False)
     key["inputs"]["frames"] = {"type": "integer", "minimum": 9, "maximum": 241}
     key["video"]["roles"]["length"] = "frames"
@@ -586,10 +573,9 @@ def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     run_request = read({"model": "ltx-2.5-keyframes", "prompt": "p", "seconds": 5, "extensions": block}, snapshot)
     assert isinstance(run_request, RunRequest), run_request
     assert run_request.inputs["frames"] == 49
-    # A name the manifest does not declare in the workflow block was refused (400 invalid_workflow_extension) by the old
-    # pipeline's manifest check (tests/test_video_keyframes.py pins it): the shape hands it back and does not run it.
+    # Undeclared workflow inputs retain the old manifest refusal.
     undeclared = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"frames": 49, "bogus": 1}}}, snapshot)
-    assert isinstance(undeclared, _base.LegacyRoute) and undeclared.name == "videos.create"
+    assert undeclared.status_code == 400 and error(undeclared)["code"] == "invalid_workflow_extension"
 
 
 def _submit_app(calls: dict[str, list], *, disposition: str = "new"):

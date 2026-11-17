@@ -1,63 +1,76 @@
-# Video create hand-offs: partial result
+# Video create hand-offs retired
 
-The missing-facts hand-off after reference-variant selection is redundant.
-`registry/workflow_sections/video.schema.json` requires `size`, `length` and
-`grid`. `gateway/workflow_contract.py:_structural_errors` applies that schema
-before the registry publishes a workflow. A reference variant with any of those
-fields absent is rejected. No schema-valid fallback case was found or invented.
-The hand-off count falls from four to three; this deletes an unreachable branch,
-not a formerly supported request class.
+`tests/test_legacy_video_ratchet.py` now pins COUNT at zero. No owner oracle,
+shipped manifest, parity golden, model catalog or OpenAPI data was edited.
 
-`tests/test_video_handoff_prerequisites.py` checks all three rejected omissions
-against a shipped, otherwise valid reference manifest. It also runs the old
-handler directly and the public POST /v1/videos route with a valid reference
-variant, checks that the route selects the job path, and compares complete engine
-submission bodies. The websocket session identifier is pinned for both calls;
-the graph and its embedded metadata are not normalized.
+## Reference-variant facts: original site 174
 
-## Remaining input hand-off (original site 197)
+Accepted in commit 200ccae49. The registry schema requires size, length and grid.
+The tests reject each omission from an otherwise valid shipped reference
+manifest, then compare a valid variant through POST /v1/videos with the direct
+old handler. This removed an unreachable branch rather than a valid request
+class.
 
-`gateway/frontend_shapes/video_create.py:_to_run_request` only stages a primary
-inline reference. `_reference_bytes` returns None for named assets, URLs and
-vision-style objects. Deleting the selection guard would index None at the
-reference check instead of resolving the asset. Secondary asset extensions are
-currently scalar-coerced into `inputs`, not staged into `RunRequest.media`.
+## Long variants: original site 188
 
-The old path uses `proxy.py:_resolve_video_workflow_assets` to resolve and probe
-source video before sizing. For a source shorter than the default duration, the
-old path derives seconds and fps from the source; the row path uses manifest fps
-and the manifest/default duration. For subject selection, the old path also calls
-`video_subject.apply_point` and `add_reference_fit` after binding. The declared
-static graph compiler does neither. Removing the whole site needs asset
-resolution, source probing and these graph operations in the declared run path.
-Scalar-input parity is pinned for a declared steps input; this does not prove
-these asset and subject cases and is not counted as a moved site.
+Commit 2f711354b reuses the existing chain validation, segment planner and
+composer. The request captures the selected template document and ChainSpec in
+its declared run options. The graph runner reconstructs that accepted plan and
+composes the submitted graph. It does not reselect a template from live engine
+configuration. The old handler keeps its direct submission for the comparison
+oracle and extension routes.
 
-## Long-variant hand-off (original site 188)
+Storyboard and 16-second long-variant creates now return job ids. The public
+route and direct old handler submit identical engine bodies. Chain availability
+still follows the same operator configuration as the old path.
 
-For a 16-second request to a short workflow with a long variant, the old handler
-selects the chain, plans multiple segments, composes their graph and submits it.
-`gateway/engine_protocol/node_graph.py:NodeGraphAdapter.compile` instead calls
-`compile_workflow` on a static graph. The probe runs the old handler and compiles
-the shipped long manifest independently: their graphs differ, and the planned
-graph has more nodes. The declared path has no planner/composer invocation.
-The existing chain templates and planner can be reused, but must be joined to
-that path with pinned template selection and options. Simply selecting the long
-workflow would still submit its static graph. Storyboard and long-duration
-public submissions are pinned against direct old-handler submissions.
+Validation: `456 passed, 4 xfailed in 41.40s`.
 
-## Initial manifest hand-off (original site 163)
+## Direct chains and missing facts: original site 163
 
-A direct long-workflow create reaches this site even without a variant. It has
-the same static-versus-composed graph mismatch as site 188. Its engine submission
-is separately pinned against a direct old-handler call. The other case is a
-workflow without a video section: the schema permits the section to be absent,
-while the old handler can still read sizing and graph roles from the separate
-video configuration. `video_grid.video_facts` returns None and the row path has
-no typed facts for sizing. Removing this site needs the chain integration plus
-a declared source for those missing facts; substituting constants would not
-prove parity with the separate old workflow configuration.
+Commit 0a9f792c7 moves direct long-workflow creates onto the same accepted plan.
+Validation: `456 passed, 4 xfailed in 40.85s`.
 
-No owner oracle, shipped manifest, parity golden, model catalog or OpenAPI data
-was edited. No oracle ceiling or reviewed-list change is proposed. The three
-reachable sites remain unfinished; their removal has not been claimed.
+Commit 7deaaea02 removes the remaining missing-facts hand-off. Registry data in
+`registry/video_grid.yml:workflow_fact_source` declares the configuration section,
+table, field projection and binding-role destinations. Both paths read the same
+current videos.workflows rows, including operator overrides. No owner data moves.
+
+A schema-valid no-section manifest is tested with an operator-set size and frame
+rate. Reference variant selection uses the same fact source when the variant
+has no video section. The complete submitted graph matches the old handler, including leaving
+binding destinations unchanged when the old configuration does not name them.
+The ratchet falls to one.
+
+Validation: `457 passed, 4 xfailed in 45.09s`.
+
+## Workflow inputs and media: original site 197
+
+The final change uses the existing input merge and validation functions, image
+and video asset resolvers, and source probe. Primary and secondary media are
+staged into RunRequest.media and adopted by the job spool. The moved inputs keep
+the old upload filenames. Asset bytes and references are excluded from subject
+options and the retained workflow extension block.
+
+Source video supplies fps and default duration before frame sizing. Frame counts
+use the existing source-cap snap. Subject selection and reference fitting run
+through video_subject.apply_point and add_reference_fit in the graph runner.
+Edge-only selection inputs stay out of the static graph compiler.
+
+Public/direct-old comparisons cover scalar inputs, named image ids and objects,
+URLs, vision-style references, a differently named bound reference input,
+secondary keyframe assets, a short source at a different fps, selection points,
+and reference fitting enabled and disabled. The graph and upload filenames are
+compared. A queued-chain probe also changes the configured chain selection,
+removes the live template after acceptance and verifies the captured plan still
+submits the old handler's graph.
+
+The video shape inherits the generic no-hand-off hook. Its remaining code has no
+LegacyRoute constructor. Existing prompt-id record reads remain covered by the
+video lifecycle tests.
+
+No blocker or oracle change remains. Verification uses the hermetic runner with
+four workers and targeted files only: the hand-off probes, create shape and role
+tests, both boundary ratchets, the four S7 video parity files, adapter differential
+S7, video grid defaults, chain composition parity, and the OpenAPI/model metadata
+pins. The final command and quoted result are in the delivery report.

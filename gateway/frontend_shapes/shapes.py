@@ -561,11 +561,21 @@ class VideoHooks:
     def run_options(self, chosen):
         return {}
 
+    def reference_input(self, chosen):
+        from gateway.frontend_shapes.video_create import _reference_input
+        return _reference_input(chosen)
+
+    async def prepare_inputs(self, request, body, chosen):
+        return {"body": body, "probe": None, "assets": {}, "config": {}}
+
+    async def resolve_inputs(self, request, prepared, chosen, spool):
+        return {}
+
     def facts(self, chosen):
         from gateway import video_grid
         return video_grid.video_facts(chosen)
 
-    async def chain_request(self, request, body, row, chosen, public_model):
+    async def chain_request(self, request, body, row, chosen, public_model, snapshot):
         """Prepare a declared chain run using the deployment's pinned planning data."""
         return _wire.error_response(503, "Chain planning is not configured")
 
@@ -621,10 +631,6 @@ class OpenAIVideoCreate(VideoViews, Shape):
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
         from gateway.frontend_shapes import video_create
         return await video_create.to_run_request(self, request, row, snapshot, spool=spool)
-
-    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
-        from gateway.frontend_shapes import video_create
-        return await video_create.legacy_route(self, request, row, snapshot)
 
     async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
         if isinstance(outcome, RunRefused):

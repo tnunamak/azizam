@@ -51,10 +51,10 @@ def test_a_supplied_primary_image_fills_its_required_role_input(target: str | No
     assert result.media[expected][0].spool_key == "k1"
 
 
-def test_a_reference_the_request_map_does_not_place_goes_to_the_old_handler() -> None:
+def test_a_reference_without_a_request_map_or_configured_target_is_refused() -> None:
     contract = image_contract("first_frame")
     result = read(create_body(contract), snap(contract))
-    assert isinstance(result, _base.LegacyRoute), getattr(result, "body", result)
+    assert result.status_code == 400
 
 
 def test_an_absent_primary_image_is_not_exempted_from_required_assets() -> None:
