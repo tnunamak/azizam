@@ -1258,11 +1258,11 @@ def test_trickled_body_cannot_extend_absolute_deadline(monkeypatch):
                 assert advance.wait(timeout=3), "test did not advance the clock"
             return chunk
 
-    def observed_read(self, deadline):
+    def observed_read(self, deadline, length):
         stream = self.rfile
         self.rfile = ObservedReader(stream)
         try:
-            return original(self, deadline)
+            return original(self, deadline, length)
         finally:
             self.rfile = stream
 
@@ -1290,8 +1290,11 @@ def test_trickled_body_cannot_extend_absolute_deadline(monkeypatch):
             conn.close()
 
 
-@pytest.mark.parametrize("length", ["-1", "bad", "17", "1, 1"])
-def test_invalid_or_oversize_body_length_is_rejected(length):
+@pytest.mark.parametrize(("length", "status", "code"), [
+    ("-1", 400, "invalid_request"), ("bad", 400, "invalid_request"),
+    ("17", 413, "request_too_large"), ("1, 2", 400, "invalid_request"),
+])
+def test_invalid_or_oversize_body_length_is_rejected(length, status, code):
     from http.client import HTTPConnection
     from urllib.parse import urlparse
 
@@ -1306,14 +1309,14 @@ def test_invalid_or_oversize_body_length_is_rejected(length):
             conn.putheader("Content-Length", length)
             conn.endheaders()
             response = conn.getresponse()
-            assert response.status == 422
-            assert json.loads(response.read())["error"]["code"] == "invalid_content_length"
+            assert response.status == status
+            assert json.loads(response.read())["error"]["code"] == code
             assert scorer.total_calls == 0
         finally:
             conn.close()
 
 
-@pytest.mark.parametrize("framing", ["duplicate", "transfer-encoding"])
+@pytest.mark.parametrize("framing", ["conflicting", "transfer-encoding"])
 def test_ambiguous_body_framing_is_rejected_and_connection_closed(framing):
     from http.client import HTTPResponse
     from urllib.parse import urlparse
@@ -1329,16 +1332,16 @@ def test_ambiguous_body_framing_is_rejected_and_connection_closed(framing):
                 "Connection: keep-alive",
                 f"Content-Length: {len(body)}",
             ]
-            if framing == "duplicate":
-                headers.append(f"Content-Length: {len(body)}")
+            if framing == "conflicting":
+                headers.append(f"Content-Length: {len(body) + 1}")
             else:
                 headers.append("Transfer-Encoding: chunked")
             conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body)
             response = HTTPResponse(conn)
             try:
                 response.begin()
-                assert response.status == 422
-                assert json.loads(response.read())["error"]["code"] == "invalid_content_length"
+                assert response.status == 400
+                assert json.loads(response.read())["error"]["code"] == "invalid_request"
                 assert conn.recv(1) == b"", "rejected framing must close the same connection"
                 assert scorer.total_calls == 0
             finally:

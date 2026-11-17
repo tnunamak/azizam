@@ -364,7 +364,7 @@ class Handler(BaseHTTPRequestHandler):
     llama_process: subprocess.Popen[Any] | None = None
     request_lock = threading.Lock()
     admission = threading.BoundedSemaphore(5)
-    max_request_body_bytes = 16 * 1024 * 1024
+    max_request_body_bytes = MAX_REQUEST_BYTES
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
@@ -412,7 +412,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             raw_lengths = self.headers.get_all("content-length") or []
+            limit = self.max_request_body_bytes
             try:
+                if self.headers.get("transfer-encoding") is not None:
+                    raise ValueError("transfer-encoding framing is not accepted")
                 values = [part.strip() for field in raw_lengths for part in field.split(",")]
                 if not values:
                     values = ["0"]
@@ -426,13 +429,15 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("conflicting content lengths")
                 # Compare the digit count before int(), including headers beyond
                 # Python's integer-conversion limit.
-                length = MAX_REQUEST_BYTES + 1 if len(value) > len(str(MAX_REQUEST_BYTES)) else int(value)
+                length = limit + 1 if len(value) > len(str(limit)) else int(value)
             except ValueError:
+                # Unread framing must never become a subsequent request.
+                self.close_connection = True
                 self._json(400, decision_engine.error_body(
                     "Content-Length must be a non-negative integer.", code="invalid_request",
                 ))
                 return
-            if length > MAX_REQUEST_BYTES:
+            if length > limit:
                 self._json(413, decision_engine.error_body(
                     "Request body is too large.", code="request_too_large",
                 ))
@@ -440,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             started = time.perf_counter()
             deadline = _request_deadline(self.headers.get("x-decision-deadline-ms"))
             try:
-                body = json.loads(self._read_request_body(deadline) or b"{}")
+                body = json.loads(self._read_request_body(deadline, length) or b"{}")
             except json.JSONDecodeError:
                 raise decision_engine.DecisionInputError("Request body must be valid JSON.", code="invalid_json")
             req = decision_engine.parse_request(body)
@@ -481,20 +486,10 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.admission.release()
 
-    def _read_request_body(self, deadline: float) -> bytes:
+    def _read_request_body(self, deadline: float, length: int) -> bytes:
+        """Read exactly ``length`` validated body bytes before ``deadline``."""
         # Unread or timed-out framing must never become a subsequent request.
         self.close_connection = True
-        lengths = self.headers.get_all("content-length", [])
-        raw = lengths[0].strip() if len(lengths) == 1 else "0"
-        if (len(lengths) > 1 or self.headers.get("transfer-encoding") is not None
-                or not raw.isascii() or not raw.isdecimal()
-                or len(raw) > 20):
-            raise decision_engine.DecisionInputError(
-                "Invalid Content-Length.", code="invalid_content_length")
-        length = int(raw)
-        if length > self.max_request_body_bytes:
-            raise decision_engine.DecisionInputError(
-                "Request body is too large.", code="invalid_content_length")
         chunks = []
         remaining_bytes = length
         previous_timeout = self.connection.gettimeout()
