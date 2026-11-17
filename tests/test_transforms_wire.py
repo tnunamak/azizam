@@ -16,6 +16,77 @@ from gateway.transforms import (
 CTX = TransformContext()
 
 
+def test_reasoning_uses_loaded_default_budgets(monkeypatch):
+    monkeypatch.setitem(t._REASONING_DEFAULT_BUDGETS, "high", 16384)
+    body = {"reasoning_effort": "high"}
+    assert ReasoningEffortTransform().apply(body) is None
+    assert body == {"thinking_budget_tokens": 16384}
+
+
+def test_reasoning_partial_policy_inherits_other_levels():
+    policy = {"effort_budgets": {"high": 16384}}
+    transform = ReasoningEffortTransform(policy)
+    low = {"reasoning_effort": "low"}
+    high = {"reasoning_effort": "high"}
+    assert transform.apply(low) is None
+    assert transform.apply(high) is None
+    assert low == {"thinking_budget_tokens": 4096}
+    assert high == {"thinking_budget_tokens": 16384}
+    assert policy == {"effort_budgets": {"high": 16384}}
+
+
+def test_reasoning_shipped_defaults_have_literal_wire_values():
+    transform = ReasoningEffortTransform()
+    actual = {}
+    for effort in ("none", "minimal", "low", "medium", "high", "xhigh"):
+        body = {"reasoning_effort": effort}
+        assert transform.apply(body) is None
+        actual[effort] = body["thinking_budget_tokens"]
+    assert actual == {"none": 0, "minimal": 2048, "low": 4096,
+                      "medium": 6144, "high": 8192, "xhigh": -1}
+
+
+def test_reasoning_instances_copy_defaults_without_file_reads(monkeypatch):
+    original = dict(t._REASONING_DEFAULT_BUDGETS)
+    transform = ReasoningEffortTransform()
+    monkeypatch.setitem(t._REASONING_DEFAULT_BUDGETS, "high", 16384)
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("constructing a transform must not reread defaults")
+
+    monkeypatch.setattr(t.Path, "read_text", unexpected_read)
+    updated = ReasoningEffortTransform()
+    before = {"reasoning_effort": "high"}
+    after = {"reasoning_effort": "high"}
+    assert transform.apply(before) is None
+    assert updated.apply(after) is None
+    assert before["thinking_budget_tokens"] == original["high"]
+    assert after["thinking_budget_tokens"] == 16384
+
+
+@pytest.mark.parametrize("bad", [True, -1, "infinite"])
+def test_reasoning_default_loader_rejects_invalid_budgets(tmp_path, bad):
+    path = tmp_path / "reasoning.yml"
+    schema = t._REASONING_DEFAULTS_PATH.with_suffix(".schema.json")
+    path.with_suffix(".schema.json").write_text(schema.read_text(), encoding="utf-8")
+    document = {"effort_budgets": dict(t._REASONING_DEFAULT_BUDGETS)}
+    document["effort_budgets"]["high"] = bad
+    path.write_text(t.yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        t._load_reasoning_default_budgets(path)
+    assert str(path) in str(caught.value)
+
+
+def test_reasoning_default_loader_rejects_incomplete_defaults(tmp_path):
+    path = tmp_path / "reasoning.yml"
+    schema = t._REASONING_DEFAULTS_PATH.with_suffix(".schema.json")
+    path.with_suffix(".schema.json").write_text(schema.read_text(), encoding="utf-8")
+    path.write_text("effort_budgets: {high: 8192}\n", encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        t._load_reasoning_default_budgets(path)
+    assert str(path) in str(caught.value)
+
+
 def test_a_path_skips_wildcards_and_empty_segments_and_a_request_error_defaults_to_invalid_value():
     assert t._get_path({"a": {"b": 1}}, "a[*].b") == 1
     assert t._get_path({"a": {"b": 1}}, "a..b") == 1
@@ -90,7 +161,9 @@ def test_effort_validation_errors_are_worded_exactly():
         "Expected one of: ['high', 'low', 'medium', 'minimal', 'none', 'xhigh'].")
     assert transform.apply({"reasoning_effort": 3}).startswith("Invalid value for 'reasoning_effort': 3.")
     assert transform.apply({"reasoning_effort": "low"}) == "No reasoning budget configured for effort 'low'."
-    assert transform.apply({"reasoning_effort": "none"}) == "No reasoning budget configured for effort 'none'."
+    inherited = {"reasoning_effort": "none"}
+    assert transform.apply(inherited) is None
+    assert inherited == {"thinking_budget_tokens": 0, "chat_template_kwargs": {"enable_thinking": False}}
     assert transform.apply({"reasoning_effort": "medium"}) == "Invalid reasoning budget configured for effort 'medium'."
     body = {"reasoning_effort": "high"}
     assert transform.apply(body) is None and body == {"thinking_budget_tokens": 7}
