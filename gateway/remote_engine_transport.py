@@ -65,7 +65,7 @@ class RemoteNetworkTransport:
             raise refused()
         approved = []
         for address in addresses:
-            address = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped else address
+            address = engine_check.plain_address(address)
             # A private exception never permits special-use or metadata destinations.
             if (address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast
                     or address.is_reserved or address in engine_check._METADATA_ADDRESSES or str(address) == '168.63.129.16'):

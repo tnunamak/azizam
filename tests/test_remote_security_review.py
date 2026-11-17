@@ -237,3 +237,16 @@ def test_remote_registry_writers_require_owner_actor(tmp_path, writer, roles):
             admin_store.write_service_registry_and_setting_with_audits(registry, path=database,
                 setting_key='test', setting_value={}, audits=[], **common)
     assert admin_store.get_service_registry_with_generation(path=database) is None
+
+
+
+@pytest.mark.parametrize('answer', ['64:ff9b::7f00:1', '64:ff9b::a9fe:a9fe',
+                                  '64:ff9b::a00:1', '::ffff:0:7f00:1', '::127.0.0.1'])
+def test_remote_embedded_ipv4_addresses_checked_before_dial(monkeypatch, answer):
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        _, _, _, runtime, recorder, _ = socket_case(monkeypatch, answers=[answer])
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert not recorder.connections and not recorder.writes
+    asyncio.run(check())
