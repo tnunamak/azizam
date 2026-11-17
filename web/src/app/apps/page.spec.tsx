@@ -1379,3 +1379,36 @@ it("marks Revoke destructive at rest, on the key row and in the app's menu", asy
     "destructive",
   );
 });
+
+const serviceCard: AccountApp = {
+  ...app,
+  id: "svc-menu",
+  name: "Door camera",
+  kind: "service",
+  access_plan: { ...familyPlan, same_as_person: true },
+  request_history: { keep: false, retention: "30d", manager_name: "Avery" },
+};
+
+it("gives only the owner 'Change who it answers to…' on a service app, and opens the handover dialog", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner"), apps: [serviceCard] });
+  vi.spyOn(peopleApi, "people").mockReset().mockResolvedValue({
+    people: [{ id: "sam", name: "Sam", email: null, plan_id: "chat", plan_name: "Chat only", disabled: false }],
+    access_plans: [],
+  } as never);
+  renderApps(owner);
+  await screen.findByRole("heading", { name: "Door camera" });
+  openMenu("Door camera");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Change who it answers to…" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Who does Door camera answer to?" }));
+  await choosePlan("Answers to", "Sam");
+  expect(dialog.getByText("Door camera will run under Sam's plan: Chat only.")).toBeVisible();
+});
+
+it("offers an administrator no way to change who a service app answers to", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("admin"), apps: [serviceCard] });
+  renderApps({ ...owner, role: "admin" });
+  await screen.findByRole("heading", { name: "Door camera" });
+  openMenu("Door camera");
+  await screen.findByRole("menuitem", { name: "Remove app" });
+  expect(screen.queryByRole("menuitem", { name: "Change who it answers to…" })).toBeNull();
+});

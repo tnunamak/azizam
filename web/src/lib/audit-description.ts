@@ -16,6 +16,7 @@ const PHRASES: Record<string, string> = {
   "operator.service_registry.seed": "Added the initial engine configuration",
   "operator.service_registry.backfill": "Updated engine configuration",
   "app.update": "Updated an app",
+  "app.handover": "Handed an app to another person",
   "app.disable": "Disabled an app",
   "app.enable": "Enabled an app",
   "credential.create": "Created a key",

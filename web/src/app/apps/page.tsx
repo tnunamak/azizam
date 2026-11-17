@@ -73,6 +73,7 @@ import {
   type Credential,
 } from "@/lib/api";
 import { peopleApi } from "@/app/people/people-api";
+import { HandOverDialog } from "./hand-over-dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { productApi } from "@/lib/product-api";
 import type { CatalogRow } from "@/lib/product-api-types";
@@ -294,6 +295,8 @@ function AppsContents() {
   // The client picked in the new key's recipe. None until the person picks one, so no client is preselected.
   const [guideApp, setGuideApp] = useState<string | null>(null);
   const [accessApp, setAccessApp] = useState<AccountApp | null>(null);
+  // Owner only: the service app whose "Answers to" is being changed.
+  const [handOverApp, setHandOverApp] = useState<AccountApp | null>(null);
   const [accessPlan, setAccessPlan] = useState(SAME_AS_PERSON);
   const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
   // True only when this dialog created the app, so a key failure on an
@@ -1228,6 +1231,16 @@ function AppsContents() {
                             Change access plan
                           </DropdownMenuItem>
                         )}
+                        {owner && app.kind === "service" ? (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setHandOverApp(app);
+                            }}
+                          >
+                            Change who it answers to…
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuItem
                           variant="destructive"
                           disabled={busy}
@@ -1282,6 +1295,19 @@ function AppsContents() {
             ))}
         </div>
       )}
+      {handOverApp ? (
+        <HandOverDialog
+          app={{
+            id: handOverApp.id,
+            name: handOverApp.name,
+            currentPersonId: accountData?.user?.id ?? null,
+            sameAsPerson: !handOverApp.access_plan || handOverApp.access_plan.same_as_person,
+            planName: handOverApp.access_plan?.name ?? null,
+          }}
+          onClose={() => setHandOverApp(null)}
+          onDone={() => refresh()}
+        />
+      ) : null}
       {accountData?.authenticated ? (
         <SignInConnections
           empty={

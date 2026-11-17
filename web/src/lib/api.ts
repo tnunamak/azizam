@@ -916,6 +916,12 @@ export const api = {
         method: "PATCH",
         body: { access_plan: accessPlan },
       }).then((r) => r.app),
+    /** Owner only: hand a service app to another person. Its keys keep working under that person's plan. */
+    handOver: (appId: string, personId: string) =>
+      adminFetch<{ app: App }>(`/admin/api/apps/${encodeURIComponent(appId)}`, {
+        method: "PATCH",
+        body: { owner_user_id: personId },
+      }).then((r) => r.app),
   },
   users: {
     list: () =>
