@@ -486,6 +486,8 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     the svc (config["backends"][id]) dict. Polls every 0.5 s. Returns False
     immediately when the svc has no usable address.
     """
+    from gateway.remote_engine import refuse_unbound
+    refuse_unbound(svc)
     from gateway.engine_contract_view import observations_config
 
     if observations_config(svc).get("process_ready"):
@@ -561,6 +563,8 @@ def readiness_failure_text(svc: Mapping[str, Any]) -> Optional[str]:
     """
     if not isinstance(svc, Mapping) or process_config_driver(svc) in ("docker", "command", "process", "systemd", "http-load-unload"):
         return None
+    from gateway.remote_engine import refuse_unbound
+    refuse_unbound(svc)
     from gateway.engine_contract_view import observations_config
 
     if observations_config(svc).get("process_ready"):
@@ -601,6 +605,8 @@ class ExternalDriver:
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Health-check the backend.  Never spawns a process."""
+        from gateway.remote_engine import refuse_unbound
+        refuse_unbound(svc)
         effective_timeout = min(timeout_s, self._DEFAULT_HEALTH_TIMEOUT_S)
         return await _poll_health(svc, effective_timeout)
 
@@ -658,6 +664,8 @@ class DockerDriver:
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Start the container (if needed) then poll health until ready."""
+        from gateway.remote_engine import refuse_unbound
+        refuse_unbound(svc)
         driver_cfg = self._driver_config(svc)
         ok = await self._start(driver_cfg)
         if not ok:
@@ -879,6 +887,8 @@ class CommandDriver:
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Start the service (if status says it isn't running) then poll health."""
+        from gateway.remote_engine import refuse_unbound
+        refuse_unbound(svc)
         if not self._commands_allowed():
             return False
         driver_cfg = self._driver_config(svc)
@@ -1169,6 +1179,8 @@ class SystemdDriver:
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Start the unit (if not running) then poll health."""
+        from gateway.remote_engine import refuse_unbound
+        refuse_unbound(svc)
         dc = self._driver_config(svc)
         scope_flag = self._scope_flag(dc)
         unit = dc.get("unit", "")
@@ -1686,6 +1698,8 @@ class HttpLoadUnloadDriver:
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Health-check only; load is handled by swap() for single-slot drivers."""
+        from gateway.remote_engine import refuse_unbound
+        refuse_unbound(svc)
         dc = self._driver_config(svc)
         return await _poll_health(_with_health(svc, dc, "verify_endpoint", "/health"), min(timeout_s, 5.0))
 
@@ -2063,6 +2077,8 @@ def driver_for_service(service_id: str, config_backends: Optional[Mapping[str, A
         except ImportError:
             bcfg = {}
 
+    from gateway.remote_engine import refuse_unbound
+    refuse_unbound(bcfg)
     lifecycle = bcfg.get("lifecycle") or {}
     if not isinstance(lifecycle, Mapping):
         lifecycle = {}
