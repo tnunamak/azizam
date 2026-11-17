@@ -108,9 +108,10 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const [jobCommands, setJobCommands] = useState<Record<string, string> | null>(
-    null,
-  );
+  const [jobCommands, setJobCommands] = useState<{
+    jobId: string;
+    commands: Record<string, string>;
+  } | null>(null);
   const job = options?.job;
   const measurementUnavailable = options?.measurement_ready === false;
   const noHardLimit = options?.known_limit === false
@@ -135,7 +136,7 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
   const defaultLengths = options?.trial_lengths ?? [];
   const trialLengthValues = lengths === null
     ? defaultLengths
-    : lengths.split(",").map((value) => Number(value.trim()));
+    : lengths.split(",").map((value) => value.trim() === "" ? NaN : Number(value.trim()));
   const trialLengthsValid = !!options && trialLengthValues.length >= 2
     && new Set(trialLengthValues).size === trialLengthValues.length
     && trialLengthValues.every((length) => Number.isFinite(length)
@@ -154,7 +155,7 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
   );
   const searchWidthValues = widths === null
     ? options?.policy.search_widths ?? []
-    : widths.split(",").map((value) => Number(value.trim()));
+    : widths.split(",").map((value) => value.trim() === "" ? NaN : Number(value.trim()));
   const searchWidthsValid = !!settings && searchWidthValues.length >= 2
     && new Set(searchWidthValues).size === searchWidthValues.length
     && searchWidthValues.every((width) => Number.isFinite(width)
@@ -195,13 +196,16 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
     }
   }
   useEffect(() => {
+    setJobCommands(null);
+  }, [job?.id]);
+  useEffect(() => {
     if (!job?.id) return;
     let alive = true;
     void adminFetch<{ commands: Record<string, string> }>(
       `${base}/stt-measurements/${job.id}`,
     )
       .then((result) => {
-        if (alive) setJobCommands(result.commands);
+        if (alive) setJobCommands({ jobId: job.id, commands: result.commands });
       })
       .catch(() => {});
     return () => {
@@ -247,9 +251,9 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
                       ? settings.max_segment_seconds
                       : undefined}
                   step="any"
-                  value={settings[key]}
+                  value={Number.isNaN(settings[key]) ? "" : settings[key]}
                   onChange={(event) =>
-                    setDraft({ ...draft, [key]: Number(event.target.value) })
+                    setDraft({ ...draft, [key]: event.target.value.trim() === "" ? NaN : Number(event.target.value) })
                   }
                 />
               </label>
@@ -548,7 +552,10 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
               command contains current settings; edit its values before running
               it.
             </p>
-            {Object.entries({ ...options.commands, ...jobCommands }).map(
+            {Object.entries({
+              ...options.commands,
+              ...(jobCommands?.jobId === job?.id ? jobCommands?.commands : {}),
+            }).map(
               ([name, command]) => (
                 <div key={name} className="py-2">
                   <span className="text-meta">{name}</span>
