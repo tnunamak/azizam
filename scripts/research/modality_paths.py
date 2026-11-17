@@ -49,7 +49,7 @@ def inventory():
         effects = [c for c in calls if any(word in c.lower() for word in
                    ('receipt', 'store', 'status', 'event', 'lease', 'metadata', 'policy', 'admission', 'meter', 'persist', 'delivery', 'strip', 'normalize'))]
         rows.append({'route': route, 'old_path': old, 'dispatch': dispatch, 'generic_ready': ready,
-                     'existing_wire_test': parity, 'side_effect_calls': effects, 'line': evidence['line']})
+                     'existing_wire_test': parity, 'old_new_parity': route.startswith('/v1/3d/'), 'side_effect_calls': effects, 'line': evidence['line']})
     return {'routes': rows, 'symbols': symbols}
 
 if __name__ == '__main__':

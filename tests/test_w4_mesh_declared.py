@@ -1,10 +1,11 @@
 """Same route and inputs through the old multipart loop and declared job runner."""
 import difflib
 import json
+from collections import Counter
 
 import pytest
 
-from gateway import declared_operation_job, multipart_adapter, receipt_store
+from gateway import admin_store, declared_operation_job, multipart_adapter, receipt_store
 from tests.support.adapter_differential import Normalizer, dump_sqlite
 from tests.support.adapter_differential_rig import reset_store
 from tests import test_adapter_differential_s7_mesh_rows as mesh
@@ -17,6 +18,11 @@ def test_mesh_old_and_declared_wire(tmp_path, name):
         root = tmp_path / str(declared)
         root.mkdir()
         with pytest.MonkeyPatch.context() as patch:
+            identities = Counter()
+            def stable_id(prefix):
+                identities[prefix] += 1
+                return f'{prefix}_{identities[prefix]:016x}'
+            patch.setattr(admin_store, '_gen_id', stable_id)
             harness = mesh.rig.__wrapped__(patch, root)
             reset_store(receipt_store.DB_PATH)
             original_answer = mesh.answer
