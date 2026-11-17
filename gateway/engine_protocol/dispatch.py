@@ -179,6 +179,9 @@ class Runtime:
         return job.poll.interval_s, job.poll.max_wait_s
 
     def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
+        if self._remote_capability is not None and any(str(key).lower() in {
+                'headers', 'authorization', 'proxy-authorization', 'cookie', 'x-api-key'} for key in body):
+            raise ProtocolError('Remote authentication must use the service credential reference.', code='protocol_dispatch_refused')
         return CanonicalRequest(op=op, body={**body, 'model': self.target.upstream},
                                 params={'model': self.target.upstream, 'offering': self.target.offering['id'],
                                         'request_id': 'req_' + secrets.token_hex(12), 'created': int(time.time())})
@@ -193,9 +196,18 @@ class Runtime:
 
     async def invoke(self, op: str, body: Mapping[str, Any]):
         self.require_egress()
+        if self._remote_capability is not None:
+            async with self._transport.operation():
+                return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
         return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
 
     async def lease(self, *, drain, lock_for, may_switch: bool = True):
+        if self._remote_capability is not None:
+            async with self._transport.operation():
+                return await self._lease(drain=drain, lock_for=lock_for, may_switch=may_switch)
+        return await self._lease(drain=drain, lock_for=lock_for, may_switch=may_switch)
+
+    async def _lease(self, *, drain, lock_for, may_switch: bool = True):
         selection = self.target.offering.get('selection') or {}
         if selection.get('mode', 'request_field') != 'switch':
             return None

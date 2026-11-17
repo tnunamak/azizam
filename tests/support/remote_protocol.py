@@ -116,6 +116,8 @@ class SocketRecorder:
                 self.response = b''
                 self.answered = False
             async def write(self, buffer, timeout=None):
+                if getattr(recorder, 'on_write', None) is not None:
+                    recorder.on_write()
                 recorder.writes.append(bytes(buffer))
                 if buffer.startswith((b'GET ', b'POST ')):
                     line = buffer.split(b'\r\n', 1)[0]
@@ -130,6 +132,11 @@ class SocketRecorder:
                         self.response = (b'HTTP/1.1 200 OK\r\nContent-Type: ' + ctype + b'\r\nContent-Length: ' +
                                          str(len(payload)).encode() + b'\r\nConnection: close\r\n\r\n' + payload)
             async def read(self, max_bytes, timeout=None):
+                if getattr(recorder, 'block_read', None) is not None:
+                    await recorder.block_read.wait()
+                if getattr(recorder, 'read_delay', None):
+                    await asyncio.sleep(recorder.read_delay)
+                max_bytes = min(max_bytes, getattr(recorder, 'fragment_size', max_bytes))
                 data, self.response = self.response[:max_bytes], self.response[max_bytes:]
                 return data
             async def start_tls(self, ssl_context, server_hostname=None, timeout=None):

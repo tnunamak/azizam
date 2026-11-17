@@ -4523,6 +4523,10 @@ def write_service_registry_in_transaction(
         [(str(service_id),) for service_id in removed_ids],
     )
     next_generation = generation + 1
+    from gateway.remote_engine import invalidate_registry
+    database = next((row[2] for row in conn.execute('PRAGMA database_list') if row[1] == 'main'), None)
+    if database:
+        invalidate_registry(database)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     conn.execute(
         "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) VALUES (?, ?, ?, ?) "

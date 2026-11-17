@@ -167,6 +167,9 @@ class HttpV1Executor:
 
     @_redacting
     async def poll(self, conn: Connection, ref: JobRef) -> JobStatus:
+        if self._remote_capability is not None:
+            self._transport.check()
+            self._transport.budget.consume('polls', 1)
         op = self._operation(ref.op, job=True)
         assert op.job is not None
         poll = op.job.poll

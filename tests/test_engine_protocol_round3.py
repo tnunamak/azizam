@@ -743,3 +743,132 @@ def test_remote_dns_pinning_reconnect_and_tls_identity(monkeypatch, tmp_path):
     monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', real_connect)
     from tests.support.remote_protocol import real_tls_identity
     asyncio.run(real_tls_identity(monkeypatch, tmp_path))
+
+
+def test_remote_opt_out_closes_pool_and_cancels_queued_poll(monkeypatch, tmp_path):
+    from tests.support.remote_protocol import socket_case
+    from gateway.engine_protocol.transport import WireRequest
+    async def check():
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        started = asyncio.Event()
+        async def worker():
+            async with runtime._transport.operation():
+                await runtime._transport.send(WireRequest('GET', 'https://engine.example/state', {}), runtime.connection.timeouts)
+                started.set()
+                await asyncio.Event().wait()
+        task = asyncio.create_task(worker())
+        await started.wait()
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['enabled'] = False
+        factory.invalidate()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        assert recorder.closed
+        assert len(recorder.connections) == 1
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert len(recorder.connections) == 1
+    asyncio.run(check())
+    async def fence():
+        import sqlite3
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        database = tmp_path / 'fence.db'
+        with sqlite3.connect(database) as conn:
+            conn.execute('CREATE TABLE owner_policy (enabled INTEGER)')
+        factory.db_path = database
+        checks = []
+        def owner_write():
+            with sqlite3.connect(database, timeout=0) as conn:
+                with pytest.raises(sqlite3.OperationalError, match='locked'):
+                    conn.execute('BEGIN IMMEDIATE')
+            checks.append(True)
+        recorder.on_write = owner_write
+        await runtime.invoke('state', {})
+        assert checks
+        with sqlite3.connect(database, timeout=0) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute('INSERT INTO owner_policy VALUES (0)')
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['enabled'] = False
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert len(recorder.connections) == 1
+    asyncio.run(fence())
+
+
+def test_remote_aggregate_deadline_spans_retries_and_polling(monkeypatch):
+    from tests.support.remote_protocol import socket_case
+    from gateway.engine_protocol.types import JobRef
+    async def check():
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        now = [0.0]
+        factory.clock = lambda: now[0]
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = {'total_s': 1, 'polls': 1}
+        cap = factory.admit('remote-box')
+        runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=cap)
+        await runtime.adapter.poll(runtime.connection_for('smell.infer'), JobRef('smell.infer', 'j'))
+        with pytest.raises(ProtocolError):
+            await runtime.adapter.poll(runtime.connection_for('smell.infer'), JobRef('smell.infer', 'j'))
+        assert len(recorder.connections) == 1
+        now[0] = 2.0
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert len(recorder.connections) == 1
+    asyncio.run(check())
+
+
+def test_remote_wire_and_decompressed_byte_caps(monkeypatch):
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        for limits in ({'wire_bytes': 16}, {'decoded_bytes': 8}):
+            registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+            registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = limits
+            cap = factory.admit('remote-box')
+            runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=cap)
+            with pytest.raises(ProtocolError):
+                await runtime.invoke('state', {})
+            assert recorder.closed
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = {'decoded_bytes': 40}
+        runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=factory.admit('remote-box'))
+        await runtime.invoke('state', {})
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert len(recorder.connections) == 2 and len(recorder.closed) >= 2
+        import gzip
+        _, _, _, runtime, recorder, _ = socket_case(monkeypatch)
+        compressed = gzip.compress(b'x' * 100000)
+        recorder.responses.append(b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ' +
+                                  str(len(compressed)).encode() + b'\r\n\r\n' + compressed)
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert recorder.closed  # encoded bodies are refused before decompression
+    asyncio.run(check())
+
+
+def test_remote_header_limits_and_cancellation_close_socket(monkeypatch):
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        for limits in ({'header_bytes': 32}, {'header_fields': 1}):
+            registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+            registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = limits
+            runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=factory.admit('remote-box'))
+            with pytest.raises(ProtocolError):
+                await runtime.invoke('state', {})
+            assert recorder.closed
+        _, _, _, runtime, recorder, _ = socket_case(monkeypatch)
+        recorder.block_read = asyncio.Event()
+        task = asyncio.create_task(runtime.invoke('state', {}))
+        while not recorder.connections:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert recorder.closed
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = {'total_s': 0.03}
+        runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=factory.admit('remote-box'))
+        recorder.read_delay, recorder.fragment_size = 0.005, 1
+        with pytest.raises((ProtocolError, TimeoutError, asyncio.CancelledError)):
+            await runtime.invoke('state', {})
+        assert recorder.closed
+    asyncio.run(check())

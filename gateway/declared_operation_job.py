@@ -105,6 +105,15 @@ async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *
     """Run the job and keep each fetched file as its own asset. ``body`` is the caller's input object; the description's
     submit map decides which of its fields reach the engine."""
     refs = await protocol_jobs.run(runtime, intent, body, job_id=job_id)
+    if getattr(runtime, '_remote_capability', None) is not None:
+        async with runtime._transport.fence():
+            runtime.require_egress()
+            _complete(refs, job_id)
+        return
+    _complete(refs, job_id)
+
+
+def _complete(refs, job_id):
     if refs is None or isinstance(refs, ResultBundle):
         # A terminal replay or a committed bundle has no second completion owner.
         return

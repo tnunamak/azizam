@@ -172,7 +172,23 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
     return bundle
 
 
+async def _commit_authorized_bundle(runtime, job_id, bundle, **kwargs):
+    if getattr(runtime, '_remote_capability', None) is not None:
+        async with runtime._transport.fence():
+            runtime.require_egress()
+            return _commit_bundle(runtime, job_id, bundle, **kwargs)
+    return _commit_bundle(runtime, job_id, bundle, **kwargs)
+
+
 async def run(runtime, op, body, *, job_id, follow_events: bool = False):
+    bound = getattr(runtime, '_transport', None)
+    if getattr(runtime, '_remote_capability', None) is not None:
+        async with bound.operation():
+            return await _run(runtime, op, body, job_id=job_id, follow_events=follow_events)
+    return await _run(runtime, op, body, job_id=job_id, follow_events=follow_events)
+
+
+async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
     require_egress = getattr(runtime, 'require_egress', None)
     if require_egress is not None:
         require_egress()
@@ -216,7 +232,7 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
         if isinstance(outcome, Completed):
             # The whole answer is in hand. It is staged and committed before the marker is cleared; a crash before the
             # commit leaves the marker, which a restart reads as submission_unknown (D3).
-            return _commit_bundle(runtime, job_id, outcome.bundle)
+            return await _commit_authorized_bundle(runtime, job_id, outcome.bundle)
         ref = _job_ref(outcome, v2)
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                  metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
@@ -246,7 +262,7 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
                         # After a restart no request was built yet: build it now, so the pin is read and checked again.
                         request = request if request is not None else runtime.request(op, body)
                         bundle = await results(conn, ref, status, request, _result_context(runtime))
-                        return _commit_bundle(runtime, job_id, bundle, clear_marker=False)
+                        return await _commit_authorized_bundle(runtime, job_id, bundle, clear_marker=False)
                     if status.state in (JobState.failed, JobState.cancelled):
                         # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
                         raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
