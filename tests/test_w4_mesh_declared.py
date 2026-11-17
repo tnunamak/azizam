@@ -34,6 +34,7 @@ def test_mesh_old_and_declared_wire(tmp_path, name):
             facts = mesh.CELLS[name](harness)
             facts['receipts'] = dump_sqlite(receipt_store.DB_PATH, Normalizer([root]), skip_tables=('receipt_history',))
             observations.append(facts)
+    print('W4-WIRE ' + name + ' ' + json.dumps(observations[0], sort_keys=True))
     assert observations[0] == observations[1], '\n'.join(difflib.unified_diff(
         json.dumps(observations[0], indent=2, sort_keys=True).splitlines(),
         json.dumps(observations[1], indent=2, sort_keys=True).splitlines()))
