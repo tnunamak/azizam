@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import fcntl
 import json
 import math
+import os
 from pathlib import Path
 
 from gateway import private_io
@@ -55,7 +57,7 @@ class Snapshot:
 
 
 class ChoiceStore:
-    """One file per installation. Callers must serialize writes across processes."""
+    """One file per installation. Writes serialize through a sibling lock file."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -102,7 +104,16 @@ class ChoiceStore:
 
     def write(self, service, node_type, input, choices, *, fetched_at):
         self._validate(service, node_type, input, choices, fetched_at)
-        entries = self._load()
-        entries = [e for e in entries if (e['service'], e['node_type'], e['input']) != (service, node_type, input)]
-        entries.append(dict(service=service, node_type=node_type, input=input, choices=choices, fetched_at=fetched_at))
-        private_io.atomic_write_text(self.path, json.dumps({'version': 1, 'entries': entries}, allow_nan=False))
+        private_io.ensure_private_dir(self.path.parent)
+        lock = os.open(self.path.with_name(self.path.name + '.lock'), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                entries = self._load()
+                entries = [e for e in entries if (e['service'], e['node_type'], e['input']) != (service, node_type, input)]
+                entries.append(dict(service=service, node_type=node_type, input=input, choices=choices, fetched_at=fetched_at))
+                private_io.atomic_write_text(self.path, json.dumps({'version': 1, 'entries': entries}, allow_nan=False))
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+        finally:
+            os.close(lock)
