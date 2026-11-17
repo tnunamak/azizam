@@ -29,8 +29,16 @@ function Table({
     () => ({ id: generatedCaptionId, setCaptionId }),
     [generatedCaptionId],
   );
-  const labelledBy = props["aria-labelledby"] || undefined;
-  const label = labelledBy ? undefined : props["aria-label"] || undefined;
+  const requestedLabelledBy = props["aria-labelledby"]?.trim() || undefined;
+  const [labelledBy, setLabelledBy] = React.useState<string>();
+  const label = labelledBy ? undefined : props["aria-label"]?.trim() || undefined;
+  React.useLayoutEffect(() => {
+    const document = containerRef.current?.ownerDocument;
+    const hasText = requestedLabelledBy?.split(/\s+/).some(
+      (id) => document?.getElementById(id)?.textContent?.trim(),
+    );
+    setLabelledBy(hasText ? requestedLabelledBy : undefined);
+  });
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
@@ -163,11 +171,12 @@ function TableCaption({
   const context = React.useContext(TableCaptionContext);
   const captionId = id ?? context?.id;
   const registerCaption = context?.setCaptionId;
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (!registerCaption) return;
-    registerCaption(captionId);
+    const hasText = captionId && document.getElementById(captionId)?.textContent?.trim();
+    registerCaption(hasText ? captionId : undefined);
     return () => registerCaption(undefined);
-  }, [captionId, registerCaption]);
+  }, [captionId, registerCaption, props.children]);
   return (
     <caption
       id={captionId}

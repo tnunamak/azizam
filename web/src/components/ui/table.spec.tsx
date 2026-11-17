@@ -108,3 +108,62 @@ test("caption outside Table keeps working without an injected ID", () => {
   render(<table><TableCaption>Standalone caption</TableCaption></table>);
   expect(screen.getByText("Standalone caption").hasAttribute("id")).toBe(false);
 });
+
+test("whitespace aria-label does not name the scrolling region", () => {
+  const view = render(<Table aria-label="   " />);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(container.hasAttribute("aria-label")).toBe(false);
+  expect(container.getAttribute("tabindex")).toBe("0");
+  expect(view.container.querySelector("table")!.getAttribute("aria-label")).toBe("   ");
+});
+
+test("missing aria-labelledby falls back to the trimmed aria-label", () => {
+  render(<Table aria-labelledby="missing-heading" aria-label="  Usage  " />);
+  const region = screen.getByRole("region", { name: "Usage" });
+  expect(region.getAttribute("aria-label")).toBe("Usage");
+  expect(region.hasAttribute("aria-labelledby")).toBe(false);
+  expect(region.querySelector("table")!.getAttribute("aria-labelledby")).toBe("missing-heading");
+  expect(region.querySelector("table")!.getAttribute("aria-label")).toBe("  Usage  ");
+});
+
+test("empty aria-labelledby target does not name the scrolling region", () => {
+  const view = render(<>
+    <h2 id="empty-heading">   </h2>
+    <Table aria-labelledby="empty-heading" />
+  </>);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(container.hasAttribute("aria-labelledby")).toBe(false);
+  expect(container.getAttribute("tabindex")).toBe("0");
+});
+
+test("empty TableCaption leaves the scrolling wrapper focusable without a region", () => {
+  const view = render(<Table><TableCaption /></Table>);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(container.hasAttribute("aria-labelledby")).toBe(false);
+  expect(container.getAttribute("tabindex")).toBe("0");
+  view.rerender(<Table><TableCaption>   </TableCaption></Table>);
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(container.getAttribute("tabindex")).toBe("0");
+  view.rerender(<Table><TableCaption><span>Requests</span></TableCaption></Table>);
+  expect(screen.getByRole("region", { name: "Requests" })).toBe(container);
+  view.rerender(<Table><TableCaption> </TableCaption></Table>);
+  expect(screen.queryByRole("region")).toBeNull();
+});
+
+test("aria-labelledby resolves a nonempty target mounted after the table", () => {
+  const view = render(<>
+    <Table aria-labelledby="missing-heading later-heading" aria-label="Fallback" />
+    <h2 id="later-heading">Later heading</h2>
+  </>);
+  const region = screen.getByRole("region", { name: "Later heading" });
+  expect(region.getAttribute("aria-labelledby")).toBe("missing-heading later-heading");
+  expect(region.hasAttribute("aria-label")).toBe(false);
+  view.rerender(<>
+    <Table aria-labelledby="missing-heading later-heading" aria-label="Fallback" />
+    <h2 id="later-heading"> </h2>
+  </>);
+  expect(screen.getByRole("region", { name: "Fallback" })).toBe(region);
+});
