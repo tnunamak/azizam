@@ -271,3 +271,51 @@ The generated audio inventory row now names the declared execution/result/delive
 compares that generated row with the documented row and checks that the prepared run actually calls the declared runner.
 These two tests add +2 cases: the combined branch budget proposal is `pytest = 29864` (+34 over 29830), before reconciling
 other lanes. The owner budget file remains unchanged.
+
+## Audio failure and publication corrections
+
+The original audio handlers and multipart runner from `fd30cbfca` are frozen as test fixtures. The audio comparison
+executes both handlers with identical requests and injected failures. It compares HTTP status/code/message, job status,
+job error and typed error fields, and receipt status. It also checks the submission and scrubbed metadata-error logs.
+The cases cover submit unreachable/timeout, history unreachable/timeout/upstream error, generation deadline, shutdown,
+publication, success, delivery failure, missing output, cancellation at publication, limits and empty asset collections.
+The separate empty 3D comparison drives both runners through the raw HTTP route and compares answers, engine requests,
+job status and receipt status. Both keep the original HTTP 500 `result_not_kept` refusal. The generic v1 empty-result
+message remains unchanged: `The engine returned no result file.`
+
+Audio transport failures are converted at the adapter boundary before generic submission ambiguity handling or poll
+retries can alter their wire answers. A generic wait deadline becomes the original HTTP 504 `Audio generation timeout`.
+Cancellation pending reaches native settlement; shutdown cancellation leaves the running row for restart recovery.
+Synchronous execution rows carry `publication_pending`, so they do not count toward application admission or appear in
+listings. Public lookups also hide them. Restart recovery removes interrupted unpublished rows. The existing bundle
+transaction accepts optional prepared-run publication fields, so assets, success and public visibility commit together.
+Delivery still follows that transaction and cannot undo it.
+
+Synchronous storage checks result limits after provenance preparation and before writing the asset. Empty asset
+collections are refused before publication. These two synchronous refusals are the expressly approved tightening:
+comparison tests record the old HTTP 200 and require the new HTTP 502, failed receipt and zero stored assets. Queued
+refusals retain the original job and receipt outcomes. The queued executor test double now publishes through the
+real declared runner, matching the route's publication responsibility instead of bypassing it.
+
+Invalid multipart timeout configuration raises typed `service_unavailable` / `capacity`. Parameterized declared-run
+start failures preserve each multipart refusal code and its client message.
+
+Committed-tree hermetic commands and quoted output:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-proof.xml -n 4 tests/test_w4_audio_failure_parity.py tests/test_w4_empty_results.py tests/test_declared_delivery.py tests/test_c2d_f_probe_bounds.py tests/test_declared_operation_job.py
+# 88 passed in 9.94s
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-regression-final.xml -n 4 tests/test_w4_audio_declared.py tests/test_w4_mesh_declared.py tests/test_audio_media_jobs.py tests/test_audio_media_job_integration.py tests/test_audio_job_runs_from_pin.py tests/test_audio_duration_publication.py tests/test_result_bundle_audio.py tests/test_audio_declared_result_boundary.py tests/test_adapter_differential_s7_mesh_rows.py tests/test_modality_paths.py tests/test_audio_route_selectors.py
+# 110 passed in 13.27s
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-shared.xml -n 4 tests/test_media_jobs.py tests/test_media_jobs_contract.py tests/test_media_jobs_survivors.py tests/test_media_ingestion.py tests/test_result_bundle.py tests/test_result_bundle_release.py tests/test_receipt_store_contract.py tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py tests/test_engine_protocol_executor.py tests/test_engine_protocol_w4_followups.py
+# 467 passed in 22.20s
+```
+
+The fixes add 36 cases: 26 audio comparisons, one empty 3D comparison, eight start-refusal parameters and one invalid
+timeout parameter. Proposed owner-only budget edit at original `tests/budgets.toml` line 678: `pytest = 29900`, +70 over
+29830 including the previously proposed +34. No owner oracle or published parity fixture was edited.
+
+Expect it to work because the frozen original handlers decide the failure answers, and the real completion transaction
+publishes asset handles with success. The tests read the job through a separate connection at publication and confirm
+that refused synchronous storage writes no asset. Confidence: 97% for the tested local paths; live engines unverified.
+No reviewer was started.
