@@ -101,3 +101,176 @@ async def exercise(path, monkeypatch):
     with pytest.raises(ProtocolError):
         await runtime.invoke('state', {})
     assert len(requests) == before
+
+
+class SocketRecorder:
+    """Replace only the OS socket boundary; keep httpx/httpcore framing and TLS setup."""
+    def __init__(self, monkeypatch):
+        import httpcore
+        self.connections, self.writes, self.tls, self.closed = [], [], [], []
+        self.responses = []
+        recorder = self
+
+        class Stream:
+            def __init__(self):
+                self.response = b''
+                self.answered = False
+            async def write(self, buffer, timeout=None):
+                recorder.writes.append(bytes(buffer))
+                if buffer.startswith((b'GET ', b'POST ')):
+                    line = buffer.split(b'\r\n', 1)[0]
+                    path = line.split(b' ')[1].decode()
+                    if recorder.responses:
+                        self.response = recorder.responses.pop(0)
+                    else:
+                        payload = (b'{"job":{"id":"j"}}' if path == '/v1/infer' else
+                                   b'{"state":"ready"}' if path == '/v1/infer/j' else
+                                   b'remote-result' if path.endswith('/molecule') else b'{"value":"remote-model"}')
+                        ctype = b'application/octet-stream' if path.endswith('/molecule') else b'application/json'
+                        self.response = (b'HTTP/1.1 200 OK\r\nContent-Type: ' + ctype + b'\r\nContent-Length: ' +
+                                         str(len(payload)).encode() + b'\r\nConnection: close\r\n\r\n' + payload)
+            async def read(self, max_bytes, timeout=None):
+                data, self.response = self.response[:max_bytes], self.response[max_bytes:]
+                return data
+            async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+                import ssl
+                assert ssl_context.verify_mode == ssl.CERT_REQUIRED and ssl_context.check_hostname
+                recorder.tls.append(server_hostname)
+                return self
+            def get_extra_info(self, info):
+                return None
+            async def aclose(self):
+                recorder.closed.append(self)
+
+        async def connect_tcp(backend, host, port, **kwargs):
+            recorder.connections.append((host, port))
+            return Stream()
+        monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', connect_tcp)
+
+
+def socket_case(monkeypatch, answers=None):
+    from gateway.remote_engine import ClientFactory
+    from gateway.remote_engine_transport import RemoteNetworkTransport
+    registry, doc, _, _, runtime, _ = case()
+    recorder = SocketRecorder(monkeypatch)
+    answers = answers if answers is not None else ['93.184.216.34']
+    async def resolve(host, port):
+        return list(answers)
+    factory = ClientFactory(lambda: registry, connector=lambda bound: RemoteNetworkTransport(bound, resolve=resolve))
+    cap = factory.admit('remote-box')
+    runtime = dispatch.Runtime(runtime.target, assets=MemoryAssetStore(), remote_factory=factory, remote_capability=cap)
+    return registry, factory, cap, runtime, recorder, answers
+
+
+async def canary_path(path, monkeypatch, caplog):
+    from gateway.engine_protocol.types import CanonicalRequest, JobRef, JobState, JobStatus
+    registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+    inbound = 'synthetic-inbound-' + path
+    service_value = 'synthetic-service-' + path
+    monkeypatch.setenv('REMOTE_TEST_CREDENTIAL', service_value)
+    registry['services']['remote-box']['config']['connection']['credentials'] = {
+        cls: {'secret_ref': 'os.environ/REMOTE_TEST_CREDENTIAL', 'origin': 'https://engine.example',
+              'header': 'Authorization', 'scheme': 'Bearer'} for cls in ('inference', 'control')}
+    cap = factory.admit('remote-box')
+    runtime = dispatch.Runtime(runtime.target, assets=MemoryAssetStore(), remote_factory=factory, remote_capability=cap)
+    request = CanonicalRequest('state', headers={'Authorization': inbound, 'Cookie': inbound, 'X-API-Key': inbound})
+    if path == 'observation':
+        await fresh_observation(runtime, factory)
+    elif path == 'poll':
+        await runtime.adapter.poll(runtime.connection_for('smell.infer'), JobRef('smell.infer', 'j'))
+    elif path == 'asset':
+        ref = JobRef('smell.infer', 'j')
+        await runtime.adapter.fetch_assets(runtime.connection_for('smell.infer'), ref, JobStatus(ref, JobState.succeeded))
+    else:
+        await runtime.adapter.invoke(runtime.connection_for('state', probe=path == 'probe'), 'state', request)
+    captured = b''.join(recorder.writes).decode()
+    assert inbound not in captured and inbound not in caplog.text
+    assert service_value not in caplog.text
+    assert 'Authorization: Bearer ' + service_value in captured or 'authorization: Bearer ' + service_value in captured
+    assert recorder.connections == [('93.184.216.34', 443)]
+    assert recorder.tls == ['engine.example']
+
+
+async def fresh_observation(runtime, factory):
+    from gateway.swap_drain import SwapDrain
+    service = runtime.target.service
+    service['config']['offerings'][0]['selection'] = {'mode': 'switch', 'switch': {
+        'call': 'select', 'args': {}, 'observe_selected': 'chosen'}}
+    service['observations'] = {'chosen': {'http': {'path': '/state', 'select': '/value'}}}
+    cap = factory.admit(runtime.target.engine_id)
+    runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=cap)
+    lease = await runtime.lease(drain=SwapDrain(), lock_for=lambda _: asyncio.Lock())
+    lease.release()
+
+
+async def real_tls_identity(monkeypatch, directory):
+    """Run the connector and TLS library against a synthetic local TLS server."""
+    import datetime
+    import ssl
+    import httpcore
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from gateway.engine_protocol.errors import ProtocolError
+    import pytest
+
+    real_connect = httpcore.AnyIOBackend.connect_tcp
+    original_context = ssl.create_default_context
+    for identity in ('engine.example', 'wrong.example'):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, identity)])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
+                       .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+                       .not_valid_after(now + datetime.timedelta(days=1))
+                       .add_extension(x509.SubjectAlternativeName([x509.DNSName(identity)]), critical=False)
+                       .sign(key, hashes.SHA256()))
+        cert_path, key_path = directory / 'synthetic-cert.pem', directory / 'synthetic-key.pem'
+        cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+        key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                              serialization.NoEncryption()))
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(cert_path, key_path)
+        received = []
+        async def serve(reader, writer):
+            try:
+                data = await reader.readuntil(b'\r\n\r\n')
+                received.append(data)
+                payload = b'{"value":"remote-model"}'
+                writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: ' +
+                             str(len(payload)).encode() + b'\r\n\r\n' + payload)
+                await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        server = await asyncio.start_server(serve, '127.0.0.1', 0, ssl=server_context)
+        port = server.sockets[0].getsockname()[1]
+        dialled = []
+        async def redirect_socket(backend, host, requested_port, **kwargs):
+            dialled.append((host, requested_port))
+            assert host == '93.184.216.34' and requested_port == 443
+            return await real_connect(backend, '127.0.0.1', port, **kwargs)
+        def context(*args, **kwargs):
+            result = original_context(*args, **kwargs)
+            result.load_verify_locations(cafile=str(cert_path))
+            return result
+        try:
+            _, _, _, runtime, _, _ = socket_case(monkeypatch)
+            monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', redirect_socket)
+            monkeypatch.setattr(ssl, 'create_default_context', context)
+            if identity == 'engine.example':
+                await runtime.invoke('state', {})
+                assert received and b'Host: engine.example' in received[0]
+            else:
+                with pytest.raises(ProtocolError):
+                    await runtime.invoke('state', {})
+                assert received == []
+            assert dialled == [('93.184.216.34', 443)]
+        finally:
+            server.close()
+            await server.wait_closed()
+            monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', real_connect)
+            monkeypatch.setattr(ssl, 'create_default_context', original_context)
+            key_path.unlink()
+            cert_path.unlink()

@@ -115,9 +115,10 @@ class Capability:
 class ClientFactory:
     """Mint authority only from current registry data and recheck it on each send."""
 
-    def __init__(self, registry: Callable[[], Mapping[str, Any]], *, transport=None):
+    def __init__(self, registry: Callable[[], Mapping[str, Any]], *, transport=None, connector=None):
         self._registry = registry
         self._transport = transport
+        self._connector = connector
         self._minted: dict[int, Capability] = {}
 
     def _current(self, service_id):
@@ -154,11 +155,17 @@ class ClientFactory:
 class BoundTransport:
     def __init__(self, factory, capability, inner):
         self.factory, self.capability, self.inner = factory, capability, inner
+        if self.inner is None:
+            from gateway.remote_engine_transport import RemoteNetworkTransport
+            self.inner = factory._connector(self) if factory._connector else RemoteNetworkTransport(self)
 
     async def send(self, request, timeouts):
         cap = self.capability
         self.factory.check(cap, service_id=cap.service_id, address=request.url)
-        if self.inner is None:
-            # No candidate network egress until the socket boundary is implemented.
+        record, _ = self.factory._current(cap.service_id)
+        names = {'accept', 'content-type', 'accept-encoding'}
+        names.update(str(spec.get('header') or 'Authorization').lower()
+                     for spec in (connection_config(record).get('credentials') or {}).values() if spec)
+        if any(name.lower() not in names for name in request.headers):
             raise refused()
         return await self.inner.send(request, timeouts)

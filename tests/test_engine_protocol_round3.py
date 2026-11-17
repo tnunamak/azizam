@@ -651,3 +651,95 @@ def test_remote_policy_rejects_unapproved_records_and_redirects():
     with pytest.raises(RedirectRefused):
         asyncio.run(runtime.invoke('state', {}))
     assert len(sent) == 1
+
+
+def test_remote_observation_denied_dns_zero_connections(monkeypatch):
+    from tests.support.remote_protocol import socket_case, fresh_observation
+    from gateway.engine_switch import SwitchUnavailable
+    async def check():
+        for answers in (['127.0.0.1'], ['::1'], ['::ffff:127.0.0.1'], ['169.254.169.254'],
+                        ['fd00:ec2::254'], ['100.100.100.200'], ['168.63.129.16'], ['0.0.0.0'],
+                        ['224.0.0.1'], ['192.0.2.1'], ['100.64.0.1'], ['10.0.0.1'],
+                        ['93.184.216.34', '127.0.0.1']):
+            _, factory, _, runtime, recorder, _ = socket_case(monkeypatch, answers)
+            with pytest.raises(ProtocolError):
+                await runtime.invoke('state', {})
+            assert recorder.connections == []
+            with pytest.raises((ProtocolError, SwitchUnavailable)):
+                await fresh_observation(runtime, factory)
+            assert recorder.connections == []
+    asyncio.run(check())
+
+
+def test_remote_observation_redirect_zero_forbidden_connections(monkeypatch):
+    from tests.support.remote_protocol import socket_case, fresh_observation
+    from gateway.engine_switch import SwitchUnavailable
+    async def check():
+        for location in (b'https://169.254.169.254/', b'/same-origin'):
+            _, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+            recorder.responses.append(b'HTTP/1.1 302 Found\r\nLocation: ' + location + b'\r\nContent-Length: 0\r\n\r\n')
+            with pytest.raises(ProtocolError):
+                await runtime.invoke('state', {})
+            assert recorder.connections == [('93.184.216.34', 443)]
+            assert len([w for w in recorder.writes if w.startswith(b'GET ')]) == 1
+            recorder.responses.append(b'HTTP/1.1 302 Found\r\nLocation: ' + location + b'\r\nContent-Length: 0\r\n\r\n')
+            with pytest.raises((ProtocolError, SwitchUnavailable)):
+                await fresh_observation(runtime, factory)
+            assert all(peer == ('93.184.216.34', 443) for peer in recorder.connections)
+    asyncio.run(check())
+
+
+def test_remote_observation_proxy_env_zero_forbidden_connections(monkeypatch):
+    from tests.support.remote_protocol import socket_case
+    monkeypatch.setenv('HTTPS_PROXY', 'http://169.254.169.254:8888')
+    monkeypatch.setenv('ALL_PROXY', 'http://127.0.0.1:9999')
+    async def check():
+        _, _, _, runtime, recorder, _ = socket_case(monkeypatch)
+        await runtime.invoke('state', {})
+        assert recorder.connections == [('93.184.216.34', 443)]
+    asyncio.run(check())
+
+
+def test_remote_observation_credential_canary_zero_forbidden_connections(monkeypatch, caplog):
+    from tests.support.remote_protocol import canary_path
+    asyncio.run(canary_path('observation', monkeypatch, caplog))
+
+
+def test_remote_poll_secret_canary_absent(monkeypatch, caplog):
+    from tests.support.remote_protocol import canary_path
+    asyncio.run(canary_path('poll', monkeypatch, caplog))
+
+
+def test_remote_asset_secret_canary_absent(monkeypatch, caplog):
+    from tests.support.remote_protocol import canary_path
+    asyncio.run(canary_path('asset', monkeypatch, caplog))
+
+
+def test_remote_control_secret_canary_absent(monkeypatch, caplog):
+    from tests.support.remote_protocol import canary_path
+    asyncio.run(canary_path('control', monkeypatch, caplog))
+
+
+def test_remote_probe_secret_canary_absent(monkeypatch, caplog):
+    from tests.support.remote_protocol import canary_path
+    asyncio.run(canary_path('probe', monkeypatch, caplog))
+
+
+def test_remote_dns_pinning_reconnect_and_tls_identity(monkeypatch, tmp_path):
+    import httpcore
+    real_connect = httpcore.AnyIOBackend.connect_tcp
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        _, _, _, runtime, recorder, answers = socket_case(monkeypatch)
+        await runtime.invoke('state', {})
+        assert recorder.connections == [('93.184.216.34', 443)]
+        assert recorder.tls == ['engine.example']
+        answers[:] = ['127.0.0.1']
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert recorder.connections == [('93.184.216.34', 443)]
+    asyncio.run(check())
+    # Restore the OS backend before exercising real certificate verification.
+    monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', real_connect)
+    from tests.support.remote_protocol import real_tls_identity
+    asyncio.run(real_tls_identity(monkeypatch, tmp_path))

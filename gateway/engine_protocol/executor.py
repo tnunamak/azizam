@@ -55,6 +55,7 @@ from gateway.engine_protocol.errors import (
 from gateway.engine_protocol.mapping import json_key, same_json
 from gateway.engine_protocol.transport import HttpxTransport, Transport, WireRequest, WireResponse
 from gateway.engine_protocol.types import (
+    CREDENTIAL_HEADER,
     AssetRef, CanonicalRequest, Connection, JobRef, JobState, JobStatus, Reply, StreamReply,
 )
 
@@ -379,6 +380,8 @@ class HttpV1Executor:
                 scheme = credential.scheme if credential.scheme is not None else (auth.scheme if auth.scheme is not None else ("Bearer" if auth.kind == "bearer" else ""))
                 headers[name.lower()] = f"{scheme} {credential.secret}" if scheme else credential.secret
         for name, value in {**conn.headers, **spec.headers}.items():
+            if self._remote_capability is not None and CREDENTIAL_HEADER.search(name):
+                raise MappingError('Remote authentication must use the service credential reference.')
             headers[name.lower()] = value
         for value in headers.values():
             if "\r" in value or "\n" in value:

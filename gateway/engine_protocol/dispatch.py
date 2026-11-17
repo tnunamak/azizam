@@ -260,6 +260,8 @@ class Runtime:
                 value = reply.selected.get('value')
                 return Observation(value is not None, value)
             except ProtocolError:
+                if self._remote_capability is not None:
+                    raise
                 return UNKNOWN
 
         return await SwitchController(drain=drain, invoke=invoke, observe=observe, lock_for=lock_for).select(
