@@ -38,6 +38,7 @@ from gateway.audio_extensions import (  # noqa: E402
     bind_audio_workflow_extensions,
     detect_unknown_audio_fields,
 )
+from tests.support.fake_upstream.audio import audio_engine
 import proxy  # noqa: E402
 from tests.support.config_snapshot import derived_patch
 from tests.support.access import access_context  # noqa: E402
@@ -78,63 +79,6 @@ class _JsonRequest:
 
     async def json(self) -> dict[str, Any]:
         return self._body
-
-
-class _FakeHTTPResponse:
-    def __init__(
-        self,
-        status_code: int,
-        *,
-        json_data: dict[str, Any] | None = None,
-        content: bytes = b"",
-        headers: dict[str, str] | None = None,
-        text: str = "",
-    ) -> None:
-        self.status_code = status_code
-        self._json_data = json_data or {}
-        self.content = content
-        self.headers = headers or {}
-        self.text = text
-
-    def json(self) -> dict[str, Any]:
-        return self._json_data
-
-
-class _FakeAudioClient:
-    def __init__(self, captured: dict[str, Any]) -> None:
-        self.captured = captured
-
-    async def __aenter__(self) -> "_FakeAudioClient":
-        return self
-
-    async def __aexit__(self, *_args: Any) -> None:
-        return None
-
-    async def post(self, url: str, **kwargs: Any) -> _FakeHTTPResponse:
-        self.captured["post_url"] = url
-        self.captured["payload"] = kwargs.get("json")
-        return _FakeHTTPResponse(200, json_data={"prompt_id": "audio-prompt"})
-
-    async def get(self, url: str, **_kwargs: Any) -> _FakeHTTPResponse:
-        if "/history/" in url:
-            return _FakeHTTPResponse(
-                200,
-                json_data={
-                    "audio-prompt": {
-                        "status": {"status_str": "success"},
-                        # The node and key the workflow's selector names: its graph's save node.
-                        "outputs": {
-                            node: {key: [{"filename": "out.wav", "type": "output"}]}
-                            for node, key in [self.captured.get("produced", ("3", "audios"))]
-                        },
-                    }
-                },
-            )
-        return _FakeHTTPResponse(
-            200,
-            content=b"RIFFfake-wave",
-            headers={"content-type": "audio/wav"},
-        )
 
 
 class TestManifestShape(unittest.TestCase):
@@ -524,9 +468,6 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         async def no_sleep(_seconds: float) -> None:
             return None
 
-        def fake_client_factory(*_args: Any, **_kwargs: Any) -> _FakeAudioClient:
-            return _FakeAudioClient(captured)
-
         with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy,
             "_resolve_audio_workflow",
@@ -543,11 +484,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
             proxy,
             "configured_downstream_headers",
             return_value={},
-        ), patch.object(
-            proxy.httpx,
-            "AsyncClient",
-            fake_client_factory,
-        ), patch.object(proxy.asyncio, "sleep", no_sleep):
+        ), audio_engine(captured), patch.object(proxy.asyncio, "sleep", no_sleep):
             response = await proxy.proxy_audio_generate(
                 _JsonRequest(body),  # type: ignore[arg-type]
                 access_context(),
@@ -663,9 +600,6 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
     async def test_out_of_range_duration_is_rejected_before_submit(self) -> None:
         captured: dict[str, Any] = {}
 
-        def fake_client_factory(*_args: Any, **_kwargs: Any) -> _FakeAudioClient:
-            return _FakeAudioClient(captured)
-
         with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy,
             "_resolve_audio_workflow",
@@ -674,11 +608,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
             proxy,
             "configured_downstream_headers",
             return_value={},
-        ), patch.object(
-            proxy.httpx,
-            "AsyncClient",
-            fake_client_factory,
-        ):
+        ), audio_engine(captured):
             response = await proxy.proxy_audio_generate(
                 _JsonRequest({"model": "tangoflux", "prompt": "x", "duration": 0.5}),  # type: ignore[arg-type]
                 access_context(),

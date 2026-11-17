@@ -172,9 +172,14 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
                 items = [{'asset_ref': asset.id, 'media_type': asset.content_type, 'size_bytes': asset.size} for asset in result.assets]
                 result_bundle.stage_assets_in(conn, job_id, attempt, name, items, limits=limits)
 
-    patch = {**({'protocol_submitting': False} if clear_marker else {}),
+    patch = {**({'protocol_submitting': False} if clear_marker and getattr(runtime, 'record_lifecycle', True) else {}),
              **publication_metadata, **(metadata or {})} or None
-    result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH, **status_args)
+    if getattr(runtime, 'retain_bundle', True):
+        result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH, **status_args)
+    else:
+        # Some synchronous wire contracts retain the asset projection without a reusable bundle.
+        media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, metadata_patch=patch,
+                                 path=media_jobs.DB_PATH, **status_args)
     return bundle
 
 
@@ -206,6 +211,7 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
         return None
     conn = runtime.connection_for(op)
     interval_s, max_wait_s = runtime.poll_timing(op)
+    record_lifecycle = getattr(runtime, 'record_lifecycle', True)
     metadata = (current or {}).get('metadata') or {}
     request = None
     saved = metadata.get('protocol_job')
@@ -221,8 +227,9 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
         validate = getattr(adapter, 'validate', None)
         if validate is not None:
             validate(conn, op, request)
-        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
-                                 metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)
+        if record_lifecycle:
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                                     metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)
         try:
             outcome = await adapter.start(conn, op, request) if v2 else await adapter.submit(conn, op, request)
         except TransportFailure as exc:
@@ -240,8 +247,9 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
             # commit leaves the marker, which a restart reads as submission_unknown (D3).
             return await _commit_authorized_bundle(runtime, job_id, outcome.bundle)
         ref = _job_ref(outcome, v2)
-        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
-                                 metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
+        if record_lifecycle:
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                                     metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
     progress = _Progress(job_id, _saved_state(metadata.get('protocol_state')))
     wake = asyncio.Event()
     follower_stopped = asyncio.Event()
@@ -260,7 +268,8 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
                         raise
                     last_error = str(exc)
                 else:
-                    progress.observe(status.state)
+                    if record_lifecycle:
+                        progress.observe(status.state)
                     if status.state == JobState.succeeded:
                         results = getattr(adapter, 'results', None) if v2 else None
                         if results is None:

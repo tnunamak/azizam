@@ -91,7 +91,7 @@ def test_the_paths_are_found_in_the_code():
         "delete_succeeded_in": {"gateway/media_jobs.py:delete_succeeded", "gateway/prompt_memory.py:remove_missing_media"},
         "delete_succeeded": set(),
         "reap_tombstones": {"gateway/workflow_run.py:delete"},
-        "discard_failed": {"gateway/workflow_run.py:_await_submit"},
+        "discard_failed": {"gateway/workflow_run.py:_await_submit", "proxy.py:_recover_media_jobs", "proxy.py:_fail_unpublished_job"},
     }
     assert reached == known, f"a new caller deletes job rows: {reached}"
 

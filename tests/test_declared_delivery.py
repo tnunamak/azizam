@@ -52,6 +52,7 @@ def test_delivery_observes_published_success_and_cannot_undo_it(tmp_path, monkey
 
 def test_multipart_store_refusal_keeps_its_type_and_code_through_declared_run(tmp_path, monkeypatch):
     import httpx
+    from tests.support.fake_upstream import HandlerTransport
 
     from gateway import multipart_adapter
     from gateway.mesh_manifest import ImageAsset

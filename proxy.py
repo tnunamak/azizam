@@ -29030,6 +29030,7 @@ class _PreparedAudioGeneration:
     store_full: bool
     interface_version = 2
     polls: int = 0
+    record_lifecycle = False
     publication_started: bool = False
     body: Mapping[str, Any] = dataclasses.field(init=False)
     job_id: str = dataclasses.field(init=False)
@@ -29056,7 +29057,7 @@ class _PreparedAudioGeneration:
                 workflow=self.workflow_id, backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
                 app_profile=plan_ref(caller), app_id=caller.app_id if caller else None,
                 owner_key_hash=_asset_owner_key(self.auth_context), api_key_name=caller.name if caller else None,
-                metadata={"mode": "sync_media_route", "publication_pending": True})
+                status=media_jobs.STATUS_RUNNING, metadata={"mode": "sync_media_route", "publication_pending": True})
             self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
         try:
             return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
@@ -29102,7 +29103,13 @@ class _PreparedAudioGeneration:
     def publication_options(self):
         self.publication_started = True
         return {"add_assets": self.assets,
-                "metadata_patch": {"publication_pending": False} if self.owns_job else {}}
+                "metadata_remove": ["publication_pending"] if self.owns_job else [],
+                "phase_patch": {"queued_at": None, "started_at": None} if self.owns_job else {},
+                "metadata_patch": self.delivery_metadata if self.store_full else {}}
+
+    @property
+    def retain_bundle(self):
+        return not self.owns_job
 
     def result_context(self):
         return ResultContext(result_bundle.limits_from_config(runtime().config))
@@ -29173,6 +29180,7 @@ class _PreparedAudioGeneration:
             raise _AudioWireResponse(_result_refusal_response(error.code, 504)) from error
         if response.status != 200:
             raise _audio_wire_error("No audio output found")
+        self.delivery_metadata = _job_metadata_mode_patch()
         self.content_type = response.headers.get("content-type", "audio/wav")
         self.content = response.raw
         peak = self.workflow_cfg.get("normalize_peak_db")
@@ -29194,10 +29202,7 @@ class _PreparedAudioGeneration:
             assets = await asyncio.to_thread(media_ingestion.store_audio_response, self.content, self.content_type,
                                             self.receipt, store_asset=store_asset_bytes, limits=context.limits)
         else:
-            result_bundle.check_assets(context.limits, [len(self.content)])
-            asset_id = await asyncio.to_thread(store_asset_bytes, self.content, kind=domain_rows.AUDIO,
-                                              suffix=self.suffix, owner_key_hash=_asset_owner_key(self.auth_context))
-            assets = [{"asset_id": asset_id, "media_type": self.content_type, "size_bytes": len(self.content)}]
+            raise _AudioEmptyResult()
         if not assets:
             raise _AudioEmptyResult()
         self.assets = assets
