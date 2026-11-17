@@ -742,3 +742,28 @@ def test_s6_unrelated_registry_generation_leaves_running_remote_job(owner, gatew
             time.sleep(.01)
         assert job['status'] == 'succeeded', job
         assert job['assets']
+
+
+@pytest.mark.parametrize('writer', ['registry_put', 'config_patch', 'config_import', 'service_patch', 'service_add'])
+def test_s6_non_owner_cannot_write_remote_policy_through_any_api(owner, gateway, writer):
+    from tests.test_signin_who_can_enter import signed_in
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    from tests.support.remote_protocol import add_remote
+    assert add_remote(client).status_code == 201
+    before = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    edited = json.loads(json.dumps(before))
+    connection = edited['services']['smell-box']['config']['connection']
+    connection['remote_dispatch'] = {'enabled': True, 'limits': {'total_s': 2}}
+    admin, _ = signed_in(gateway, sub='remote-writer-admin', email='admin@example.test', groups=['/Trusted'])
+    routes = {
+        'registry_put': ('PUT', '/admin/api/operator/service-registry', edited),
+        'config_patch': ('PATCH', '/admin/api/config/changes', {'items': [{'section': 'registry', 'value': edited}]}),
+        'config_import': ('POST', '/admin/api/config/import', {'document': edited}),
+        'service_patch': ('PATCH', '/admin/api/operator/services/smell-box', {'connection': connection}),
+        'service_add': ('POST', '/admin/api/operator/services', {'name': 'remote-new', 'base_url': 'https://engine.example', 'protocol': 'd0-smell', 'cost_class': 'free-local', 'enabled': False, 'connection': connection}),
+    }
+    method, path, body = routes[writer]
+    response = admin.request(method, path, headers=_write_headers(admin), json=body)
+    assert response.status_code == 403, response.text
+    assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before

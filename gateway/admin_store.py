@@ -4121,6 +4121,8 @@ def put_operator_setting_in(
     now: int | None = None,
 ) -> dict[str, Any]:
     """``put_operator_setting`` inside a transaction the caller owns and commits."""
+    if str(key or "").strip() == "service_registry":
+        raise ValueError("service_registry must be written through the registry transaction primitive")
     setting_key, value = _canonical_setting(conn, str(key or "").strip(), value)
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
@@ -4319,6 +4321,7 @@ def write_service_registry(
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     stored_form: bool = False,
+    actor: Any = None,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
 
@@ -4339,7 +4342,7 @@ def write_service_registry(
             session_guard.require_live(conn, session)
             next_generation = write_service_registry_in_transaction(
                 conn, value, updated_by=updated_by,
-                expected_generation=expected_generation, now=ts, stored_form=stored_form,
+                expected_generation=expected_generation, now=ts, stored_form=stored_form, actor=actor,
             )
             conn.commit()
         except Exception:
@@ -4367,6 +4370,7 @@ def write_service_registry_with_audit(
     migration_step: str | None = None,
     stored_form: bool = False,
     also_in_transaction: Callable[[sqlite3.Connection, int], None] | None = None,
+    actor: Any = None,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
 
@@ -4400,7 +4404,7 @@ def write_service_registry_with_audit(
                 updated_by=updated_by,
                 expected_generation=expected_generation,
                 now=ts,
-                stored_form=stored_form,
+                stored_form=stored_form, actor=actor,
             )
             _record_audit_in_transaction(
                 conn,
@@ -4473,6 +4477,7 @@ def write_service_registry_in_transaction(
     expected_generation: int,
     now: int,
     stored_form: bool = False,
+    actor: Any = None,
 ) -> int:
     """Write the registry and increment its generation in a caller-owned transaction.
 
@@ -4510,6 +4515,17 @@ def write_service_registry_in_transaction(
         and service_registry.is_litellm_service_record(record_id, record),
     )
     after_effective = registry_layers.layer(value, release)
+    # Every registry writer must carry owner proof to grant or change remote authority.
+    # updated_by and audit labels are attribution, never authorization.
+    from gateway.remote_engine import authority_record
+    from gateway.engine_contract_view import connection_config
+    new_services = after_effective.get('services') or {}
+    for sid in set(old_services) | set(new_services):
+        old_record, new_record = old_services.get(sid), new_services.get(sid)
+        remote = any('remote_dispatch' in connection_config(record or {}) for record in (old_record, new_record))
+        if remote and authority_record(old_record) != authority_record(new_record):
+            if actor is None or 'owner' not in actor.roles:
+                raise PermissionError('Only the owner can change remote engine authority.')
     # Every engine write runs here under the writer lock, so a description delete cannot slip between this check and the
     # write: an engine that now names a protocol description needs the description to exist.
     from gateway import protocol_description_store
@@ -4572,6 +4588,7 @@ def write_service_registry_and_setting_with_audits(
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     precheck: Callable[[sqlite3.Connection], None] | None = None,
+    actor: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Commit a registry revision, one ordinary setting and their audit facts atomically.
 
@@ -4605,7 +4622,7 @@ def write_service_registry_and_setting_with_audits(
                 registry,
                 updated_by=updated_by,
                 expected_generation=expected_generation,
-                now=ts,
+                now=ts, actor=actor,
             )
             _upsert_setting_in_transaction(conn, setting_name, setting_payload, ts, updated_by)
             for audit in audits:

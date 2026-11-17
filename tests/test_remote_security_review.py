@@ -204,3 +204,36 @@ def test_remote_authority_cache_runs_off_loop_and_ignores_unrelated_revision(mon
             assert all(thread != loop_thread for thread in threads)
         assert not policy_calls  # the authority digest, limits and validation are cached
     asyncio.run(check())
+
+
+@pytest.mark.parametrize('writer', ['transaction', 'plain', 'audit', 'with_setting', 'ordinary_in'])
+@pytest.mark.parametrize('roles', [None, frozenset({'admin'})])
+def test_remote_registry_writers_require_owner_actor(tmp_path, writer, roles):
+    from types import SimpleNamespace
+    from gateway import admin_store
+    database = tmp_path / 'registry.db'
+    admin_store.init_db(database)
+    registry, _, _, _, _, _ = case()
+    actor = None if roles is None else SimpleNamespace(roles=roles)
+    common = {'updated_by': 'owner', 'expected_generation': 0, 'actor': actor}
+    expected = ValueError if writer == 'ordinary_in' else PermissionError
+    message = 'registry transaction primitive' if writer == 'ordinary_in' else 'Only the owner'
+    with pytest.raises(expected, match=message):
+        if writer == 'ordinary_in':
+            with admin_store._conn(database) as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                admin_store.put_operator_setting_in(conn, 'service_registry', registry, updated_by='owner')
+        elif writer == 'transaction':
+            with admin_store._conn(database) as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                admin_store.write_service_registry_in_transaction(conn, registry, now=1, **common)
+        elif writer == 'plain':
+            admin_store.write_service_registry(registry, path=database, **common)
+        elif writer == 'audit':
+            admin_store.write_service_registry_with_audit(registry, path=database, audit_action='test',
+                audit_actor_kind='user', audit_actor_id='owner', audit_actor_label=None,
+                audit_target_kind='test', audit_target_id='test', **common)
+        else:
+            admin_store.write_service_registry_and_setting_with_audits(registry, path=database,
+                setting_key='test', setting_value={}, audits=[], **common)
+    assert admin_store.get_service_registry_with_generation(path=database) is None
