@@ -289,8 +289,8 @@ def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> 
            for group, fields in rules.items()}
     roles = {role: item["input"] for role, item in configured_input_targets(config, contract).items()}
     raw["roles"] = roles
-    capability = contract["capability"]
-    return video_facts({"capability": capability, capability: raw})
+    # video_facts reads the facts block named by an entry's capability; this projection has no entry, so it names its own block.
+    return video_facts({"capability": "configured", "configured": raw})
 
 
 def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:
