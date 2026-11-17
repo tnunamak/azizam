@@ -27,6 +27,90 @@ from tests.test_s7_parity_video_create import submitted, world  # noqa: F401
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture
+def non_video_scalar_contract():
+    from tests.workflow_runtime_fakes import entry
+
+    contract = {
+        "schema_version": 2, "id": "test.scalar", "version": "1", "intent": "test.scalar",
+        "inputs": {"amount": {"type": "number"}, "enabled": {"type": "boolean"}},
+        "outputs": {"result": {"media_type": "application/json"}},
+        "bindings": {"test": {"map": {
+            "amount": [{"path": "payload.amount"}],
+            "enabled": [{"path": "payload.enabled"}],
+        }}},
+    }
+    return contract, entry(contract)
+
+
+@pytest.mark.parametrize("name,value,expected_type,token", [
+    pytest.param("amount", 4, int, "4", id="json-int"),
+    pytest.param("amount", 4.0, float, "4.0", id="json-float"),
+    pytest.param("enabled", True, bool, "true", id="json-boolean"),
+    pytest.param("amount", "4", float, "4.0", id="form-number"),
+])
+def test_non_video_scalar_coercion_and_binding_preserve_json_types(
+        non_video_scalar_contract, name, value, expected_type, token):
+    from gateway.frontend_shapes._base import coerce
+    from gateway.manifests import bind_backend_request, validate_inputs
+
+    contract, chosen = non_video_scalar_contract
+    supplied = {name: value}
+    supplied_type = type(value)
+    supplied_json = json.dumps(supplied, sort_keys=True, separators=(",", ":"))
+    coerced = {name: coerce(chosen, name, value)}
+    assert type(coerced[name]) is expected_type
+    assert json.dumps(coerced[name]) == token
+    validated = validate_inputs(contract, coerced)
+    assert validated.rejected == {}
+    assert validated.errors == []
+    accepted = validated.accepted
+    expected_json = '{"' + name + '":' + token + '}'
+    assert type(accepted[name]) is expected_type
+    assert json.dumps(accepted, sort_keys=True, separators=(",", ":")) == expected_json
+
+    template = {"payload": {"untouched": "keep"}}
+    template_before = copy.deepcopy(template)
+    bound = bind_backend_request(contract, "test", template, accepted)
+    assert bound.applied_inputs == [name]
+    assert bound.ignored_inputs == {}
+    assert type(bound.request["payload"][name]) is expected_type
+    assert json.dumps(bound.request["payload"][name]) == token
+    assert json.dumps(bound.request, sort_keys=True, separators=(",", ":")) == (
+        '{"payload":{"' + name + '":' + token + ',"untouched":"keep"}}'
+    )
+
+    # Equality alone cannot detect an int changed to float, or a bool to an int.
+    assert type(supplied[name]) is supplied_type
+    assert json.dumps(supplied, sort_keys=True, separators=(",", ":")) == supplied_json
+    assert type(coerced[name]) is expected_type
+    assert type(accepted[name]) is expected_type
+    assert json.dumps(coerced, sort_keys=True, separators=(",", ":")) == expected_json
+    assert json.dumps(accepted, sort_keys=True, separators=(",", ":")) == expected_json
+    assert template == template_before
+
+
+def test_non_video_number_refuses_json_boolean_without_coercing_it(non_video_scalar_contract):
+    from gateway.frontend_shapes._base import coerce
+    from gateway.manifests import validate_inputs
+
+    contract, chosen = non_video_scalar_contract
+    supplied = {"amount": True}
+    coerced = {"amount": coerce(chosen, "amount", supplied["amount"])}
+    assert type(coerced["amount"]) is bool
+    assert json.dumps(coerced, separators=(",", ":")) == '{"amount":true}'
+    validated = validate_inputs(contract, coerced)
+    assert validated.accepted == {}
+    assert validated.rejected == {"amount": "amount must be a number"}
+    assert [(error.path, error.code) for error in validated.errors] == [
+        (("inputs", "amount"), "value_invalid"),
+    ]
+    assert type(supplied["amount"]) is bool
+    assert type(coerced["amount"]) is bool
+    assert json.dumps(supplied, separators=(",", ":")) == '{"amount":true}'
+    assert json.dumps(coerced, separators=(",", ":")) == '{"amount":true}'
+
+
 @pytest.fixture(autouse=True)
 def fixed_submission_session(monkeypatch):
     # Old and job-backed calls create independent websocket sessions. Pin only
