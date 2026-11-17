@@ -133,6 +133,8 @@ def _make_invalid_source(repo: Path, req: Path, inp: Path, lock: Path, case: str
         "input": (2, "stale"),
         "malformed": (2, "stale"),
         "missing": (127, "required hermetic test input is missing"),
+        "ignored_input": (2, "input path is not tracked"),
+        "duplicate_manifest": (2, "duplicate manifest hash header"),
     }[case]
     if case == "dirty":
         req.write_text("changed\n")
@@ -150,6 +152,26 @@ def _make_invalid_source(repo: Path, req: Path, inp: Path, lock: Path, case: str
         lock.write_text("broken\n")
         subprocess.run(["git", "-C", str(repo), "add", "-f", "tests/requirements-hermetic.lock"], check=True)
         subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
+    elif case == "ignored_input":
+        # The base commit is already made: keep matching bytes, but untrack the input.
+        original = inp.read_bytes()
+        relative = inp.relative_to(repo).as_posix()
+        (repo / ".gitignore").write_text(relative + "\n")
+        subprocess.run(["git", "-C", str(repo), "rm", "--cached", relative], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ignore input"], check=True)
+        assert inp.read_bytes() == original
+        import hashlib
+        assert f"# hermetic-input-sha256: {hashlib.sha256(original).hexdigest()}" in lock.read_text()
+        assert subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", relative], capture_output=True).returncode != 0
+        subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", relative], check=True)
+    elif case == "duplicate_manifest":
+        import hashlib
+        matching = f"# hermetic-manifest-sha256: {hashlib.sha256(req.read_bytes()).hexdigest()}"
+        assert matching in lock.read_text()
+        lock.write_text(lock.read_text() + f"# hermetic-manifest-sha256: {'0' * 64}\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-f", "tests/requirements-hermetic.lock"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "duplicate header"], check=True)
     else:
         lock.unlink()
         subprocess.run(["git", "-C", str(repo), "add", "-u"], check=True)
@@ -157,7 +179,10 @@ def _make_invalid_source(repo: Path, req: Path, inp: Path, lock: Path, case: str
     return expected
 
 
-@pytest.mark.parametrize("case", ["dirty", "untracked", "requirements", "input", "malformed", "missing"])
+@pytest.mark.parametrize("case", [
+    "dirty", "untracked", "requirements", "input", "malformed", "missing",
+    "ignored_input", "duplicate_manifest",
+])
 def test_runner_rejects_invalid_source_before_state_or_provisioning(tmp_path: Path, case: str) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
