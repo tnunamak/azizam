@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from starlette.datastructures import Headers
 
 from gateway import media_jobs, job_retry_hint, multipart_adapter, row_routes, workflow_adapters
 
@@ -64,9 +65,24 @@ def test_the_retry_hint_is_none_without_events() -> None:
     (None, False), ("", False), ("respond-async", True), ("RESPOND-ASYNC", True),
     ("wait=10, respond-async", True), ("respond-async; foo=bar", True), ("handling=lenient", False),
     ("respond-asynchronous", False),
+    ("Respond-Async ; wait=10", True), ("return=minimal, respond-async", True),
+    ("return=minimal", False), ('foo; note="a, respond-async"', False),
+    ('foo; note="a, respond-async; b"', False),
+    (r'foo; note="a\", respond-async"', False),
+    (r'foo; note="a\\", respond-async', True),
+    ('foo; note="a, b", respond-async', True),
 ])
 def test_prefer_respond_async_is_read_as_an_rfc_7240_token(value, expected) -> None:
     assert row_routes.prefers_async(value) is expected
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ([(b"prefer", b"return=minimal"), (b"prefer", b"respond-async")], True),
+    ([(b"prefer", b"return=minimal"), (b"prefer", b"wait=10")], False),
+    ([], False),
+])
+def test_request_prefer_reads_all_header_values(raw, expected) -> None:
+    assert row_routes.request_prefers_async(Headers(raw=raw)) is expected
 
 
 def test_form_fields_come_from_the_mapped_inputs_with_contract_defaults() -> None:

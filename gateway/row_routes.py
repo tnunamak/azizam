@@ -93,11 +93,30 @@ def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
 
 
 def prefers_async(value: str | None) -> bool:
-    """Whether a ``Prefer`` header asks for ``respond-async`` (RFC 7240: comma-separated tokens, optional parameters)."""
-    for preference in (value or "").split(","):
+    """Whether a Prefer header asks for respond-async, ignoring commas inside quoted parameters."""
+    value = value or ""
+    preferences = []
+    start = 0
+    quoted = escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == "," and not quoted:
+            preferences.append(value[start:index])
+            start = index + 1
+    preferences.append(value[start:])
+    for preference in preferences:
         if preference.split(";", 1)[0].split("=", 1)[0].strip().lower() == PREFER_ASYNC:
             return True
     return False
+
+
+def request_prefers_async(headers: Any) -> bool:
+    return any(prefers_async(value) for value in headers.getlist("prefer"))
 
 
 def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None:
@@ -192,7 +211,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
             return response
         snapshot = deps.snapshot()
         spool = deps.new_spool()
-        wants_async = prefers_async(request.headers.get("prefer"))
+        wants_async = request_prefers_async(request.headers)
         answered = dataclasses.replace(row, mode="job") if wants_async else row
         return await _serve_open(deps, row, answered, shape, core, request, caller, snapshot, spool, owner,
                                  request_id, wants_async, route_intent(row, canonical), route_backend(row, canonical))
