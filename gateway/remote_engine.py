@@ -48,6 +48,12 @@ def refused() -> ProtocolError:
     return ProtocolError('Remote engine authority is missing, changed or refused.', code='protocol_dispatch_refused')
 
 
+def refuse_unbound(service: Mapping[str, Any]) -> None:
+    """Legacy clients have no remote authority, even for owner-enabled records."""
+    if (connection_config(service).get('remote_dispatch') or {}).get('enabled') is True:
+        raise refused()
+
+
 def origin(address: str) -> str:
     if (not isinstance(address, str) or any(c.isspace() or ord(c) < 32 for c in address)
             or '\\' in address or '#' in address or '?' in address):
