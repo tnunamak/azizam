@@ -285,17 +285,22 @@ message remains unchanged: `The engine returned no result file.`
 
 Audio transport failures are converted at the adapter boundary before generic submission ambiguity handling or poll
 retries can alter their wire answers. A generic wait deadline becomes the original HTTP 504 `Audio generation timeout`.
-Cancellation pending reaches native settlement; shutdown cancellation leaves the running row for restart recovery.
+Cancellation pending reaches native settlement. Cancelled queued runs remain available for restart recovery; owned
+synchronous rows are failed and discarded immediately when cancellation unwinds the request.
 Synchronous execution rows carry `publication_pending`, so they do not count toward application admission or appear in
 listings. Public lookups also hide them. Restart recovery removes interrupted unpublished rows. The existing bundle
 transaction accepts optional prepared-run publication fields, so assets, success and public visibility commit together.
 Delivery still follows that transaction and cannot undo it.
 
-Synchronous storage checks result limits after provenance preparation and before writing the asset. Empty asset
-collections are refused before publication. These two synchronous refusals are the expressly approved tightening:
-comparison tests record the old HTTP 200 and require the new HTTP 502, failed receipt and zero stored assets. Queued
-refusals retain the original job and receipt outcomes. The queued executor test double now publishes through the
-real declared runner, matching the route's publication responsibility instead of bypassing it.
+Owner decision (review item 7): synchronous results over a deployment limit answer HTTP 502 `result_refused` and store
+nothing. This intentionally differs from the original HTTP 200; the no-orphan comparison pins that change. Limits are
+checked after provenance preparation and before writing the asset. When synchronous indexing declines an unsupported
+media type or Opus without an Ogg header, the request still returns HTTP 200 with the original audio bytes and headers,
+without publishing an empty Library job. Queued empty-result failures retain their original outcome.
+
+The storage proof runs the actual executor and audio route against the fake engine. It starts with no assets, observes
+the real storage call during execution, and checks the audio samples in both that call and the resulting cached file.
+It does not pre-publish an asset or replace the audio handler.
 
 Invalid multipart timeout configuration raises typed `service_unavailable` / `capacity`. Parameterized declared-run
 start failures preserve each multipart refusal code and its client message.
@@ -321,3 +326,26 @@ Expect it to work because the frozen original handlers decide the failure answer
 publishes asset handles with success. The tests read the job through a separate connection at publication and confirm
 that refused synchronous storage writes no asset. Confidence: 97% for the tested local paths; live engines unverified.
 No reviewer was started.
+
+
+## Final audio review corrections
+
+Owned synchronous rows are failed and discarded for both `CancelledError` and `CancellationPending`. Queued rows retain
+native cancellation settlement and restart recovery. Tests cancel a real in-flight HTTP request and check that no row
+remains, including hidden terminal rows. Synchronous unindexable results discard their unpublished internal row and use
+the existing delivery function to return the original bytes. The unsupported-type and Opus cases compare status, body,
+headers, storage calls, job state and receipt state with the frozen original handler.
+
+A cancellation exception raised by the route writes the original HTTP 500 failed receipt before native settlement.
+Cancellation at publication preserves the original timing: generation's receipt already succeeded with HTTP 200 before
+publication was attempted. Both timings are pinned against the frozen executor. The new job still settles canceled.
+
+The named 600-poll case requires exactly 600 history reads and the synchronous HTTP 504 `Audio generation timeout`,
+separately from the generic deadline case. Queued failure facts retain their original normalized timeout message and
+HTTP 504 receipt. A real GET from inside the delivery hook reads the committed job for both sync and queued runs and
+requires success with asset handles. The typed multipart timeout refusal remains unchanged.
+
+This round adds nine cases: two 600-poll cases, two unindexable sync cases, two reads before delivery, one owned
+CancellationPending case, one queued route-cancellation receipt case and one client-disconnect comparison. The existing
+shutdown and worker-storage cases are strengthened without adding cases. Combined owner-only budget proposal at
+original `tests/budgets.toml` line 678: `pytest = 29909` (+79 over 29830; +9 after the prior proposal of 29900).

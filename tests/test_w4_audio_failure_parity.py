@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 
 import proxy
-from gateway import media_jobs, receipt_store, media_delivery, media_metadata, result_bundle
-from gateway.engine_protocol import jobs as protocol_jobs
+from gateway import media_jobs, receipt_store, media_delivery, media_metadata
 from gateway.engine_protocol.errors import TransportFailure, UpstreamError
 from tests import test_adapter_differential as base
 from tests.support.adapter_differential_rig import GatewayRig
@@ -35,6 +34,7 @@ def observe(tmp_path, old, mode, case, capsys):
         counters = {'submit': 0, 'history': 0, 'stored': 0}
         during = []
         publication = []
+        waiting_for_engine = asyncio.Event()
         job_id = None
         real_graph = proxy._graph
         real_store = proxy.store_asset_bytes
@@ -77,6 +77,9 @@ def observe(tmp_path, old, mode, case, capsys):
                         from gateway.engine_protocol.httpx_wire import reply_from
                         import httpx
                         return reply_from(httpx.Response(200, json={'p1': {'status': {'status_str': 'success'}, 'outputs': {}}}))
+                    if case == 'client_disconnect':
+                        waiting_for_engine.set()
+                        await asyncio.Future()
                     if case == 'sync_cancel_pending':
                         raise media_jobs.CancellationPending('injected cancellation')
                     if case == 'shutdown':
@@ -152,7 +155,8 @@ def observe(tmp_path, old, mode, case, capsys):
                     assert case == 'shutdown'
                 return response
             try:
-                return await rig.call('POST', '/v1/audio/generate', label=case, json_body=BODY)
+                return await rig.call('POST', '/v1/audio/generate', label=case, json_body=BODY,
+                                      cancel_when=waiting_for_engine.wait if case == 'client_disconnect' else None)
             except asyncio.CancelledError:
                 assert case == 'shutdown'
                 return None
@@ -184,7 +188,7 @@ def observe(tmp_path, old, mode, case, capsys):
             assert counters['history'] == 600
         if case in ('empty', 'unsupported_type', 'opus_without_ogg') and mode == 'sync':
             summary['wire'] = rig.calls[-1]['response']
-        if case in ('cancel_during_route', 'poll_limit_600'):
+        if case in ('cancel_during_route', 'cancel_pending', 'poll_limit_600'):
             summary['receipt_http_status'] = receipt['metadata']['status_code']
         if case == 'publication_atomic':
             assert all(count > 0 for status, count in publication), publication
@@ -195,8 +199,10 @@ def observe(tmp_path, old, mode, case, capsys):
                 summary['rewrite_log'] = 'audio metadata rewrite failed: scrubbed rewrite failure' in logs
         if case.startswith('history_'):
             assert counters['history'] == 1
-        if case in ('shutdown', 'sync_cancel_pending') and mode == 'sync':
+        if case in ('shutdown', 'sync_cancel_pending', 'client_disconnect') and mode == 'sync':
             assert media_jobs.unfinished(path=media_jobs.DB_PATH) == []
+            assert media_jobs.get_by_request_id(receipt['request_id'], audience='internal', include_deleted=True,
+                                                path=media_jobs.DB_PATH) is None
         return summary
 
 
@@ -222,6 +228,7 @@ def test_cancel_pending_reaches_the_old_settle_path(tmp_path, capsys):
     new = observe(tmp_path / 'new', False, 'queued', 'cancel_pending', capsys)
     assert old['job_status'] == 'canceled'
     assert old['job_error'] == 'Canceled by requester'
+    assert old['receipt_http_status'] == 200
     assert new == old
 
 
@@ -278,3 +285,9 @@ def test_cancelled_queued_route_keeps_the_original_500_receipt(tmp_path, capsys)
 @pytest.mark.parametrize('mode', ['sync', 'queued'])
 def test_get_between_commit_and_delivery_includes_assets(tmp_path, mode, capsys):
     observe(tmp_path, False, mode, 'get_before_delivery', capsys)
+
+
+def test_disconnected_sync_request_leaves_no_hidden_row(tmp_path, capsys):
+    old = observe(tmp_path / 'old', True, 'sync', 'client_disconnect', capsys)
+    new = observe(tmp_path / 'new', False, 'sync', 'client_disconnect', capsys)
+    assert new == old

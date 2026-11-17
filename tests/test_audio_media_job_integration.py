@@ -265,12 +265,13 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             content, options = stored_bytes[0]
             self.assertEqual(options['kind'], 'aud')
             self.assertEqual(options['suffix'], '.wav')
-            with wave.open(io.BytesIO(content)) as actual, wave.open(io.BytesIO(base._wav())) as expected:
-                self.assertEqual(actual.getparams(), expected.getparams())
-                self.assertEqual(actual.readframes(actual.getnframes()), expected.readframes(expected.getnframes()))
             asset, = job['assets']
             cached = proxy.IMAGE_CACHE_DIR / (asset['asset_id'].removeprefix('aud_') + '.wav')
             self.assertTrue(cached.is_file())
+            for audio in (content, cached.read_bytes()):
+                with wave.open(io.BytesIO(audio)) as actual, wave.open(io.BytesIO(base._wav())) as expected:
+                    self.assertEqual(actual.getparams(), expected.getparams())
+                    self.assertEqual(actual.readframes(actual.getnframes()), expected.readframes(expected.getnframes()))
             self.assertEqual(asset['size_bytes'], len(content))
             self.assertIsNone(proxy._load_audio_media_job_payload(job_id))
             events = media_jobs.events(job_id, audience='internal', path=media_jobs.DB_PATH)
