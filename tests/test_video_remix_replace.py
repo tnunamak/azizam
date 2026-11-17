@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from anyio.from_thread import start_blocking_portal
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,6 +69,7 @@ class RemixReplaceBase(unittest.TestCase):
             "deleted_at": None,
         }
         self.client = TestClient(proxy.app)
+        self.client.portal = self.stack.enter_context(start_blocking_portal())
 
     @property
     def graph(self) -> dict:

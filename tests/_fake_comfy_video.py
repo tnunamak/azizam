@@ -61,6 +61,15 @@ class FakeComfy:
         if len(self.submitted) < count:
             raise AssertionError(f"expected {count} submitted graphs, got {len(self.submitted)}")
 
+    def wait_for_status(self, client, video_id: str, status: str) -> dict:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            body = client.get(f"/v1/videos/{video_id}").json()
+            if body.get("status") == status:
+                return body
+            time.sleep(0.02)
+        raise AssertionError(f"expected status {status}, got {body}")
+
     def client_class(self) -> type:
         outer = self
 

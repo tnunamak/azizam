@@ -354,16 +354,17 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
 
         poll()
         for percent in (12, 40, 85):
-            proxy._video_progress[rr.NEW_PROMPT_ID].update(status="running", percent=percent, node="18")
+            proxy.media_jobs.update_status(video_id.removeprefix("video_"), "running", progress=percent, path=proxy.media_jobs.DB_PATH)
             self.assertEqual(poll()["status"], "in_progress")
             content = self.client.get(f"/v1/videos/{video_id}/content")
             self.assertEqual(content.status_code, 404)
             self.assertEqual(content.json()["error"]["code"], "video_not_ready")
         # A second sampler stage restarts its own bar; the reported progress must not drop.
-        proxy._video_progress[rr.NEW_PROMPT_ID].update(status="running", percent=7, node="19")
+        proxy._workflow_run_core()._record_progress(video_id.removeprefix("video_"), 7)
         self.assertGreaterEqual(poll()["progress"], 85)
         self.comfy.history[rr.NEW_PROMPT_ID] = rr_fake.succeeded_history("remix_00001_.mp4")
         self.comfy.view_bytes["remix_00001_.mp4"] = _rendered_mp4()
+        self.comfy.wait_for_status(self.client, video_id, "completed")
         done = poll()
         self.assertEqual((done["status"], done["progress"]), ("completed", 100))
         self.assertIsInstance(done["completed_at"], int)
@@ -390,7 +391,7 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
             ]},
             "outputs": {},
         }
-        body = self.client.get(f"/v1/videos/{video_id}").json()
+        body = self.comfy.wait_for_status(self.client, video_id, "failed")
         _conforms_to_video_resource(self, body)
         self.assertEqual(body["status"], "failed")
         self.assertEqual(body["error"]["code"], "video_generation_failed")

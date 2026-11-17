@@ -27760,6 +27760,17 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
 
     def observed(ctx, status, graph):
         from dataclasses import replace
+        options = (ctx.payload.get("body") or {}).get("options") or {}
+        subject = options.get("subject_plan")
+        if isinstance(subject, Mapping) and status.state.value == "succeeded":
+            block = subject.get("block") or {}
+            roles = subject.get("roles") or {}
+            record = {"subject": {"probe_node": roles.get("probe_node"),
+                                  "explicit": video_subject.explicit_selection(block),
+                                  "subject": str(block.get("source_subject") or "person")}}
+            warnings = _video_job_warnings(record, getattr(status.record, "job", None))
+            if warnings:
+                ctx.record_result_metadata({"azizam_warnings": warnings})
         chain = chain_record(ctx)
         if not isinstance(chain, Mapping):
             return status
