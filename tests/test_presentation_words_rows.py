@@ -36,6 +36,14 @@ SHIPPED = {
         "capability": "other", "label": "AI", "icon": "chat",
         "service_capability": "chat", "summary": "Use this configured AI capability.",
     },
+    "primary_chat_names": ["default", "fast", "coder", "code", "chat"],
+    "chat_profile_descriptions": [
+        {"words": ["default", "chat"], "description": "Thinks through questions before answering."},
+        {"words": ["fast", "quick"], "description": "Answers quickly for everyday prompts."},
+        {"words": ["coder", "code"], "contains": ["coder"], "description": "Helps with coding tasks and technical questions."},
+        {"words": ["rp", "roleplay"], "contains": ["roleplay"], "description": "Uses a roleplay-tuned chat profile."},
+    ],
+    "fallback_chat_description": "A chat model.",
     "admin_surface": {
         "fallback_name": "Protocol frontend",
         "intents_description": "Supports {intents}.",
@@ -163,6 +171,11 @@ def test_loaded_words_keep_order_and_compile_every_technical_pattern(tmp_path):
         if key == "technical_patterns":
             assert all(isinstance(pattern, re.Pattern) for pattern in words[key])
             assert tuple(pattern.pattern for pattern in words[key]) == tuple(expected)
+        elif key == "chat_profile_descriptions":
+            assert [dict(row) for row in words[key]] == [
+                {**row, "words": tuple(row["words"]), "contains": tuple(row.get("contains", []))}
+                for row in expected
+            ]
         elif isinstance(expected, list):
             assert words[key] == tuple(expected)
         elif isinstance(expected, dict):
@@ -215,7 +228,7 @@ def test_custom_file_changes_answers_at_import_and_is_never_read_again(tmp_path,
 
 LIST_KEYS = [
     "provider_suffixes", "engine_prefixes", "engine_tails", "parenthesized_hardware",
-    "hardware_label_suffixes", "bare_titles", "technical_patterns",
+    "hardware_label_suffixes", "bare_titles", "technical_patterns", "primary_chat_names",
 ]
 
 
@@ -358,3 +371,80 @@ def test_admin_surface_words_reject_invalid_templates(tmp_path, key, field, temp
         presentation._load_presentation_words(path)
     assert str(path) in str(exc.value)
     assert f"admin_surface.{key}" in str(exc.value)
+
+
+CHAT_PROFILE_CASES = [
+    ("default", "Thinks through questions before answering.", False),
+    ("chat", "Thinks through questions before answering.", False),
+    ("fast", "Answers quickly for everyday prompts.", False),
+    ("quick", "Answers quickly for everyday prompts.", True),
+    ("coder", "Helps with coding tasks and technical questions.", False),
+    ("code", "Helps with coding tasks and technical questions.", False),
+    ("my-coder-v2", "Helps with coding tasks and technical questions.", True),
+    ("rp", "Uses a roleplay-tuned chat profile.", True),
+    ("roleplay", "Uses a roleplay-tuned chat profile.", True),
+    ("roleplay_x", "Uses a roleplay-tuned chat profile.", True),
+    ("reasoner", "A chat model.", True),
+    ("", "A chat model.", False),
+    ("DEFAULT", "Thinks through questions before answering.", True),
+    ("  DEFAULT  ", "Thinks through questions before answering.", True),
+    ("roleplay-coder", "Helps with coding tasks and technical questions.", True),
+]
+
+
+def chat_profile_row(name):
+    return presentation.capability_presentation(
+        Capability(intent="chat", backend="test", model=name), {"capability": "chat"},
+    )
+
+
+@pytest.mark.parametrize("name,description,secondary", CHAT_PROFILE_CASES)
+def test_chat_profile_parity(name, description, secondary):
+    assert presentation._chat_profile_description(name) == description
+    row = chat_profile_row(name)
+    # The public projection treats an absent model name as the generic chat profile.
+    assert row["summary"] == (description if name else "Thinks through questions before answering.")
+    assert row["secondary_profile"] is secondary
+
+
+def test_custom_chat_profile_rows_change_only_the_added_name(tmp_path, monkeypatch):
+    before = {name: chat_profile_row(name) for name, _, _ in CHAT_PROFILE_CASES}
+    data = yaml.safe_load(WORDS_FILE.read_text(encoding="utf-8"))
+    data["primary_chat_names"].append("reasoner")
+    data["chat_profile_descriptions"].append({
+        "words": ["reasoner"], "description": "Considers a question carefully.",
+    })
+    loaded = presentation._load_presentation_words(write_words(tmp_path, data))
+    monkeypatch.setattr(presentation, "PRESENTATION_WORDS", loaded)
+    for name, _, _ in CHAT_PROFILE_CASES:
+        expected = dict(before[name])
+        if name == "reasoner":
+            expected.update(summary="Considers a question carefully.", secondary_profile=False)
+        assert chat_profile_row(name) == expected
+
+
+def test_chat_profile_row_order_precedes_exact_match_priority(tmp_path, monkeypatch):
+    data = deepcopy(SHIPPED)
+    data["chat_profile_descriptions"].append({
+        "words": ["roleplay-coder"], "description": "A later exact match.",
+    })
+    monkeypatch.setattr(presentation, "PRESENTATION_WORDS",
+                        presentation._load_presentation_words(write_words(tmp_path, data)))
+    assert presentation._chat_profile_description("roleplay-coder") == "Helps with coding tasks and technical questions."
+
+
+@pytest.mark.parametrize("key,value,diagnostic", [
+    ("primary_chat_names", "default", "primary_chat_names"),
+    ("chat_profile_descriptions", [{"words": ["new"]}], "chat_profile_descriptions[0].description"),
+    ("chat_profile_descriptions", "invalid", "chat_profile_descriptions"),
+    ("chat_profile_descriptions", [{"words": "new", "description": "New."}], "chat_profile_descriptions[0].words"),
+    ("chat_profile_descriptions", [{"words": ["new"], "contains": False, "description": "New."}], "chat_profile_descriptions[0].contains"),
+    ("fallback_chat_description", "", "fallback_chat_description"),
+])
+def test_chat_profile_loader_refuses_malformed_rows(tmp_path, key, value, diagnostic):
+    data = deepcopy(SHIPPED)
+    data[key] = value
+    path = write_words(tmp_path, data)
+    with pytest.raises(ValueError) as exc:
+        presentation._load_presentation_words(path)
+    assert str(path) in str(exc.value) and diagnostic in str(exc.value)
