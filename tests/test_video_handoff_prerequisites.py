@@ -500,3 +500,23 @@ def test_operator_chain_workflow_works_without_a_manifest_long_variant(world, ex
 
 def test_main_video_oracle_function_bytes_are_pinned():
     main_video.checked_source()
+
+
+@pytest.mark.parametrize("case", ["row-plain", "row-resolution"])
+def test_missing_workflow_row_matches_the_main_public_route(world, case):
+    from tests.support.config_snapshot import publish_section
+    expected = json.loads((ROOT / "tests/fixtures/video_public_rows_fd30cbfca.json").read_text())[case]
+    videos = copy.deepcopy(proxy.config["videos"])
+    del videos["workflows"]["video-ltx-2.5-t2v"]
+    publish_section(world.rig.monkeypatch, "videos", videos)
+    world.rig.set(proxy, "_WORKFLOW_JOB_SPOOL", None)
+    async def drive():
+        response = await world.rig.call("POST", "/v1/videos", json_body=expected["request"])
+        assert response.status_code == expected["status"], response.text
+        independent = {"id", "created_at", "completed_at", "expires_at", "updated_at"}
+        assert {key:value for key,value in response.json().items() if key not in independent} == expected["body"]
+        if response.status_code == 200:
+            await submitted(world, 1)
+        else:
+            assert world.engine.prompts == {}
+    asyncio.run(drive())

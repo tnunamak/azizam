@@ -28181,15 +28181,15 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         caller = request.state.caller
         manifest = workflow_run.plain(chosen.contract)
         cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
-        if cfg is None:
-            requested = body.get("model") or _video_default_workflow()
-            return model_compatibility_error(ModelCompatibilityError(
-                f"Model '{requested}' is not available for video generation.", code="model_not_found"))
         manifest_facts = self.facts(chosen)
         extended = video_grid.video_facts(chosen) is None or frontend_video_create.needs_resolution(
             chosen, body, manifest_facts, frontend_video_create._reference_input(chosen))
         if not extended:
-            return {"body": body, "probe": None, "assets": {}, "config": cfg}
+            return {"body": body, "probe": None, "assets": {}, "config": cfg or {}}
+        if cfg is None:
+            requested = body.get("model") or _video_default_workflow()
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{requested}' is not available for video generation.", code="model_not_found"))
         requested = body.get("model") or _video_default_workflow()
         resolution = resolve_model_for_operation("videos", requested)
         effective = resolution.effective_model if resolution.is_openai_alias else requested
