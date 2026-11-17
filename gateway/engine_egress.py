@@ -237,7 +237,7 @@ class Projection:
     whole projection once and never combines the maps of two projections.
     """
 
-    __slots__ = ("destinations", "probe_paths", "remote_destinations", "registry_path", "registry_generation", "service_destinations")
+    __slots__ = ("destinations", "probe_paths", "remote_destinations", "registry_path", "registry_generation", "service_destinations", "registry_reader", "registry_version")
 
     def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]], remote_destinations: frozenset[str] = frozenset(), service_destinations=None) -> None:
         self.destinations = destinations
@@ -245,6 +245,8 @@ class Projection:
         self.remote_destinations = remote_destinations
         self.registry_path = None
         self.registry_generation = None
+        self.registry_reader = None
+        self.registry_version = None
         self.service_destinations = service_destinations or MappingProxyType({})
 
 
@@ -302,6 +304,18 @@ def install(projection: Projection, *, registry_path=None, registry_generation=N
         projection.registry_generation = registry_generation
         if projection.registry_path is not None and projection.registry_path == _live.registry_path:
             projection.remote_destinations = projection.remote_destinations | _live.remote_destinations
+            projection.registry_reader = _live.registry_reader
+            projection.registry_version = _live.registry_version
+        elif projection.registry_path is not None:
+            from gateway import admin_store
+            from gateway.registry_version import RegistryVersion
+            projection.registry_reader = RegistryVersion(projection.registry_path)
+            try:
+                version = projection.registry_reader.version()
+                if admin_store.service_registry_generation(path=Path(projection.registry_path)) == registry_generation:
+                    projection.registry_version = version
+            except Exception:
+                pass  # retain known denials; a store outage must not disable local engines
         _live = projection
 
 
@@ -322,10 +336,23 @@ def protect_registry_write(path, services) -> None:
                 registry_generation=live.registry_generation)
 
 
+def _changed_registry_version():
+    live = _live
+    if live.registry_reader is not None:
+        try:
+            version = live.registry_reader.version()
+            if version != live.registry_version:
+                return version
+        except Exception:
+            pass  # preserve the last known denial set, including during store outages
+    return None
+
+
 def refresh_remote_destinations() -> None:
     """Observe CLI writes before a legacy send, without relying on reload callbacks."""
     live = _live
-    if live.registry_path is None:
+    version = _changed_registry_version()
+    if version is None:
         return
     from gateway import admin_store, request_connections, registry_layers, service_registry
     from gateway.remote_engine import refused
@@ -334,6 +361,9 @@ def refresh_remote_destinations() -> None:
         with request_connections.request_scope():
             revision = admin_store.service_registry_generation(path=path)
             if revision == live.registry_generation:
+                with _LIVE_LOCK:
+                    if _live is live:
+                        live.registry_version = version
                 return
             encoded = admin_store.get_service_registry_json_with_generation(path=path)
         if encoded is None:
@@ -345,8 +375,14 @@ def refresh_remote_destinations() -> None:
                 current = _live
                 install(Projection(current.destinations, current.probe_paths, current.remote_destinations, current.service_destinations),
                         registry_path=path, registry_generation=encoded['operator_settings_generation'])
+                _live.registry_version = version
     except Exception:
-        raise refused() from None
+        pass  # never discard known denials or turn a registry outage into a local outage
+
+
+async def refresh_remote_destinations_async() -> None:
+    if _changed_registry_version() is not None:
+        await asyncio.to_thread(refresh_remote_destinations)
 
 
 def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> None:
@@ -390,7 +426,7 @@ def check_request(request: httpx.Request, *, remote_bound=None, refreshed=False)
 
 
 async def _check_async(request: httpx.Request) -> None:
-    await asyncio.to_thread(refresh_remote_destinations)
+    await refresh_remote_destinations_async()
     check_request(request, refreshed=True)
 
 

@@ -21445,7 +21445,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     from gateway.remote_engine import refuse_unbound, refused
     try:
-        await asyncio.to_thread(engine_egress.refresh_remote_destinations)
+        await engine_egress.refresh_remote_destinations_async()
         refuse_unbound(service)
         if engine_egress.is_remote_destination(service_registry.engine_base_address(service)):
             raise refused()

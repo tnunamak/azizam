@@ -810,7 +810,7 @@ class NodeGraphAdapter:
         """
         from gateway.remote_engine import refuse_unbound_connection
         import asyncio
-        await asyncio.to_thread(engine_egress.refresh_remote_destinations)
+        await engine_egress.refresh_remote_destinations_async()
         refuse_unbound_connection(conn)
         try:
             from websockets.asyncio.client import connect as ws_connect
