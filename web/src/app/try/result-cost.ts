@@ -1,5 +1,6 @@
 function formatCost(amount: unknown): string | undefined {
   if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return undefined;
+  if (amount > 0 && amount < 0.000001) return "<$0.000001";
   return `$${amount.toFixed(amount < 0.01 && amount > 0 ? 6 : 2)}`;
 }
 
