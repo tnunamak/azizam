@@ -156,3 +156,71 @@ def test_unreadable_shipped_file_does_not_break_inheritance_for_others(tmp_path,
     monkeypatch.setattr(description, "REGISTRY_DIR", tmp_path)
     doc = description.parse_description(raw, source="fixture.yml")
     assert traits(doc) == traits(description.parse_description(raw_document("http-multipart"), source="seed.yml"))
+
+
+def _synthetic_remote_models(monkeypatch, models, *, nested=False):
+    from types import SimpleNamespace
+
+    doc = SimpleNamespace(id="fixture-protocol", catalog_aliases=(), catalog_intent="fixture.intent")
+    monkeypatch.setattr(description, "load_registry", lambda: {doc.id: doc})
+    config = {"remote_provider": True, "protocol": doc.id, "models": models}
+    return remote_provider_model_capabilities(
+        "fixture-service", {"config": config} if nested else config,
+    )
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_remote_model_explicit_traits_are_data(monkeypatch, nested):
+    row = {"id": "fixture-model", "input_modalities": ["text", "audio"],
+           "output_modalities": ["image"], "streaming": False, "resource_tier": "batch"}
+    rows = _synthetic_remote_models(monkeypatch, [row], nested=nested)
+    assert len(rows) == 1
+    cap = rows[0]
+    assert (cap.input_modalities, cap.output_modalities, cap.streaming, cap.resource_tier) == (
+        ("text", "audio"), ("image",), False, "batch",
+    )
+    assert (cap.intent, cap.backend, cap.model, cap.tags) == (
+        "fixture.intent", "fixture-service", "fixture-model", ("remote",),
+    )
+    assert row["input_modalities"] == ["text", "audio"]
+
+
+def test_remote_model_absent_traits_keep_defaults(monkeypatch):
+    cap = _synthetic_remote_models(monkeypatch, {"fixture-model": {}})[0]
+    assert (cap.input_modalities, cap.output_modalities, cap.streaming, cap.resource_tier) == (
+        ("text",), ("text",), True, "expensive",
+    )
+
+
+@pytest.mark.parametrize("field,value", [
+    ("input_modalities", "text"), ("input_modalities", None),
+    ("input_modalities", ["text", 1]), ("input_modalities", [""]),
+    ("output_modalities", "image"), ("output_modalities", ("image",)),
+    ("output_modalities", False), ("output_modalities", [" "]),
+    ("streaming", "false"), ("streaming", 0), ("streaming", 1), ("streaming", None),
+    ("resource_tier", None), ("resource_tier", 1), ("resource_tier", " "),
+    ("resource_tier", "standard"), ("resource_tier", []), ("resource_tier", True),
+])
+def test_remote_model_malformed_trait_names_row(monkeypatch, field, value):
+    with pytest.raises(ValueError) as error:
+        _synthetic_remote_models(monkeypatch, [{"id": "bad-fixture", field: value}])
+    message = str(error.value)
+    assert "fixture-service" in message
+    assert "bad-fixture" in message
+    assert field in message
+
+
+def test_remote_model_empty_modality_lists_are_not_defaulted(monkeypatch):
+    cap = _synthetic_remote_models(monkeypatch, [{
+        "id": "fixture-empty", "input_modalities": [], "output_modalities": [],
+    }])[0]
+    assert cap.input_modalities == ()
+    assert cap.output_modalities == ()
+
+
+@pytest.mark.parametrize("tier", ["interactive", "batch", "expensive"])
+def test_remote_model_resource_tier_uses_capability_vocabulary(monkeypatch, tier):
+    cap = _synthetic_remote_models(monkeypatch, [{
+        "id": "fixture-tier", "resource_tier": tier,
+    }])[0]
+    assert cap.resource_tier == tier
