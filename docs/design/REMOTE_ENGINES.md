@@ -1,8 +1,9 @@
 # Remote protocol engines
 
-Status: proposed design, not a shipped capability.
+Status: implemented for explicitly opted-in, non-billed services; see implementation receipts below.
 Review pin: `44659c2fcd74a70d34f7c3a9974f7d1d4f9906f6`.
-This change is documentation only; remote dispatch remains refused.
+The design-review material through Revisions is historical. The separate release
+change enables admission only after the implementation gates below pass.
 This revision inspected dispatch, egress and the two named test modules.
 Earlier registry observations below are retained historical evidence; no tests ran.
 Prior-art claims supplied with the assignment are background, not independently
@@ -270,7 +271,7 @@ bypass. The final separate release change permits remote admission LAST and cite
 each stage's exact commit, full node IDs, output and limitations. A missing test,
 xfail, skipped security path or mocked socket assertion does not satisfy a gate.
 
-## Verification and readiness
+## Design-review readiness (historical)
 
 Expect it to work because one service-bound transport carries the same immutable
 authority across every main and auxiliary request; socket checks cannot inherit
@@ -459,3 +460,32 @@ Expect it to work because all six production paths enter the same bound
 transport; the real connector records approved peers and TLS identity, and
 registry changes serialize with network writes and completion. Confidence:
 0.86 in the tested implementation, pending the separate reviewer and release gate.
+
+### Release admission receipt
+
+Stage 4 commit: `ec56a499e68a896cc02e2f41cc4cc70b7d173909`.
+Its final named gates and credential/projection/registry regressions reported
+`213 passed in 15.53s`. The final DEBUG-level canaries and all three S6 journeys
+reported `8 passed in 11.16s`. The broader targeted parity/runner/security run
+reported `471 passed, 1 xfailed in 29.20s`; the remaining xfail is S1.
+The public job journey also rejects an asset redirect to metadata, publishes no
+asset for that failed job, and opens no connection to the redirect target.
+
+All four stage commits were pushed after their named gates passed. This separate
+release commit enables production readiness and preserves the versioned runner's
+ownership of already-committed terminal bundles and replays. An opted-in
+record must still satisfy owner authorization, non-billed classification, exact
+origin, credentials, address policy and all finite ceilings. No service record
+is opted in by the release. The final hermetic target command is:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w3b-release-final.xml -n 4 tests/test_engine_protocol_round3.py tests/test_c2d2_scenarios.py tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py tests/test_c2d_openapi_parity.py tests/test_c2d_model_metadata_parity.py tests/test_operation_runner.py tests/test_smell_infer_offering.py tests/test_engine_credential_exposure.py tests/test_projection_registry.py tests/test_service_registry.py tests/test_result_bundle.py tests/test_result_bundle_release.py
+```
+
+Output: `722 passed, 1 xfailed in 41.60s`. The remaining xfail is S1.
+The unchanged frozen route graph also passed with
+`nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w3b-route-graph-final.xml -n 4 tests/test_route_graph_freeze.py`: `5 passed in 8.30s`.
+
+The S6 harness enables candidate admission only when production readiness is
+false. With this release's readiness true, the journey runs without a readiness
+override. The independent reviewer and owner release gate remain outstanding.

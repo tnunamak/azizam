@@ -28,7 +28,7 @@ from gateway.engine_protocol.errors import ProtocolError
 
 _FACTORIES = weakref.WeakSet()
 _FACTORY_LOCK = threading.Lock()
-PRODUCTION_READY = False
+PRODUCTION_READY = True
 
 
 def invalidate_registry(path):
