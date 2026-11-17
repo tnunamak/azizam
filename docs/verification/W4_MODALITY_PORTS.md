@@ -47,3 +47,42 @@ plain wire oracle after deletion.
 Live external-engine jobs are unverified: the task forbids touching the live gateway. The hermetic route tests run the
 real app, job worker, stores and runner against controlled engine HTTP, including a queued job and content retrieval.
 No shipped catalog, OpenAPI pin, parity fixture, budget or reviewed oracle is changed.
+
+## Outcome and remaining work
+
+Both 3D routes now enter declared_operation_job.run. MultipartRunner no longer writes the submit marker or commits the
+result itself. The old/new comparison is preserved at commit 6b7626fc7; the final tests read the captured expectations
+from tests/fixtures/w4_mesh_wire.json. No other modality was started: speech needs an inline/stream lifecycle contract;
+STT needs the chunk/deadline/cleanup contract; image/audio need the graph rounds and postprocessing side effects moved;
+video needs tracking/source/chaining and its create hand-offs are owned separately. These are implementation gaps,
+not permission blockers. The complete W4 workstream remains unfinished.
+
+The parity harness pins one existing legal scheduling order: asynchronous request capture finishes before the worker
+finalizes its handed-off receipt. Otherwise the capture's shared receipt slot can still be unnamed when capture ends,
+and the stored retention list varies with scheduling. It waits on the actual shared slot and joins workers, without
+masking the retention field. Production receipt scheduling is unchanged; this existing race is not fixed here.
+
+Proposed owner-only budget edit: tests/budgets.toml line 678, change only `pytest = 29830` to `pytest = 29848` (+18 cases).
+No reviewed list changes are proposed. Full-suite collection was not run; the owner must reconcile this delta with other lanes.
+
+## Verification
+
+Tests ran only from committed trees through the hermetic runner. Initial red commit c15ac2afc:
+`nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-mesh-red.xml -n 4 tests/test_w4_mesh_declared.py`
+reported `7 failed in 8.45s` (candidate method absent and default bypassed the declared path).
+
+Transition commit 6b7626fc7, both implementations still present:
+`nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-mesh-slot-parity.xml -n 4 tests/test_w4_mesh_declared.py -k old_and_declared -o junit_logging=all`
+reported `17 passed in 10.02s`. The log contains no receipt-close errors or ordering timeouts. This is the source of the final wire fixture, including 30 receipt snapshots.
+
+Final code commit a47da8bc6:
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-mesh-verified.xml -n 4 \
+  tests/test_w4_mesh_declared.py tests/test_adapter_differential_s7_mesh_rows.py \
+  tests/test_declared_operation_job.py tests/test_engine_knowledge_boundary.py \
+  tests/test_implicit_marker_ratchet.py tests/test_c2d_openapi_parity.py \
+  tests/test_protocol_traits_from_data.py tests/test_c2d_f_probe_bounds.py
+```
+reported `324 passed in 23.80s`. This includes queued execution and content retrieval for the 3D routes, the unchanged S7 wire recordings, the OpenAPI pin, both architectural guards, and bounded probe checks. Intermediate receipt-snapshot failures exposed the pre-existing scheduling race described above; no production receipt fix or masked retention field was introduced.
+
+Confidence: 90% for the 3D code port and hermetic wire preservation. Live external-engine behavior is unverified.
