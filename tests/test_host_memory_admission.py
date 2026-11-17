@@ -373,3 +373,12 @@ def test_a_save_applies_to_the_next_admission_without_a_restart(tmp_path, admin_
         run(made.admit(graph("a.safetensors"), hma.Ask()))
     save(admin_db, {"margin_gb": {"personal": 1, "service": 10}, "wait_s": 5, "job_wait_s": 500})
     run(made.admit(graph("a.safetensors"), hma.Ask()))
+
+
+def test_the_app_kind_of_a_caller_is_read_from_its_identity():
+    from types import SimpleNamespace
+    assert hma.app_kind_of_caller(SimpleNamespace(identity=SimpleNamespace(auth_kind="service_key"))) == "service"
+    assert hma.app_kind_of_caller(SimpleNamespace(identity=SimpleNamespace(auth_kind="session"))) == "personal"
+    # A credential kind on the context itself is not where requests and jobs carry it; None (a lost caller) has a person.
+    assert hma.app_kind_of_caller(SimpleNamespace(auth_kind="service_key", identity=None)) == "personal"
+    assert hma.app_kind_of_caller(None) == "personal"

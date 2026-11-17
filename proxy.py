@@ -8585,8 +8585,8 @@ async def _graph_run_round(
         # A synchronous caller waits a bounded time for the host's memory, then gets the retryable busy answer.
         admit = getattr(adapter, "admit_prompt", None)
         if admit is not None:
-            await admit(submit_payload, host_memory_admission.Ask(
-                auth_kind=getattr(getattr(getattr(request, "state", None), "caller", None), "auth_kind", None)))
+            await admit(submit_payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(
+                getattr(getattr(request, "state", None), "caller", None))))
     except host_memory_admission.HostMemoryBusy:
         await _finalize_probe()
         return host_memory_admission.busy_response(), []
