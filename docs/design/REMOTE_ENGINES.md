@@ -355,8 +355,11 @@ Registry mutations revoke existing in-process authority before commit, through
 `admin_store.write_service_registry_in_transaction`, including caller-owned
 transactions. A rollback conservatively requires fresh admission too. Network
 fences check authority without holding SQLite transactions during connect, TLS
-or writes; an in-progress I/O is cancelled and the next I/O must recheck. The
-registry generation and a digest of the full record pin queued work. The normal
+or writes; an in-progress I/O is cancelled and the next I/O must recheck. A
+service-specific digest of connection, billing, enabled state and declared
+operations/selection pins queued work. Display metadata and unrelated registry
+revisions do not revoke it. Policies and hashes are cached per registry generation;
+authoritative reads and validation run in workers rather than the event loop. The normal
 restart behavior fails interrupted declared jobs rather than rebinding them.
 
 ### Stage 1 — capability binding

@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 import secrets
+import asyncio
 import time
 from typing import Any, Mapping
 
@@ -196,10 +197,12 @@ class Runtime:
         if self._egress is not None:
             self._egress()
         if self._remote_capability is not None:
-            cap = self._remote_capability
-            self._transport.factory.check(cap, service_id=self.target.engine_id, address=self.connection.address)
+            self._transport.check()
 
     async def invoke(self, op: str, body: Mapping[str, Any]):
+        if self._remote_capability is not None:
+            await asyncio.to_thread(self._transport.factory.check, self._remote_capability,
+                                    service_id=self.target.engine_id, address=self.connection.address)
         self.require_egress()
         if self._remote_capability is not None:
             async with self._transport.operation():

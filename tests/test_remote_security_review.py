@@ -171,3 +171,36 @@ def test_remote_generation_change_stops_next_socket_io(monkeypatch):
             await stream.write(b'synthetic-must-not-send')
         assert calls == ['read']
     asyncio.run(check())
+
+
+
+def test_remote_authority_cache_runs_off_loop_and_ignores_unrelated_revision(monkeypatch):
+    import threading
+    from gateway import remote_engine
+    registry, _, _, _, _, _ = case()
+    snapshot = {'value': registry, 'operator_settings_generation': 1}
+    factory = remote_engine.ClientFactory(lambda: snapshot)
+    cap = factory.admit('remote-box')
+    bound = factory.transport(cap)
+    threads, policy_calls = [], []
+    original_registry, original_policy = factory._registry, remote_engine.policy
+    def read():
+        threads.append(threading.get_ident())
+        return original_registry()
+    def policy(record, **kwargs):
+        policy_calls.append(True)
+        return original_policy(record, **kwargs)
+    factory._registry = read
+    monkeypatch.setattr(remote_engine, 'policy', policy)
+    async def check():
+        loop_thread = threading.get_ident()
+        async with bound.operation():
+            for _ in range(4):
+                await bound.check_current()
+            snapshot['operator_settings_generation'] += 1
+            registry['services']['remote-box']['description'] = 'unrelated display metadata'
+            await bound.check_current()
+            assert not bound.revoked
+            assert all(thread != loop_thread for thread in threads)
+        assert not policy_calls  # the authority digest, limits and validation are cached
+    asyncio.run(check())

@@ -312,8 +312,10 @@ def check_request(request: httpx.Request, *, remote_bound=None) -> None:
         from gateway.remote_engine import refused
         if remote_bound is None:
             raise refused()
-        remote_bound.factory.check(remote_bound.capability, service_id=remote_bound.capability.service_id,
-                                   address=str(request.url))
+        from gateway.remote_engine import origin
+        remote_bound.check()
+        if origin(str(request.url)) != remote_bound.capability.exact_origin:
+            raise refused()
     domains = live.destinations.get(key)
     if not domains or (marked and request.url.path in live.probe_paths.get(key, ())):
         return
@@ -341,6 +343,7 @@ def async_client(*, _remote_bound=None, **kwargs: Any) -> httpx.AsyncClient:
     if _remote_bound is None:
         return _guard(httpx.AsyncClient(**kwargs), _check_async)
     async def check(request):
+        await _remote_bound.check_current()
         check_request(request, remote_bound=_remote_bound)
     return _guard(httpx.AsyncClient(**kwargs), check)
 

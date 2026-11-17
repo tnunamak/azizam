@@ -17,6 +17,7 @@ import weakref
 import secrets
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import unquote, urlsplit
@@ -31,7 +32,7 @@ _FACTORY_LOCK = threading.Lock()
 PRODUCTION_READY = True
 
 
-def invalidate_registry(path):
+def invalidate_registry(path, before=None, after=None):
     """Revoke before a registry mutation can commit, including caller-owned transactions.
 
     A later rollback does not restore old authority: fresh admission is required.
@@ -41,7 +42,12 @@ def invalidate_registry(path):
         factories = tuple(_FACTORIES)
     for factory in factories:
         if factory.db_path is not None and Path(factory.db_path).resolve() == Path(path).resolve():
-            factory.invalidate()
+            changed = None
+            if before is not None and after is not None:
+                old, new = before.get('services') or {}, after.get('services') or {}
+                changed = {sid for sid in set(old) | set(new)
+                           if authority_record(old.get(sid)) != authority_record(new.get(sid))}
+            factory.invalidate(changed)
 
 
 def refused() -> ProtocolError:
@@ -82,6 +88,24 @@ def origin(address: str) -> str:
         return f'https://{host}:{port}'
     except (ValueError, UnicodeError):
         raise refused() from None
+
+
+def authority_record(record):
+    """Only inputs that select an engine, credentials, billing or remote authority."""
+    if not isinstance(record, Mapping):
+        return None
+    keys = {'id', 'enabled', 'connection', 'offerings', 'process', 'observations',
+            'residency', 'protocol_operations', 'control_file_roots', 'native_passthrough',
+            'provider_type', 'cost_class', 'paid_remote', 'remote_provider', 'locality',
+            'placement', 'execution_substrate', 'kind', 'litellm_provider', 'provider_adapter'}
+    config = record.get('config') or {}
+    return [{key: record[key] for key in keys if key in record},
+            {key: config[key] for key in keys if key in config}]
+
+
+@lru_cache(maxsize=1)
+def limit_catalog():
+    return yaml.safe_load((Path(__file__).resolve().parents[1] / 'registry/remote_egress.yml').read_text())['limits']
 
 
 def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tuple[str, ...], tuple[tuple[str, float | int], ...]]:
@@ -136,7 +160,7 @@ def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tu
         if not any(network.subnet_of(ipaddress.ip_network(pool)) for pool in pools):
             raise refused()
         parsed.append(str(network))
-    catalog = yaml.safe_load((Path(__file__).resolve().parents[1] / 'registry/remote_egress.yml').read_text())['limits']
+    catalog = limit_catalog()
     overrides = raw.get('limits', {})
     if not isinstance(overrides, Mapping) or set(overrides) - catalog.keys():
         raise refused()
@@ -176,27 +200,36 @@ class ClientFactory:
         self.db_path = db_path
         self.clock = time.monotonic
         self._lock = threading.RLock()
-        self._send_lock = asyncio.Lock()
+        self._current_cache = {}
+        self._policy_cache = {}
         with _FACTORY_LOCK:
             _FACTORIES.add(self)
 
     def _current(self, service_id):
-        snapshot = self._registry()
-        registry = snapshot.get('value', snapshot)
-        record = (registry.get('services') or {}).get(service_id)
-        if not isinstance(record, Mapping):
-            raise refused()
-        if record.get('enabled', True) is False:
-            raise refused()
-        raw_record = ((snapshot.get('raw_value') or {}).get('services') or {}).get(service_id)
-        if raw_record is not None:
-            policy(raw_record)
-        encoded = json.dumps([snapshot.get('operator_settings_generation', snapshot.get('generation')), record], sort_keys=True)
-        return record, hashlib.sha256(encoded.encode()).hexdigest()
+        with self._lock:
+            snapshot = self._registry()
+            revision = snapshot.get('operator_settings_generation', snapshot.get('generation'))
+            cached = self._current_cache.get(service_id)
+            if revision is not None and cached is not None and cached[0] == revision:
+                return cached[1], cached[2]
+            registry = snapshot.get('value', snapshot)
+            record = (registry.get('services') or {}).get(service_id)
+            if not isinstance(record, Mapping) or record.get('enabled', True) is False:
+                raise refused()
+            raw = ((snapshot.get('raw_value') or {}).get('services') or {}).get(service_id)
+            encoded = json.dumps([authority_record(record), authority_record(raw)], sort_keys=True)
+            digest = hashlib.sha256(encoded.encode()).hexdigest()
+            # Unversioned test sources may mutate in place; their digest is the revision.
+            if cached is None or cached[2] != digest:
+                if raw is not None:
+                    policy(raw)
+                self._policy_cache[service_id] = policy(record)
+            self._current_cache[service_id] = (revision, record, digest)
+            return record, digest
 
     def admit(self, service_id: str) -> Capability:
         record, generation = self._current(service_id)
-        approved, exceptions, limits = policy(record)
+        approved, exceptions, limits = self._policy_cache[service_id]
         credentials = connection_config(record).get('credentials') or {}
         refs = tuple(sorted(str(row['secret_ref']) for row in credentials.values() if row and row.get('secret_ref')))
         cap = Capability(service_id, approved, generation, exceptions, refs, limits, self.clock())
@@ -208,7 +241,6 @@ class ClientFactory:
                 or origin(address) != cap.exact_origin):
             raise refused()
         record, generation = self._current(service_id)
-        policy(record)
         if generation != cap.policy_generation or (service is not None and service != record):
             raise refused()
 
@@ -216,10 +248,12 @@ class ClientFactory:
         self.check(cap, service_id=cap.service_id, address=cap.exact_origin)
         return BoundTransport(self, cap, self._transport)
 
-    def invalidate(self):
+    def invalidate(self, service_ids=None):
         with self._lock:
-            self._revoked.update(tuple(self._minted.values()))
-            bindings = tuple(self._bindings)
+            self._revoked.update(cap for cap in tuple(self._minted.values())
+                                 if service_ids is None or cap.service_id in service_ids)
+            bindings = tuple(bound for bound in self._bindings
+                             if service_ids is None or bound.capability.service_id in service_ids)
         for bound in bindings:
             bound.revoke()
 
@@ -244,12 +278,18 @@ class BoundTransport:
     def check(self):
         if self.revoked:
             raise asyncio.CancelledError('Remote engine authority was revoked.')
+        self.budget.remaining()
+
+    async def check_current(self):
+        self.check()
         try:
-            self.factory.check(self.capability, service_id=self.capability.service_id, address=self.capability.exact_origin)
+            await asyncio.to_thread(self.factory.check, self.capability,
+                                    service_id=self.capability.service_id, address=self.capability.exact_origin)
         except ProtocolError:
             self.revoke()
             raise asyncio.CancelledError('Remote engine authority was revoked.') from None
-        self.budget.remaining()
+        # Revocation can arrive while the worker is checking the committed generation.
+        self.check()
 
     def revoke(self):
         self.revoked = True
@@ -270,7 +310,7 @@ class BoundTransport:
         try:
             while self.tasks or self.responses or self.clients:
                 await asyncio.sleep(min(self.budget.limits['authority_check_s'], self.budget.remaining()))
-                self.check()
+                await self.check_current()
         except ProtocolError:
             self.revoke()
         finally:
@@ -279,7 +319,7 @@ class BoundTransport:
 
     @asynccontextmanager
     async def operation(self):
-        self.check()
+        await self.check_current()
         self.loop = asyncio.get_running_loop()
         task = asyncio.current_task()
         self.tasks[task] = self.tasks.get(task, 0) + 1
@@ -300,15 +340,15 @@ class BoundTransport:
     async def fence(self):
         # A check authorizes the next I/O only. Never hold a database transaction
         # or a writer lock while the peer controls completion of that operation.
-        self.check()
+        await self.check_current()
         yield
-        self.check()
+        await self.check_current()
 
     async def send(self, request, timeouts):
         from gateway.remote_engine_budget import BoundResponse, service_capacity
         cap = self.capability
-        self.factory.check(cap, service_id=cap.service_id, address=request.url)
-        record, _ = self.factory._current(cap.service_id)
+        await asyncio.to_thread(self.factory.check, cap, service_id=cap.service_id, address=request.url)
+        record, _ = await asyncio.to_thread(self.factory._current, cap.service_id)
         names = {'accept', 'content-type', 'accept-encoding'}
         names.update(str(spec.get('header') or 'Authorization').lower()
                      for spec in (connection_config(record).get('credentials') or {}).values() if spec)
@@ -331,13 +371,18 @@ def factory_from_store():
     """Use a fresh authoritative snapshot, independent of request connection caches."""
     from gateway import admin_store, request_connections, secret_refs, service_registry
     path = secret_refs.database()
+    cached = None
     def read():
+        nonlocal cached
         with request_connections.request_scope():
-            snapshot = admin_store.get_service_registry_with_generation(path=path)
-        if snapshot is None:
+            encoded = admin_store.get_service_registry_json_with_generation(path=path)
+        if encoded is None:
             raise refused()
-        raw = snapshot['value']
-        snapshot['raw_value'] = raw
-        snapshot['value'] = service_registry.read_registry(raw)[0]
-        return snapshot
+        revision = encoded['operator_settings_generation']
+        if cached is None or cached['operator_settings_generation'] != revision:
+            from gateway import registry_layers
+            raw = registry_layers.layer(json.loads(encoded['value_json']), service_registry.release_registry())
+            cached = {'raw_value': raw, 'value': service_registry.read_registry(raw)[0],
+                      'operator_settings_generation': revision}
+        return cached
     return ClientFactory(read, db_path=path)

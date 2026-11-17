@@ -78,7 +78,7 @@ class BoundResponse:
         iterator = self.inner.chunks().__aiter__()
         try:
             while True:
-                self.bound.check()
+                await self.bound.check_current()
                 budget = self.bound.budget
                 async with asyncio.timeout(min(budget.remaining(), budget.limits['idle_read_s'])):
                     try:
@@ -88,7 +88,7 @@ class BoundResponse:
                 # Encoded responses are refused by the executor before consumption.
                 # Count identity bytes independently of wire framing.
                 budget.consume('decoded_bytes', len(chunk))
-                self.bound.check()
+                await self.bound.check_current()
                 yield chunk
         except BaseException:
             await self.aclose()
@@ -122,12 +122,12 @@ class GuardedStream:
 
     async def write(self, buffer, timeout=None):
         async with self.bound.fence():
-            self.bound.check()
+            await self.bound.check_current()
             async with asyncio.timeout(self.bound.budget.remaining()):
                 await self.inner.write(buffer, timeout=min(timeout or self.bound.budget.remaining(), self.bound.budget.remaining()))
 
     async def read(self, max_bytes, timeout=None):
-        self.bound.check()
+        await self.bound.check_current()
         budget = self.bound.budget
         phase = 'idle_read_s' if self.received_any else 'first_byte_s'
         read_size = min(max_bytes, budget.limits['wire_bytes'] - budget.used['wire_bytes'] + 1)
@@ -136,7 +136,7 @@ class GuardedStream:
         async with asyncio.timeout(min(budget.remaining(), budget.limits[phase], timeout or budget.remaining())):
             data = await self.inner.read(max(1, read_size), timeout=timeout)
         budget.consume('wire_bytes', len(data))
-        self.bound.check()
+        await self.bound.check_current()
         self.received_any = self.received_any or bool(data)
         if not self.headers_done:
             self.header.extend(data)
@@ -153,7 +153,7 @@ class GuardedStream:
         return data
 
     async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
-        self.bound.check()
+        await self.bound.check_current()
         budget = self.bound.budget
         try:
             async with self.bound.fence():

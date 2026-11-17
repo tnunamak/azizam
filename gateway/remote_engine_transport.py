@@ -47,7 +47,7 @@ class RemoteNetworkTransport:
 
     async def send(self, request, timeouts):
         cap = self.bound.capability
-        self.bound.factory.check(cap, service_id=cap.service_id, address=request.url)
+        await asyncio.to_thread(self.bound.factory.check, cap, service_id=cap.service_id, address=request.url)
         limits = dict(cap.finite_budgets)
         parts = urlsplit(request.url)
         origin(request.url)

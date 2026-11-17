@@ -4526,7 +4526,7 @@ def write_service_registry_in_transaction(
     from gateway.remote_engine import invalidate_registry
     database = next((row[2] for row in conn.execute('PRAGMA database_list') if row[1] == 'main'), None)
     if database:
-        invalidate_registry(database)
+        invalidate_registry(database, registry_layers.layer(before, release), after_effective)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     conn.execute(
         "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) VALUES (?, ?, ?, ?) "

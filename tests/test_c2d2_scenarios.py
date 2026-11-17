@@ -705,3 +705,40 @@ def test_s6_remote_opt_out_cancels_running_job(owner, gateway, fake_upstreams, m
     receipts = [row['receipt'] for row in client.get('/admin/api/activity/requests').json()['records']
                 if row['receipt'].get('job_id') == job_id]
     assert len(receipts) == 1 and receipts[0]['status'] == 'cancelled'
+
+
+
+def test_s6_unrelated_registry_generation_leaves_running_remote_job(owner, gateway, fake_upstreams, monkeypatch):
+    from tests.support.remote_protocol import gateway_case, add_remote
+    client, _, owner_id, plan_id = owner
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    recorder.pending = True
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client),
+                        json={'enabled': True}).status_code == 200
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted = public.post('/gateway/v1/media/jobs', headers=_headers(key), json={
+            'intent': 'smell.infer', 'model': 'smell-1', 'input': {'vector': VECTOR}})
+        assert submitted.status_code == 202, submitted.text
+        job_id = submitted.json()['id']
+        for _ in range(100):
+            if '/v1/infer/j' in recorder.paths:
+                break
+            time.sleep(.01)
+        assert '/v1/infer/j' in recorder.paths
+        before = client.get('/admin/api/operator/service-registry').json()
+        changed = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client),
+                               json={'description': 'Updated display metadata'})
+        assert changed.status_code == 200, changed.text
+        after = client.get('/admin/api/operator/service-registry').json()
+        assert after != before
+        recorder.pending = False
+        for _ in range(200):
+            job = public.get('/gateway/v1/media/jobs/' + job_id, headers=_headers(key)).json()
+            if job['status'] in {'succeeded', 'failed', 'canceled'}:
+                break
+            time.sleep(.01)
+        assert job['status'] == 'succeeded', job
+        assert job['assets']
