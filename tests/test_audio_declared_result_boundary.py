@@ -1,6 +1,6 @@
-"""Publication ordering that must be settled before moving audio delivery into results.
+"""Publication stays successful when the audio delivery hook fails.
 
-This is a boundary probe, not a route port or a passing old/new parity claim.
+The separate callback probe also pins why delivery cannot happen before publication.
 The same result bytes go through the existing storage and stripping functions.
 """
 import asyncio
@@ -31,7 +31,7 @@ def test_delivery_failure_after_storage_changes_publication_with_linked_declared
     made.set(media_ingestion, 'store_audio_response', record_store)
     made.set(media_delivery, 'deliver_bytes', refuse_delivery)
     try:
-        # The old route stores/indexes the result, then attempts delivery rewriting.
+        # The route publishes the stored result, then attempts delivery rewriting.
         response = asyncio.run(made.call('POST', '/v1/audio/generate', label='rewrite failure', json_body=BODY))
         assert response.status_code == 502
         assert json.loads(response.content)['error']['message'] == 'Could not prepare audio for delivery'
