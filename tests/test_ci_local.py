@@ -243,7 +243,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["steps"].split(",") == sorted([
         "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
         "fresh-compose", "fresh-native", "fresh-venv", "journey-clock", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
-        "web-build", "web-check", "web-npm-ci", "web-unit"])
+        "sweep-report-node", "web-build", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 
@@ -641,7 +641,7 @@ def test_static_checks_overlap_browsers_after_build_in_native_slot(world: World)
     rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
     names = [row[0] for row in rows]
     assert names == sorted(names)
-    assert len(names) == len(set(names)) == 20
+    assert len(names) == len(set(names)) == 21
     assert all(row[1] == "0" for row in rows)
     assert (world.receipts / "logs/web-build.log").read_text() == "build-log\n"
     assert (world.receipts / "logs/web-check.log").read_text() == "type-log\nlint-log\ndoctor-log\n"
@@ -712,7 +712,7 @@ def test_each_step_records_wall_cpu_and_peak_rss(world: World) -> None:
     result = world.run()
     assert result.returncode == 0, result.stdout + result.stderr
     rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
-    assert len(rows) == 20
+    assert len(rows) == 21
     for name, rc, seconds, wall, cpu, peak_kb in rows:
         assert rc == "0" and seconds.isdigit(), name
         assert re.fullmatch(r"\d+\.\d{2}", wall) and re.fullmatch(r"\d+\.\d{2}", cpu), name
@@ -772,7 +772,7 @@ def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
         if line.startswith("critical path"):
             break
         rows.append(line.split())
-    assert len(rows) == 20
+    assert len(rows) == 21
     walls = [float(row[2]) for row in rows]
     assert walls == sorted(walls, reverse=True)
     assert rows[0][0] == "python-hermetic"
