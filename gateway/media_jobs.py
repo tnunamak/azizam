@@ -1743,6 +1743,8 @@ def update_status(
     error_info: Mapping[str, Any] | None = None,
     add_assets: Iterable[Mapping[str, Any]] | None = None,
     metadata_patch: Mapping[str, Any] | None = None,
+    metadata_remove: Iterable[str] = (),
+    phase_patch: Mapping[str, int | None] | None = None,
     expected_status: str | None = None,
     now: int | None = None,
     before_commit: Callable[[sqlite3.Connection, dict[str, Any]], object] | None = None,
@@ -1824,6 +1826,12 @@ def update_status(
             existing_meta = dict(current.get("metadata") or {})
             existing_meta.update(metadata_patch)
             current["metadata"] = existing_meta
+        for key in metadata_remove:
+            current.get("metadata", {}).pop(key, None)
+        if phase_patch:
+            if set(phase_patch) - set(PHASE_FIELDS):
+                raise ValueError("phase_patch contains unknown phase fields")
+            current.update(phase_patch)
         current["updated_at"] = ts
         # Legacy attempts remain unavailable; do not invent prior phase facts.
         if current.get("attempt_number") is not None:

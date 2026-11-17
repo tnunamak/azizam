@@ -51,6 +51,7 @@ def test_delivery_observes_published_success_and_cannot_undo_it(tmp_path, monkey
 
 def test_multipart_store_refusal_keeps_its_type_and_code_through_declared_run(tmp_path, monkeypatch):
     import httpx
+    from tests.support.fake_upstream import HandlerTransport
 
     from gateway import multipart_adapter
     from gateway.mesh_manifest import ImageAsset
@@ -73,7 +74,7 @@ def test_multipart_store_refusal_keeps_its_type_and_code_through_declared_run(tm
                           pin=SimpleNamespace(contract={'outputs': {'shape': {'media_type': 'model/gltf-binary'}}}))
 
     async def go():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(
+        async with httpx.AsyncClient(transport=HandlerTransport(
             lambda request: httpx.Response(200, content=content))) as client:
             prepared = multipart_adapter._MultipartRun(
                 runner, ctx, client, 'http://engine.test/render', 'source',
