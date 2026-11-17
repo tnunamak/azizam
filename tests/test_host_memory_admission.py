@@ -63,6 +63,10 @@ def admission(root, readings, clock=None, **over):
     return made, clock
 
 
+def hma_env_dir():
+    return hma.safe_load_strict(hma._DECLARATION.read_text())["engine_dir_env"]
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -170,7 +174,7 @@ def test_models_are_found_in_a_folder_under_a_root_and_models_of_lists_each_once
 
 
 def test_the_policy_reads_its_defaults_from_the_registry_and_env_overrides_them(monkeypatch, tmp_path):
-    monkeypatch.delenv("AZIZAM_COMFY_DIR", raising=False)
+    monkeypatch.delenv(hma_env_dir(), raising=False)
     for name in ("AZIZAM_HOST_MEMORY_MARGIN_GB", "AZIZAM_HOST_MEMORY_WAIT_S", "AZIZAM_HOST_MEMORY_MODEL_ROOTS"):
         monkeypatch.delenv(name, raising=False)
     default = hma.load_policy()
@@ -187,7 +191,7 @@ def test_roots_come_from_the_engine_directory_and_its_extra_model_paths(monkeypa
     other.mkdir()
     (tmp_path / "models").mkdir()
     (tmp_path / "extra_model_paths.yaml").write_text(f"diffusion:\n    base_path: {other}/\n    unet: unet/\n")
-    monkeypatch.setenv("AZIZAM_COMFY_DIR", str(tmp_path))
+    monkeypatch.setenv(hma_env_dir(), str(tmp_path))
     monkeypatch.delenv("AZIZAM_HOST_MEMORY_MODEL_ROOTS", raising=False)
     assert hma.load_policy().model_roots == (str(tmp_path / "models"), str(other))
 

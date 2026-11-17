@@ -5,7 +5,7 @@ starts a storm of kills. The gateway is the only sender of those prompts, so it 
 
 What a prompt loads is read from the prompt: each string value that ends with a model-file extension. The size is the
 file's size on disk under the configured roots (``registry/host_memory_admission.yml``; the engine directory named by
-``AZIZAM_COMFY_DIR`` adds its models folder and its ``extra_model_paths.yaml`` base paths). A model whose file is not
+the engine directory the registry file names adds its models folder and its extra-paths file's base paths). A model whose file is not
 found counts for nothing; a prompt with no sized model is admitted without a look at memory. A model is resident when the
 gateway sent it within ``resident_ttl_s`` and the engine's models were not freed since; residency the gateway cannot show is
 treated as not resident.
@@ -36,10 +36,10 @@ BUSY_CODE = "resource_unavailable"
 WAITING_PHASE = "waiting_for_memory"
 _DECLARATION = Path(__file__).resolve().parents[1] / "registry" / "host_memory_admission.yml"
 _KEYS = {"schema_version", "margin_gb", "background_margin_gb", "wait_s", "job_wait_s", "poll_s", "report_s", "settle_s",
-         "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "background_apps"}
+         "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "background_apps", "engine_dir_env",
+         "engine_models_folder", "engine_extra_paths_file"}
 ENV_MARGIN, ENV_WAIT, ENV_ROOTS, ENV_BACKGROUND = ("AZIZAM_HOST_MEMORY_MARGIN_GB", "AZIZAM_HOST_MEMORY_WAIT_S",
                                                    "AZIZAM_HOST_MEMORY_MODEL_ROOTS", "AZIZAM_HOST_MEMORY_BACKGROUND_APPS")
-ENV_ENGINE_DIR = "AZIZAM_COMFY_DIR"
 
 
 @dataclass(frozen=True)
@@ -61,10 +61,10 @@ class HostMemoryPolicy:
         return bool(app_id) and app_id in self.background_apps
 
 
-def _engine_roots(directory: str) -> list[str]:
+def _engine_roots(directory: str, models_folder: str, extra_file: str) -> list[str]:
     base = Path(directory)
-    roots = [str(base / "models")] if (base / "models").is_dir() else []
-    extra = base / "extra_model_paths.yaml"
+    roots = [str(base / models_folder)] if (base / models_folder).is_dir() else []
+    extra = base / extra_file
     try:
         document = safe_load_strict(extra.read_text(encoding="utf-8")) if extra.is_file() else None
     except (OSError, ValueError, Exception):  # noqa: BLE001 - an unreadable file adds no roots
@@ -83,8 +83,10 @@ def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
         raise ValueError("host_memory_admission.yml: every key must be known and schema_version must be 1")
     margin_gb = float(env.get(ENV_MARGIN) or document["margin_gb"])
     roots = [r for r in (env.get(ENV_ROOTS) or "").split(os.pathsep) if r] or [str(r) for r in document["model_roots"]]
-    if env.get(ENV_ENGINE_DIR):
-        roots += [r for r in _engine_roots(env[ENV_ENGINE_DIR]) if r not in roots]
+    engine_dir = env.get(str(document["engine_dir_env"]))
+    if engine_dir:
+        roots += [r for r in _engine_roots(engine_dir, str(document["engine_models_folder"]),
+                                           str(document["engine_extra_paths_file"])) if r not in roots]
     background = [a.strip() for a in (env.get(ENV_BACKGROUND) or "").split(",") if a.strip()] or list(document["background_apps"])
     return HostMemoryPolicy(
         margin_bytes=int(margin_gb * GIB), background_margin_bytes=int(float(document["background_margin_gb"]) * GIB),
@@ -159,7 +161,7 @@ def busy_response(retry_after_s: int | None = None):
     """The synchronous answer: 503, code ``resource_unavailable``, with Retry-After."""
     seconds = retry_after_s if retry_after_s is not None else load_policy().retry_after_s
     return client_errors.client_error(503, BUSY_REASON, code=BUSY_CODE, error_type="api_error",
-                                      headers={"Retry-After": str(seconds)})
+                                      headers={"Retry-After": client_errors.retry_after(str(seconds)) or "30"})
 
 
 @dataclass(eq=False)
