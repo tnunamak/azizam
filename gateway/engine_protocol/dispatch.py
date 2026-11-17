@@ -81,9 +81,9 @@ def resolve(
     engine_id, service, offering = matches[0]
     if service.get('enabled', True) is False:
         raise ProtocolError('The selected engine is disabled.', code='engine_disabled')
-    from gateway.service_registry import validate_protocol_dispatch_local_only
+    from gateway.service_registry import validate_protocol_dispatch_admission
     try:
-        validate_protocol_dispatch_local_only(service)
+        validate_protocol_dispatch_admission(service)
     except ValueError:
         raise ProtocolError('Protocol dispatch requires a local engine without paid-provider billing.',
                             code='protocol_dispatch_refused') from None
@@ -111,8 +111,13 @@ class Runtime:
         self._egress = egress
         connection = connection_config(target.service)
         remote = connection.get('remote_dispatch') or {}
+        if not isinstance(remote, Mapping):
+            raise ProtocolError('The remote engine policy is invalid.', code='protocol_dispatch_refused')
         if remote_capability is not None or remote.get('enabled') is True:
-            from gateway.remote_engine import refused
+            from gateway.remote_engine import refused, factory_from_store, PRODUCTION_READY
+            if remote_factory is None and remote_capability is None and PRODUCTION_READY:
+                remote_factory = factory_from_store()
+                remote_capability = remote_factory.admit(target.engine_id)
             if remote_factory is None or remote_capability is None or transport is not None:
                 raise refused()
             remote_factory.check(remote_capability, service_id=target.engine_id, address=connection.get('address'),

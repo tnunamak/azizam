@@ -34,13 +34,13 @@ def problems() -> list[dict[str, str]]:
 
 def configuration_problems(registry: Mapping[str, Any]) -> list[dict[str, str]]:
     """Report refused stored records without probing or preventing other records from loading."""
-    from gateway.service_registry import validate_protocol_dispatch_local_only
+    from gateway.service_registry import validate_protocol_dispatch_admission
     issues = []
     for engine_id, service in (registry.get('services') or {}).items():
         if not dispatch.opted_in(service) or not service.get('enabled', True):
             continue
         try:
-            validate_protocol_dispatch_local_only(service)
+            validate_protocol_dispatch_admission(service)
         except ValueError:
             issues.append({'engine_id': engine_id,
                 'reason': 'Protocol dispatch is refused for paid, remote or unproven addresses. Use the provider route or a loopback engine.'})
@@ -125,10 +125,10 @@ async def models(registry: Mapping, *, remote_factory=None) -> list[dict]:
                 _cache.move_to_end(key)
                 return copy.deepcopy(cached[1])
             async with asyncio.timeout(ENGINE_TIMEOUT_S):
-                from gateway.service_registry import validate_protocol_dispatch_local_only
+                from gateway.service_registry import validate_protocol_dispatch_admission
                 options = {}
                 if remote_factory is None:
-                    validate_protocol_dispatch_local_only(service)
+                    validate_protocol_dispatch_admission(service)
                 else:
                     options = {'remote_factory': remote_factory, 'remote_capability': remote_factory.admit(engine_id)}
                 runtime = await asyncio.to_thread(dispatch.Runtime, dispatch.Target(engine_id, service, offerings[0], doc), **options)

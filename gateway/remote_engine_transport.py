@@ -81,6 +81,10 @@ class RemoteNetworkTransport:
             built = client.build_request(request.method, request.url, headers={**request.headers, 'accept-encoding': 'identity'},
                                          content=request.body)
             response = await client.send(built, stream=True)
+            if 'transfer-encoding' in response.headers:
+                # Refuse transfer encodings rather than leave trailer headers
+                # outside the response-header ceiling.
+                raise refused()
             return _HttpxResponse(response, client)
         except BaseException as error:
             await client.aclose()

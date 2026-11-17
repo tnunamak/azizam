@@ -27,6 +27,7 @@ def case():
     offering = {'id': 'remote-model', 'upstream': 'remote-model', 'kind': 'model',
                 'tasks': [{'task': 'smell.infer'}], 'selection': {'mode': 'request_field'}}
     service = {'id': 'remote-box', 'enabled': True, 'config': {
+        'cost_class': 'free-local',
         'connection': {'dispatch': 'protocol', 'protocol': doc.id, 'address': 'https://engine.example',
                        'remote_dispatch': {'version': 1, 'enabled': True}, 'credentials': {}},
         'offerings': [offering]}}
@@ -108,6 +109,8 @@ class SocketRecorder:
     def __init__(self, monkeypatch):
         import httpcore
         self.connections, self.writes, self.tls, self.closed = [], [], [], []
+        self.posts = []
+        self.paths = []
         self.responses = []
         recorder = self
 
@@ -122,15 +125,21 @@ class SocketRecorder:
                 if buffer.startswith((b'GET ', b'POST ')):
                     line = buffer.split(b'\r\n', 1)[0]
                     path = line.split(b' ')[1].decode()
+                    recorder.paths.append(path)
+                    self.path = path
                     if recorder.responses:
                         self.response = recorder.responses.pop(0)
                     else:
                         payload = (b'{"job":{"id":"j"}}' if path == '/v1/infer' else
-                                   b'{"state":"ready"}' if path == '/v1/infer/j' else
+                                   (b'{"state":"working"}' if getattr(recorder, 'pending', False) else b'{"state":"ready"}') if path == '/v1/infer/j' else
                                    b'remote-result' if path.endswith('/molecule') else b'{"value":"remote-model"}')
+                        if path == '/state' and getattr(recorder, 'identity', None):
+                            payload = json.dumps({'value': recorder.identity}).encode()
                         ctype = b'application/octet-stream' if path.endswith('/molecule') else b'application/json'
                         self.response = (b'HTTP/1.1 200 OK\r\nContent-Type: ' + ctype + b'\r\nContent-Length: ' +
                                          str(len(payload)).encode() + b'\r\nConnection: close\r\n\r\n' + payload)
+                elif buffer and getattr(self, 'path', None) == '/v1/infer':
+                    recorder.posts.append(json.loads(buffer))
             async def read(self, max_bytes, timeout=None):
                 if getattr(recorder, 'block_read', None) is not None:
                     await recorder.block_read.wait()
@@ -150,6 +159,8 @@ class SocketRecorder:
                 recorder.closed.append(self)
 
         async def connect_tcp(backend, host, port, **kwargs):
+            if getattr(recorder, 'on_connect', None) is not None:
+                recorder.on_connect(host, port)
             recorder.connections.append((host, port))
             return Stream()
         monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', connect_tcp)
@@ -170,6 +181,8 @@ def socket_case(monkeypatch, answers=None):
 
 
 async def canary_path(path, monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
     from gateway.engine_protocol.types import CanonicalRequest, JobRef, JobState, JobStatus
     registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
     inbound = 'synthetic-inbound-' + path
@@ -281,3 +294,45 @@ async def real_tls_identity(monkeypatch, directory):
             monkeypatch.setattr(ssl, 'create_default_context', original_context)
             key_path.unlink()
             cert_path.unlink()
+
+
+def gateway_case(gateway, monkeypatch, fake_upstreams):
+    from gateway import engine_check, remote_engine
+    if not remote_engine.PRODUCTION_READY:
+        monkeypatch.setattr(remote_engine, 'PRODUCTION_READY', True)
+    recorder = SocketRecorder(monkeypatch)
+    recorder.identity = 'smell-1'
+    from tests.test_owner_engine_chain_smell import EmptyModelCatalog
+    if '127.0.0.1:4011' not in fake_upstreams.router._routes:
+        fake_upstreams.router.add('127.0.0.1:4011', EmptyModelCatalog())
+    original = engine_check._default_resolve
+    async def resolve(host, port=None):
+        if host == 'engine.example':
+            return ['93.184.216.34']
+        return await original(host, port)
+    monkeypatch.setattr(engine_check, '_default_resolve', resolve)
+    return recorder
+
+
+def add_remote(client, *, observations=False):
+    from tests.test_owner_engine_chain_smell import _write_headers
+    offering = {'id': 'smell-1', 'upstream': 'smell-1', 'kind': 'model',
+                'tasks': [{'task': 'smell.infer'}], 'selection': {'mode': 'request_field'}}
+    extra = {}
+    if observations:
+        offering['selection'] = {'mode': 'switch', 'switch': {
+            'call': 'select', 'args': {}, 'observe_selected': 'chosen'}}
+        extra['observations'] = {'chosen': {'http': {'path': '/state', 'select': '/value'}}}
+    created = client.post('/admin/api/operator/services', headers=_write_headers(client), json={
+        'name': 'smell-box', 'base_url': 'https://engine.example', 'protocol': 'd0-smell',
+        'cost_class': 'free-local',
+        'enabled': False, 'capabilities': ['smell.infer'], 'offerings': [offering],
+        'connection': {'dispatch': 'protocol', 'protocol': 'd0-smell', 'address': 'https://engine.example',
+                       'remote_dispatch': {'enabled': True, 'version': 1}}})
+    if observations and created.status_code == 201:
+        # The canonical observation block is on the service record, not legacy config.
+        registry = client.get('/admin/api/operator/service-registry').json()['service_registry']
+        registry['services']['smell-box']['observations'] = extra['observations']
+        stored = client.put('/admin/api/operator/service-registry', headers=_write_headers(client), json=registry)
+        assert stored.status_code == 200, stored.text
+    return created

@@ -1023,6 +1023,7 @@ class AdminSQLiteStore:
                         "gateway_lifecycle", "gateway_lifecycle_base_url", "probe_with_inference_connection",
                         "health_endpoint", "api_key", "api_key_env", "api_key_ref", "api_key_secret_id", "credential_origin",
                         "litellm_provider", "provider_adapter",
+                        "provider_type", "cost_class", "paid_remote", "remote_provider", "locality", "placement",
                     }
                     missing_timeout = object()
                     if (old_config.get("timeout", missing_timeout) != new_config.get("timeout", missing_timeout)

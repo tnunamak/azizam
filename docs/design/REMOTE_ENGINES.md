@@ -288,3 +288,174 @@ No tests run. Only visible document regions changed; redacted text was preserved
 - Most uncertain assumption remains production-path completeness: prior scoped evidence
   did not establish owner authentication, lifecycle enforcement or all credential
   construction. Stage 0 and auxiliary canary gates require evidence, not inference.
+
+## Implementation receipts (W3b / S6)
+
+The design above is retained as its reviewed contract. Stage 0 was accepted by
+the owner at `2107d91098a619951fd3bcd71ad2ccf6620e2d97`. Production admission
+remains refused in the stage 1–4 commits. Only the separate release commit may
+change `gateway.remote_engine.PRODUCTION_READY` from false to true.
+
+### Owner configuration and conservative refusals
+
+An owner writes `connection.remote_dispatch` through the existing service or
+registry API. Its fields are `enabled` (boolean), `version` (1, default 1),
+`private_cidrs` (default empty) and `limits` (default empty). No request-body
+policy, endpoint, authentication header or credential override grants authority.
+The service must explicitly declare `cost_class: free-local`; opt-in alone does
+not establish non-billed use. Existing paid/unknown classifications at every
+nesting level still refuse admission. Native pass-through is refused on these
+records because it does not carry the declared-operation capability.
+
+Defaults and hard maxima live in `registry/remote_egress.yml`. In addition to
+the reviewed table, `connections` defaults to 1 and has maximum 4, shared across
+operations for a service/database on each serving event loop;
+`authority_check_s` defaults to 0.05 s and has maximum 1 s. This watcher observes
+cross-process revocation while a job sleeps. SQLite write fences independently
+prevent sends and success publication under a revoked generation.
+
+The first implementation refuses encoded/compressed responses before decoding,
+transfer encodings (including chunked bodies and trailers),
+all redirects, informational responses, query-bearing URLs, non-HTTPS origins,
+and unlisted outbound headers. Control addresses must share the approved exact
+origin. An unavailable probe credential may still be omitted; a non-probe
+operation requiring it fails before send. Credentials use only the existing
+service-reference resolver. None are persisted in capability/job metadata.
+
+Each connection is freshly resolved and pinned; no idle pool is reused between
+requests. The complete answer set must be permitted, and only the selected first
+address is dialed. The original hostname supplies TLS SNI, certificate checking
+and Host. A new request/retry resolves again. Raw TCP is closed on revocation;
+revocation does not authorize a TLS shutdown or backend cleanup request.
+
+Registry mutations revoke existing in-process authority before commit, through
+`admin_store.write_service_registry_in_transaction`, including caller-owned
+transactions. A rollback conservatively requires fresh admission too. Socket
+connect, TLS, write and final publication fences use the same SQLite writer lock
+as registry edits, so revocation is not dependent on a reload callback. The
+registry generation and a digest of the full record pin queued work. The normal
+restart behavior fails interrupted declared jobs rather than rebinding them.
+
+### Stage 1 — capability binding
+
+Commit: `2243e02f1a87fab268f4a9dd090bde74c18e87b8`.
+Gate output: `124 passed, 2 xfailed in 17.55s` (the xfails were other scenarios).
+Required full node IDs:
+
+```text
+tests/test_engine_protocol_round3.py::test_remote_factory_main_dispatch
+tests/test_engine_protocol_round3.py::test_remote_factory_fresh_observation
+tests/test_engine_protocol_round3.py::test_remote_factory_inventory
+tests/test_engine_protocol_round3.py::test_remote_factory_control
+tests/test_engine_protocol_round3.py::test_remote_factory_polling
+tests/test_engine_protocol_round3.py::test_remote_factory_assets
+tests/test_engine_protocol_round3.py::test_remote_binding_required_on_every_adapter_path
+tests/test_engine_protocol_round3.py::test_remote_same_origin_services_do_not_union_exceptions
+tests/test_engine_protocol_round3.py::test_remote_policy_generation_rechecked_on_dispatch_and_reuse
+tests/test_c2d2_scenarios.py::test_s6_only_owner_can_enable_remote_dispatch
+```
+
+The six production bindings remain the ones recorded at stage 0. Runtime passes
+one bound transport into both the main and freshly compiled observation adapter.
+The HTTP executor requires the matching capability and refuses remote redirects.
+Inventory enters through Runtime; control, polls and assets use the same adapter
+and connector. Missing or mismatched authority cannot fall back to a default.
+
+### Stage 2 — socket boundary
+
+Commit: `5296b53e248d8aa4ec27092595cafc54aa3cc0f7`.
+Gate outputs: `120 passed in 14.29s`, followed by the strengthened fresh-observation
+checks, `2 passed in 7.52s`. A fresh observation failure now stops selection; it
+cannot become an unknown value that triggers a fallback control request.
+Required full node IDs:
+
+```text
+tests/test_engine_protocol_round3.py::test_remote_observation_denied_dns_zero_connections
+tests/test_engine_protocol_round3.py::test_remote_observation_redirect_zero_forbidden_connections
+tests/test_engine_protocol_round3.py::test_remote_observation_proxy_env_zero_forbidden_connections
+tests/test_engine_protocol_round3.py::test_remote_observation_credential_canary_zero_forbidden_connections
+tests/test_engine_protocol_round3.py::test_remote_dns_pinning_reconnect_and_tls_identity
+tests/test_engine_protocol_round3.py::test_remote_poll_secret_canary_absent
+tests/test_engine_protocol_round3.py::test_remote_asset_secret_canary_absent
+tests/test_engine_protocol_round3.py::test_remote_control_secret_canary_absent
+tests/test_engine_protocol_round3.py::test_remote_probe_secret_canary_absent
+```
+
+These use the real HTTP transport/connector with a controlled resolver and an OS
+socket recorder. Certificate identity also runs against a real local TLS server
+with synthetic certificates: the matching identity works and a trusted wrong
+hostname receives no HTTP request. Later journey qualification adds private/ULA
+positive cases, mapped IPv4, metadata exclusion inside an allowed ULA exception,
+rebinding at the dial boundary, and missing-probe-credential omission.
+
+### Stage 3 — resources and revocation
+
+Commit: `a4e29bbd07ef1c1e3775fb979490aea82d034a7a`.
+Gate output: `161 passed, 2 xfailed in 21.92s`.
+Required full node IDs:
+
+```text
+tests/test_engine_protocol_round3.py::test_remote_opt_out_closes_pool_and_cancels_queued_poll
+tests/test_engine_protocol_round3.py::test_remote_aggregate_deadline_spans_retries_and_polling
+tests/test_engine_protocol_round3.py::test_remote_wire_and_decompressed_byte_caps
+tests/test_engine_protocol_round3.py::test_remote_header_limits_and_cancellation_close_socket
+```
+
+One admission deadline and counters survive control, observations, retries,
+polls and assets. Raw HTTP bytes and headers are limited before parser buffering;
+identity body bytes have an independent aggregate cap. The tests include closed
+sockets on cancellation/overflow, a slow trickle and SQLite exclusion while a
+socket write is authorized. Later journey qualification shares connection limits
+across independent factories on a serving loop and fences final job publication.
+
+### Stage 4 — public generic jobs
+
+The stage 4 commit is pinned in the release receipt below after its tests pass.
+Required full node IDs:
+
+```text
+tests/test_c2d2_scenarios.py::test_s6_remote_job_observation_poll_asset_security
+tests/test_c2d2_scenarios.py::test_s6_remote_opt_out_cancels_running_job
+tests/test_c2d2_scenarios.py::test_s6_owner_opted_in_remote_engine_serves_a_job
+```
+
+The owner installs the description and writes canonical record data. The public
+route admits and queues the job, holds the serving lease where configured,
+observes, submits, polls and stores the fetched bytes, then publishes one terminal
+receipt. Opt-out cancels admitted work and refuses subsequent submissions without
+another upstream connection. S6's strict xfail is removed from the test and
+`tests/suites.toml`; the unrelated S1 xfail remains.
+
+Qualification uses synthetic request/service canaries, never real credentials.
+The public models and OpenAPI comparisons hold display time and cached host facts
+fixed, then compare response bytes with readiness disabled and enabled. Existing
+OpenAPI/workflow and model metadata goldens also pass without fixture changes.
+
+### Commands, limits of evidence and owner oracle proposal
+
+Every pytest run uses a committed tree and the hermetic runner. The stage gates
+used the following target lists, always with `nice -n 15`,
+`--junit-xml-out ../<unique-name>.xml` and `-n 4`:
+
+- Stage 1: `tests/test_engine_protocol_round3.py tests/test_c2d2_scenarios.py tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py`.
+- Stage 2: `tests/test_engine_protocol_round3.py tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py`, then the two named fresh-observation cases.
+- Stage 3: the stage 1 targets plus `tests/test_operation_runner.py tests/test_smell_infer_offering.py`.
+- Stage 4: the stage 3 targets plus `tests/test_c2d_openapi_parity.py tests/test_c2d_model_metadata_parity.py`.
+
+No full suite, live gateway, deployment restart, paid provider, external engine,
+or sustained load test was used. The connection ceiling is per serving event
+loop; the SQLite authorization fence spans processes. Cross-process active-work
+cancellation is observed by the bounded watcher. There is no idle-connection
+reuse feature to qualify. Both compressed responses and unsafe ancillary paths
+are refused instead of being repaired or followed.
+
+Owner oracles were not edited. `tests/budgets.toml:678` currently has
+`pytest = 29830`. This branch adds 29 top-level unparametrized tests relative to
+train 66 (3 stage 0, 26 stages 1–4). Proposed owner change, subject to the release
+collection count: `pytest = 29859`. No reviewed literal list or frozen graph
+change is proposed.
+
+Expect it to work because all six production paths enter the same bound
+transport; the real connector records approved peers and TLS identity, and
+registry changes serialize with network writes and completion. Confidence:
+0.86 in the tested implementation, pending the separate reviewer and release gate.

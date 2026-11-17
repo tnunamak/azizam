@@ -622,16 +622,22 @@ def test_remote_policy_rejects_unapproved_records_and_redirects():
 
     registry, _, factory, cap, runtime, requests = case()
     service = registry['services']['remote-box']
+    unknown_billing = copy.deepcopy(service)
+    unknown_billing['config'].pop('cost_class')
+    with pytest.raises(ProtocolError):
+        policy(unknown_billing)
     for override in ({'version': 2}, {'enabled': False}, {'enabled': 'true'}, {'unknown': True},
                      {'private_cidrs': ['10.0.0.0/8']}, {'private_cidrs': ['127.0.0.0/24']},
                      {'limits': {'polls': 301}}, {'limits': {'polls': 1.5}},
-                     {'limits': {'total_s': float('nan')}}, {'limits': {'wire_bytes': True}}):
+                     {'limits': {'total_s': float('nan')}}, {'limits': {'wire_bytes': True}},
+                     {'limits': {'wire_bytes': 10 ** 1000}}):
         bad = copy.deepcopy(service)
         bad['config']['connection']['remote_dispatch'].update(override)
         with pytest.raises(ProtocolError):
             policy(bad)
     for level in ('record', 'config', 'connection', 'offering'):
-        for key, value in [('paid_remote', True), ('provider_type', 'unknown'), ('cost_class', 'paid-remote')]:
+        for key, value in [('paid_remote', True), ('provider_type', 'unknown'), ('cost_class', 'paid-remote'),
+                           ('provider_type', False), ('cost_class', None)]:
             bad = copy.deepcopy(service)
             target = {'record': bad, 'config': bad['config'], 'connection': bad['config']['connection'],
                       'offering': bad['config']['offerings'][0]}[level]
@@ -668,6 +674,19 @@ def test_remote_observation_denied_dns_zero_connections(monkeypatch):
             with pytest.raises((ProtocolError, SwitchUnavailable)):
                 await fresh_observation(runtime, factory)
             assert recorder.connections == []
+        for answer, cidr, allowed in [
+                ('10.1.2.3', '10.1.2.0/24', True), ('::ffff:10.1.2.3', '10.1.2.0/24', True),
+                ('fd12:3456:789a:1::1', 'fd12:3456:789a:1::/64', True), ('fd00:ec2::254', 'fd00:ec2::/64', False)]:
+            registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch, [answer])
+            registry['services']['remote-box']['config']['connection']['remote_dispatch']['private_cidrs'] = [cidr]
+            runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=factory.admit('remote-box'))
+            if allowed:
+                await runtime.invoke('state', {})
+                assert len(recorder.connections) == 1
+            else:
+                with pytest.raises(ProtocolError):
+                    await runtime.invoke('state', {})
+                assert recorder.connections == []
     asyncio.run(check())
 
 
@@ -721,8 +740,21 @@ def test_remote_control_secret_canary_absent(monkeypatch, caplog):
 
 
 def test_remote_probe_secret_canary_absent(monkeypatch, caplog):
-    from tests.support.remote_protocol import canary_path
+    from tests.support.remote_protocol import canary_path, socket_case
     asyncio.run(canary_path('probe', monkeypatch, caplog))
+    async def missing():
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        monkeypatch.delenv('REMOTE_TEST_MISSING_CREDENTIAL', raising=False)
+        registry['services']['remote-box']['config']['connection']['credentials'] = {'control': {
+            'secret_ref': 'os.environ/REMOTE_TEST_MISSING_CREDENTIAL', 'origin': 'https://engine.example'}}
+        runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=factory.admit('remote-box'))
+        from gateway.engine_protocol.types import CanonicalRequest
+        await runtime.adapter.invoke(runtime.connection_for('state', probe=True), 'state', CanonicalRequest('state'))
+        assert b'authorization:' not in b''.join(recorder.writes).lower()
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert len(recorder.connections) == 1
+    asyncio.run(missing())
 
 
 def test_remote_dns_pinning_reconnect_and_tls_identity(monkeypatch, tmp_path):
@@ -731,6 +763,7 @@ def test_remote_dns_pinning_reconnect_and_tls_identity(monkeypatch, tmp_path):
     from tests.support.remote_protocol import socket_case
     async def check():
         _, _, _, runtime, recorder, answers = socket_case(monkeypatch)
+        recorder.on_connect = lambda *_: answers.__setitem__(slice(None), ['127.0.0.1'])
         await runtime.invoke('state', {})
         assert recorder.connections == [('93.184.216.34', 443)]
         assert recorder.tls == ['engine.example']
@@ -845,9 +878,14 @@ def test_remote_wire_and_decompressed_byte_caps(monkeypatch):
     asyncio.run(check())
 
 
-def test_remote_header_limits_and_cancellation_close_socket(monkeypatch):
+def test_remote_header_limits_and_cancellation_close_socket(monkeypatch, tmp_path):
     from tests.support.remote_protocol import socket_case
     async def check():
+        _, _, _, runtime, recorder, _ = socket_case(monkeypatch)
+        recorder.responses.append(b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: refused\r\n\r\n')
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert recorder.closed
         for limits in ({'header_bytes': 32}, {'header_fields': 1}):
             registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
             registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = limits
@@ -872,3 +910,23 @@ def test_remote_header_limits_and_cancellation_close_socket(monkeypatch):
             await runtime.invoke('state', {})
         assert recorder.closed
     asyncio.run(check())
+    async def capacity():
+        from gateway.remote_engine import ClientFactory
+        from gateway.engine_protocol.transport import WireRequest
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        # Two independent factories for one service must share the connection ceiling.
+        other_factory = ClientFactory(lambda: registry, connector=factory._connector)
+        # The test directory is supplied by pytest, never the host's scratch defaults.
+        factory.db_path = other_factory.db_path = tmp_path / 'capacity.db'
+        other = dispatch.Runtime(runtime.target, remote_factory=other_factory,
+                                 remote_capability=other_factory.admit('remote-box'))
+        wire = WireRequest('GET', 'https://engine.example/state', {})
+        response = await runtime._transport.send(wire, runtime.connection.timeouts)
+        waiting = asyncio.create_task(other._transport.send(wire, other.connection.timeouts))
+        await asyncio.sleep(0)
+        assert not waiting.done() and len(recorder.connections) == 1
+        await response.aclose()
+        second = await asyncio.wait_for(waiting, 2)
+        await second.aclose()
+        assert len(recorder.connections) == 2
+    asyncio.run(capacity())

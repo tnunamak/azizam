@@ -28,6 +28,7 @@ from gateway.engine_protocol.errors import ProtocolError
 
 _FACTORIES = weakref.WeakSet()
 _FACTORY_LOCK = threading.Lock()
+PRODUCTION_READY = False
 
 
 def invalidate_registry(path):
@@ -48,44 +49,57 @@ def refused() -> ProtocolError:
 
 
 def origin(address: str) -> str:
-    if not isinstance(address, str) or any(c.isspace() or ord(c) < 32 for c in address) or '\\' in address:
+    if (not isinstance(address, str) or any(c.isspace() or ord(c) < 32 for c in address)
+            or '\\' in address or '#' in address or '?' in address):
         raise refused()
     try:
         p = urlsplit(address)
         if (p.scheme != 'https' or not p.hostname or p.username is not None or p.password is not None
                 or p.fragment or p.query or '%' in p.netloc or p.hostname.endswith('.')):
             raise refused()
-        port = p.port or 443
+        port = p.port if p.port is not None else 443
         if not 0 < port < 65536:
             raise refused()
         host = p.hostname.encode('idna').decode('ascii').lower()
         if ':' in host:
             host = '[' + host + ']'
         decoded = unquote(p.path)
-        if '\\' in decoded or decoded.startswith('//') or any(s in {'.', '..'} for s in decoded.split('/')):
+        if ('\\' in decoded or decoded.startswith('//') or any(s in {'.', '..'} for s in decoded.split('/'))
+                or any(c.isspace() or ord(c) < 32 for c in decoded)):
             raise refused()
         return f'https://{host}:{port}'
     except (ValueError, UnicodeError):
         raise refused() from None
 
 
-def policy(service: Mapping[str, Any]) -> tuple[str, tuple[str, ...], tuple[tuple[str, float | int], ...]]:
+def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tuple[str, ...], tuple[tuple[str, float | int], ...]]:
     from gateway import service_registry as sr
 
     connection = connection_config(service)
     raw = connection.get('remote_dispatch')
-    if not isinstance(raw, Mapping) or raw.get('enabled') is not True:
+    if (not isinstance(raw, Mapping) or type(raw.get('enabled')) is not bool
+            or (require_enabled and raw.get('enabled') is not True)):
         raise refused()
     if set(raw) - {'enabled', 'version', 'private_cidrs', 'limits'} or type(raw.get('version', 1)) is not int or raw.get('version', 1) != 1:
         raise refused()
-    if connection.get('dispatch') != 'protocol' or service.get('enabled', True) is False:
+    if connection.get('dispatch') != 'protocol':
         raise refused()
     config = service.get('config') or {}
-    levels = [service, config, connection, *offerings_config(service)]
+    if config.get('native_passthrough') or service.get('native_passthrough'):
+        raise refused()
     if isinstance(service.get('connection'), Mapping) and isinstance(config.get('connection'), Mapping):
         if service['connection'] != config['connection']:
             raise refused()
-    if any(sr._paid_remote_or_substrate(level) for level in levels) or sr.is_litellm_service_record(service.get('id'), service):
+    try:
+        sr.validate_protocol_dispatch_billing(service)
+    except ValueError:
+        raise refused() from None
+    levels = [service, config, connection, *offerings_config(service)]
+    for level in levels:
+        for name in ('provider_type', 'cost_class'):
+            if name in level and (not isinstance(level[name], str) or level[name].strip().lower() not in sr.LOCAL_PROVIDER_CLASSES):
+                raise refused()
+    if not any(level.get('cost_class') == 'free-local' for level in levels):
         raise refused()
     approved = origin(connection.get('address'))
     if connection.get('control_address') and origin(connection['control_address']) != approved:
@@ -117,7 +131,7 @@ def policy(service: Mapping[str, Any]) -> tuple[str, tuple[str, ...], tuple[tupl
     limits = []
     for name, spec in catalog.items():
         value = overrides.get(name, spec['default'])
-        if (type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= spec['maximum']
+        if (type(value) not in (int, float) or not 0 < value <= spec['maximum'] or not math.isfinite(value)
                 or (spec.get('integer') and type(value) is not int)):
             raise refused()
         limits.append((name, value))
@@ -160,6 +174,11 @@ class ClientFactory:
         record = (registry.get('services') or {}).get(service_id)
         if not isinstance(record, Mapping):
             raise refused()
+        if record.get('enabled', True) is False:
+            raise refused()
+        raw_record = ((snapshot.get('raw_value') or {}).get('services') or {}).get(service_id)
+        if raw_record is not None:
+            policy(raw_record)
         encoded = json.dumps([snapshot.get('operator_settings_generation', snapshot.get('generation')), record], sort_keys=True)
         return record, hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -203,6 +222,7 @@ class BoundTransport:
         self.loop = None
         self.monitor = None
         self.revoked = False
+        self.capacity = None
         with factory._lock:
             factory._bindings.add(self)
         if self.inner is None:
@@ -211,8 +231,12 @@ class BoundTransport:
 
     def check(self):
         if self.revoked:
-            raise refused()
-        self.factory.check(self.capability, service_id=self.capability.service_id, address=self.capability.exact_origin)
+            raise asyncio.CancelledError('Remote engine authority was revoked.')
+        try:
+            self.factory.check(self.capability, service_id=self.capability.service_id, address=self.capability.exact_origin)
+        except ProtocolError:
+            self.revoke()
+            raise asyncio.CancelledError('Remote engine authority was revoked.') from None
         self.budget.remaining()
 
     def revoke(self):
@@ -292,7 +316,7 @@ class BoundTransport:
             conn.close()
 
     async def send(self, request, timeouts):
-        from gateway.remote_engine_budget import BoundResponse
+        from gateway.remote_engine_budget import BoundResponse, service_capacity
         cap = self.capability
         self.factory.check(cap, service_id=cap.service_id, address=request.url)
         record, _ = self.factory._current(cap.service_id)
@@ -302,11 +326,29 @@ class BoundTransport:
         if any(name.lower() not in names for name in request.headers):
             raise refused()
         async with self.operation():
+            if self.capacity is None:
+                self.capacity = service_capacity(self)
             async with asyncio.timeout(self.budget.remaining()):
-                await self.budget.slots.acquire()
+                await self.capacity.acquire(self.budget.limits['connections'])
             try:
                 response = await self.inner.send(request, timeouts)
                 return BoundResponse(response, self)
             except BaseException:
-                self.budget.slots.release()
+                await self.capacity.release()
                 raise
+
+
+def factory_from_store():
+    """Use a fresh authoritative snapshot, independent of request connection caches."""
+    from gateway import admin_store, request_connections, secret_refs, service_registry
+    path = secret_refs.database()
+    def read():
+        with request_connections.request_scope():
+            snapshot = admin_store.get_service_registry_with_generation(path=path)
+        if snapshot is None:
+            raise refused()
+        raw = snapshot['value']
+        snapshot['raw_value'] = raw
+        snapshot['value'] = service_registry.read_registry(raw)[0]
+        return snapshot
+    return ClientFactory(read, db_path=path)
