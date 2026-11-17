@@ -196,8 +196,9 @@ def self_test(conn: sqlite3.Connection) -> None:
             conn.execute("UPDATE apps SET owner_user_id=? WHERE id=?", (other, svc))
         except sqlite3.IntegrityError as exc:
             raise GuardError(f"binding guard self-test: a marked handover was refused: {exc}") from None
-        conn.execute("DELETE FROM app_handovers WHERE app_id=?", (svc,))
+        conn.execute("UPDATE app_handovers SET to_user_id=? WHERE app_id=?", (owner, svc))
         conn.execute("UPDATE apps SET owner_user_id=? WHERE id=?", (owner, svc))
+        conn.execute("DELETE FROM app_handovers WHERE app_id=?", (svc,))
 
         permitted = (
             ("same-value kind", "UPDATE apps SET kind=kind WHERE id=?", (svc,)),
