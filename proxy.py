@@ -12443,7 +12443,7 @@ async def _proxy_graph_video_create(
                         and "frames" in ((video_manifest or {}).get("inputs") or {}) else None)
 
     # Validate / clamp request inputs.
-    configured = video_grid.configured_facts(workflow_cfg, {})
+    configured = video_grid.configured_facts(workflow_cfg, {"capability": domain_rows.VIDEO})
     max_seconds = float(configured.length.max_seconds)
     min_seconds = float(configured.length.min_seconds)
     source_fps = source_probe.fps if source_probe is not None else None
