@@ -43,6 +43,53 @@ describe("IconButton loading", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["direct click", "Enter", "Space"] as const)(
+    "blocks button and ancestor clicks while loading via %s",
+    async (activation) => {
+      const user = userEvent.setup();
+      const onClick = vi.fn();
+      const onParentClick = vi.fn();
+      const onClickCapture = vi.fn();
+      render(
+        <div onClick={onParentClick} onClickCapture={onClickCapture}>
+          <IconButton aria-label="Refresh" loading onClick={onClick}>R</IconButton>
+        </div>,
+      );
+      const button = screen.getByRole("button", { name: "Refresh" });
+      await user.tab();
+      expect(document.activeElement).toBe(button);
+      expect(button.hasAttribute("disabled")).toBe(false);
+
+      if (activation === "direct click") {
+        fireEvent.click(button);
+      } else {
+        await user.keyboard(activation === "Enter" ? "{Enter}" : " ");
+      }
+
+      // Capture proves each activation produced a click, not a vacuous no-op.
+      expect(onClickCapture).toHaveBeenCalledTimes(1);
+      expect(onClickCapture.mock.calls[0][0].target).toBe(button);
+      expect(onClick).not.toHaveBeenCalled();
+      expect(onParentClick).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(button);
+    },
+  );
+
+  it("allows button and ancestor clicks when not loading", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    const onParentClick = vi.fn();
+    render(
+      <div onClick={onParentClick}>
+        <IconButton aria-label="Refresh" onClick={onClick}>R</IconButton>
+      </div>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onParentClick).toHaveBeenCalledTimes(1);
+  });
+
   it("prevents submit default actions while loading", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn((event) => event.preventDefault());

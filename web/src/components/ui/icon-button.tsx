@@ -59,6 +59,7 @@ export function IconButton({
       onClick={(event) => {
         if (loading) {
           event.preventDefault();
+          event.stopPropagation();
           return;
         }
         onClick?.(event);
