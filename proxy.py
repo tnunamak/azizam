@@ -28242,7 +28242,9 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                     return _json_error(400, f"Workflow {frontend_video_create.short_name(chosen)} does not support I2V.")
                 data, filename = await _resolve_input_reference(
                     reference, caller, request=request, accepts=_input_accepts(manifest, target))
-                assets = {target: (data, filename, "image/png"), **assets}
+                mime = (request_spool.measured_type(data[:512], None)
+                        if frontend_video_create._reference_bytes(reference) is not None else None) or "image/png"
+                assets = {target: (data, filename, mime), **assets}
         except _InputReferenceError as exc:
             return _json_error(400, str(exc))
         except _VideoAssetError as exc:
