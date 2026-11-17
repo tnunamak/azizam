@@ -30,6 +30,33 @@ BUNDLED_PATH = _REGISTRY_DIR / "video_grid.yml"
 SCHEMA_PATH = _REGISTRY_DIR / "video_grid.schema.json"
 
 
+
+def _checked_fact_rules(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Reject an incomplete projection before it can produce missing video facts."""
+    source = document.get("workflow_fact_source") or {}
+    facts = source.get("facts") or {}
+    required = {"size": ("default", "max", "multiple"),
+                "length": ("min_seconds", "max_seconds"), "grid": ("fps", "step", "offset")}
+    for group, names in required.items():
+        fields = facts.get(group)
+        if not isinstance(fields, Mapping):
+            raise ValueError(f"workflow_fact_source.facts.{group}: missing group")
+        for name in names:
+            rule = fields.get(name)
+            path = f"workflow_fact_source.facts.{group}.{name}"
+            if not isinstance(rule, Mapping):
+                raise ValueError(f"{path}: missing rule")
+            for key in ("key", "default"):
+                if key not in rule:
+                    raise ValueError(f"{path}.{key}: missing field")
+    for name, rule in (source.get("roles") or {}).items():
+        for key in ("keys", "fields"):
+            if not isinstance(rule.get(key), list) or not rule[key]:
+                raise ValueError(f"workflow_fact_source.roles.{name}.{key}: missing selector")
+        if "index" in rule and (type(rule["index"]) is not int or rule["index"] < 0):
+            raise ValueError(f"workflow_fact_source.roles.{name}.index must be an exact nonnegative integer")
+    return facts
+
 def _load_document(path: Path) -> dict[str, Any]:
     """Read and validate the defaults and wire reasons together."""
     try:
@@ -51,6 +78,7 @@ def _load_document(path: Path) -> dict[str, Any]:
                     }
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator(schema).validate(checked)
+        _checked_fact_rules(document)
         defaults = document["grid_defaults"]
         for key in ("length_step", "length_offset", "minimum_side"):
             if type(defaults[key]) is not int:
@@ -253,9 +281,9 @@ def workflow_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> VideoManifest:
     """Project the same configuration values and node-role bindings both create paths use."""
-    source = _DOCUMENT["workflow_fact_source"]
+    rules = _checked_fact_rules(_DOCUMENT)
     raw = {group: {name: config.get(rule["key"], rule["default"]) for name, rule in fields.items()}
-           for group, fields in source["facts"].items()}
+           for group, fields in rules.items()}
     roles = {role: item["input"] for role, item in configured_input_targets(config, contract).items()}
     raw["roles"] = roles
     return video_facts({"capability": "video", "video": raw})
@@ -263,6 +291,7 @@ def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> 
 
 def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:
     """The precise binding destinations named by the configuration's node roles."""
+    _checked_fact_rules(_DOCUMENT)
     meta = config.get("node_roles") or {}
     roles = {}
     for role, rule in _DOCUMENT["workflow_fact_source"]["roles"].items():
