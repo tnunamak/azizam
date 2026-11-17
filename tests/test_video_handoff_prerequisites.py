@@ -394,6 +394,79 @@ def test_queued_chain_uses_accepted_template_and_options(world):
     asyncio.run(drive())
 
 
+def test_queued_chain_keeps_accepted_grid_size_and_segments(world):
+    from tests.support.config_snapshot import publish_section
+    from tests.test_s7_parity_video_create import MODEL, await_status
+    from gateway import video_extend
+
+    world.rig.set(proxy, "_WORKFLOW_JOB_SPOOL", None)
+    name, configured = proxy._chain_workflow_for(MODEL)
+    assert name is not None and configured is not None
+    original = copy.deepcopy(configured)
+    engine = video_extend.engine_for(original["builder"])
+    assert engine is not None
+    body = {"model": MODEL, "prompt": "accepted configuration", "seconds": 16, "seed": 7}
+    shots = [(body["prompt"], body["seconds"])]
+    segments = engine.plan_segments(
+        shots, fps=float(original.get("frame_rate", 24)), has_source=False,
+        max_segment_seconds=float(original.get("chain_segment_seconds", proxy._video_chain_segment_seconds())))
+    expected_segments = len(segments)
+    assert expected_segments > 1
+    queued = []
+    world.rig.set(proxy, "_schedule_workflow_run", queued.append)
+
+    async def drive():
+        auth = access_context(everything(media_metadata="none", receipt_detail="full"))
+        old = await main_video.create(json_request(body), auth, body_override=body)
+        assert old.status_code == 200, old.body
+        old_post = json.loads(old.body)
+        expected_graph = copy.deepcopy(world.engine.prompts["p1"])
+        assert old_post["segments"] == expected_segments
+        old_status = await main_video.status(old_post["id"], auth)
+        assert old_status.status_code == 200, old_status.body
+        before = json.loads(old_status.body)
+        fields = ("seconds", "actual_seconds", "total_seconds", "size")
+        expected = {key: before[key] for key in fields}
+        assert before["segments_total"] == expected_segments
+
+        response = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert response.status_code == 200, response.text
+        accepted = response.json()
+        assert accepted["id"].startswith("video_mj_")
+        assert len(queued) == 1 and len(world.engine.prompts) == 1
+        assert {key: accepted[key] for key in fields} == {key: old_post[key] for key in fields}
+        assert accepted["segments"] == expected_segments
+
+        videos = copy.deepcopy(proxy.config["videos"])
+        changed = videos["workflows"][name]
+        changed.update(frame_rate=12, default_size="320x192", chain_segment_seconds=4)
+        assert float(original.get("frame_rate", 24)) != changed["frame_rate"]
+        assert old_post["size"] != changed["default_size"]
+        changed_segments = engine.plan_segments(
+            shots, fps=12, has_source=False, max_segment_seconds=4)
+        assert len(changed_segments) != expected_segments
+        publish_section(world.rig.monkeypatch, "videos", videos)
+        live_name, live = proxy._chain_workflow_for(MODEL)
+        assert live_name == name
+        assert {key: live[key] for key in ("frame_rate", "default_size", "chain_segment_seconds")} == {
+            "frame_rate": 12, "default_size": "320x192", "chain_segment_seconds": 4}
+        assert video_extend.engine_for(original["builder"]) is engine
+
+        await proxy._run_workflow_job(queued[0])
+        await await_status(world, accepted["id"])
+        assert len(world.engine.prompts) == 2
+        assert json.dumps(world.engine.prompts["p2"], sort_keys=True) == json.dumps(expected_graph, sort_keys=True)
+        assert len(proxy._video_chain_units["p2"]) == expected_segments
+        status = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
+        assert status.status_code == 200, status.text
+        after = status.json()
+        assert {key: after[key] for key in fields} == expected
+        assert after["segments"] == expected_segments
+        assert after["segments_total"] == expected_segments
+
+    asyncio.run(drive())
+
+
 @pytest.mark.parametrize("extra", [
     {"model": "ltx-2.5-long", "seconds": 16},
     {"model": "ltx-2.5-t2v", "seconds": 16},
