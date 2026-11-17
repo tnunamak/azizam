@@ -59,6 +59,11 @@ class RemixReplaceBase(unittest.TestCase):
         self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
         patch_video_row_files_in_a_temporary_tree(self.stack)       # a plain create is a row job: it keeps its files here
+        self.stack.enter_context(patch.object(proxy, "_workflow_run_semaphore", None))
+        self.stack.enter_context(patch.object(proxy, "IMAGE_MEDIA_JOB_CONCURRENCY", 20))
+        from gateway.engine_protocol.description import Poll
+        from gateway.engine_protocol.node_graph import NodeGraphAdapter
+        self.stack.enter_context(patch.object(NodeGraphAdapter, "poll_for", return_value=Poll(ramp_s=(), interval_s=0.05, max_polls=None)))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
