@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Mapping, TypeVar
 
 _Row = TypeVar("_Row")
@@ -14,8 +15,12 @@ def resolve_intent(
     if not isinstance(intent, str):
         raise TypeError("intent must be a string")
     parts = intent.split(".")
-    if len(parts) < 2 or not all(parts) or any(char.isspace() for char in intent):
+    if len(parts) < 2 or any(
+        re.fullmatch(r"[A-Za-z0-9_]+", part, flags=re.ASCII) is None for part in parts
+    ):
         return None
     if intent in exact:
         return exact[intent]
+    if any("." in name and intent.startswith(name + ".") for name in exact):
+        return None
     return families.get(parts[0])
