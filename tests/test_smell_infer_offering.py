@@ -102,14 +102,19 @@ def test_the_smell_offering_never_resubmits_after_a_lost_reply(jobs_db):  # noqa
 
 
 def _without_web_comments(source: str) -> str:
-    """Blank comment spans without moving lines or interpreting quoted markers."""
+    """Blank comments, preserving regex/string bytes and original line offsets."""
     chars = list(source)
-    quote = None
+    # Each interpolation has its own token context and balanced code braces.
+    contexts = [{"mode": "code", "depth": 0, "previous": "", "word": ""}]
+    regex_prefixes = set("(,=:[!&|?{};+-*%<>~^")
+    regex_words = {"return", "typeof", "case", "do", "else", "in", "of", "void", "yield"}
     comment = None
     index = 0
     while index < len(source):
         char = source[index]
         pair = source[index:index + 2]
+        context = contexts[-1]
+        mode = context["mode"]
         if comment == "line":
             if char in "\r\n":
                 comment = None
@@ -125,21 +130,68 @@ def _without_web_comments(source: str) -> str:
                 if char not in "\r\n":
                     chars[index] = " "
                 index += 1
-        elif quote is not None:
+        elif mode != "code":
             if char == "\\":
                 index += 2
+            elif mode == "\x60" and pair == "${":
+                contexts.append({"mode": "code", "depth": 1, "previous": "{", "word": ""})
+                index += 2
             else:
-                if char == quote:
-                    quote = None
+                if char == mode:
+                    contexts.pop()
+                    contexts[-1]["previous"] = char
+                    contexts[-1]["word"] = ""
                 index += 1
         elif char in ("'", '"', "\x60"):
-            quote = char
+            contexts.append({"mode": char})
             index += 1
         elif pair in ("//", "/*"):
             chars[index:index + 2] = [" ", " "]
             comment = "line" if pair == "//" else "block"
             index += 2
+        elif char == "/" and (
+            not context["previous"]
+            or context["previous"] in regex_prefixes
+            or context["word"] in regex_words
+        ):
+            # A slash inside a character class is not the closing delimiter.
+            index += 1
+            in_class = False
+            while index < len(source):
+                current = source[index]
+                if current == "\\":
+                    index += 2
+                    continue
+                if current == "[":
+                    in_class = True
+                elif current == "]":
+                    in_class = False
+                elif current == "/" and not in_class:
+                    index += 1
+                    break
+                index += 1
+            while index < len(source) and source[index].isalpha():
+                index += 1
+            context["previous"] = "/"
+            context["word"] = ""
+        elif char.isspace():
+            index += 1
+        elif char.isalnum() or char in "_$":
+            start = index
+            while index < len(source) and (source[index].isalnum() or source[index] in "_$"):
+                index += 1
+            context["previous"] = source[index - 1]
+            context["word"] = source[start:index]
         else:
+            if context["depth"]:
+                if char == "{":
+                    context["depth"] += 1
+                elif char == "}":
+                    context["depth"] -= 1
+                    if context["depth"] == 0:
+                        contexts.pop()
+            context["previous"] = char
+            context["word"] = ""
             index += 1
     return "".join(chars)
 
@@ -227,6 +279,16 @@ def test_no_web_source_names_the_smell_offering():
         ("web/src/after-block.ts", '/* explanation\n smell docs */ const offering = "smell";\n', True, [2]),
         ("web/src/inline-comment.ts", 'const value = 1; // smell docs\n', True, []),
         ("web/src/string-comment.ts", 'const text = "/* smell */";\n', True, [1]),
+        ("web/src/regex-class.ts", "const marker = /[/*]/; const offering = \"smell\";\n", True, [1]),
+        ("web/src/regex-escape.ts", "const marker = /a\\/b/; const offering = \"smell\";\n", True, [1]),
+        ("web/src/real-block.ts", "const value = 1; /* smell documentation */\n", True, []),
+        ("web/src/division.ts", "const r = a / b; // smell\n", True, []),
+        ("web/src/template-expression.ts", "const text = `${1 /* smell documentation */}`;\n", True, []),
+        ("web/src/template-text.ts", "const text = `smell ${1}`;\n", True, [1]),
+        ("web/src/nested-template.ts", "const text = `${{value: `${1 /* smell docs */}`}.value}`;\n", True, []),
+        ("web/src/template-code.ts", "const text = `${{value: \"smell\"}.value}`;\n", True, [1]),
+        ("web/src/regex-return.ts", "function f() { return /[/*]/g; } const offering = \"smell\";\n", True, [1]),
+        ("web/src/regex-class-escape.ts", "const marker = /[\\]/*]/g; const offering = \"smell\";\n", True, [1]),
         ("gateway/constant.py", 'QUERY = """SMELL"""\n', False, [1]),
         (
             "gateway/docs.py",
@@ -258,6 +320,16 @@ def test_no_web_source_names_the_smell_offering():
         "after-multiline-block-comment",
         "trailing-line-comment",
         "quoted-block-comment",
+        "regex-class",
+        "regex-escape",
+        "real-block",
+        "division",
+        "template-expression",
+        "template-text",
+        "nested-template",
+        "template-code",
+        "regex-return",
+        "regex-class-escape",
         "triple-quoted-constant",
         "real-docstrings",
         "gateway-json",
