@@ -1,6 +1,11 @@
 # Published duration-adjustment reasons for the frame-count grid. The step is the
 # workflow's length_step; unlisted steps keep the generic wire reason.
 grid_defaults:
+  fallback_fps: 25
+  fallback_size: 1280x720
+  fallback_size_multiple: 32
+  fallback_min_seconds: 1
+  fallback_max_seconds: 8
   length_step: 8
   length_offset: 1
   minimum_side: 64
