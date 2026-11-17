@@ -214,3 +214,67 @@ def test_an_owner_home_is_not_judged_on_member_requests() -> None:
 def test_the_budget_table_has_no_route_exceptions() -> None:
     """Every route meets the defaults in [api]. A route with its own limits hides a slow route, so the table stays empty."""
     assert BUDGETS["api"].get("routes", {}) == {}
+
+
+def test_judge_includes_stalls_from_both_entry_points() -> None:
+    rows = [{"route": "/cold", "who": "owner", "stall_ms": BUDGETS["loop"]["max_stall_ms"] + 1}]
+    expected = check.loop_violations(rows, BUDGETS["loop"])
+    assert expected
+    assert check.judge(rows, [], None, BUDGETS, False) == expected
+    assert run.check.judge(rows, [], None, BUDGETS, False) == expected
+    assert check.judge(rows, [], None, BUDGETS, True) == []
+
+
+@pytest.mark.parametrize("value", [float("nan"), None, True, "12", float("inf"), -float("inf")])
+def test_judge_reports_invalid_measurements(value) -> None:
+    cases = [
+        (check.api_violations, [_api(p95=value)], BUDGETS["api"], False, "p95_ms"),
+        (check.ui_violations, [{**_ui(), "bytes": value}], BUDGETS["ui"], False, "kilobytes"),
+    ]
+    for fn, rows, budget, counts_only, metric in cases:
+        found = fn(rows, budget, counts_only)
+        assert [(v["metric"], v["value"], v["over"]) for v in found] == [(metric, "invalid", 99)]
+    stalled = {"route": "/cold", "who": "owner", "stall_ms": value}
+    assert check.loop_violations([stalled], BUDGETS["loop"])[0]["value"] == "invalid"
+    assert check.home_violations(_home(js_req=value), BUDGETS["home"])[0]["value"] == "invalid"
+
+
+@pytest.mark.parametrize("counts_only", [False, True])
+def test_judge_error_and_skipped_rows(counts_only) -> None:
+    row = {"route": "/hung", "who": "owner"}
+    found = check.judge([{**row, "error": "reset"}], [], None, BUDGETS, counts_only)
+    assert [(v["metric"], v["value"], v["over"]) for v in found] == [("error", "error", 99)]
+    assert check.judge([{**row, "skipped": "unavailable"}], [], None, BUDGETS, counts_only) == []
+
+
+def test_judge_counts_only_keeps_home_counts_not_timings() -> None:
+    home = _home(desktop_cold=None, mobile_cold=float("nan"), mobile_warm=999999,
+                 js_req=BUDGETS["home"]["js_requests"] + 1)
+    assert [v["metric"] for v in check.judge([], [], home, BUDGETS, True)] == ["js_requests"]
+    home["who"] = "member"
+    home["profiles"]["desktop"]["cold"]["member_api_requests"] = BUDGETS["home"]["member_api_requests"] + 1
+    assert [v["metric"] for v in check.judge([], [], home, BUDGETS, True)] == ["js_requests", "member_api_requests"]
+
+
+@pytest.mark.parametrize("counts_only", [False, True])
+def test_judge_within_budget(counts_only) -> None:
+    assert check.judge([_api()], [_ui()], _home(), BUDGETS, counts_only) == []
+
+
+def test_run_main_uses_shared_judge_for_stalls(tmp_path, monkeypatch) -> None:
+    rows = [{"route": "/cold", "who": "owner", "stall_ms": BUDGETS["loop"]["max_stall_ms"] + 1}]
+    monkeypatch.setattr(run, "HERE", tmp_path)
+    (tmp_path / "budgets.toml").write_text("")
+    monkeypatch.setattr(run.tomllib, "loads", lambda _: BUDGETS)
+    monkeypatch.setattr(run.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "abc", ""))
+    monkeypatch.setattr(run, "start_fixture", lambda *a: (object(), {}))
+    monkeypatch.setattr(run, "stop", lambda process: None)
+    monkeypatch.setattr(run.scratch_owner, "sweep", lambda *a: None)
+    monkeypatch.setattr(run.api_bench, "run", lambda manifest: {"rows": rows})
+    monkeypatch.setattr(run.os, "getloadavg", lambda: (0, 0, 0))
+    monkeypatch.setenv("AZIZAM_CI_SCRATCH", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["run.py", "--no-ui", "--out", str(tmp_path / "out")])
+    assert run.main() == 1
+    import json
+    result = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert result["violations"] == check.judge(rows, [], None, BUDGETS, False)

@@ -145,11 +145,7 @@ def main() -> int:
         if process is not None:
             stop(process)  # serve.py deletes its copy of the data as it exits
         scratch_owner.sweep(scratch, "azizam-perf-run-")  # and if it was killed, the copy goes now, not at the next start
-    violations = check.api_violations(api["rows"], budgets["api"], args.counts_only)
-    if ui is not None:
-        violations += check.ui_violations(ui["rows"], budgets["ui"], args.counts_only)
-    if home is not None and not args.counts_only:
-        violations += check.home_violations(home, budgets["home"])
+    violations = check.judge(api["rows"], ui["rows"] if ui is not None else [], home, budgets, args.counts_only)
     text = report(violations, sha, load)
     (out / "report.md").write_text(text, encoding="utf-8")
     (out / "result.json").write_text(json.dumps({"sha": sha, "load_1min": load, "violations": violations}, indent=1), encoding="utf-8")

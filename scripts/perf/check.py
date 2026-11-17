@@ -4,13 +4,14 @@
     scripts/perf/check.py --api api.json [--ui ui.json] [--budgets budgets.toml] [--counts-only]
 
 Prints a ranked table of what exceeds a budget (worst first) and exits 1 when anything does.
---counts-only judges only statements, connections and processes (no timing), for hosts
+--counts-only judges counts and payload sizes (no timing), for hosts
 where times are meaningless.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import tomllib
 from pathlib import Path
@@ -18,19 +19,41 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
+def _finite(value) -> bool:
+    return not isinstance(value, bool) and (
+        isinstance(value, int) or isinstance(value, float) and math.isfinite(value)
+    )
+
+
+def _violation(kind, what, metric, value, limit, *, rounded=False, never=False):
+    if not _finite(value):
+        return {"kind": kind, "what": what, "metric": metric,
+                "value": "never" if never and value is None else "invalid", "limit": limit, "over": 99}
+    if value > limit:
+        return {"kind": kind, "what": what, "metric": metric,
+                "value": round(value) if rounded else value, "limit": limit, "over": value / max(limit, 1)}
+    return None
+
+
 def api_violations(rows: list[dict], budget: dict, counts_only: bool) -> list[dict]:
     found = []
     for row in rows:
-        if "p95_ms" not in row:
+        if "skipped" in row:
             continue
+        if "error" in row:
+            found.append({"kind": "api", "what": f"{row['route']} ({row['who']})", "metric": "error",
+                          "value": "error", "limit": 0, "over": 99})
+            continue
+        if "p95_ms" not in row:
+            continue  # standalone loop measurement, not an API sample
         limits = {**budget, **(budget.get("routes", {}).get(row["route"]) or {})}
-        checks = [("statements", row["sql"]), ("connections", row["connects"]), ("processes", row["subproc"])]
+        checks = [("statements", row.get("sql")), ("connections", row.get("connects")), ("processes", row.get("subproc"))]
         if not counts_only:
             checks.append(("p95_ms", row["p95_ms"]))
         for name, value in checks:
-            if value > limits[name]:
-                found.append({"kind": "api", "what": f"{row['route']} ({row['who']})", "metric": name,
-                              "value": value, "limit": limits[name], "over": value / max(limits[name], 1)})
+            violation = _violation("api", f"{row['route']} ({row['who']})", name, value, limits[name])
+            if violation is not None:
+                found.append(violation)
     return found
 
 
@@ -38,11 +61,11 @@ def loop_violations(rows: list[dict], budget: dict) -> list[dict]:
     """A cold read that stalls the event loop, as api_bench.py measures it (rows with stall_ms)."""
     found = []
     for row in rows:
-        if "stall_ms" not in row or row["stall_ms"] <= budget["max_stall_ms"]:
+        if "stall_ms" not in row:
             continue
-        found.append({"kind": "loop", "what": f"{row['route']} ({row['who']})", "metric": "stall_ms",
-                      "value": row["stall_ms"], "limit": budget["max_stall_ms"],
-                      "over": row["stall_ms"] / max(budget["max_stall_ms"], 1)})
+        violation = _violation("loop", f"{row['route']} ({row['who']})", "stall_ms", row["stall_ms"], budget["max_stall_ms"])
+        if violation is not None:
+            found.append(violation)
     return found
 
 
@@ -56,31 +79,48 @@ def ui_violations(rows: list[dict], budget: dict, counts_only: bool) -> list[dic
             found.append({"kind": "ui", "what": f"{row['route']} ({row['who']})", "metric": "ready_ms",
                           "value": "never", "limit": limits["ready_ms"], "over": 99})
             continue
-        checks = [("requests", row["requests"]), ("kilobytes", row["bytes"] / 1024)]
+        size = row.get("bytes")
+        checks = [("requests", row.get("requests")), ("kilobytes", size / 1024 if _finite(size) else size)]
         if not counts_only:
-            checks += [("ready_ms", row["ready_ms"]), ("long_task_ms", row["long_task_ms"])]
+            checks += [("ready_ms", row["ready_ms"]), ("long_task_ms", row.get("long_task_ms"))]
         for name, value in checks:
-            if value > limits[name]:
-                found.append({"kind": "ui", "what": f"{row['route']} ({row['who']})", "metric": name,
-                              "value": round(value), "limit": limits[name], "over": value / max(limits[name], 1)})
+            violation = _violation("ui", f"{row['route']} ({row['who']})", name, value, limits[name], rounded=True)
+            if violation is not None:
+                found.append(violation)
     return found
 
 
-def home_violations(report: dict, budget: dict) -> list[dict]:
-    """Judge a home_bench.mjs report against [home]."""
+def home_violations(report: dict, budget: dict, counts_only: bool = False) -> list[dict]:
+    """Judge a home report; counts-only excludes content timings."""
     profiles = report["profiles"]
-    checks = [
-        ("desktop_cold_ms", profiles["desktop"]["cold"]["content_ms"]), ("desktop_warm_ms", profiles["desktop"]["warm"]["content_ms"]),
-        ("mobile_cold_ms", profiles["mobile"]["cold"]["content_ms"]), ("mobile_warm_ms", profiles["mobile"]["warm"]["content_ms"]),
-        ("js_wire_kb", profiles["mobile"]["cold"]["js_wire_kb"]), ("js_requests", profiles["mobile"]["cold"]["js_requests"]),
-        ("uncompressed_js", profiles["mobile"]["cold"]["js_uncompressed"]),
-    ]
+    checks = []
+    if not counts_only:
+        for device in ("desktop", "mobile"):
+            for cache in ("cold", "warm"):
+                checks.append((f"{device}_{cache}_ms", profiles[device][cache].get("content_ms")))
+    cold = profiles["mobile"]["cold"]
+    checks += [("js_wire_kb", cold.get("js_wire_kb")), ("js_requests", cold.get("js_requests")),
+               ("uncompressed_js", cold.get("js_uncompressed"))]
     if report.get("who") == "member":
-        # Only a member's Home is judged on requests: an owner's also reads the status and registry the shell shares.
+        # The owner's shell also reads status and registry.
         checks.append(("member_api_requests", profiles["desktop"]["cold"].get("member_api_requests")))
-    return [{"kind": "home", "what": "Home", "metric": name, "value": value if value is not None else "never", "limit": budget[name],
-             "over": 99 if value is None else value / max(budget[name], 1)}
-            for name, value in checks if value is None or value > budget[name]]
+    found = []
+    for name, value in checks:
+        violation = _violation("home", "Home", name, value, budget[name], never=name.endswith("_ms"))
+        if violation is not None:
+            found.append(violation)
+    return found
+
+
+def judge(api_rows: list[dict], ui_rows: list[dict], home: dict | None, budgets: dict, counts_only: bool) -> list[dict]:
+    found = api_violations(api_rows, budgets["api"], counts_only)
+    if not counts_only:
+        found += loop_violations(api_rows, budgets["loop"])
+    if ui_rows:
+        found += ui_violations(ui_rows, budgets["ui"], counts_only)
+    if home is not None:
+        found += home_violations(home, budgets["home"], counts_only)
+    return found
 
 
 def table(violations: list[dict]) -> str:
@@ -100,13 +140,9 @@ def main() -> None:
     args = parser.parse_args()
     budgets = tomllib.loads(args.budgets.read_text(encoding="utf-8"))
     api_rows = json.loads(args.api.read_text())["rows"]
-    bad = api_violations(api_rows, budgets["api"], args.counts_only)
-    if not args.counts_only:
-        bad += loop_violations(api_rows, budgets["loop"])
-    if args.ui:
-        bad += ui_violations(json.loads(args.ui.read_text())["rows"], budgets["ui"], args.counts_only)
-    if args.home and not args.counts_only:
-        bad += home_violations(json.loads(args.home.read_text()), budgets["home"])
+    ui_rows = json.loads(args.ui.read_text())["rows"] if args.ui else []
+    home = json.loads(args.home.read_text()) if args.home else None
+    bad = judge(api_rows, ui_rows, home, budgets, args.counts_only)
     if bad:
         print(table(bad))
         print(f"\n{len(bad)} over budget", file=sys.stderr)
