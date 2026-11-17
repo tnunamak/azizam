@@ -144,6 +144,10 @@ an empty name clears it even when the environment variable is set.
 | `AZIZAM_COMFY_DIR` | Root directory of a [ComfyUI](https://github.com/comfyanonymous/ComfyUI) installation. Sets the default for `AZIZAM_COMFY_OUTPUT_DIR` and `AZIZAM_COMFY_CUSTOM_NODES_DIR`. | unset (feature off) |
 | `AZIZAM_COMFY_OUTPUT_DIR` | ComfyUI output directory (overrides `AZIZAM_COMFY_DIR/output`). Used for recent-renders and disk hot-spot reporting. | `$AZIZAM_COMFY_DIR/output` if `AZIZAM_COMFY_DIR` is set, else disabled |
 | `AZIZAM_COMFY_CUSTOM_NODES_DIR` | ComfyUI custom_nodes directory (overrides `AZIZAM_COMFY_DIR/custom_nodes`). Used by the status endpoint custom-nodes list. | `$AZIZAM_COMFY_DIR/custom_nodes` if `AZIZAM_COMFY_DIR` is set, else disabled |
+| `AZIZAM_HOST_MEMORY_MARGIN_GB` | GiB that must stay free after a prompt loads model files (default from `registry/host_memory_admission.yml`: 12). |  |
+| `AZIZAM_HOST_MEMORY_WAIT_S` | Seconds a synchronous request waits for host memory before the retryable busy answer (default 300). |  |
+| `AZIZAM_HOST_MEMORY_MODEL_ROOTS` | Directories that hold the engine's model files, separated by the path separator. The engine directory (`AZIZAM_COMFY_DIR`) adds its models folder and extra model paths. No known root: no prompt waits. | unset |
+| `AZIZAM_HOST_MEMORY_BACKGROUND_APPS` | Comma-separated app ids whose requests wait behind everyone else and use the larger margin (test lanes). | unset |
 
 ## Status / monitoring
 
