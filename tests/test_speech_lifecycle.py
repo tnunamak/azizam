@@ -303,3 +303,26 @@ class BufferedSttStreamValidationTests(SttCase):
         for payload in (123, None, [], "words", {}, {"text": 123}, {"text": None}):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 speech_stream.transcript_json_to_sse(payload)
+
+
+
+class RemoteRefusalTests(RouteCase):
+    def test_remote_legacy_speech_route_answers_typed_refusal(self):
+        import pytest
+        from gateway import engine_egress
+        from tests.support.remote_protocol import SocketRecorder
+        resolution = proxy.resolve_model_for_operation('speech', 'tts-fast')
+        service_id = resolution.alias.service
+        service = self.cfg['backends'][service_id]
+        service['connection'] = {'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}}
+        previous = engine_egress._live
+        self.addCleanup(engine_egress.install, previous)
+        engine_egress.publish(self.cfg['backends'])
+        self.assertFalse(proxy._is_local_swap_backend(service_id))
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            recorder = SocketRecorder(monkeypatch)
+            response = self.client.post('/v1/audio/speech', json={
+                'model': 'tts-fast', 'voice': 'shimmer', 'input': 'synthetic review', 'response_format': 'wav'})
+            self.assertEqual(response.status_code, 502, response.text)
+            self.assertEqual(response.json()['error']['code'], 'protocol_dispatch_refused')
+            self.assertFalse(recorder.connections or recorder.writes)

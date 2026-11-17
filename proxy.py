@@ -1153,7 +1153,11 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 
     if not backend:
         return False
-    return supports_swap(driver_for_service(backend, config.get("backends")))
+    try:
+        return supports_swap(driver_for_service(backend, config.get("backends")))
+    except ProtocolError:
+        # Classification grants no egress: a remote record is never a local swap.
+        return False
 
 
 # Optional catalog of additional GGUF aliases (parallel to the roles section). Each entry has
@@ -5023,6 +5027,8 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     These hops (speech, rerank, realtime, decisions) hold no serving lease yet,
     so a transition-enabled domain refuses them here (fail closed).
     """
+    from gateway.remote_engine import refuse_unbound
+    refuse_unbound((config.get("backends") or {}).get(service_id) or {})
     refusal = _unleased_path_refusal(service_id)
     if refusal is not None:
         return refusal
@@ -14569,6 +14575,12 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 async def _transition_unavailable_handler(_request: Request, exc: TransitionUnavailable) -> Response:
     """A gate refusal no route caught still answers in the gateway's error shape, with its Retry-After, never FastAPI's ``{"detail"}``."""
     return _transition_unavailable_response(exc)
+
+
+@app.exception_handler(ProtocolError)
+async def _protocol_refusal_handler(_request: Request, exc: ProtocolError) -> Response:
+    """Legacy routes share the declared protocol's sanitized error envelope."""
+    return _protocol_failure(exc)
 
 
 @app.exception_handler(RegistryNotApplied)
