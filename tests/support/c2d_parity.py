@@ -30,7 +30,13 @@ def jsonable(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return jsonable(dataclasses.asdict(value))
     if isinstance(value, dict):
-        return {str(key): jsonable(item) for key, item in value.items()}
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            text = str(key)
+            if text in result:
+                raise ValueError(f"Colliding JSON key text: {text!r}")
+            result[text] = jsonable(item)
+        return result
     if isinstance(value, (set, frozenset)):
         return sorted((jsonable(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
     if isinstance(value, (list, tuple)):
