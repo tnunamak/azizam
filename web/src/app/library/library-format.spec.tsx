@@ -32,6 +32,17 @@ describe("thumbnailSize", () => {
 });
 
 describe("tileDate", () => {
+  test("labels invalid dates as undated and bounds future clock skew", () => {
+    expect(tileDate(new Date(NaN), now)).toBe("Undated");
+    expect(tileDate(new Date(2027, 9, 8, 15), now)).toBe("Oct 8, 2027");
+    expect(tileDate(new Date(2026, 9, 8, 17), now)).toBe("Today");
+    expect(tileDate(new Date(now.getTime() + 86_400_000 - 1), now)).toBe("Today");
+    expect(tileDate(new Date(now.getTime() + 86_400_000), now)).toBe("Oct 9");
+    expect(tileDate(new Date(2026, 9, 10, 15), now)).toBe("Oct 10");
+    expect(dayMarks([new Date(NaN), null, new Date(2027, 9, 8, 15)], now))
+      .toEqual(["Undated", null, "Oct 8, 2027"]);
+  });
+
   test.each([
     [new Date(2026, 9, 8, 9, 0), "Today"],
     [new Date(2026, 9, 7, 23, 59), "Yesterday"],
@@ -115,6 +126,25 @@ describe("model display names", () => {
 });
 
 describe("inProgressMedia", () => {
+  test.each([
+    [0, 50, 0],
+    [1000, 50, 1],
+    [Infinity, 50, 50],
+    [-Infinity, 0, 0],
+    [NaN, 50, 50],
+    [null, 0, 0],
+    [undefined, 50, 50],
+    [Infinity, Infinity, null],
+    [NaN, NaN, null],
+    [null, -Infinity, null],
+    [undefined, undefined, null],
+  ])("uses only finite start times (%s, %s)", (accepted_at_ms, _stored_at, startedAt) => {
+    expect(inProgressMedia([{
+      request_id: "timestamp", status: "running", intent: "image.generate",
+      accepted_at_ms, _stored_at,
+    }])).toEqual([{ id: "timestamp", kind: "image", startedAt }]);
+  });
+
   test("keeps only running media requests and reads their kind and start", () => {
     expect(
       inProgressMedia([
