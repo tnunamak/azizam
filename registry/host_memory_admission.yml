@@ -2,9 +2,12 @@
 # A prompt that makes the graph engine load model files waits until the host's MemAvailable covers the files it will load
 # plus a margin. Models the gateway already sent to the engine, and has not freed, are resident and cost nothing.
 schema_version: 1
-# GiB that must stay free after the load, for a person's request and for background work (a larger margin).
-margin_gb: 12
-background_margin_gb: 20
+# GiB that must stay free after the load, by the kind of App that asks: a personal App has a person behind it; a service
+# App has none, yields to every personal request and keeps the larger margin. The owner's saved setting (admin.db key
+# host_memory_admission, /admin/api/settings/host-memory) wins over this file, for these margins and the two waits below.
+margin_gb:
+  personal: 12
+  service: 20
 # Seconds a synchronous request waits before the retryable busy answer, and the ceiling of a job's wait.
 wait_s: 300
 job_wait_s: 7200
@@ -22,9 +25,6 @@ model_extensions: [.safetensors, .gguf, .ckpt, .pt, .pth, .bin, .sft]
 # Directories that hold the model files; empty: none known, so no prompt has a known size and none waits. The engine
 # directory named by the environment variable below (its models folder and the base paths of its extra-paths file) adds to this list.
 model_roots: []
-# Credential kinds (RuntimeIdentity.auth_kind) whose requests yield to every other request and use the larger margin. A
-# service App's key has no person behind it; a session, a personal App key and an MCP grant do. Empty: every request is equal.
-background_auth_kinds: [service_key]
 # The environment variable that names the engine's directory, the folder under it that holds models, and the engine's own
 # file of further model directories (a mapping whose sections may name a base_path).
 engine_dir_env: AZIZAM_COMFY_DIR

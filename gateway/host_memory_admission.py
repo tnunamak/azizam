@@ -10,8 +10,10 @@ found counts for nothing; a prompt with no sized model is admitted without a loo
 gateway sent it within ``resident_ttl_s`` and the engine's models were not freed since; residency the gateway cannot show is
 treated as not resident.
 
-A request with a person behind it is admitted before service-key work (``background_auth_kinds``, which also uses the larger margin); within a
-class the order is first come, first served. A synchronous request waits ``wait_s`` and then gets the retryable busy answer.
+The margin depends on the kind of App that asks (``admin_store.APP_KINDS``: a ``personal`` App has a person behind it; a
+``service`` App has none and yields to every personal request). The margin per kind, ``wait_s`` and ``job_wait_s`` are owner
+settings (key ``host_memory_admission`` in admin.db, ``validate_setting``); the shipped file is their read-only default and
+the saved setting wins. Within a kind the order is first come, first served. A synchronous request waits ``wait_s`` and then gets the retryable busy answer.
 A job waits up to ``job_wait_s`` and reports its wait to the caller through ``Ask.on_wait``.
 """
 
@@ -22,11 +24,12 @@ import itertools
 import logging
 import os
 import time
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 
-from gateway import client_errors
+from gateway import admin_store, client_errors
 from gateway.strict_yaml import safe_load_strict
 
 LOG = logging.getLogger("azizam.host_memory")
@@ -35,16 +38,17 @@ BUSY_REASON = "host_memory_busy"
 BUSY_CODE = "resource_unavailable"
 WAITING_PHASE = "waiting_for_memory"
 _DECLARATION = Path(__file__).resolve().parents[1] / "registry" / "host_memory_admission.yml"
-_KEYS = {"schema_version", "margin_gb", "background_margin_gb", "wait_s", "job_wait_s", "poll_s", "report_s", "settle_s",
-         "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "background_auth_kinds", "engine_dir_env",
+_KEYS = {"schema_version", "margin_gb", "wait_s", "job_wait_s", "poll_s", "report_s", "settle_s",
+         "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "engine_dir_env",
          "engine_models_folder", "engine_extra_paths_file"}
+SETTING_KEY = "host_memory_admission"
+PERSONAL, SERVICE = admin_store.APP_KINDS
 ENV_MARGIN, ENV_WAIT, ENV_ROOTS = ("AZIZAM_HOST_MEMORY_MARGIN_GB", "AZIZAM_HOST_MEMORY_WAIT_S", "AZIZAM_HOST_MEMORY_MODEL_ROOTS")
 
 
 @dataclass(frozen=True)
 class HostMemoryPolicy:
-    margin_bytes: int = 12 * GIB
-    background_margin_bytes: int = 20 * GIB
+    margin_bytes_by_kind: Mapping[str, int] = field(default_factory=lambda: {PERSONAL: 12 * GIB, SERVICE: 20 * GIB})
     wait_s: float = 300.0
     job_wait_s: float = 7200.0
     poll_s: float = 2.0
@@ -54,10 +58,12 @@ class HostMemoryPolicy:
     retry_after_s: int = 30
     model_extensions: tuple[str, ...] = (".safetensors",)
     model_roots: tuple[str, ...] = ()
-    background_auth_kinds: tuple[str, ...] = ()
 
-    def is_background(self, auth_kind: str | None) -> bool:
-        return bool(auth_kind) and auth_kind in self.background_auth_kinds
+
+def app_kind_of(auth_kind: str | None) -> str:
+    """The App kind behind a request's credential kind. The runtime identity carries ``auth_kind``, not the App row's kind;
+    ``service_key`` is what an authenticated request of a ``service`` App has (``admin_runtime``), every other kind has a person."""
+    return SERVICE if auth_kind == "service_key" else PERSONAL
 
 
 def _engine_roots(directory: str, models_folder: str, extra_file: str) -> list[str]:
@@ -80,19 +86,79 @@ def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
     document = safe_load_strict(_DECLARATION.read_text(encoding="utf-8"))
     if not isinstance(document, dict) or set(document) != _KEYS or document["schema_version"] != 1:
         raise ValueError("host_memory_admission.yml: every key must be known and schema_version must be 1")
-    margin_gb = float(env.get(ENV_MARGIN) or document["margin_gb"])
+    margins = document["margin_gb"]
+    if not isinstance(margins, dict) or set(margins) != set(admin_store.APP_KINDS):
+        raise ValueError("host_memory_admission.yml: margin_gb must give one margin per app kind")
+    margins = {kind: float(env.get(ENV_MARGIN) or margins[kind]) if kind == PERSONAL else float(margins[kind])
+               for kind in admin_store.APP_KINDS}
     roots = [r for r in (env.get(ENV_ROOTS) or "").split(os.pathsep) if r] or [str(r) for r in document["model_roots"]]
     engine_dir = env.get(str(document["engine_dir_env"]))
     if engine_dir:
         roots += [r for r in _engine_roots(engine_dir, str(document["engine_models_folder"]),
                                            str(document["engine_extra_paths_file"])) if r not in roots]
     return HostMemoryPolicy(
-        margin_bytes=int(margin_gb * GIB), background_margin_bytes=int(float(document["background_margin_gb"]) * GIB),
+        margin_bytes_by_kind={kind: int(gb * GIB) for kind, gb in margins.items()},
         wait_s=float(env.get(ENV_WAIT) or document["wait_s"]), job_wait_s=float(document["job_wait_s"]),
         poll_s=float(document["poll_s"]), report_s=float(document["report_s"]), settle_s=float(document["settle_s"]),
         resident_ttl_s=float(document["resident_ttl_s"]), retry_after_s=int(document["retry_after_s"]),
-        model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots),
-        background_auth_kinds=tuple(str(k) for k in document["background_auth_kinds"]))
+        model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots))
+
+
+# -- the owner's setting (admin.db) over the shipped defaults ------------------------------------------------------------
+
+class InvalidHostMemorySetting(ValueError):
+    """The submitted setting is not a margin per app kind and two waits, or is out of range."""
+
+
+def _number(value: Any) -> float | None:
+    return float(value) if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+
+def validate_setting(value: Any) -> dict[str, Any]:
+    """``{"margin_gb": {"personal": n, "service": n}, "wait_s": n, "job_wait_s": n}`` with non-negative numbers and
+    ``wait_s`` not above ``job_wait_s``, or a clear refusal."""
+    if not isinstance(value, Mapping) or set(value) != {"margin_gb", "wait_s", "job_wait_s"}:
+        raise InvalidHostMemorySetting("Supply margin_gb (one number per app kind), wait_s and job_wait_s.")
+    margins = value["margin_gb"]
+    if not isinstance(margins, Mapping) or set(margins) != set(admin_store.APP_KINDS):
+        raise InvalidHostMemorySetting("margin_gb needs one number for each of: " + ", ".join(admin_store.APP_KINDS) + ".")
+    checked: dict[str, Any] = {"margin_gb": {}}
+    for kind in admin_store.APP_KINDS:
+        if _number(margins[kind]) is None:
+            raise InvalidHostMemorySetting(f"margin_gb.{kind} must be a number of GB, zero or more.")
+        checked["margin_gb"][kind] = margins[kind]
+    for key in ("wait_s", "job_wait_s"):
+        if _number(value[key]) is None:
+            raise InvalidHostMemorySetting(f"{key} must be a number of seconds, zero or more.")
+        checked[key] = value[key]
+    if checked["wait_s"] > checked["job_wait_s"]:
+        raise InvalidHostMemorySetting("wait_s (requests) cannot be longer than job_wait_s (jobs).")
+    return checked
+
+
+def stored_setting(path: Path) -> dict[str, Any] | None:
+    """The owner's saved setting, or None when none is saved. A damaged row counts as none."""
+    record = admin_store.get_operator_setting(SETTING_KEY, path=path)
+    if record:
+        try:
+            return validate_setting(record["value"])
+        except InvalidHostMemorySetting:
+            LOG.warning("host memory: the saved setting is invalid; the shipped defaults apply")
+    return None
+
+
+def effective(policy: HostMemoryPolicy, stored: Mapping[str, Any] | None) -> HostMemoryPolicy:
+    """``policy`` (shipped file and environment) with the owner's saved setting over it."""
+    if not stored:
+        return policy
+    return replace(policy, margin_bytes_by_kind={kind: int(float(gb) * GIB) for kind, gb in stored["margin_gb"].items()},
+                   wait_s=float(stored["wait_s"]), job_wait_s=float(stored["job_wait_s"]))
+
+
+def setting_view(policy: HostMemoryPolicy) -> dict[str, Any]:
+    """The setting as the owner sees it (GB and seconds) for ``policy``."""
+    return {"margin_gb": {kind: round(size / GIB, 3) for kind, size in policy.margin_bytes_by_kind.items()},
+            "wait_s": policy.wait_s, "job_wait_s": policy.job_wait_s}
 
 
 def read_mem_available() -> int | None:
@@ -139,7 +205,7 @@ def wait_event(state: WaitState | None) -> dict[str, Any]:
 class Ask:
     """Who asks and how long it may wait. ``bounded``: a synchronous request, which gets the busy answer at ``wait_s``."""
 
-    auth_kind: str | None = None
+    app_kind: str = PERSONAL
     bounded: bool = True
     on_wait: Callable[[WaitState | None], Any] | None = None
 
@@ -164,14 +230,16 @@ def busy_response(retry_after_s: int | None = None):
 
 @dataclass(eq=False)
 class _Waiter:
-    background: bool
+    background: bool    # a service App's request: it yields to every personal one
     seq: int
 
 
 class HostMemoryAdmission:
     def __init__(self, policy: HostMemoryPolicy, *, read_available: Callable[[], int | None] = read_mem_available,
-                 sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, clock: Callable[[], float] = time.monotonic) -> None:
+                 sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, clock: Callable[[], float] = time.monotonic,
+                 saved_setting: Callable[[], Mapping[str, Any] | None] | None = None) -> None:
         self.policy = policy
+        self._saved = saved_setting     # read on every admission: a save by the owner applies to the next prompt
         self._read, self._sleep, self._clock = read_available, sleep, clock
         self._loaded: dict[str, float] = {}
         self._reserved: list[tuple[float, int]] = []
@@ -213,7 +281,7 @@ class HostMemoryAdmission:
         return min(self._waiting, key=lambda w: (w.background, w.seq)) is waiter
 
     async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> None:
-        policy = self.policy
+        policy = effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None)
         names = models_of(graph, policy.model_extensions)
         now = self._clock()
         fresh = [n for n in names if not self._resident(n, now)]
@@ -225,8 +293,8 @@ class HostMemoryAdmission:
         if staged == 0:
             self._loaded.update(dict.fromkeys(names, now))
             return
-        background = policy.is_background(ask.auth_kind)
-        margin = policy.background_margin_bytes if background else policy.margin_bytes
+        background = ask.app_kind == SERVICE
+        margin = policy.margin_bytes_by_kind[ask.app_kind]
         limit = policy.wait_s if ask.bounded else policy.job_wait_s
         waiter = _Waiter(background, next(self._ticket))
         self._waiting.append(waiter)
@@ -269,5 +337,5 @@ def shared() -> HostMemoryAdmission:
     """The process's one admission: the host's memory is one resource, whichever adapter sends the prompt."""
     global _SHARED
     if _SHARED is None:
-        _SHARED = HostMemoryAdmission(load_policy())
+        _SHARED = HostMemoryAdmission(load_policy(), saved_setting=lambda: stored_setting(admin_store.DB_PATH))
     return _SHARED

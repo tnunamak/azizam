@@ -17,7 +17,7 @@ BUSY_MESSAGE = "The host's memory is busy with other work. Try again soon."
 
 
 def policy(root, **over):
-    values = dict(margin_bytes=1000, background_margin_bytes=5000, wait_s=10.0, job_wait_s=1000.0, report_s=0.0, poll_s=2.0, settle_s=0.0, resident_ttl_s=600.0,
+    values = dict(margin_bytes_by_kind={"personal": 1000, "service": 5000}, wait_s=10.0, job_wait_s=1000.0, report_s=0.0, poll_s=2.0, settle_s=0.0, resident_ttl_s=600.0,
                   model_extensions=(".safetensors", ".gguf"), model_roots=(str(root),))
     values.update(over)
     return hma.HostMemoryPolicy(**values)
@@ -178,12 +178,12 @@ def test_the_policy_reads_its_defaults_from_the_registry_and_env_overrides_them(
     for name in ("AZIZAM_HOST_MEMORY_MARGIN_GB", "AZIZAM_HOST_MEMORY_WAIT_S", "AZIZAM_HOST_MEMORY_MODEL_ROOTS"):
         monkeypatch.delenv(name, raising=False)
     default = hma.load_policy()
-    assert (default.margin_bytes, default.wait_s, default.poll_s) == (12 * GIB, 300.0, 2.0)
+    assert (default.margin_bytes_by_kind, default.wait_s, default.poll_s) == ({"personal": 12 * GIB, "service": 20 * GIB}, 300.0, 2.0)
     monkeypatch.setenv("AZIZAM_HOST_MEMORY_MARGIN_GB", "8")
     monkeypatch.setenv("AZIZAM_HOST_MEMORY_WAIT_S", "30")
     monkeypatch.setenv("AZIZAM_HOST_MEMORY_MODEL_ROOTS", str(tmp_path))
     changed = hma.load_policy()
-    assert (changed.margin_bytes, changed.wait_s, changed.model_roots) == (8 * GIB, 30.0, (str(tmp_path),))
+    assert (changed.margin_bytes_by_kind["personal"], changed.wait_s, changed.model_roots) == (8 * GIB, 30.0, (str(tmp_path),))
 
 
 def test_roots_come_from_the_engine_directory_and_its_extra_model_paths(monkeypatch, tmp_path):
@@ -270,12 +270,12 @@ def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(
         clock.now += seconds
         await asyncio.sleep(0)
 
-    made = hma.HostMemoryAdmission(policy(tmp_path, background_auth_kinds=("service_key",), settle_s=3.0), read_available=host,
+    made = hma.HostMemoryAdmission(policy(tmp_path, settle_s=3.0), read_available=host,
                                    sleep=sleep, clock=clock)
     order = []
 
-    async def ask(label, model, app_id):
-        await made.admit(graph(model), hma.Ask(auth_kind=app_id, bounded=False))
+    async def ask(label, model, auth_kind):
+        await made.admit(graph(model), hma.Ask(app_kind=hma.app_kind_of(auth_kind), bounded=False))
         order.append((label, clock.now))
 
     async def go():
@@ -287,3 +287,87 @@ def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(
     run(go())
     assert [label for label, _ in order] == ["person", "background"]
     assert 4 <= order[0][1] < 40 <= order[1][1]    # the person ran when 12 000 freed; background only when 60 000 did
+
+
+# -- the margins and waits are an owner setting over the shipped file ---------------------------------------------------
+
+SAVED = {"margin_gb": {"personal": 2, "service": 30}, "wait_s": 20, "job_wait_s": 500}
+
+
+def save(path, value):
+    from gateway import admin_store
+    admin_store.put_operator_setting_with_audit(
+        hma.SETTING_KEY, value, updated_by="tester", audit_action="operator.host_memory.update", audit_actor_kind="user",
+        audit_actor_id="tester", audit_actor_label="tester", audit_target_kind="operator_setting",
+        audit_target_id=hma.SETTING_KEY, path=path)
+
+
+@pytest.fixture
+def admin_db(tmp_path):
+    from gateway import admin_store
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    return path
+
+
+def test_with_no_saved_setting_the_shipped_defaults_apply(admin_db):
+    assert hma.stored_setting(admin_db) is None
+    shipped = hma.HostMemoryPolicy()
+    assert hma.effective(shipped, hma.stored_setting(admin_db)) is shipped
+    assert hma.setting_view(shipped) == {"margin_gb": {"personal": 12.0, "service": 20.0}, "wait_s": 300.0, "job_wait_s": 7200.0}
+
+
+def test_the_saved_setting_wins_over_the_shipped_defaults(admin_db):
+    save(admin_db, SAVED)
+    made = hma.effective(hma.HostMemoryPolicy(), hma.stored_setting(admin_db))
+    assert made.margin_bytes_by_kind == {"personal": 2 * GIB, "service": 30 * GIB}
+    assert (made.wait_s, made.job_wait_s) == (20.0, 500.0)
+    assert made.poll_s == 2.0      # what the setting does not hold stays as shipped
+
+
+@pytest.mark.parametrize("bad", [
+    {"margin_gb": {"personal": -1, "service": 20}, "wait_s": 1, "job_wait_s": 2},
+    {"margin_gb": {"personal": 12, "service": float("nan")}, "wait_s": 1, "job_wait_s": 2},
+    {"margin_gb": {"personal": True, "service": 20}, "wait_s": 1, "job_wait_s": 2},
+    {"margin_gb": {"personal": "12", "service": 20}, "wait_s": 1, "job_wait_s": 2},
+    {"margin_gb": {"personal": 12}, "wait_s": 1, "job_wait_s": 2},
+    {"margin_gb": {"personal": 12, "service": 20, "robot": 3}, "wait_s": 1, "job_wait_s": 2},
+    {"margin_gb": {"personal": 12, "service": 20}, "wait_s": -1, "job_wait_s": 2},
+    {"margin_gb": {"personal": 12, "service": 20}, "wait_s": 600, "job_wait_s": 300},
+    {"margin_gb": {"personal": 12, "service": 20}, "wait_s": 1},
+    {"margin_gb": 12, "wait_s": 1, "job_wait_s": 2},
+])
+def test_an_invalid_setting_is_refused(bad):
+    with pytest.raises(hma.InvalidHostMemorySetting):
+        hma.validate_setting(bad)
+
+
+def test_a_damaged_saved_row_falls_back_to_the_shipped_defaults(admin_db):
+    save(admin_db, {"margin_gb": {"personal": -5, "service": 1}, "wait_s": 1, "job_wait_s": 2})
+    assert hma.stored_setting(admin_db) is None
+
+
+def test_a_service_app_uses_the_service_margin_from_the_saved_setting(tmp_path, admin_db):
+    weights(tmp_path, "a.safetensors", 10 * GIB)
+    save(admin_db, {"margin_gb": {"personal": 2, "service": 30}, "wait_s": 5, "job_wait_s": 500})
+    assert hma.app_kind_of("service_key") == "service"
+    assert [hma.app_kind_of(k) for k in ("session", "app_key", "mcp_grant", "trusted_address", None)] == ["personal"] * 5
+    # 15 GiB free: a person needs 10 + 2, a service App needs 10 + 30.
+    def build():
+        return hma.HostMemoryAdmission(policy(tmp_path, margin_bytes_by_kind={"personal": 99 * GIB, "service": 99 * GIB}),
+                                       read_available=lambda: 15 * GIB, sleep=Clock().sleep, clock=Clock(),
+                                       saved_setting=lambda: hma.stored_setting(admin_db))
+    run(build().admit(graph("a.safetensors"), hma.Ask(app_kind="personal")))
+    with pytest.raises(hma.HostMemoryBusy):
+        run(build().admit(graph("a.safetensors"), hma.Ask(app_kind="service")))
+
+
+def test_a_save_applies_to_the_next_admission_without_a_restart(tmp_path, admin_db):
+    weights(tmp_path, "a.safetensors", 10 * GIB)
+    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=lambda: 15 * GIB, sleep=Clock().sleep, clock=Clock(),
+                                   saved_setting=lambda: hma.stored_setting(admin_db))
+    save(admin_db, {"margin_gb": {"personal": 10, "service": 10}, "wait_s": 5, "job_wait_s": 500})
+    with pytest.raises(hma.HostMemoryBusy):
+        run(made.admit(graph("a.safetensors"), hma.Ask()))
+    save(admin_db, {"margin_gb": {"personal": 1, "service": 10}, "wait_s": 5, "job_wait_s": 500})
+    run(made.admit(graph("a.safetensors"), hma.Ask()))
