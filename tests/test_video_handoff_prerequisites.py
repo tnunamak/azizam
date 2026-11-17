@@ -665,3 +665,98 @@ def test_chain_submit_failure_is_the_accepted_deferred_error_with_main_cause(wor
         kept = receipt(world, created.headers["x-request-id"])
         assert kept["status"] == "succeeded" and kept["metadata"]["status_code"] == 200
     asyncio.run(drive())
+
+
+def test_queued_chain_freezes_operator_facts_through_execution_and_polling(world):
+    from tests.support.config_snapshot import publish_section
+    from tests.support.fake_upstream import HandlerTransport
+    from tests.test_s7_parity_video_create import HOST
+    from gateway import video_extend
+
+    body = {"model": "ltx-2.5-long", "prompt": "accepted operator plan", "seconds": 20, "seed": 7,
+            "extensions": {"com.azizam.workflow": {"state_ledger": "same scene", "context_seconds": 1.0}}}
+    auth = access_context(everything(media_metadata="none", receipt_detail="full"))
+    name = "video-ltx-2.5-long"
+    plan_a = copy.deepcopy(proxy.config["videos"])
+    plan_a["workflows"][name].update(frame_rate=24, default_size="960x512", chain_segment_seconds=8)
+    builder_a = plan_a["workflows"][name]["builder"]
+    builder_b = plan_a["workflows"]["video-minimax-h3-long"]["builder"]
+    assert builder_a != builder_b
+    assert builder_a in video_extend.ENGINES and builder_b in video_extend.ENGINES
+    publish_section(world.rig.monkeypatch, "videos", plan_a)
+    queued = []
+    world.rig.set(proxy, "_schedule_workflow_run", queued.append)
+
+    async def drive():
+        # The frozen main handler, under A, supplies the independent complete
+        # graph and units before either the accepted job or any config mutation.
+        old = await main_video.create(json_request(body), auth, body_override=body)
+        assert old.status_code == 200, old.body
+        expected_post = json.loads(old.body)
+        expected_graph = copy.deepcopy(world.engine.prompts["p1"])
+        expected_units = copy.deepcopy(proxy._video_chain_units["p1"])
+        assert expected_post["segments"] >= 2
+        assert len(expected_units) >= 2
+        made = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert made.status_code == 200, made.text
+        accepted = made.json()
+        fields = ("seconds", "total_seconds", "segments", "size", "actual_seconds",
+                  "model", "azizam_resolved_model", "extended_from_video_id")
+        assert {key: accepted[key] for key in fields} == {key: expected_post[key] for key in fields}
+        assert len(queued) == 1 and len(world.engine.prompts) == 1
+
+        # These are the actual workflow-row keys used by the existing main
+        # oracle, not invented runner hooks. Keep both templates installed.
+        plan_b = copy.deepcopy(plan_a)
+        plan_b["workflows"][name].update(
+            builder=builder_b, frame_rate=12, default_size="640x384", chain_segment_seconds=4)
+        publish_section(world.rig.monkeypatch, "videos", plan_b)
+        assert builder_a in video_extend.ENGINES and builder_b in video_extend.ENGINES
+
+        # Discriminate a no-op fixture: a fresh main request now observes B.
+        # Never use this graph as the expected result for the accepted A job.
+        live = await main_video.create(json_request(body), auth, body_override=body)
+        assert live.status_code == 200, live.body
+        live_post = json.loads(live.body)
+        assert live_post["size"] != expected_post["size"]
+        assert live_post["segments"] != expected_post["segments"]
+        assert world.engine.prompts["p2"] != expected_graph
+        assert proxy._video_chain_units["p2"] != expected_units
+
+        gate = asyncio.Event()
+        async def handle(request):
+            if request.url.path == "/history/p3":
+                await gate.wait()
+            return world.engine(request)
+        world.rig.monkeypatch.setitem(world.rig.fakes.router._routes, HOST, HandlerTransport(handle))
+        runner = asyncio.create_task(proxy._run_workflow_job(queued[0]))
+        try:
+            await submitted(world, 3)
+            async def registered_units():
+                while "p3" not in proxy._video_chain_units:
+                    await asyncio.sleep(0)
+            await asyncio.wait_for(registered_units(), timeout=5)
+            assert json.dumps(world.engine.prompts["p3"], sort_keys=True) == json.dumps(expected_graph, sort_keys=True)
+            assert proxy._video_chain_units["p3"] == expected_units
+
+            # C is published before either public GET or the blocked engine
+            # history observation. Both the pending and finished views keep A.
+            plan_c = copy.deepcopy(plan_b)
+            plan_c["workflows"][name].update(
+                builder=builder_a, frame_rate=30, default_size="320x192", chain_segment_seconds=2)
+            publish_section(world.rig.monkeypatch, "videos", plan_c)
+            pending = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
+            assert pending.status_code == 200, pending.text
+            assert {key: pending.json()[key] for key in fields} == {key: accepted[key] for key in fields}
+            gate.set()
+            await asyncio.wait_for(runner, timeout=10)
+            finished = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
+            assert finished.status_code == 200, finished.text
+            assert finished.json()["status"] == "completed"
+            assert {key: finished.json()[key] for key in fields} == {key: accepted[key] for key in fields}
+        finally:
+            gate.set()
+            if not runner.done():
+                await asyncio.wait_for(runner, timeout=10)
+
+    asyncio.run(drive())
