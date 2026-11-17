@@ -10,14 +10,14 @@ const report = fileURLToPath(new URL("./report.mjs", import.meta.url));
 const started = Date.UTC(2025, 0, 1);
 const clean = { surface: "Home", route: "/", state: "ready", role: "owner", width: 1280, theme: "light", status: "checked", loading: false };
 
-function fixture({ receipt = true, old = false, states = [clean], marker = true } = {}) {
+function fixture({ receipt = true, old = false, states = [clean], marker = true, receiptBody } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "sweep-report-"));
   try {
     mkdirSync(path.join(dir, "findings"));
     writeFileSync(path.join(dir, "findings", "page.json"), JSON.stringify({ findings: [], states }));
     if (receipt) {
       const file = path.join(dir, "playwright.json");
-      writeFileSync(file, JSON.stringify({
+      writeFileSync(file, receiptBody ?? JSON.stringify({
         stats: { expected: 1, unexpected: 0, flaky: 0, skipped: 0, duration: 1000 },
         suites: [{ specs: [{ title: "synthetic clean page", tests: [{ results: [{ status: "passed", errors: [] }] }] }] }],
         errors: [],
@@ -69,3 +69,30 @@ test("manual report still requires a receipt but does not judge its age", () => 
   assert.equal(empty.status, 1);
   assert.match(empty.stdout, /no page states were checked/);
 });
+
+test("all skipped states fail the checked-page gate", () => {
+  const result = fixture({states: [{...clean, status: "skipped", reason: "synthetic skip"}]});
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /broken: no page states were checked/);
+});
+test("one checked and one skipped state still pass", () => {
+  const result = fixture({states: [clean, {...clean, status: "skipped", reason: "synthetic skip"}]});
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.summary.pages_checked, 1);
+});
+test("fresh receipt without stats still reports top-level and suite errors", () => {
+  const result = fixture({receiptBody: JSON.stringify({errors: [{message: "synthetic runner failure"}],
+    suites: [{specs: [{title: "broken suite", tests: [{results: [{status: "failed", errors: [{message: "synthetic test failure"}]}]}]}]}]})});
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /broken: runner receipt is malformed/);
+  assert.match(result.stdout, /run error: synthetic runner failure/);
+  assert.match(result.stdout, /broken suite: failed synthetic test failure/);
+});
+for (const receiptBody of ["{", "null", "[]", "42", '{"stats":null}', '{"stats":[]}', '{"stats":true}']) {
+  test("malformed fresh receipt fails plainly: " + receiptBody, () => {
+    const result = fixture({receiptBody});
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /broken: runner receipt is malformed/);
+    assert.equal(result.summary.pages_checked, 1);
+  });
+}

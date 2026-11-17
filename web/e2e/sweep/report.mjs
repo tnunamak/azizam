@@ -44,7 +44,16 @@ const SURFACE_ORDER = [
 ];
 
 const context = existsSync(path.join(dir, "context.json")) ? JSON.parse(readFileSync(path.join(dir, "context.json"), "utf8")) : {};
-const runStats = existsSync(path.join(dir, "playwright.json")) ? JSON.parse(readFileSync(path.join(dir, "playwright.json"), "utf8")).stats : null;
+const runnerReceipt = path.join(dir, "playwright.json");
+const receiptFresh = existsSync(runnerReceipt) &&
+  !(process.env.SWEEP_RUN_STARTED_MS !== undefined &&
+    statSync(runnerReceipt).mtimeMs < Number(process.env.SWEEP_RUN_STARTED_MS));
+const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+let runnerReport = null;
+try {
+  if (existsSync(runnerReceipt)) runnerReport = JSON.parse(readFileSync(runnerReceipt, "utf8"));
+} catch { /* The gate reports malformed receipts after writing the report. */ }
+const runStats = isObject(runnerReport) && isObject(runnerReport.stats) ? runnerReport.stats : null;
 const findings = [];
 const states = [];
 for (const file of readdirSync(findingsDir).filter((name) => name.endsWith(".json")).sort()) {
@@ -209,15 +218,13 @@ if (out) {
 }
 // ---------- Gate ----------
 const broken = [];
-const runnerReceipt = path.join(dir, "playwright.json");
-if (!existsSync(runnerReceipt) ||
-    (process.env.SWEEP_RUN_STARTED_MS !== undefined &&
-     statSync(runnerReceipt).mtimeMs < Number(process.env.SWEEP_RUN_STARTED_MS))) {
+if (!receiptFresh) {
   broken.push("no runner receipt from this run");
 }
-if (states.length === 0) broken.push("no page states were checked");
-if (runStats) {
-  const report = JSON.parse(readFileSync(path.join(dir, "playwright.json"), "utf8"));
+if (checked === 0) broken.push("no page states were checked");
+if (receiptFresh) {
+  if (!isObject(runnerReport) || !runStats) broken.push("runner receipt is malformed");
+  const report = isObject(runnerReport) ? runnerReport : {};
   const walk = (suite) => {
     for (const spec of suite.specs ?? [])
       for (const test of spec.tests ?? [])
