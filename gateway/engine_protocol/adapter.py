@@ -142,7 +142,10 @@ class AdapterRegistry:
     """
 
     def __init__(self, descriptions: Mapping[str, ProtocolDescription], *, transport: Transport | None = None,
-                 assets: AssetStore | None = None) -> None:
+                 assets: AssetStore | None = None, remote_capability=None) -> None:
+        if remote_capability is not None and transport is None:
+            raise ProtocolError('Remote adapters require the bound client factory.', code='protocol_dispatch_refused')
+        self._remote_capability = remote_capability
         self._descriptions = dict(descriptions)
         self._transport = transport
         self._assets = assets
@@ -162,7 +165,8 @@ class AdapterRegistry:
         if description.adapter_id is None:
             from gateway.engine_protocol.executor import HttpV1Executor
             from gateway.engine_protocol.http_adapter import HttpV1Adapter
-            built: EngineAdapter = HttpV1Adapter(HttpV1Executor(description, transport=self._transport, assets=self._assets))
+            built: EngineAdapter = HttpV1Adapter(HttpV1Executor(description, transport=self._transport, assets=self._assets,
+                                                               remote_capability=self._remote_capability))
         else:
             factory = self._factories.get(description.adapter_id)
             if factory is None:

@@ -548,3 +548,106 @@ def test_probe_engine_recovers_after_an_outage_and_the_cache_expires(monkeypatch
     calls['down'] = False
     assert [item['id'] for item in asyncio.run(inventory.models(registry))] == ['m0']
     assert inventory.problems() == []
+
+
+# Remote capability factory gates: all callers use production adapter paths.
+def test_remote_factory_main_dispatch(monkeypatch):
+    from tests.support.remote_protocol import exercise
+    asyncio.run(exercise('main', monkeypatch))
+
+
+def test_remote_factory_fresh_observation(monkeypatch):
+    from tests.support.remote_protocol import exercise
+    asyncio.run(exercise('observation', monkeypatch))
+
+
+def test_remote_factory_inventory(monkeypatch):
+    from tests.support.remote_protocol import exercise
+    asyncio.run(exercise('inventory', monkeypatch))
+
+
+def test_remote_factory_control(monkeypatch):
+    from tests.support.remote_protocol import exercise
+    asyncio.run(exercise('control', monkeypatch))
+
+
+def test_remote_factory_polling(monkeypatch):
+    from tests.support.remote_protocol import exercise
+    asyncio.run(exercise('polling', monkeypatch))
+
+
+def test_remote_factory_assets(monkeypatch):
+    from tests.support.remote_protocol import exercise
+    asyncio.run(exercise('assets', monkeypatch))
+
+
+def test_remote_binding_required_on_every_adapter_path():
+    from tests.support.remote_protocol import case
+    from gateway.engine_protocol.adapter import AdapterRegistry
+    _, doc, _, cap, _, requests = case()
+    with pytest.raises(ProtocolError):
+        AdapterRegistry({doc.id: doc}, remote_capability=cap).adapter_for(doc.id)
+    assert requests == []
+
+
+def test_remote_same_origin_services_do_not_union_exceptions():
+    from tests.support.remote_protocol import case
+    registry, _, factory, cap, _, _ = case()
+    other = copy.deepcopy(registry['services']['remote-box'])
+    other['id'] = 'other-box'
+    other['config']['connection']['remote_dispatch']['private_cidrs'] = ['10.0.0.0/24']
+    registry['services']['other-box'] = other
+    second = factory.admit('other-box')
+    assert cap.address_exceptions == ()
+    assert second.address_exceptions == ('10.0.0.0/24',)
+    with pytest.raises(ProtocolError):
+        factory.check(cap, service_id='other-box', address='https://engine.example')
+
+
+def test_remote_policy_generation_rechecked_on_dispatch_and_reuse():
+    from tests.support.remote_protocol import case
+    registry, _, factory, cap, runtime, requests = case()
+    registry['services']['remote-box']['config']['connection']['remote_dispatch']['private_cidrs'] = ['10.0.0.0/24']
+    with pytest.raises(ProtocolError):
+        factory.check(cap, service_id='remote-box', address='https://engine.example')
+    with pytest.raises(ProtocolError):
+        asyncio.run(runtime.invoke('state', {}))
+    assert requests == []
+
+
+def test_remote_policy_rejects_unapproved_records_and_redirects():
+    from tests.support.remote_protocol import case
+    from gateway.remote_engine import policy
+    from gateway.engine_protocol.errors import RedirectRefused
+
+    registry, _, factory, cap, runtime, requests = case()
+    service = registry['services']['remote-box']
+    for override in ({'version': 2}, {'enabled': False}, {'enabled': 'true'}, {'unknown': True},
+                     {'private_cidrs': ['10.0.0.0/8']}, {'private_cidrs': ['127.0.0.0/24']},
+                     {'limits': {'polls': 301}}, {'limits': {'polls': 1.5}},
+                     {'limits': {'total_s': float('nan')}}, {'limits': {'wire_bytes': True}}):
+        bad = copy.deepcopy(service)
+        bad['config']['connection']['remote_dispatch'].update(override)
+        with pytest.raises(ProtocolError):
+            policy(bad)
+    for level in ('record', 'config', 'connection', 'offering'):
+        for key, value in [('paid_remote', True), ('provider_type', 'unknown'), ('cost_class', 'paid-remote')]:
+            bad = copy.deepcopy(service)
+            target = {'record': bad, 'config': bad['config'], 'connection': bad['config']['connection'],
+                      'offering': bad['config']['offerings'][0]}[level]
+            target[key] = value
+            with pytest.raises(ProtocolError):
+                policy(bad)
+    bad = copy.deepcopy(runtime.target.service)
+    bad['config']['connection']['credentials'] = {'inference': {'secret_ref': 'synthetic-reference', 'origin': 'https://other.example'}}
+    with pytest.raises(ProtocolError):
+        dispatch.Runtime(dispatch.Target('remote-box', bad, runtime.target.offering, runtime.target.description),
+                         remote_factory=factory, remote_capability=cap)
+    sent = []
+    def redirect(request):
+        sent.append(request)
+        return httpx.Response(302, headers={'Location': '/another'})
+    runtime._transport.inner = transport.HttpxTransport.for_tests(HandlerTransport(redirect))
+    with pytest.raises(RedirectRefused):
+        asyncio.run(runtime.invoke('state', {}))
+    assert len(sent) == 1

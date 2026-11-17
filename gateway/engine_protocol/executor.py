@@ -104,11 +104,12 @@ def _redacting(method: Callable[..., Any]) -> Callable[..., Any]:
 
 class HttpV1Executor:
     def __init__(self, description: ProtocolDescription, *, transport: Transport | None = None,
-                 assets: AssetStore | None = None, budgets: Budgets | None = None) -> None:
+                 assets: AssetStore | None = None, budgets: Budgets | None = None, remote_capability=None) -> None:
         if description.executor != "http-v1":
             raise ValueError(f"'{description.id}' is run by {description.executor}, not http-v1")
         self.description = description
         self._transport = transport or HttpxTransport()
+        self._remote_capability = remote_capability
         self._assets = assets
         self.budgets = budgets or description.budgets
         self.boundary_factory: Callable[[], str] = lambda: secrets.token_hex(16)
@@ -450,6 +451,8 @@ class HttpV1Executor:
                 break
             location = response.headers.get("location", "")
             await response.aclose()
+            if self._remote_capability is not None:
+                raise RedirectRefused('Remote engine redirects are refused.')
             if not location:
                 raise MalformedResponse("The engine redirected without saying where.")
             target = urljoin(url, location)
@@ -470,6 +473,11 @@ class HttpV1Executor:
         return response
 
     async def _send(self, wire: WireRequest, conn: Connection, secrets_: list[str]) -> WireResponse:
+        if conn.remote_capability is not None or self._remote_capability is not None:
+            from gateway.remote_engine import BoundTransport, refused
+            if (conn.remote_capability is not self._remote_capability or not isinstance(self._transport, BoundTransport)
+                    or self._transport.capability is not conn.remote_capability):
+                raise refused()
         try:
             return await self._transport.send(wire, conn.timeouts)
         except ProtocolError:

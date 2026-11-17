@@ -83,7 +83,7 @@ async def _descriptions(budget_s: float) -> dict[str, description.ProtocolDescri
         return _docs_last_good
 
 
-async def models(registry: Mapping) -> list[dict]:
+async def models(registry: Mapping, *, remote_factory=None) -> list[dict]:
     started = time.monotonic()
     for key, cached in list(_cache.items()):
         if started - cached[0] >= CACHE_TTL_S:
@@ -126,8 +126,12 @@ async def models(registry: Mapping) -> list[dict]:
                 return copy.deepcopy(cached[1])
             async with asyncio.timeout(ENGINE_TIMEOUT_S):
                 from gateway.service_registry import validate_protocol_dispatch_local_only
-                validate_protocol_dispatch_local_only(service)
-                runtime = await asyncio.to_thread(dispatch.Runtime, dispatch.Target(engine_id, service, offerings[0], doc))
+                options = {}
+                if remote_factory is None:
+                    validate_protocol_dispatch_local_only(service)
+                else:
+                    options = {'remote_factory': remote_factory, 'remote_capability': remote_factory.admit(engine_id)}
+                runtime = await asyncio.to_thread(dispatch.Runtime, dispatch.Target(engine_id, service, offerings[0], doc), **options)
                 reply = await runtime.invoke('models', {})
                 if isinstance(reply, StreamReply):
                     await reply.aclose()

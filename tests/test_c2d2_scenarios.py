@@ -577,3 +577,7 @@ def test_s6_remote_generic_job_lifecycle_and_leases_production_path(owner, gatew
     receipts = [row["receipt"] for row in records.json()["records"] if row["receipt"].get("job_id") == submitted["id"]]
     assert len(receipts) == 1
     assert (receipts[0]["status"], receipts[0]["backend"]) == ("succeeded", "smell-box")
+
+
+def test_s6_only_owner_can_enable_remote_dispatch(owner, gateway):
+    test_s6_remote_policy_owner_authentication_production_path(owner, gateway)
