@@ -465,9 +465,8 @@ def test_existing_row_duration_reason_keeps_the_main_public_answer(world):
     asyncio.run(drive())
 
 
-@pytest.mark.parametrize("extra", [{"seconds": 16}, {"shots": [
-    {"prompt": "first", "seconds": 4}, {"prompt": "second", "seconds": 4}]}], ids=["seconds", "storyboard"])
-def test_operator_chain_workflow_works_without_a_manifest_long_variant(world, extra):
+@pytest.mark.parametrize("case", ["operator-seconds", "operator-shots"])
+def test_operator_chain_without_a_manifest_long_variant_keeps_mains_refusal(world, case):
     from dataclasses import replace
     from gateway.workflow_run import plain
     original = proxy.WORKFLOW_SNAPSHOTS.current()
@@ -486,15 +485,12 @@ def test_operator_chain_workflow_works_without_a_manifest_long_variant(world, ex
         def __getattr__(self, name):
             return getattr(original, name)
     world.rig.set(proxy, "WORKFLOW_SNAPSHOTS", type("Provider", (), {"current": lambda self: Snapshot()})())
-    body = {"model": "ltx-2.5-t2v", "prompt": "configured chain", "seed": 7, **extra}
+    expected = json.loads((ROOT / "tests/fixtures/video_operator_chain_fd30cbfca.json").read_text())[case]
     async def drive():
-        old = await main_video.create(json_request(body), access_context(), body_override=body)
-        new = await world.rig.call("POST", "/v1/videos", json_body=body)
-        assert new.status_code == old.status_code == 200, new.text
-        await submitted(world, 2)
-        assert json.dumps(world.engine.prompts["p1"], sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
-        for field in ("seconds", "total_seconds", "segments", "extended_from_video_id"):
-            assert new.json()[field] == json.loads(old.body)[field]
+        response = await world.rig.call("POST", "/v1/videos", json_body=expected["request"])
+        assert response.status_code == expected["status"] == 400
+        assert response.json() == expected["body"]
+        assert world.engine.calls == []
     asyncio.run(drive())
 
 

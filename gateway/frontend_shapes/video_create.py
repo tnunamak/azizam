@@ -182,7 +182,7 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     seconds = body.get("seconds")
     limit = manifest.length.max_seconds
     shots = body.get("shots") is not None
-    long_id = manifest.variants.get("long") or hooks.long_workflow(chosen)
+    long_id = manifest.variants.get("long")
     if shots or (_beyond(seconds, limit) and long_id):
         if long_id:
             chosen = snapshot.get(long_id)
