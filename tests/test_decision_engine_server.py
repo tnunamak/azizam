@@ -175,6 +175,96 @@ class UsageScorer:
         return {0: -0.3, 1: -0.2}
 
 
+def _post_headers_only(base_url: str, content_length: str | None) -> tuple[int, dict]:
+    from http.client import HTTPResponse
+    from urllib.parse import urlparse
+
+    address = urlparse(base_url)
+    with socket.create_connection((address.hostname, address.port), timeout=5) as conn:
+        headers = [
+            "POST /v1/systemone HTTP/1.0",
+            "Host: localhost",
+            "Content-Type: application/json",
+        ]
+        if content_length is not None:
+            headers.append(f"Content-Length: {content_length}")
+        # Do not send a body or close the write side. A response must be based
+        # on the headers, not EOF rescuing an unbounded/blocking body read.
+        conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
+        response = HTTPResponse(conn)
+        try:
+            response.begin()
+            return response.status, json.loads(response.read())
+        finally:
+            response.close()
+
+
+class _ReleasedAdmission(threading.BoundedSemaphore):
+    def __init__(self) -> None:
+        super().__init__(1)
+        self.released = threading.Event()
+
+    def release(self, n=1):
+        super().release(n)
+        self.released.set()
+
+
+@pytest.mark.parametrize(
+    ("length", "status", "code"),
+    [
+        pytest.param("-1", 400, "invalid_request", id="negative"),
+        pytest.param("abc", 400, "invalid_request", id="nonnumeric"),
+        pytest.param(str(1024 * 1024 + 1), 413, "request_too_large", id="oversized"),
+        pytest.param("9" * 5000, 413, "request_too_large", id="oversized-many-digits"),
+    ],
+)
+def test_handler_refuses_invalid_length_before_body_and_releases_slot(length, status, code):
+    scorer = UsageScorer()
+    admission = _ReleasedAdmission()
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        actual, body = _post_headers_only(base_url, length)
+        assert actual == status
+        assert body["error"]["code"] == code
+        assert body["error"]["type"] == "invalid_request_error"
+        assert scorer.total_calls == 0
+        assert admission.released.wait(timeout=5)
+        assert admission.acquire(blocking=False)
+        admission.release()
+        assert _post_json(base_url, "/v1/systemone", _systemone_body())[0] == 200
+    assert scorer.total_calls == 1
+
+
+@pytest.mark.parametrize("length", [None, "0"], ids=["missing", "zero"])
+def test_handler_absent_body_keeps_empty_body_refusal(length):
+    scorer = UsageScorer()
+    admission = _ReleasedAdmission()
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        expected_status, _headers, expected = _post_raw(base_url, "/v1/systemone", b"")
+        assert admission.released.wait(timeout=5)
+        admission.released.clear()
+        status, body = _post_headers_only(base_url, length)
+        assert status == expected_status == 422
+        assert body == expected
+        assert admission.released.wait(timeout=5)
+        assert admission.acquire(blocking=False)
+        admission.release()
+    assert scorer.total_calls == 0
+
+
+@pytest.mark.parametrize("at_limit", [False, True], ids=["normal", "at-limit"])
+def test_handler_accepts_body_within_request_limit(at_limit):
+    assert server.MAX_REQUEST_BYTES == 1024 * 1024
+    scorer = UsageScorer()
+    payload = json.dumps(_systemone_body()).encode("utf-8")
+    if at_limit:
+        payload += b" " * (server.MAX_REQUEST_BYTES - len(payload))
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        status, _headers, body = _post_raw(base_url, "/v1/systemone", payload)
+    assert status == 200
+    assert body["usage"] == {"input_tokens": 11, "output_tokens": 1}
+    assert scorer.total_calls == 1
+
+
 def test_handler_serializes_request_wide_usage_for_concurrent_calls():
     scorer = UsageScorer()
     with _ThreadedServer(_handler_for(scorer)) as base_url:
@@ -1253,3 +1343,79 @@ def test_ambiguous_body_framing_is_rejected_and_connection_closed(framing):
                 assert scorer.total_calls == 0
             finally:
                 response.close()
+
+def _post_length_fields(base_url: str, lengths: list[str], payload: bytes = b"") -> tuple[int, dict]:
+    from http.client import HTTPResponse
+    from urllib.parse import urlparse
+
+    address = urlparse(base_url)
+    with socket.create_connection((address.hostname, address.port), timeout=5) as conn:
+        headers = [
+            "POST /v1/systemone HTTP/1.0",
+            "Host: localhost",
+            "Content-Type: application/json",
+            *[f"Content-Length: {value}" for value in lengths],
+        ]
+        # Keep the write side open: neither EOF nor teardown may unblock the read.
+        conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + payload)
+        response = HTTPResponse(conn)
+        try:
+            response.begin()
+            return response.status, json.loads(response.read())
+        finally:
+            response.close()
+
+
+@pytest.mark.parametrize("lengths", [
+    pytest.param(["1", "-1"], id="negative-second"),
+    pytest.param(["-1", "1"], id="negative-first"),
+    pytest.param(["1", str(1024 * 1024 + 1)], id="oversized-second"),
+    pytest.param(["1", "2"], id="different-valid"),
+    pytest.param(["1, -1"], id="comma-negative"),
+    pytest.param(["1, 2"], id="comma-conflict"),
+    pytest.param(["1", ""], id="empty-second"),
+    pytest.param(["1,"], id="empty-comma-token"),
+])
+def test_handler_refuses_conflicting_length_fields_before_body_and_releases_slot(lengths):
+    scorer = UsageScorer()
+    admission = _ReleasedAdmission()
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        status, body = _post_length_fields(base_url, lengths)
+        assert status == 400
+        assert body["error"]["code"] == "invalid_request"
+        assert body["error"]["message"] == "Content-Length must be a non-negative integer."
+        assert scorer.total_calls == 0
+        assert admission.released.wait(timeout=5)
+        assert admission.acquire(blocking=False)
+        admission.release()
+        assert _post_json(base_url, "/v1/systemone", _systemone_body())[0] == 200
+    assert scorer.total_calls == 1
+
+
+@pytest.mark.parametrize("form", ["separate", "comma", "mixed", "zero-padded"])
+def test_handler_accepts_identical_length_fields(form):
+    scorer = UsageScorer()
+    payload = json.dumps(_systemone_body()).encode("utf-8")
+    length = str(len(payload))
+    fields = {
+        "separate": [length, length],
+        "comma": [f"{length}, {length}"],
+        "mixed": [length, f"{length}, {length}"],
+        "zero-padded": ["00" + length, length],
+    }
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        status, body = _post_length_fields(base_url, fields[form], payload)
+    assert status == 200
+    assert body["usage"] == {"input_tokens": 11, "output_tokens": 1}
+    assert scorer.total_calls == 1
+
+
+def test_handler_identical_two_byte_lengths_preserve_request_validation():
+    scorer = UsageScorer()
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        expected_status, _headers, expected = _post_raw(base_url, "/v1/systemone", b"{}")
+        status, body = _post_length_fields(base_url, ["2", "2"], b"{}")
+        assert status == expected_status == 422
+        assert body == expected
+        assert _post_json(base_url, "/v1/systemone", _systemone_body())[0] == 200
+    assert scorer.total_calls == 1

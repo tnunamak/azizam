@@ -37,6 +37,7 @@ from gateway import decision_engine
 
 DEFAULT_REQUEST_TIMEOUT_S = 15.0
 MIN_UPSTREAM_TIMEOUT_S = 0.001
+MAX_REQUEST_BYTES = 1024 * 1024
 
 
 class DecisionThreadingHTTPServer(ThreadingHTTPServer):
@@ -410,6 +411,32 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         try:
+            raw_lengths = self.headers.get_all("content-length") or []
+            try:
+                values = [part.strip() for field in raw_lengths for part in field.split(",")]
+                if not values:
+                    values = ["0"]
+                normalized = []
+                for value in values:
+                    if not value.isascii() or not value.isdecimal():
+                        raise ValueError("invalid content length")
+                    normalized.append(value.lstrip("0") or "0")
+                value = normalized[0]
+                if any(other != value for other in normalized[1:]):
+                    raise ValueError("conflicting content lengths")
+                # Compare the digit count before int(), including headers beyond
+                # Python's integer-conversion limit.
+                length = MAX_REQUEST_BYTES + 1 if len(value) > len(str(MAX_REQUEST_BYTES)) else int(value)
+            except ValueError:
+                self._json(400, decision_engine.error_body(
+                    "Content-Length must be a non-negative integer.", code="invalid_request",
+                ))
+                return
+            if length > MAX_REQUEST_BYTES:
+                self._json(413, decision_engine.error_body(
+                    "Request body is too large.", code="request_too_large",
+                ))
+                return
             started = time.perf_counter()
             deadline = _request_deadline(self.headers.get("x-decision-deadline-ms"))
             try:
