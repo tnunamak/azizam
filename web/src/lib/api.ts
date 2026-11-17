@@ -166,6 +166,9 @@ export interface App {
   effective_access_plan_id: string | null;
   created_at: number;
   disabled_at: number | null;
+  /** Service apps only: what a handover would stop (live keys and trusted addresses). */
+  live_keys?: number;
+  trusted_addresses?: number;
 }
 
 export interface User {
@@ -916,7 +919,7 @@ export const api = {
         method: "PATCH",
         body: { access_plan: accessPlan },
       }).then((r) => r.app),
-    /** Owner only: hand a service app to another person. Its keys keep working under that person's plan. */
+    /** Owner only: hand a service app to another person. Its keys and trusted addresses stop; the new person makes new ones. */
     handOver: (appId: string, personId: string) =>
       adminFetch<{ app: App }>(`/admin/api/apps/${encodeURIComponent(appId)}`, {
         method: "PATCH",

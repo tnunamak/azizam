@@ -322,6 +322,8 @@ class AdminSQLiteStore:
         if record.get("kind") == "service":
             record["request_history"] = {"keep": bool(record.get("history_keep")),
                                          "retention": record.get("history_period")}
+            # What a handover to another person would stop: the owner's confirmation states these counts.
+            record.update(admin_store.app_binding_counts(str(record.get("id")), path=self.path))
         if assignment != PERSON:
             plan_id = assignment
         elif listing is None:

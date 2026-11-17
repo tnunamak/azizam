@@ -83,6 +83,7 @@ def test_an_administrator_makes_a_service_app_with_a_plan_in_one_request_and_its
     identity = runtime_identity_for_app_credential_hash(hash_api_key(key), path=gateway.path)
     assert identity is not None and not identity.denial
     assert identity.auth_kind == "service_key"
+    assert identity.person_id is None
     assert identity.access.app_plan.id == plan["id"]
 
 

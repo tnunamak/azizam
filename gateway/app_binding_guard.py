@@ -3,8 +3,7 @@
 The guards make the App rules hold for every writer, not only for the routes:
 
 * an App keeps its kind, and a personal App keeps its person (O2);
-* a service App changes person only with no key, expired keys included, and no trusted address, unless the
-  owner hands it over (``admin_store.reassign_service_app``), which keeps its keys and addresses (O3);
+* a service App changes person only with no key, expired keys included, and no trusted address (O3);
 * a key or trusted address is added with its App's accountable person as creator (O4);
 * an App key keeps its App, creator, secret and expiry (a new secret has no provenance, and a later expiry
   revives a key that ran out), a revoked key stays revoked, and a trusted address is replaced rather than edited;
@@ -46,7 +45,6 @@ WHEN NEW.owner_user_id IS NOT OLD.owner_user_id AND (
   EXISTS (SELECT 1 FROM credentials WHERE subject_kind = 'app'
     AND COALESCE(NULLIF(app_id, ''), subject_id) = OLD.id AND revoked_at IS NULL)
   OR EXISTS (SELECT 1 FROM app_trusted_addresses WHERE app_id = OLD.id))
-  AND NOT EXISTS (SELECT 1 FROM app_handovers WHERE app_id = OLD.id AND to_user_id = NEW.owner_user_id)
 BEGIN SELECT RAISE(ABORT, 'an App with keys or trusted addresses keeps its person'); END"""),
     ("apps_never_deleted", """CREATE TRIGGER apps_never_deleted
 BEFORE DELETE ON apps
@@ -113,8 +111,6 @@ def install(conn: sqlite3.Connection) -> None:
     """
     conn.execute("SAVEPOINT binding_guards")
     try:
-        conn.execute("CREATE TABLE IF NOT EXISTS app_handovers ("
-                     "app_id TEXT PRIMARY KEY REFERENCES apps(id), to_user_id TEXT NOT NULL REFERENCES users(id))")
         for name, sql in GUARDS:
             conn.execute(f"DROP TRIGGER IF EXISTS {name}")
             conn.execute(sql)
@@ -144,13 +140,13 @@ def self_test(conn: sqlite3.Connection) -> None:
 
     The fixtures live in a savepoint that is rolled back, so the self-test leaves no row behind.
     """
-    owner, other, third = (f"usr_{uuid.uuid4().hex}" for _ in range(3))
+    owner, other = f"usr_{uuid.uuid4().hex}", f"usr_{uuid.uuid4().hex}"
     svc, zero, personal = (f"app_{uuid.uuid4().hex}" for _ in range(3))
     live, revoked, control = (f"cred_{uuid.uuid4().hex}" for _ in range(3))
     tad = f"tad_{uuid.uuid4().hex}"
     conn.execute("SAVEPOINT binding_guard_self_test")
     try:
-        for user in (owner, other, third):
+        for user in (owner, other):
             conn.execute("INSERT INTO users(id, issuer, subject, email, display_name, created_at) "
                          "VALUES (?, 'https://self-test.invalid', ?, NULL, 'self test', 0)", (user, user))
         for app, kind in ((svc, "service"), (zero, "service"), (personal, "personal")):
@@ -187,18 +183,6 @@ def self_test(conn: sqlite3.Connection) -> None:
         for label, statement, params in forbidden:
             if not _refused(conn, statement, params):
                 raise GuardError(f"binding guard self-test: {label} was not refused")
-
-        # A handover marker lets the App move to the person it names, and to no one else.
-        conn.execute("INSERT INTO app_handovers(app_id, to_user_id) VALUES (?, ?)", (svc, other))
-        if not _refused(conn, "UPDATE apps SET owner_user_id=? WHERE id=?", (third, svc)):
-            raise GuardError("binding guard self-test: a handover to someone the marker does not name was not refused")
-        try:
-            conn.execute("UPDATE apps SET owner_user_id=? WHERE id=?", (other, svc))
-        except sqlite3.IntegrityError as exc:
-            raise GuardError(f"binding guard self-test: a marked handover was refused: {exc}") from None
-        conn.execute("UPDATE app_handovers SET to_user_id=? WHERE app_id=?", (owner, svc))
-        conn.execute("UPDATE apps SET owner_user_id=? WHERE id=?", (owner, svc))
-        conn.execute("DELETE FROM app_handovers WHERE app_id=?", (svc,))
 
         permitted = (
             ("same-value kind", "UPDATE apps SET kind=kind WHERE id=?", (svc,)),

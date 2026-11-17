@@ -2098,6 +2098,8 @@ def create_admin_router(
             return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
         except admin_store.NameRejected as exc:
             return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
+        except admin_store.HandoverRefused as exc:
+            return _RouteError(status.HTTP_409_CONFLICT, "handover_refused", str(exc)).as_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,

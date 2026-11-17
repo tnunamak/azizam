@@ -478,10 +478,6 @@ NOT_CREDENTIAL_TABLES = {
     # (gateway/transition_snapshots.py). None holds a secret or names a person, and no row grants access or makes a
     # key; the transition executor writes them for owner requests and for wakes.
     "transition_gate", "transition_op", "transition_snapshot", "transition_snapshot_pointer",
-    # app_handovers: a marker row that lives only inside reassign_service_app's own transaction. It lets the App-binding
-    # guard accept one person change on one service App; it makes no key and moves no key. The one writer checks the
-    # browser session in that transaction (gateway/admin_store.py).
-    "app_handovers",
 }
 
 

@@ -383,11 +383,6 @@ CREATE TABLE IF NOT EXISTS account_access (
  user_id TEXT PRIMARY KEY REFERENCES users(id), plan_id TEXT REFERENCES access_plans(id),
  disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
 );
--- One row exists only inside the write that hands a service App to another person (reassign_service_app). The
--- App-binding guard lets an App with keys change person only while this row names the App and the new person.
-CREATE TABLE IF NOT EXISTS app_handovers (
- app_id TEXT PRIMARY KEY REFERENCES apps(id), to_user_id TEXT NOT NULL REFERENCES users(id)
-);
 -- A person whose latest sign-in was refused. Their personal keys stop working
 -- until a sign-in succeeds, which deletes the row (reversible by design).
 CREATE TABLE IF NOT EXISTS account_signin_refusals (
@@ -2322,6 +2317,20 @@ def _audit_in_write(conn: sqlite3.Connection, audit: Mapping[str, Any], *, targe
         metadata={**dict(audit.get("metadata") or {}), **metadata}, now=_now())
 
 
+def app_binding_counts(app_id: str, *, path: Path = DB_PATH) -> dict[str, int]:
+    """How many live keys (expired ones too, as the binding guard counts them) and trusted addresses an App has."""
+    with _conn(path) as conn:
+        keys = conn.execute(
+            "SELECT COUNT(*) FROM credentials WHERE subject_kind = 'app' "
+            "AND COALESCE(NULLIF(app_id, ''), subject_id) = ? AND revoked_at IS NULL", (app_id,)).fetchone()[0]
+        addresses = conn.execute("SELECT COUNT(*) FROM app_trusted_addresses WHERE app_id = ?", (app_id,)).fetchone()[0]
+    return {"live_keys": keys, "trusted_addresses": addresses}
+
+
+class HandoverRefused(ValueError):
+    """The person a service App would be handed to cannot answer for it now (the route answers 409)."""
+
+
 def reassign_service_app(
     app_id: str,
     to_user_id: str,
@@ -2332,11 +2341,14 @@ def reassign_service_app(
 ) -> dict[str, Any] | None:
     """Hand a service App to another person: the person who answers for it, and whose plan bounds it.
 
-    This is a different act from ``update_app``, whose ``owner_user_id`` only filters. The keys and trusted
-    addresses stay as they are: they keep the person who issued them as their creator, and keep working under the
-    new person's plan. Only a service App moves; the new person must be a signed-up person who is neither
-    suspended nor removed. One audit row names the old and the new person, in the same transaction. Returns the
-    App, or ``None`` when it does not exist.
+    This is a different act from ``update_app``, whose ``owner_user_id`` only filters. Every live key of the App is
+    revoked and its trusted addresses are removed first, in the same transaction, so the App is unbound when its
+    person changes and the binding guard (``apps_owner_moves_only_unbound``) allows the move. Each live binding was
+    issued by the App's own person, so the new person makes a new key. The App keeps its id, name, plan choice,
+    request-history setting and usage history. Only a service App moves. The new person needs an access row, must be
+    neither suspended nor removed, and must not have a refused sign-in (else ``HandoverRefused``). One audit row names
+    the old and the new person and the counts, in the same transaction. Returns the App, or ``None`` when it does not
+    exist.
     """
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -2348,18 +2360,27 @@ def reassign_service_app(
             raise ValueError("only a service app can be handed to another person; a personal app keeps its person")
         if str(current["owner_user_id"]) == to_user_id:
             raise ValueError("that person already answers for this app")
-        if conn.execute("SELECT 1 FROM users WHERE id = ?", (to_user_id,)).fetchone() is None:
-            raise ValueError("the person who will answer for this app was not found")
-        state = conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
-                             (to_user_id,)).fetchone()
-        if state is not None and (state["disabled_at"] is not None or state["removed_at"] is not None):
-            raise ValueError("an app can only be handed to an active person")
-        conn.execute("INSERT INTO app_handovers(app_id, to_user_id) VALUES (?, ?)", (app_id, to_user_id))
+        state = conn.execute(
+            "SELECT a.disabled_at, a.removed_at, "
+            "EXISTS(SELECT 1 FROM account_signin_refusals r WHERE r.user_id = a.user_id) AS refused "
+            "FROM account_access a JOIN users u ON u.id = a.user_id WHERE a.user_id = ?", (to_user_id,)).fetchone()
+        if state is None:
+            raise HandoverRefused("that person has not signed up, so an app cannot be handed to them")
+        if state["disabled_at"] is not None or state["removed_at"] is not None:
+            raise HandoverRefused("an app can only be handed to an active person; that person is suspended or removed")
+        if state["refused"]:
+            raise HandoverRefused("that person's latest sign-in was refused, so an app cannot be handed to them yet")
+        # The same set the binding guard counts: every key not revoked (expired ones too).
+        revoked = conn.execute(
+            "UPDATE credentials SET revoked_at = ? WHERE subject_kind = 'app' "
+            "AND COALESCE(NULLIF(app_id, ''), subject_id) = ? AND revoked_at IS NULL", (_now(), app_id)).rowcount
+        removed = conn.execute("DELETE FROM app_trusted_addresses WHERE app_id = ?", (app_id,)).rowcount
         conn.execute("UPDATE apps SET owner_user_id = ? WHERE id = ?", (to_user_id, app_id))
-        conn.execute("DELETE FROM app_handovers WHERE app_id = ?", (app_id,))
         if audit is not None:
             _audit_in_write(conn, audit, target_kind="app", target_id=app_id, metadata={
-                "from_user_id": current["owner_user_id"], "to_user_id": to_user_id, "name": current["name"]})
+                "from_user_id": current["owner_user_id"], "to_user_id": to_user_id,
+                "owner_user_id": to_user_id, "revoked_keys": revoked, "removed_addresses": removed,
+                "name": current["name"]})
         conn.commit()
         row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
     return _row_to_dict(row)

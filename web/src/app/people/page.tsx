@@ -1221,6 +1221,8 @@ function Confirmation({
 }) {
   const [typed, setTyped] = useState("");
   const [moving, setMoving] = useState<App | null>(null);
+  // Only the owner can change who a service app answers to; others see the list but not the button.
+  const viewerIsOwner = useViewer().role === "owner";
   // The service apps this person answers for stop with them. Each can be handed to someone else first.
   const { data: allApps, refetch: refetchApps } = useQuery({
     queryKey: ["admin", "apps"],
@@ -1259,15 +1261,17 @@ function Confirmation({
                       {app.same_as_person ? "Same as its person" : (app.access_plan_name ?? "Its own plan")}
                     </span>
                   </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    disabled={mutation.isPending}
-                    onClick={() => setMoving(app)}
-                  >
-                    Move to another person first
-                  </Button>
+                  {viewerIsOwner ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      disabled={mutation.isPending}
+                      onClick={() => setMoving(app)}
+                    >
+                      Move to another person first
+                    </Button>
+                  ) : null}
                 </li>
               ))}
             </ul>
