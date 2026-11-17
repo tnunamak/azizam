@@ -594,6 +594,7 @@ def create_config_router(
                 try:
                     written = admin_store.write_service_registry_with_audit(
                         wanted_registry.stored, expected_generation=wanted_registry.generation, updated_by=ctx.subject,
+                        actor=ctx,
                         audit_action="operator.service_registry.import", audit_actor_kind=ctx.actor_kind,
                         audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
                         audit_target_kind="operator_setting", audit_target_id="service_registry",
@@ -616,6 +617,7 @@ def create_config_router(
             def write_registry(conn: Any) -> None:
                 admin_store.write_service_registry_in_transaction(
                     conn, wanted_registry.stored, updated_by=ctx.subject, expected_generation=wanted_registry.generation,
+                    actor=ctx,
                     now=int(datetime.now(timezone.utc).timestamp()), stored_form=True)
 
             response = run_change(ctx, items, if_match=if_match, kind="import", origin="import", note=note,

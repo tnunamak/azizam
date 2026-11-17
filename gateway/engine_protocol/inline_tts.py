@@ -70,6 +70,8 @@ class InlineTtsAdapter:
         raise UnsupportedByAdapter("The speech adapter lists no inventory.")
 
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
+        from gateway.remote_engine import refuse_unbound_connection
+        refuse_unbound_connection(conn)
         if op not in OPERATIONS:
             raise UnknownOperation(f"The speech adapter has no operation '{op}'.")
         if op in _JSON_ROUTES:

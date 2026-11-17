@@ -142,7 +142,10 @@ class AdapterRegistry:
     """
 
     def __init__(self, descriptions: Mapping[str, ProtocolDescription], *, transport: Transport | None = None,
-                 assets: AssetStore | None = None) -> None:
+                 assets: AssetStore | None = None, remote_capability=None) -> None:
+        if remote_capability is not None and transport is None:
+            raise ProtocolError('Remote adapters require the bound client factory.', code='protocol_dispatch_refused')
+        self._remote_capability = remote_capability
         self._descriptions = dict(descriptions)
         self._transport = transport
         self._assets = assets
@@ -162,8 +165,12 @@ class AdapterRegistry:
         if description.adapter_id is None:
             from gateway.engine_protocol.executor import HttpV1Executor
             from gateway.engine_protocol.http_adapter import HttpV1Adapter
-            built: EngineAdapter = HttpV1Adapter(HttpV1Executor(description, transport=self._transport, assets=self._assets))
+            built: EngineAdapter = HttpV1Adapter(HttpV1Executor(description, transport=self._transport, assets=self._assets,
+                                                               remote_capability=self._remote_capability))
         else:
+            if self._remote_capability is not None:
+                from gateway.remote_engine import refused
+                raise refused()
             factory = self._factories.get(description.adapter_id)
             if factory is None:
                 raise ProtocolError(f"The protocol '{protocol_id}' needs the adapter '{description.adapter_id}', which is not registered.",
@@ -185,6 +192,8 @@ def connection_from_record(connection: Mapping[str, Any], secret: Callable[[str]
     ``secret`` looks a ``secret_ref`` up; a reference that resolves to nothing gives no credential (the request goes
     without a key, and the engine says so), never an empty one.
     """
+    from gateway.remote_engine import remote_enabled
+    remote_marker = remote_enabled(connection)
     transport = connection.get("transport", "http")
     if transport != "http":
         raise ProtocolError(f"The transport '{transport}' needs a reviewed adapter; the http-v1 executor speaks http only.",
@@ -213,4 +222,5 @@ def connection_from_record(connection: Mapping[str, Any], secret: Callable[[str]
             total_s=float(timeouts.get("total_s", defaults.total_s)),
         ),
         headers=headers,
+        remote_enabled=remote_marker,
     )

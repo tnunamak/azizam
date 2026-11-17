@@ -815,7 +815,7 @@ def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Map
     # The egress map follows the config the gateway boots with (registry overlay, partial and empty fallbacks included),
     # not the bootstrap file: a service held only in the registry is mapped from the first request. It goes live
     # before the snapshot, so no request sees an enabled domain without its map entry.
-    engine_egress.install(_project_egress(snapshot.config.get("backends")))
+    engine_egress.install(_project_egress(snapshot.config.get("backends")), registry_path=ADMIN_DB_PATH, registry_generation=registry_generation)
     CONFIG_HOME.publish(snapshot)
     globals().update(_workflow_alias_tables(snapshot.config))
     return CONFIG_HOME.holder.current().config
@@ -1154,7 +1154,11 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 
     if not backend:
         return False
-    return supports_swap(driver_for_service(backend, config.get("backends")))
+    try:
+        return supports_swap(driver_for_service(backend, config.get("backends")))
+    except ProtocolError:
+        # Classification grants no egress: a remote record is never a local swap.
+        return False
 
 
 # Optional catalog of additional GGUF aliases (parallel to the roles section). Each entry has
@@ -1753,7 +1757,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # The map goes live before the snapshot: between the two, the old config meets the new map, and a destination the
     # new map adds is refused without a lease (fail closed). The other order would let the new config send to an
     # enabled domain that the old map does not know, with no lease check.
-    engine_egress.install(egress)
+    engine_egress.install(egress, registry_path=ADMIN_DB_PATH, registry_generation=registry_generation)
     # Publish the snapshot first: runtime() reads only the holder, so a request that starts from here on binds the new
     # snapshot whole, and `config` and the derived names below follow from it, never ahead of it.
     CONFIG_HOME.publish(snapshot)
@@ -5024,6 +5028,8 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     These hops (speech, rerank, realtime, decisions) hold no serving lease yet,
     so a transition-enabled domain refuses them here (fail closed).
     """
+    from gateway.remote_engine import refuse_unbound
+    refuse_unbound((config.get("backends") or {}).get(service_id) or {})
     refusal = _unleased_path_refusal(service_id)
     if refusal is not None:
         return refusal
@@ -14573,6 +14579,12 @@ async def _transition_unavailable_handler(_request: Request, exc: TransitionUnav
     return _transition_unavailable_response(exc)
 
 
+@app.exception_handler(ProtocolError)
+async def _protocol_refusal_handler(_request: Request, exc: ProtocolError) -> Response:
+    """Legacy routes share the declared protocol's sanitized error envelope."""
+    return _protocol_failure(exc)
+
+
 @app.exception_handler(RegistryNotApplied)
 async def _registry_not_applied_handler(_request: Request, exc: RegistryNotApplied) -> JSONResponse:
     """An admin save that is stored but not live answers with that fact, not with a success."""
@@ -21433,6 +21445,14 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     if (not service or not service.get("port") or not service.get("host")
             or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
+    from gateway.remote_engine import refuse_unbound, refused
+    try:
+        await engine_egress.refresh_remote_destinations_async()
+        refuse_unbound(service)
+        if engine_egress.is_remote_destination(service_registry.engine_base_address(service)):
+            raise refused()
+    except ProtocolError as error:
+        return await _deny_realtime(websocket, _protocol_failure(error))
     admission = _dispatch_admission_response(
         f"{domain_rows.AUDIO_PREFIX}realtime", auth_context=auth_context, resource_class=domain_rows.AUDIO,
         service_id=_REALTIME_SERVICE_ID, service_available=True,
@@ -26230,6 +26250,7 @@ _DECLARED_JOB_FIELDS = frozenset({"intent", "model", "input"})
 async def _submit_declared_operation_job(*, request: Request, payload: Mapping[str, Any], intent: str) -> Response | None:
     """A job for an operation an owner's engine description declares; None when no enabled engine declares it."""
     from gateway.engine_protocol import dispatch as protocol_dispatch
+    from gateway.engine_contract_view import connection_config
     from gateway.engine_protocol.media import GatewayAssetStore
     model = payload.get("model")
     try:
@@ -26262,12 +26283,26 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
     if admission is not None:
         return admission
     caller = auth_context.identity
+    remote_options = {}
+    remote_metadata = {}
+    from gateway.remote_engine import remote_enabled
+    if remote_enabled(connection_config(target.service)):
+        from gateway.remote_engine import factory_from_store
+        factory = factory_from_store()
+        try:
+            capability = factory.admit(target.engine_id)
+        except ProtocolError as error:
+            return _protocol_failure(error)
+        remote_options = {'remote_factory': factory, 'remote_capability': capability}
+        remote_metadata = {'remote_binding': {'service_id': capability.service_id, 'origin': capability.exact_origin,
+                           'policy_generation': capability.policy_generation, 'admitted_at': capability.admitted_at,
+                           'admission_id': capability.admission_id}}
     request_id = f"decljob_{uuid.uuid4().hex}"
     job = media_jobs.MediaJob(
         intent=intent, backend=target.engine_id, request_id=request_id, parent_request_id=request_id,
         app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
         api_key_name=caller.name if caller else None, app_profile=plan_ref(caller),
-        metadata={"mode": declared_operation_job.MODE, "model": str(model)})
+        metadata={"mode": declared_operation_job.MODE, "model": str(model), **remote_metadata})
     created = media_jobs.create(job, input_data=dict(body), path=media_jobs.DB_PATH)
     # The receipt is the Activity row: opened here under the job's request id (so a restart closes it with the job),
     # closed by the task that runs the job. It names the work and the engine, never the input or the result.
@@ -26285,7 +26320,7 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
         lease = None
         try:
             runtime = await asyncio.to_thread(
-                protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
+                protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id), **remote_options)
             # The same lifecycle as a synchronous protocol call: check the operation's key before a selection call can
             # change state, then hold the serving lease (the transition domain's, or the offering's selection) for the
             # whole run. The finally releases it on success, failure and cancellation.
@@ -26306,9 +26341,13 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
             receipt_owner.report(status="succeeded", reason="completed")
             await receipt_owner.settle()
         except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
-            canceled = isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
+            logging.getLogger('gateway.engine_protocol').warning('Declared operation job ended: %s', type(exc).__name__)
+            canceled = (isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
+                        or bool(remote_options and isinstance(exc, ProtocolError) and exc.code == 'protocol_dispatch_refused'))
             media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED if canceled else media_jobs.STATUS_FAILED,
-                                     error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH)
+                                     error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH,
+                                     **({'metadata_patch': {'remote_end_reason': 'remote_operation_cancelled'}}
+                                        if canceled and remote_options else {}))
             await receipt_owner.settle(asyncio.CancelledError() if canceled else exc)
             if isinstance(exc, asyncio.CancelledError):
                 raise

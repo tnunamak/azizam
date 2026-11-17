@@ -117,6 +117,19 @@ async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *
     if isinstance(refs, ResultBundle):
         # Core published this bundle before returning it; delivery has no completion ownership.
         return await deliver(refs) if deliver is not None else None
+    if getattr(runtime, "_remote_capability", None) is not None:
+        # A remote engine's results commit only while its egress still holds; delivery runs after the fence.
+        async with runtime._transport.fence():
+            runtime.require_egress()
+            _complete(refs, job_id)
+    else:
+        _complete(refs, job_id)
+    if deliver is not None:
+        from gateway.result_bundle import DEFAULT_NAME
+        return await deliver(ResultBundle({DEFAULT_NAME: AssetsResult(tuple(refs))}))
+
+
+def _complete(refs, job_id: str) -> None:
     if not refs:
         raise ProtocolError("The engine returned no result file.", code="malformed_response")
     media_jobs.update_status(
@@ -124,6 +137,3 @@ async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *
         add_assets=[{"asset_id": ref.id, "kind": kind_for_media_type(ref.content_type),
                      "media_type": ref.content_type, "size_bytes": ref.size} for ref in refs])
     media_jobs.append_event(job_id, "succeeded", {"status": "succeeded"}, path=media_jobs.DB_PATH)
-    if deliver is not None:
-        from gateway.result_bundle import DEFAULT_NAME
-        return await deliver(ResultBundle({DEFAULT_NAME: AssetsResult(tuple(refs))}))

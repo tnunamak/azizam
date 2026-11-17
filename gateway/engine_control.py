@@ -21,6 +21,7 @@ from gateway.engine_observations import ObservationReader
 from gateway.engine_residency import ResidencyController
 from gateway.engine_switch import SwitchController
 from gateway.swap_drain import SwapDrain
+from gateway.remote_engine import refuse_unbound
 
 
 class EngineControlRuntime:
@@ -39,11 +40,13 @@ class EngineControlRuntime:
         return operations if isinstance(operations, Mapping) else {}
 
     async def observe(self, name: str):
+        refuse_unbound(self.service)
         return await self._observations.read({**self.service,
             "connection": connection_config(self.service),
             "observations": observations_config(self.service)}, name)
 
     async def invoke(self, name: str, args: Mapping[str, Any]) -> None:
+        refuse_unbound(self.service)
         operation = self._operations().get(name)
         if not isinstance(operation, Mapping):
             raise ValueError(f"undeclared control operation: {name}")
@@ -180,6 +183,7 @@ class EngineControlRuntime:
 
     async def select(self, offering_id: str, selection: Mapping[str, Any], *,
                      on_acquired=None, on_release=None, prepare=None):
+        refuse_unbound(self.service)
         controller = SwitchController(drain=self._drain, invoke=self.invoke,
             observe=self.observe, lock_for=self._lock_for)
         return await controller.select(self.service, offering_id, selection,
@@ -187,17 +191,21 @@ class EngineControlRuntime:
                                        prepare=prepare)
 
     async def load(self) -> bool:
+        refuse_unbound(self.service)
         controller = ResidencyController(invoke=self.invoke, observe=self.observe)
         return await controller.load({**self.service, "residency": residency_config(self.service)})
 
     async def unload(self) -> bool:
+        refuse_unbound(self.service)
         controller = ResidencyController(invoke=self.invoke, observe=self.observe)
         return await controller.unload({**self.service, "residency": residency_config(self.service)})
 
     async def sleep(self) -> bool:
+        refuse_unbound(self.service)
         controller = ResidencyController(invoke=self.invoke, observe=self.observe)
         return await controller.sleep({**self.service, "residency": residency_config(self.service)})
 
     async def wake(self) -> bool:
+        refuse_unbound(self.service)
         controller = ResidencyController(invoke=self.invoke, observe=self.observe)
         return await controller.wake({**self.service, "residency": residency_config(self.service)})

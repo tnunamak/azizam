@@ -4121,6 +4121,8 @@ def put_operator_setting_in(
     now: int | None = None,
 ) -> dict[str, Any]:
     """``put_operator_setting`` inside a transaction the caller owns and commits."""
+    if str(key or "").strip() == "service_registry":
+        raise ValueError("service_registry must be written through the registry transaction primitive")
     setting_key, value = _canonical_setting(conn, str(key or "").strip(), value)
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
@@ -4291,6 +4293,16 @@ def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, A
     return record
 
 
+def service_registry_generation(*, path: Path = DB_PATH) -> int:
+    """Read only the registry CAS counter; remote I/O compares it before each hop."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'"
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+
 def get_service_registry_json_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
     """Read the encoded document and generation together, without parsing JSON."""
     # One statement, so the document and its CAS generation come from the same
@@ -4319,6 +4331,7 @@ def write_service_registry(
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     stored_form: bool = False,
+    actor: Any = None,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
 
@@ -4339,7 +4352,7 @@ def write_service_registry(
             session_guard.require_live(conn, session)
             next_generation = write_service_registry_in_transaction(
                 conn, value, updated_by=updated_by,
-                expected_generation=expected_generation, now=ts, stored_form=stored_form,
+                expected_generation=expected_generation, now=ts, stored_form=stored_form, actor=actor,
             )
             conn.commit()
         except Exception:
@@ -4367,6 +4380,7 @@ def write_service_registry_with_audit(
     migration_step: str | None = None,
     stored_form: bool = False,
     also_in_transaction: Callable[[sqlite3.Connection, int], None] | None = None,
+    actor: Any = None,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
 
@@ -4400,7 +4414,7 @@ def write_service_registry_with_audit(
                 updated_by=updated_by,
                 expected_generation=expected_generation,
                 now=ts,
-                stored_form=stored_form,
+                stored_form=stored_form, actor=actor,
             )
             _record_audit_in_transaction(
                 conn,
@@ -4473,6 +4487,7 @@ def write_service_registry_in_transaction(
     expected_generation: int,
     now: int,
     stored_form: bool = False,
+    actor: Any = None,
 ) -> int:
     """Write the registry and increment its generation in a caller-owned transaction.
 
@@ -4510,6 +4525,31 @@ def write_service_registry_in_transaction(
         and service_registry.is_litellm_service_record(record_id, record),
     )
     after_effective = registry_layers.layer(value, release)
+    # Every registry writer must carry owner proof to grant or change remote authority.
+    # updated_by and audit labels are attribution, never authorization.
+    from gateway.remote_engine import authority_record
+    from gateway.engine_contract_view import connection_config
+    new_services = after_effective.get('services') or {}
+    for sid in set(old_services) | set(new_services):
+        old_record, new_record = old_services.get(sid), new_services.get(sid)
+        remote = any('remote_dispatch' in connection_config(record or {}) for record in (old_record, new_record))
+        old_authority, new_authority = authority_record(old_record), authority_record(new_record)
+        disable_only = False
+        if (old_record and new_record and old_record.get('enabled', True) is True
+                and new_record.get('enabled', True) is False):
+            # Restore only the enabled bits for comparison. An admin may reduce
+            # availability, never change connection policy in the same write.
+            restored = [dict(level) for level in new_authority]
+            for previous_level, restored_level in zip(old_authority, restored):
+                if restored_level.get('enabled') is False:
+                    if 'enabled' in previous_level:
+                        restored_level['enabled'] = previous_level['enabled']
+                    else:
+                        restored_level.pop('enabled', None)
+            disable_only = restored == old_authority
+        if remote and old_authority != new_authority and not disable_only:
+            if actor is None or 'owner' not in actor.roles:
+                raise PermissionError('Only the owner can change remote engine authority.')
     # Every engine write runs here under the writer lock, so a description delete cannot slip between this check and the
     # write: an engine that now names a protocol description needs the description to exist.
     from gateway import protocol_description_store
@@ -4523,6 +4563,12 @@ def write_service_registry_in_transaction(
         [(str(service_id),) for service_id in removed_ids],
     )
     next_generation = generation + 1
+    from gateway.remote_engine import invalidate_registry
+    database = next((row[2] for row in conn.execute('PRAGMA database_list') if row[1] == 'main'), None)
+    if database:
+        from gateway.engine_egress import protect_registry_write
+        protect_registry_write(database, after_effective.get('services'))
+        invalidate_registry(database, registry_layers.layer(before, release), after_effective)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     conn.execute(
         "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) VALUES (?, ?, ?, ?) "
@@ -4568,6 +4614,7 @@ def write_service_registry_and_setting_with_audits(
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     precheck: Callable[[sqlite3.Connection], None] | None = None,
+    actor: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Commit a registry revision, one ordinary setting and their audit facts atomically.
 
@@ -4601,7 +4648,7 @@ def write_service_registry_and_setting_with_audits(
                 registry,
                 updated_by=updated_by,
                 expected_generation=expected_generation,
-                now=ts,
+                now=ts, actor=actor,
             )
             _upsert_setting_in_transaction(conn, setting_name, setting_payload, ts, updated_by)
             for audit in audits:
