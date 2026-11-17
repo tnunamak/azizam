@@ -1530,7 +1530,8 @@ def get(
     include_deleted: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    """Return the stored job filtered for ``audience``, or None. Deleted jobs are hidden unless explicitly included."""
+    """Return the stored job filtered for ``audience``, or None. Pending publication is internal; deleted jobs are hidden
+    unless explicitly included."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     with _conn(path) as conn:
@@ -1632,6 +1633,7 @@ def recent(
     if app_ids is not None or owner_key_hashes is not None:
         if not app_ids and not owner_key_hashes:
             return []
+    # Sync operations use an internal row until their result is published atomically.
     clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)",
                           "COALESCE(json_extract(job_json, '$.metadata.publication_pending'), 0) = 0"]
     params: list[Any] = []

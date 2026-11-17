@@ -43,7 +43,7 @@ def observe(root, old):
         facts = mesh.run(harness, drive)
         job, = media_jobs.recent(path=media_jobs.DB_PATH)
         receipt, = [row for row in receipt_store.recent(audience='internal', path=receipt_store.DB_PATH)
-                    if row['path'] == mesh.RAW]
+                    if row['request_id'] == job['request_id']]
         facts.update(job_status=job['status'], receipt_status=receipt['status'])
         return facts
 

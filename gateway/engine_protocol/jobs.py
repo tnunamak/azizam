@@ -158,6 +158,7 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
     that same commit. Raises ``ResultRefused`` for a result that breaks a limit (nothing is published, the stage is
     aborted) and ``CancellationPending`` for a cancel that has not settled."""
     limits = _result_context(runtime).limits
+    # Optional public projection fields share the bundle's completion transaction.
     publication_options = getattr(runtime, 'publication_options', None)
     if publication_options is not None:
         status_args = {**publication_options(), **status_args}
