@@ -19,6 +19,11 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from gateway import operation_security
+from gateway.decision_engine import (
+    MAX_OPTIONS as MAX_CHOICE_OPTIONS,
+    MIN_LEVELS as MIN_SCORE_LEVELS,
+    MAX_LEVELS as MAX_SCORE_LEVELS,
+)
 from gateway.receipts import new_request_id
 
 JSON = dict[str, Any]
@@ -26,9 +31,6 @@ State = str | list[Any] | dict[str, Any]
 ModelsResult = Sequence["DecisionModel"] | Sequence[Mapping[str, Any]]
 
 
-MAX_CHOICE_OPTIONS = 255
-MIN_SCORE_LEVELS = 1
-MAX_SCORE_LEVELS = 10
 DEFAULT_LIMITS = {
     "max_options": MAX_CHOICE_OPTIONS,
     "max_levels": MAX_SCORE_LEVELS,
