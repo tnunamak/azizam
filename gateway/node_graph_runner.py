@@ -521,6 +521,9 @@ class NodeGraphRunner:
         not make it; then it runs first, and its files must carry transparency, or the run fails."""
         builtin = {"strip_audio": self._strip_audio, "attach_provenance": self._attach_provenance}
         names = [name for name in (ctx.pin.binding.get("result_processing") or ()) if name != CUTOUT_STAGE]
+        if (((ctx.payload.get("body") or {}).get("options") or {}).get(AUDIO_FACT) is False
+                and "strip_audio" not in names):
+            names.insert(0, "strip_audio")
         if needs_cutout:
             names.insert(0, CUTOUT_STAGE)
         for stage in names:

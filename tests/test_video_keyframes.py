@@ -9,6 +9,7 @@ upload), against a fake ComfyUI and the shipped proxy_config.yml.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 from dataclasses import replace
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -331,14 +333,67 @@ class KeyframeRouteBase(unittest.TestCase):
             self.stack.enter_context(p)
         self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
-        spool = tempfile.TemporaryDirectory()
-        self.addCleanup(spool.cleanup)
-        patch_video_row_files(self.stack, Path(spool.name))
+        spool = self.stack.enter_context(tempfile.TemporaryDirectory())
+        patch_video_row_files(self.stack, Path(spool))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
             self.addCleanup(lambda n=name, s=saved: (getattr(proxy, n).clear(), getattr(proxy, n).update(s)))
+        submit = proxy.workflow_run.WorkflowRunCore.submit_run
+
+        async def submit_before_graph_check(core, request, caller, **kwargs):
+            # The route answers when queued; these assertions inspect the engine's
+            # submitted graph. Keep the request loop alive until that handoff.
+            outcome = await submit(core, replace(request, submit_wait_s=0), caller, **kwargs)
+            if hasattr(self, "queued_jobs"):
+                return outcome
+            job_id = getattr(outcome, "job_id", None)
+            deadline = time.monotonic() + 5
+            while job_id and time.monotonic() < deadline:
+                job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+                if (job.get("metadata") or {}).get(proxy.node_graph_runner.ENGINE_PROMPT_KEY) or media_jobs.is_terminal(job.get("status", "")):
+                    break
+                await asyncio.sleep(0.01)
+            return outcome
+
+        self.stack.enter_context(patch.object(proxy.workflow_run.WorkflowRunCore, "submit_run", submit_before_graph_check))
+
+        self.stack.enter_context(patch.object(proxy, "_workflow_run_semaphore", None))
+        self.stack.enter_context(patch.object(proxy, "_workflow_run_tasks", set()))
+        self.stack.enter_context(patch.object(proxy, "_workflow_run_scheduled", set()))
         self.client = TestClient(proxy.app)
+
+    def keep_job_loop(self):
+        # Hold the scheduler until the fake engine's output is ready, then run
+        # the real worker and follow the public id through content delivery.
+        self.queued_jobs = []
+        self.stack.enter_context(patch.object(proxy, "_schedule_workflow_run", self.queued_jobs.append))
+        self.client.portal = self.stack.enter_context(self.client._portal_factory())
+        async def cancel_pending():
+            import asyncio
+            tasks = tuple(proxy._workflow_run_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.stack.callback(lambda: self.client.portal.call(cancel_pending))
+
+    def finished_content(self, video_id):
+        job_id = video_id.removeprefix("video_")
+        self.assertIn(job_id, self.queued_jobs)
+        async def run_ready_job():
+            await asyncio.wait_for(proxy._run_workflow_job(job_id), timeout=10)
+        self.client.portal.call(run_ready_job)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            status = self.client.get(f"/v1/videos/{video_id}")
+            self.assertEqual(status.status_code, 200, status.text)
+            if status.json()["status"] in ("completed", "failed"):
+                break
+            time.sleep(0.02)
+        self.assertEqual(status.json()["status"], "completed", status.text)
+        response = self.client.get(f"/v1/videos/{video_id}/content?metadata=none")
+        self.assertEqual(response.status_code, 200, response.text[:200])
+        return response.content
 
     @property
     def graph(self) -> dict:
@@ -721,17 +776,6 @@ class KeyframeMultipartRequestTests(KeyframeRouteBase):
 class FirstFrameOnlyParityTests(KeyframeRouteBase):
     """Requests that omit the new inputs build the graph they always built."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        submit = proxy.workflow_run.WorkflowRunCore.submit_run
-
-        async def submit_before_graph_check(core, request, caller, **kwargs):
-            # The route answers when queued; these assertions inspect the engine's
-            # submitted graph. Keep the request loop alive until that handoff.
-            return await submit(core, replace(request, submit_wait_s=5.0), caller, **kwargs)
-
-        self.stack.enter_context(patch.object(proxy.workflow_run.WorkflowRunCore, "submit_run", submit_before_graph_check))
-
     def _expected(self, parent: str, edits: dict[str, dict[str, object]]) -> dict:
         graph = _graph(parent)
         graph.pop("_meta", None)
@@ -816,9 +860,7 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
 
     def setUp(self) -> None:
         super().setUp()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
+        root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         self.media_db = root / "media_jobs.db"
         media_jobs.init_db(self.media_db)
         for p in (
@@ -829,6 +871,8 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         ):
             self.stack.enter_context(p)
 
+        self.keep_job_loop()
+
     def _create(self) -> dict:
         r = self.client.post("/v1/videos", json={
             "model": "video-minimax-h3-keyframes", "prompt": "a lighthouse", "seconds": 5,
@@ -838,39 +882,38 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
 
     def test_job_is_tracked_listed_and_reports_status(self) -> None:
         created = self._create()
-        self.assertEqual(created["id"], NEW_ID)
+        self.assertTrue(created["id"].startswith("video_mj_"))
         self.assertEqual((created["object"], created["status"]), ("video", "queued"))
-        record = proxy._video_job_records[NEW_PROMPT_ID]
+        record = proxy._workflow_job_service().request_facts(created["id"].removeprefix("video_"), access_context())
         self.assertEqual(record["resolved_model"], "video-minimax-h3-keyframes")
         self.assertEqual(record["provenance"]["workflow_id"], "video.generate.minimax-h3-keyframes")
         self.assertEqual(record["size"], "960x544")
-        self.assertIsNotNone(record["owner_key_hash"])
+        job = media_jobs.get(created["id"].removeprefix("video_"), audience="internal", path=self.media_db)
+        self.assertIsNotNone(job["owner_key_hash"])
         self.assertNotIn("last_frame", json.dumps(record["provenance"]))
         listed = self.client.get("/v1/videos").json()
-        self.assertEqual([item["id"] for item in listed["data"]], [NEW_ID])
-        self.assertEqual(self.client.get(f"/v1/videos/{NEW_ID}").json()["azizam_resolved_model"],
+        self.assertEqual([item["id"] for item in listed["data"]], [created["id"]])
+        self.assertEqual(self.client.get(f"/v1/videos/{created['id']}").json()["azizam_resolved_model"],
                          "video-minimax-h3-keyframes")
 
     def test_finished_clip_lands_in_the_library_as_a_video(self) -> None:
         import anyio
 
-        self._create()
         mp4 = mp4_bytes()
         self.comfy.history[NEW_PROMPT_ID] = succeeded_history("kf_00001_.mp4", node="18")
         self.comfy.view_bytes["kf_00001_.mp4"] = mp4
+        created = self._create()
 
-        async def fetch():
-            return await proxy.proxy_graph_video_content(NEW_ID, access_context(), metadata_mode="none")
-
-        response = anyio.run(fetch)
-        self.assertEqual(response.status_code, 200, getattr(response, "body", b"")[:200])
-        job = media_jobs.get_by_request_id(NEW_ID, path=self.media_db)
+        self.assertEqual(self.finished_content(created["id"]), media_metadata.strip_metadata(mp4, ".mp4"))
+        # The declared run itself is the Library job; delivery need not create a
+        # second synchronous job under the public wire id.
+        job = media_jobs.get(created["id"].removeprefix("video_"), audience="internal", path=self.media_db)
         assert job is not None
         self.assertEqual(job["intent"], "video.generate")
         self.assertEqual(job["workflow"], "video.generate.minimax-h3-keyframes")
         self.assertEqual(job["backend"], "comfyui")
         self.assertEqual(job["status"], media_jobs.STATUS_SUCCEEDED)
-        self.assertEqual((job["assets"][0]["kind"], job["assets"][0]["media_type"]), ("video", "video/mp4"))
+        self.assertEqual((proxy._parse_asset_id(job["assets"][0]["asset_id"])[0], job["assets"][0]["media_type"]), ("vid", "video/mp4"))
         self.assertTrue(job["assets"][0]["asset_id"].startswith("vid_"))
 
 
@@ -908,9 +951,7 @@ class VideoAudioControlTests(KeyframeRouteBase):
 
     def setUp(self) -> None:
         super().setUp()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
+        root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         self.media_db = root / "media_jobs.db"
         media_jobs.init_db(self.media_db)
         for p in (
@@ -921,6 +962,8 @@ class VideoAudioControlTests(KeyframeRouteBase):
         ):
             self.stack.enter_context(p)
 
+        self.keep_job_loop()
+
     def _create(self, audio: object = None) -> dict:
         controls = {} if audio is None else {"audio": audio}
         body = {
@@ -930,28 +973,26 @@ class VideoAudioControlTests(KeyframeRouteBase):
         }
         response = self.client.post("/v1/videos", json=body)
         self.assertEqual(response.status_code, 200, response.text)
+        self.video_id = response.json()["id"]
         return response.json()
 
     def _finished(self, mp4: bytes) -> bytes:
         self.comfy.history[NEW_PROMPT_ID] = succeeded_history("aud_00001_.mp4", node="18")
         self.comfy.view_bytes["aud_00001_.mp4"] = mp4
 
-        async def fetch():
-            return await proxy.proxy_graph_video_content(NEW_ID, access_context(), metadata_mode="none")
-
-        response = anyio.run(fetch)
-        self.assertEqual(response.status_code, 200, getattr(response, "body", b"")[:200])
-        return bytes(response.body)
+        return self.finished_content(self.video_id)
 
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are required")
     def test_audio_false_removes_the_track_from_the_stored_video(self) -> None:
         mp4 = _mp4_with_audio()
         self.assertEqual(_audio_stream_count(mp4), 1)
         created = self._create(audio=False)
-        self.assertIs(proxy._video_job_records[created["id"].removeprefix("video_")].get("audio"), False)
+        self.assertIs(proxy._workflow_job_service().request_facts(created["id"].removeprefix("video_"), access_context()).get("audio"), False)
         stored = self._finished(mp4)
         self.assertEqual(_audio_stream_count(stored), 0)
-        job = media_jobs.get_by_request_id(NEW_ID, path=self.media_db)
+        # The declared run itself is the Library job; delivery need not create a
+        # second synchronous job under the public wire id.
+        job = media_jobs.get(created["id"].removeprefix("video_"), audience="internal", path=self.media_db)
         self.assertEqual(job["assets"][0]["media_type"], "video/mp4")
 
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are required")
