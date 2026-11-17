@@ -101,6 +101,49 @@ def test_the_smell_offering_never_resubmits_after_a_lost_reply(jobs_db):  # noqa
     assert len(posts) == 1, "the submit was sent again after its reply was lost"
 
 
+def _without_web_comments(source: str) -> str:
+    """Blank comment spans without moving lines or interpreting quoted markers."""
+    chars = list(source)
+    quote = None
+    comment = None
+    index = 0
+    while index < len(source):
+        char = source[index]
+        pair = source[index:index + 2]
+        if comment == "line":
+            if char in "\r\n":
+                comment = None
+            else:
+                chars[index] = " "
+            index += 1
+        elif comment == "block":
+            if pair == "*/":
+                chars[index:index + 2] = [" ", " "]
+                comment = None
+                index += 2
+            else:
+                if char not in "\r\n":
+                    chars[index] = " "
+                index += 1
+        elif quote is not None:
+            if char == "\\":
+                index += 2
+            else:
+                if char == quote:
+                    quote = None
+                index += 1
+        elif char in ("'", '"', "\x60"):
+            quote = char
+            index += 1
+        elif pair in ("//", "/*"):
+            chars[index:index + 2] = [" ", " "]
+            comment = "line" if pair == "//" else "block"
+            index += 2
+        else:
+            index += 1
+    return "".join(chars)
+
+
 def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
     """Scan a repository-shaped tree and report source locations only."""
     folder = root / "web" / "src" if web else root / "gateway"
@@ -119,7 +162,8 @@ def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
             with tokenize.open(path) as handle:
                 source = handle.read()
             tree = ast.parse(source, filename=str(path))
-            docstring_lines = set()
+            source_lines = source.splitlines(keepends=True)
+            docstring_spans = []
             for node in ast.walk(tree):
                 if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                     first = node.body[0] if node.body else None
@@ -128,12 +172,20 @@ def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
                         and isinstance(first.value, ast.Constant)
                         and isinstance(first.value.value, str)
                     ):
-                        docstring_lines.add(first.value.lineno)
+                        docstring_spans.append((
+                            (first.lineno, first.col_offset),
+                            (first.end_lineno, first.end_col_offset),
+                        ))
             for token in tokenize.generate_tokens(io.StringIO(source).readline):
-                if token.type == tokenize.COMMENT or (
-                    token.type == tokenize.STRING and token.start[0] in docstring_lines
-                ):
+                if token.type == tokenize.COMMENT:
                     continue
+                if token.type == tokenize.STRING:
+                    # AST columns are UTF-8 byte offsets; tokenize uses characters.
+                    start = (token.start[0], len(source_lines[token.start[0] - 1][:token.start[1]].encode("utf-8")))
+                    end = (token.end[0], len(source_lines[token.end[0] - 1][:token.end[1]].encode("utf-8")))
+                    if any(span_start <= start and end <= span_end
+                           for span_start, span_end in docstring_spans):
+                        continue
                 if "smell" in token.string.lower():
                     hits.add(f"{relative}:{token.start[0]}")
             continue
@@ -144,9 +196,9 @@ def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
             source = raw.decode("utf-8")
         except UnicodeDecodeError:
             continue  # Binary assets are not source text.
+        if web:
+            source = _without_web_comments(source)
         for line_number, line in enumerate(source.splitlines(), start=1):
-            if web and line.lstrip().startswith(("//", "*", "/*")):
-                continue
             if "smell" in line.lower():
                 hits.add(f"{relative}:{line_number}")
     return sorted(hits)
@@ -165,6 +217,16 @@ def test_no_web_source_names_the_smell_offering():
 @pytest.mark.parametrize(
     ("relative_path", "source", "web", "expected_lines"),
     [
+        ("gateway/inline.py", '"""module docs"""; OFFERING = "smell"\n', False, [1]),
+        ("gateway/joined.py", '("ordinary documentation "\n "smell documentation")\n', False, []),
+        ("gateway/after.py", '("ordinary documentation "\n "smell documentation")\nOFFERING = "smell"\n', False, [3]),
+        ("gateway/unicode.py", '"""é docs"""; OFFERING = "smell"\n', False, [1]),
+        ("web/src/inline.ts", '/* explanation */ const offering = "smell";\n', True, [1]),
+        ("web/src/quoted.ts", 'const url = "https://example.invalid"; const offering = "smell";\n', True, [1]),
+        ("web/src/template.ts", 'const url = \x60https://example.invalid/*text*/\x60; const offering = "smell";\n', True, [1]),
+        ("web/src/after-block.ts", '/* explanation\n smell docs */ const offering = "smell";\n', True, [2]),
+        ("web/src/inline-comment.ts", 'const value = 1; // smell docs\n', True, []),
+        ("web/src/string-comment.ts", 'const text = "/* smell */";\n', True, [1]),
         ("gateway/constant.py", 'QUERY = """SMELL"""\n', False, [1]),
         (
             "gateway/docs.py",
@@ -186,6 +248,16 @@ def test_no_web_source_names_the_smell_offering():
         ("web/src/comments.ts", "// smell\n  /* smell\n * smell\n */\n", True, []),
     ],
     ids=[
+        "same-line-docstring-assignment",
+        "joined-docstring",
+        "after-joined-docstring",
+        "unicode-docstring-boundary",
+        "after-typescript-block-comment",
+        "quoted-double-slash",
+        "template-comment-markers",
+        "after-multiline-block-comment",
+        "trailing-line-comment",
+        "quoted-block-comment",
         "triple-quoted-constant",
         "real-docstrings",
         "gateway-json",
