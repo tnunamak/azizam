@@ -363,3 +363,70 @@ def test_remote_boot_map_protects_before_first_snapshot_and_send(monkeypatch):
     with pytest.raises(BeforePublish):
         proxy._publish_boot_snapshot(candidate, None)
     assert seen and not recorder.connections and not recorder.writes
+
+
+def test_remote_service_shares_one_watcher_and_caps_active_operations(monkeypatch, tmp_path):
+    from gateway.remote_engine import ClientFactory, policy, limit_catalog
+    from gateway.engine_protocol.errors import BudgetExceeded
+    from gateway.remote_engine_watch import ServiceWatcher
+    registry, _, _, _, _, _ = case()
+    service = registry['services']['remote-box']
+    service['config']['connection']['remote_dispatch']['limits'] = {'operations': 2, 'authority_check_s': .02}
+    first = ClientFactory(lambda: registry, db_path=tmp_path/'shared.db')
+    second = ClientFactory(lambda: registry, db_path=first.db_path)
+    cap = first.admit('remote-box')
+    a, nested = first.transport(cap), first.transport(cap)
+    b = second.transport(second.admit('remote-box'))
+    excess = second.transport(second.admit('remote-box'))
+    ticks = []
+    real = ServiceWatcher._check
+    def check(self, active):
+        ticks.append((self, len(active)))
+        real(self, active)
+    monkeypatch.setattr(ServiceWatcher, '_check', check)
+    async def run():
+        async with a.operation():
+            async with nested.operation(), b.operation():
+                assert a.monitor is nested.monitor is b.monitor
+                assert a.operation_slot.state.operations == 2
+                with pytest.raises(BudgetExceeded) as error:
+                    async with excess.operation():
+                        pytest.fail('excess operation admitted')
+                assert error.value.budget == 'operations'
+                async with asyncio.timeout(1):
+                    while len(ticks) < 2:
+                        await asyncio.sleep(.01)
+                assert all(watcher is a.watcher for watcher, _ in ticks)
+        async with excess.operation():
+            assert excess.operation_slot.state.operations == 1
+    asyncio.run(run())
+    limits = service['config']['connection']['remote_dispatch']['limits']
+    limits['operations'] = limit_catalog()['operations']['maximum'] + 1
+    with pytest.raises(ProtocolError):
+        policy(service)
+
+
+def test_remote_operation_slot_lasts_until_response_close(monkeypatch, tmp_path):
+    from gateway.remote_engine import ClientFactory
+    from gateway.engine_protocol.transport import WireRequest
+    from gateway.engine_protocol.errors import BudgetExceeded
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        factory.db_path = tmp_path/'slots.db'
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = {'operations': 1}
+        a = factory.transport(factory.admit('remote-box'))
+        other = ClientFactory(lambda: registry, connector=factory._connector, db_path=factory.db_path)
+        b = other.transport(other.admit('remote-box'))
+        wire = WireRequest('GET', 'https://engine.example/state', {})
+        response = await a.send(wire, runtime.connection.timeouts)
+        assert a.operation_slot.users == 0 and a.operation_slot.responses == 1
+        with pytest.raises(BudgetExceeded):
+            await b.send(wire, runtime.connection.timeouts)
+        assert len(recorder.connections) == 1
+        await response.aclose()
+        assert a.operation_slot.state is None
+        next_response = await b.send(wire, runtime.connection.timeouts)
+        await next_response.aclose()
+        assert b.operation_slot.state is None
+    asyncio.run(check())

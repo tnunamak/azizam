@@ -196,6 +196,7 @@ class ClientFactory:
         self._minted = weakref.WeakValueDictionary()
         self._revoked = weakref.WeakSet()
         self._budgets = weakref.WeakKeyDictionary()
+        self._operation_slots = weakref.WeakKeyDictionary()
         self._bindings = weakref.WeakSet()
         self.db_path = db_path
         self.clock = time.monotonic
@@ -261,8 +262,9 @@ class ClientFactory:
 class BoundTransport:
     def __init__(self, factory, capability, inner):
         self.factory, self.capability, self.inner = factory, capability, inner
-        from gateway.remote_engine_budget import OperationBudget
+        from gateway.remote_engine_budget import OperationBudget, OperationSlot
         self.budget = factory._budgets.setdefault(capability, OperationBudget(capability, factory.clock))
+        self.operation_slot = factory._operation_slots.setdefault(capability, OperationSlot())
         self.responses, self.clients = set(), set()
         self.tasks = {}
         self.loop = None
@@ -292,6 +294,8 @@ class BoundTransport:
         self.check()
 
     def revoke(self):
+        if self.revoked:
+            return
         self.revoked = True
         if self.loop is not None and not self.loop.is_closed():
             self.loop.call_soon_threadsafe(self._cancel)
@@ -306,35 +310,28 @@ class BoundTransport:
         await asyncio.gather(*(response.aclose() for response in tuple(self.responses)), return_exceptions=True)
         await asyncio.gather(*(client.aclose() for client in tuple(self.clients)), return_exceptions=True)
 
-    async def _watch(self):
-        try:
-            while self.tasks or self.responses or self.clients:
-                await asyncio.sleep(min(self.budget.limits['authority_check_s'], self.budget.remaining()))
-                await self.check_current()
-        except ProtocolError:
-            self.revoke()
-        finally:
-            if self.revoked:
-                await self.close()
-
     @asynccontextmanager
     async def operation(self):
-        await self.check_current()
-        self.loop = asyncio.get_running_loop()
-        task = asyncio.current_task()
-        self.tasks[task] = self.tasks.get(task, 0) + 1
-        if self.monitor is None or self.monitor.done():
-            self.monitor = self.loop.create_task(self._watch())
+        from gateway.remote_engine_watch import watch
+        self.operation_slot.enter(self)
         try:
-            async with asyncio.timeout(self.budget.remaining()):
-                yield
-        except BaseException:
-            await self.close()
-            raise
+            await self.check_current()
+            self.loop = asyncio.get_running_loop()
+            task = asyncio.current_task()
+            self.tasks[task] = self.tasks.get(task, 0) + 1
+            self.monitor = watch(self)
+            try:
+                async with asyncio.timeout(self.budget.remaining()):
+                    yield
+            except BaseException:
+                await self.close()
+                raise
+            finally:
+                self.tasks[task] -= 1
+                if not self.tasks[task]:
+                    del self.tasks[task]
         finally:
-            self.tasks[task] -= 1
-            if not self.tasks[task]:
-                del self.tasks[task]
+            self.operation_slot.leave()
 
     @asynccontextmanager
     async def fence(self):

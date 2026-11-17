@@ -28,17 +28,53 @@ class _Capacity:
             self.changed.notify_all()
 
 
-def service_capacity(bound):
-    """Share the active-connection ceiling across admitted operations on this loop."""
+class ServiceCapacity:
+    def __init__(self):
+        self.connections = _Capacity()
+        self.operations = 0
+
+
+def service_state(bound):
+    from gateway.remote_engine_watch import service_key
     loop = asyncio.get_running_loop()
-    key = (str(bound.factory.db_path) if bound.factory.db_path else id(bound.factory), bound.capability.service_id)
     with _CAPACITY_LOCK:
         capacities = _CAPACITIES.setdefault(loop, weakref.WeakValueDictionary())
-        capacity = capacities.get(key)
-        if capacity is None:
-            capacity = _Capacity()
-            capacities[key] = capacity
-        return capacity
+        key = service_key(bound)
+        state = capacities.get(key)
+        if state is None:
+            state = ServiceCapacity()
+            capacities[key] = state
+        bound.service_state = state
+        return state
+
+
+def service_capacity(bound):
+    return service_state(bound).connections
+
+
+class OperationSlot:
+    """One logical admission, shared by its nested transports and open responses."""
+    def __init__(self):
+        self.users = self.responses = 0
+        self.state = None
+
+    def enter(self, bound):
+        if self.state is None:
+            state = service_state(bound)
+            if state.operations >= bound.budget.limits['operations']:
+                raise BudgetExceeded('operations', 'The remote service has reached its active operation limit.')
+            state.operations += 1
+            self.state = state
+        self.users += 1
+
+    def leave(self):
+        self.users -= 1
+        self.release_if_idle()
+
+    def release_if_idle(self):
+        if not self.users and not self.responses and self.state is not None:
+            self.state.operations -= 1
+            self.state = None
 
 
 class OperationBudget:
@@ -73,6 +109,7 @@ class BoundResponse:
         self.closed = False
         self._closing = None
         bound.responses.add(self)
+        bound.operation_slot.responses += 1
 
     async def chunks(self):
         iterator = self.inner.chunks().__aiter__()
@@ -109,6 +146,8 @@ class BoundResponse:
             self.bound.responses.discard(self)
             self.bound.clients.discard(getattr(self.inner, '_client', None))
             await self.bound.capacity.release()
+            self.bound.operation_slot.responses -= 1
+            self.bound.operation_slot.release_if_idle()
 
 
 class GuardedStream:

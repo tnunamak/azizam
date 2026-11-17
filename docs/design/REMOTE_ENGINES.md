@@ -567,3 +567,18 @@ or watcher running, then proves both the next read and the next write refuse.
 The watcher interval bounds detection only while an operation is sleeping or
 blocked inside a previously authorized I/O; it is not permission for another I/O
 under a stale generation. Bytes already handed to the network cannot be recalled.
+
+### Re-review: service concurrency and watcher scope
+
+The `operations` ceiling in registry/remote_egress.yml defaults to 4 with maximum
+16. It limits active logical operations per service/database on a serving event
+loop, across factories. Excess work is refused without a second wait queue.
+Nested main/observation transports for one capability share one slot; an open
+response retains its slot until closed, and cancellation releases it.
+
+One watcher task serves all active transports for that service/database/loop.
+Each tick submits one batch to a worker, using the smallest configured
+`authority_check_s` interval among those operations. Independent I/O checks still
+read the committed generation before sending or consuming more bytes. A service
+with many jobs therefore has one watcher submission per tick, bounded operation
+slots, and the existing separate connection ceiling.

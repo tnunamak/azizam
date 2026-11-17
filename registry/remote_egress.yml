@@ -11,5 +11,6 @@ limits:
   header_bytes: {default: 32768, maximum: 65536, integer: true}
   header_fields: {default: 100, maximum: 256, integer: true}
   polls: {default: 60, maximum: 300, integer: true}
+  operations: {default: 4, maximum: 16, integer: true}
   connections: {default: 1, maximum: 4, integer: true}
   authority_check_s: {default: 0.05, maximum: 1}
