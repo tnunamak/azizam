@@ -389,7 +389,8 @@ or writes; an in-progress I/O is cancelled and the next I/O must recheck. A
 service-specific digest of connection, billing, enabled state and declared
 operations/selection pins queued work. Display metadata and unrelated registry
 revisions do not revoke it. Policies and hashes are cached per registry generation;
-authoritative reads and validation run in workers rather than the event loop.
+snapshot reloads and validation run in workers; unchanged authority uses an
+inline SQLite data_version comparison on a persistent read-only connection.
 The normal
 restart behavior fails interrupted declared jobs rather than rebinding them.
 
@@ -507,10 +508,10 @@ reuse feature to qualify. Both compressed responses and unsafe ancillary paths
 are refused instead of being repaired or followed.
 
 Owner oracles were not edited. `tests/budgets.toml:678` currently has
-`pytest = 29830`. This branch adds 29 top-level unparametrized tests relative to
-train 66 (3 stage 0, 26 stages 1–4). Proposed owner change, subject to the release
-collection count: `pytest = 29859`. No reviewed literal list or frozen graph
-change is proposed.
+`pytest = 29830`. The initial stages added 29 cases; the security and performance
+corrections bring the branch increase to 108 over train 66. Proposed owner
+change, subject to release collection: `pytest = 29938`. No reviewed literal list
+or frozen graph change is proposed.
 
 Expect it to work because all six production paths enter the same bound
 transport; the real connector records approved peers and TLS identity, and
@@ -544,23 +545,26 @@ The unchanged frozen route graph also passed with
 
 The S6 harness enables candidate admission only when production readiness is
 false. With this release's readiness true, the journey runs without a readiness
-override. The independent reviewer and owner release gate remain outstanding.
+override. The owner's third security review passed; the release gate remains.
 
 ### Independent security review corrections
 
 The owner rejected e1b49bb73 for merge. The ten corrections and their exact
 regression node IDs and test commands are recorded in
-[REMOTE_ENGINES_REVIEW.md](REMOTE_ENGINES_REVIEW.md). The next owner review and
-release gate remain required.
+[REMOTE_ENGINES_REVIEW.md](REMOTE_ENGINES_REVIEW.md). The owner's third security
+review passed these corrections. The release gate remains required.
 
 ### Re-review: cross-process I/O checks
 
 GuardedStream reads and writes call check_current before touching the socket and
-check again after I/O. The production factory reads a fresh SQLite integer
-registry generation in a worker thread on each check. An unchanged generation
-reuses parsed registry data, policy validation and hashes; a changed generation
-reloads and validates the authoritative record. This keeps SQLite off the event
-loop without making I/O depend on a watcher tick. The external-process test
+check again after I/O. Each production factory shares one persistent read-only
+SQLite connection. It compares PRAGMA data_version inline; an unchanged version
+reuses parsed registry data, policy validation and hashes without a worker hop.
+After a change, one check per service refreshes the snapshot in a worker while
+other checks wait. The snapshot's version is captured before reading, so a
+commit during refresh cannot be hidden. I/O is refused if refresh fails or is
+overtaken by another commit. The in-process revoked flag still stops I/O
+immediately. These checks do not depend on a watcher tick. The external-process test
 commits an owner opt-out through the real registry writer with no parent callback
 or watcher running, then proves both the next read and the next write refuse.
 
@@ -576,23 +580,30 @@ loop, across factories. Excess work is refused without a second wait queue.
 Nested main/observation transports for one capability share one slot; an open
 response retains its slot until closed, and cancellation releases it.
 
+There is no per-caller quota yet: one caller can occupy every operation slot
+for a service and cause other callers' operations to be refused.
+
 One watcher task serves all active transports for that service/database/loop.
-Each tick submits one batch to a worker, using the smallest configured
-`authority_check_s` interval among those operations. Independent I/O checks still
-read the committed generation before sending or consuming more bytes. A service
-with many jobs therefore has one watcher submission per tick, bounded operation
-slots, and the existing separate connection ceiling.
+Each tick uses the same version cache, at the smallest configured
+`authority_check_s` interval among those operations. Unchanged authority submits
+no worker. Independent I/O checks compare the committed version before sending
+or consuming more bytes. Operation slots and connections retain separate caps.
 
 ### Re-review: legacy publication, disable and migration boundaries
 
 The active registry writer publishes conservative remote destination denials
 before committing, covering all four registry transaction callers. Boot and hot
 reload install the egress projection before publishing their runtime snapshot.
-Legacy send hooks also compare the persisted generation (off-loop for async
-clients) so a CLI opt-in is refused on the next send without a reload callback.
+Legacy send hooks compare data_version inline on one persistent read-only
+connection for the active registry path. They reload destinations only after a
+commit, so a CLI opt-in is refused on the next send without a reload callback.
+If a read fails, they retain the last known denial set; local destinations
+outside that set keep serving, including gateways with no remote records.
 Once marked remote, a destination stays refused for unbound clients in that
 process until restart, including after a failed reload or transaction rollback.
-This prevents a stale concurrent reload from removing a newer denial.
+This is fail-closed for known remote destinations: a stale concurrent reload,
+failed write or later opt-out cannot restore unbound access. Restart rebuilds
+the set from the current registry.
 
 An administrator can disable a remote service without changing other authority
 inputs. Only an owner can re-enable it or change its connection policy. Schema
@@ -623,3 +634,6 @@ on their old address as well as on the new remote origin.
 
 The eight re-review corrections, full node IDs, commands and observed pass lines
 are recorded in [REMOTE_ENGINES_REREVIEW.md](REMOTE_ENGINES_REREVIEW.md).
+
+Performance test commands and measurements are recorded in
+[REMOTE_ENGINES_PERFORMANCE.md](REMOTE_ENGINES_PERFORMANCE.md).
