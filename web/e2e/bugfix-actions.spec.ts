@@ -18,6 +18,8 @@ test("remove an app through Apps & keys and invalidate its key", { tag: GLOBAL_S
     .first()
     .click();
   await page.getByLabel("App name", { exact: true }).fill(name);
+  // An administrator chooses who the app acts as; nothing is preselected.
+  await page.getByRole("dialog", { name: "New app" }).getByRole("radio", { name: /^You/ }).click();
   const mintedResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/me/api/apps/") &&

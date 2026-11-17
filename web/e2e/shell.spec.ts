@@ -102,6 +102,10 @@ test(
     await page
       .getByLabel("App name", { exact: true })
       .fill("Command palette app");
+    await page
+      .getByRole("dialog", { name: "New app", exact: true })
+      .getByRole("radio", { name: /^You/ })
+      .click();
     const key = page.waitForResponse(
       (response) =>
         response.url().includes("/me/api/apps/") &&

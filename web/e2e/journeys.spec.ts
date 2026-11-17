@@ -13,6 +13,8 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", { t
     .first()
     .click();
   await page.getByLabel("App name", { exact: true }).fill(name);
+  // An administrator chooses who the app acts as; nothing is preselected.
+  await page.getByRole("dialog", { name: "New app" }).getByRole("radio", { name: /^You/ }).click();
   // There is no app recipe to choose: the name picks the setup guide.
   await expect(page.getByRole("combobox", { name: "App recipe" })).toHaveCount(0);
   const mintedResponse = page.waitForResponse(
@@ -125,7 +127,8 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", { t
   const detail = page.getByRole("dialog");
   await expect(detail).toBeVisible();
   await detail.getByText("Technical details", { exact: true }).click();
-  await expect(detail).toContainText("app.self_create");
+  // An administrator's app is made through the admin core, which records app.create with the kind.
+  await expect(detail).toContainText("app.create");
   await expect(detail).toContainText(firstKey.app_id);
 });
 
@@ -138,6 +141,8 @@ test("an owner gives a new app another access plan before its key exists, then c
     const url = request.url();
     if (request.method() === "PATCH" && /\/admin\/api\/apps\/[^/]+$/.test(url))
       calls.push("set plan");
+    if (request.method() === "POST" && new URL(url).pathname === "/me/api/apps")
+      calls.push([undefined, "person"].includes(request.postDataJSON().access_plan) ? "create app" : "create app with plan");
     if (request.method() === "POST" && /\/me\/api\/apps\/[^/]+\/keys$/.test(url))
       calls.push("mint key");
   });
@@ -145,13 +150,15 @@ test("an owner gives a new app another access plan before its key exists, then c
   await page.getByRole("button", { name: "New app", exact: true }).first().click();
   await page.getByLabel("App name", { exact: true }).fill(name);
   const dialog = page.getByRole("dialog", { name: "New app" });
+  await dialog.getByRole("radio", { name: /^You/ }).click();
   await dialog.getByRole("combobox", { name: "Access plan" }).click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   await dialog.getByRole("button", { name: "Create app and key", exact: true }).click();
   const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
   await expect(reveal).toBeVisible();
   await expect(reveal).toContainText("Access plan “Local chat”");
-  expect(calls).toEqual(["set plan", "mint key"]);
+  // One request makes the app under its plan; no later change sets it.
+  expect(calls).toEqual(["create app with plan", "mint key"]);
   await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
   await expect(reveal).not.toBeVisible();
   const card = page
