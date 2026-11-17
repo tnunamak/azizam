@@ -29057,6 +29057,393 @@ async def proxy_audio_generate(
         return client_errors.client_error(502, "audio_failed", error_type="api_error")
 
 
+class _AudioWireResponse(Exception):
+    def __init__(self, response: Response):
+        self.response = response
+
+
+def _audio_wire_error(message: str, status: int = 502) -> _AudioWireResponse:
+    return _AudioWireResponse(Response(content=json.dumps({"error": {"message": message, "type": "api_error"}}),
+                                       status_code=status, media_type="application/json"))
+
+
+@dataclass
+class _PreparedAudioGeneration:
+    """Prepared wire inputs; core owns submit/poll/publication, delivery follows publication."""
+
+    graph: Any
+    graph_adapter: Any
+    workflow: Mapping[str, Any]
+    graph_binding: Mapping[str, Any]
+    manifest: Mapping[str, Any]
+    workflow_cfg: Mapping[str, Any]
+    model: Any
+    workflow_name: str
+    workflow_id: str
+    audio_type: str
+    duration_value: Any
+    seed_val: Any
+    headers: Mapping[str, str]
+    auth_context: Any
+    receipt: RouteReceipt | None
+    store_full: bool
+    interface_version = 2
+    polls: int = 0
+
+    @property
+    def adapter(self):
+        return self
+
+    async def run(self, body):
+        self.body = body
+        if self.receipt is not None and self.receipt.job_id:
+            self.job_id = self.receipt.job_id
+        else:
+            caller = self.auth_context.identity
+            job = media_jobs.MediaJob(
+                request_id=self.receipt.request_id if self.receipt is not None else f"req_{uuid.uuid4().hex}",
+                intent=self.receipt.intent if self.receipt is not None else INTENT_AUDIO_GENERATE,
+                workflow=self.workflow_id, backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+                app_profile=plan_ref(caller), app_id=caller.app_id if caller else None,
+                owner_key_hash=_asset_owner_key(self.auth_context), api_key_name=caller.name if caller else None,
+                metadata={"mode": "sync_media_route"})
+            self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
+        try:
+            return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
+        except BaseException:
+            current = media_jobs.get(self.job_id, audience="internal", path=media_jobs.DB_PATH)
+            if current and current['status'] not in media_jobs.TERMINAL_STATUSES:
+                media_jobs.update_status(self.job_id, media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
+            raise
+
+    def connection_for(self, op):
+        return self.graph
+
+    def request(self, op, body):
+        return AdapterRequest(op=op, body=body)
+
+    def poll_timing(self, op):
+        return 0, 1200
+
+    def result_context(self):
+        return ResultContext(result_bundle.limits_from_config(runtime().config))
+
+    async def start(self, conn, op, request):
+        from gateway.engine_protocol.types import Pending
+        response = await conn.submit(
+            _build_graph_submit_payload(self.workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID), headers=self.headers)
+        if response.status != 200:
+            raise _AudioWireResponse(client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=self.graph_adapter.label))
+        prompt_id = response.json().get("prompt_id")
+        if not prompt_id:
+            raise _audio_wire_error("No prompt_id returned")
+        return Pending(JobRef(op, prompt_id))
+
+    async def poll(self, conn, ref):
+        from gateway.engine_protocol.types import JobStatus
+        if self.polls >= 600:
+            raise _audio_wire_error("Audio generation timeout", 504)
+        self.polls += 1
+        await asyncio.sleep(2)
+        response = await conn.history(ref.id, headers=self.headers)
+        if response.status != 200 or ref.id not in response.json():
+            return JobStatus(ref, JobState.pending)
+        job = response.json()[ref.id]
+        status = job.get("status", {}) or {}
+        state = status.get("status_str") or status.get("status") or ""
+        if state == "error":
+            message = f"{self.graph_adapter.label} generation failed"
+            for tag, payload in status.get("messages") or []:
+                if tag == "execution_error" and isinstance(payload, dict):
+                    message = _graph_error_message({"status": {"messages": [[tag, payload]]}}, self.workflow,
+                                                   capability=_AUDIO_GRAPH_CAPABILITY) or message
+                    break
+            raise _audio_wire_error(message)
+        return JobStatus(ref, JobState.succeeded if state == "success" else JobState.pending, record=(job, response))
+
+    async def results(self, conn, ref, status, request, context):
+        from gateway.engine_protocol.types import AssetRef, AssetsResult, ResultBundle
+        job, history = status.record
+        try:
+            picked = self.graph_adapter.collect(job, self.graph_binding, self.manifest.get("outputs") or {},
+                                                limits=context.limits, history_bytes=len(history.raw or b""))
+        except node_graph.SelectionRefused as error:
+            if error.code != "result_missing":
+                raise _AudioWireResponse(_result_refusal_response(error.code, 502)) from error
+            picked = {}
+        self.selected_name, files = next(iter(picked.items()), (None, ()))
+        file = files[0] if files else None
+        if not file or not file.get("filename"):
+            raise _audio_wire_error("No audio output found")
+        params = {"filename": file["filename"], "type": file.get("type", "output")}
+        if file.get("subfolder"):
+            params["subfolder"] = file["subfolder"]
+        try:
+            async with output_selectors.FETCH_GATE.slot(context.limits):
+                response = await conn.view(params, headers=self.headers)
+        except output_selectors.FetchRefused as error:
+            raise _AudioWireResponse(_result_refusal_response(error.code, 504)) from error
+        if response.status != 200:
+            raise _audio_wire_error("No audio output found")
+        self.content_type = response.headers.get("content-type", "audio/wav")
+        self.content = response.raw
+        peak = self.workflow_cfg.get("normalize_peak_db")
+        if peak is not None:
+            self.content = await private_tmp.run_worker(_peak_normalize_audio, self.content, self.content_type, float(peak))
+        self.suffix = Path(file["filename"]).suffix or ".wav"
+        if self.store_full:
+            self.content = await self._attach()
+            artifacts = audio_media_jobs.audio_artifacts_from_result(
+                self.content, response_format=self.body.get("response_format"), media_type=self.content_type)
+            result_bundle.check_assets(context.limits, [len(item.content) for item in artifacts])
+            assets = await asyncio.to_thread(audio_media_jobs.store_audio_artifacts, artifacts,
+                                            store_asset=store_asset_bytes, owner_key_hash=_asset_owner_key(self.auth_context))
+        elif self.receipt is not None:
+            from gateway import media_ingestion
+            self.receipt.requested_model = str(self.model)
+            self.receipt.resolved_model = self.workflow_name
+            self.receipt.resolved_workflow = self.workflow_id
+            assets = await asyncio.to_thread(media_ingestion.store_audio_response, self.content, self.content_type,
+                                            self.receipt, store_asset=store_asset_bytes)
+        else:
+            asset_id = await asyncio.to_thread(store_asset_bytes, self.content, kind=domain_rows.AUDIO,
+                                              suffix=self.suffix, owner_key_hash=_asset_owner_key(self.auth_context))
+            assets = [{"asset_id": asset_id, "media_type": self.content_type, "size_bytes": len(self.content)}]
+        media_jobs.update_status(self.job_id, media_jobs.STATUS_RUNNING, add_assets=assets, path=media_jobs.DB_PATH)
+        return ResultBundle({self.selected_name: AssetsResult(tuple(
+            AssetRef(item["asset_id"], item["media_type"], item.get("size_bytes", 0)) for item in assets))})
+
+    async def _attach(self):
+        return await asyncio.to_thread(
+            media_delivery.attach_provenance, self.content, self.suffix,
+            provenance.build_provenance_record(
+                receipt=media_delivery.current().receipt, kind=domain_rows.AUDIO,
+                requested_model=str(self.model), resolved_model=self.workflow_name, workflow_id=self.workflow_id,
+                backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY), seed=self.seed_val,
+                parameters={**media_delivery.current().parameters, "type": self.audio_type, "duration": self.duration_value}))
+
+    async def deliver(self, bundle):
+        if not self.store_full:
+            if media_delivery.current_mode() == provenance.METADATA_NONE:
+                self.content = await asyncio.to_thread(media_delivery.deliver_bytes, self.content, self.suffix, provenance.METADATA_NONE)
+            else:
+                self.content = await self._attach()
+        answer = Response(content=self.content, status_code=200, media_type=self.content_type,
+                          headers={"X-Audio-Model": self.workflow_name, "X-Audio-Type": self.audio_type})
+        answer.selected_result = self.selected_name
+        return answer
+
+    async def cancel(self, conn, ref):
+        # This wire has never interrupted the engine on a client disconnect.
+        return None
+
+
+@_acts_for("identity", _AUDIO_GENERATE_OPERATION)
+async def proxy_audio_generate_declared(
+    request: Request, auth_context, *, intents: frontend_mount.ExecutionIntents, store_full: bool = False,
+    receipt: RouteReceipt | None = None,
+    pinned: pinned_definitions.PinnedDefinitions | None = None, pinned_workflow: str | None = None,
+):
+    """POST /v1/audio/generate — submit audio generation via ComfyUI.
+
+    ``store_full`` is for the media-job executor, which stores the bytes: they
+    keep full metadata and the delivery mode is applied when the asset is served.
+    ``pinned`` is what the job pinned at accept. With it the manifest and the graph come from the pin, never from the
+    registry or the workflow file; without it (the synchronous route) they are read live. ``pinned_workflow`` is the
+    workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
+    """
+    admission = _graph_media_admission(intents.require_admission(), auth_context=auth_context)
+    if admission is not None:
+        return admission
+
+    if not _graph_service(_AUDIO_GRAPH_CAPABILITY).enabled:
+        return Response(
+            content=json.dumps({"error": {"message": "Audio generation not enabled", "type": "service_unavailable"}}),
+            status_code=503,
+            media_type="application/json"
+        )
+    adapter = _graph_adapter(_AUDIO_GRAPH_CAPABILITY)
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+        service_label=adapter.label,))
+    if service_response is not None:
+        return service_response
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(
+            content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+
+    unknown_top_level = detect_unknown_audio_fields(body)
+    if unknown_top_level:
+        name, reason = next(iter(unknown_top_level.items()))
+        return _gateway_input_refusal(_audio_extension_error_response(reason, param=name), reason)
+    _begin_media_delivery(auth_context, receipt)
+    metadata_error = _note_media_metadata_body(body)
+    if metadata_error is not None:
+        return metadata_error
+    try:
+        audio_graph.check_request(body)
+    except audio_graph.InvalidAudioRequest as error:
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
+
+    model = body.get("model", _audio_default_workflow())
+    audio_type = body.get("type", "music")
+
+    workflow_name, workflow_cfg = _resolve_audio_workflow(model)
+    if not workflow_cfg:
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{model}' is not available for audio generation.",
+                code="model_not_found",
+            )
+        )
+    if pinned is not None:
+        try:
+            manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
+            pinned_graph = _pinned_graph(pinned)
+            workflow_id = str(manifest.get("id") or "")
+            # A graph file can back several workflows. If the caller named this pinned identity,
+            # an alias must not redirect it to the artifact's workflow. Filename-based owner keys still work.
+            identity_names = (workflow_id, workflow_id.rsplit(".", 1)[-1])
+            identity_redirected = str(model) in identity_names and workflow_name not in identity_names
+            if (pinned_workflow != workflow_id or identity_redirected
+                    or not _manifest_names_audio_workflow(manifest, workflow_name)):
+                raise definition_store.DefinitionUnavailable(
+                    f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
+        except definition_store.DefinitionUnavailable as exc:
+            _MEDIA_JOB_LOG.warning("pinned audio definitions unusable: %s", log_scrub.describe_error(exc))
+            return Response(
+                content=json.dumps({"error": {"message": "Workflow definition unavailable", "type": "api_error",
+                                              "code": "definition_unavailable"}}),
+                status_code=500,
+                media_type="application/json",
+            )
+    else:
+        manifest = _load_audio_workflow_manifest(workflow_name)
+        workflow_id = str(manifest.get("id") or "") if manifest else ""
+        if not workflow_id:
+            return model_compatibility_error(
+                ModelCompatibilityError(
+                    f"Model '{model}' is not available for audio generation.",
+                    code="model_not_found",
+                )
+            )
+    if manifest is None:
+        return Response(
+            content=json.dumps({"error": {"message": f"Workflow manifest missing for {workflow_name}", "type": "api_error"}}),
+            status_code=500,
+            media_type="application/json"
+        )
+    # The one effective input spec: the manifest, narrowed by this deployment's audio.workflows limits. The edge reads
+    # the public body against it, and the adapter's compiler writes the graph from it; the template's _meta is not read.
+    try:
+        effective = audio_graph.effective_manifest(manifest, audio_graph.AudioLimits(
+            default_duration=workflow_cfg.get("default_duration"),
+            min_seconds=workflow_cfg.get("min_seconds"),
+            max_seconds=workflow_cfg.get("max_seconds"),
+        ))
+    except ManifestError as error:
+        print(f"[proxy] audio workflow {workflow_name} limits do not fit its manifest: {error}", flush=True)
+        return client_errors.client_error(500, "audio_failed", error_type="api_error")
+    try:
+        inputs = audio_graph.manifest_inputs(body, manifest=effective, stored=_JOB_GENERATED.get())
+    except audio_graph.InvalidAudioRequest as error:
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
+    except ManifestError as error:
+        print(f"[proxy] audio workflow {workflow_name} manifest cannot serve this request: {error}", flush=True)
+        return openai_error_response(f"Workflow manifest for {workflow_name} cannot serve this request",
+                                     status_code=500, error_type="api_error")
+    duration_value = inputs.get("duration")
+    seed_val = generated_defaults.first_value(effective["inputs"], inputs)
+    # The template is the one the manifest's binding names, so the map and the graph it writes come from one place.
+    graph_binding = (manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
+    workflow = pinned_graph if pinned is not None else _load_audio_workflow_file({"file": graph_binding.get("workflow")})
+    if not workflow:
+        return Response(
+            content=json.dumps({"error": {"message": f"Workflow file missing for {workflow_name}", "type": "api_error"}}),
+            status_code=500,
+            media_type="application/json"
+        )
+
+    policy_decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.audio",
+            intent=INTENT_AUDIO_GENERATE,
+            model=str(model) if model is not None else None,
+            workflow=workflow_id,
+            backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="batch",
+        ),
+        receipt,
+    )
+    if policy_decision.denied:
+        return _policy_denied_response(policy_decision)
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        capability=_AUDIO_GRAPH_CAPABILITY,
+        requested=str(model) if model is not None else None,
+        resolved=str(workflow_name),
+        manifest=manifest,
+        extra_ids=(workflow_id,),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
+
+    try:
+        workflow = node_graph.compile_workflow(effective, DERIVED._GRAPH_BINDING, workflow, inputs)
+    except node_graph.InputRefused as error:
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
+    except ManifestError as error:
+        # The manifest's map does not fit its template: a deployment fault, not the caller's.
+        print(f"[proxy] audio workflow {workflow_name} binding does not fit its template: {error}", flush=True)
+        return openai_error_response(f"Workflow binding for {workflow_name} does not fit its graph",
+                                     status_code=500, error_type="api_error")
+
+    if receipt is not None:
+        receipt.backend = _graph_service_id(_AUDIO_GRAPH_CAPABILITY)
+        _capture_retention_facts(receipt)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_AUDIO_GRAPH_CAPABILITY))
+    try:
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
+            graph = _graph(client, _AUDIO_GRAPH_CAPABILITY)
+            admission = _graph_media_admission(intents.require_admission(), auth_context=auth_context)
+            if admission is not None:
+                return admission
+            prepared = _PreparedAudioGeneration(
+                graph=graph, graph_adapter=adapter, workflow=workflow, graph_binding=graph_binding, manifest=manifest,
+                workflow_cfg=workflow_cfg, model=model, workflow_name=workflow_name, workflow_id=workflow_id,
+                audio_type=audio_type, duration_value=duration_value, seed_val=seed_val, headers=headers,
+                auth_context=auth_context, receipt=receipt, store_full=store_full)
+            return await prepared.run(body)
+    except _AudioWireResponse as error:
+        return error.response
+    except media_metadata.MediaMetadataError as error:
+        return Response(content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
+                        status_code=502, media_type="application/json")
+    except TransportFailure as e:
+        if e.kind == "timeout":
+            return Response(
+                content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
+                status_code=504,
+                media_type="application/json"
+            )
+        if e.kind == "unreachable":
+            return Response(
+                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(capability=_AUDIO_GRAPH_CAPABILITY, probe=True)), "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json"
+            )
+        return client_errors.client_error(502, "audio_failed", error_type="api_error")
+    except Exception as e:
+        return client_errors.client_error(502, "audio_failed", error_type="api_error")
+
+
 @_acts_for("identity", _AUDIO_GENERATE_OPERATION)
 async def audio_generate(request: Request, *, intents: frontend_mount.ExecutionIntents):
     """OpenAI-compatible audio generation endpoint."""
