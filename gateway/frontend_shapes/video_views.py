@@ -46,7 +46,7 @@ FALLBACK_MEDIA_TYPE = "application/octet-stream"
 # Facts of the request a status body shows by the name the wire gives them (fact key -> body key).
 BODY_FACTS = (("model", "model"), ("size", "size"), ("seconds", "seconds"), ("actual_seconds", "actual_seconds"),
               ("resolved_model", "azizam_resolved_model"), ("remixed_from_video_id", "remixed_from_video_id"),
-              ("extended_from_video_id", "extended_from_video_id"), ("total_seconds", "total_seconds"), ("warnings", "warnings"))
+              ("extended_from_video_id", "extended_from_video_id"), ("total_seconds", "total_seconds"), ("segments", "segments"), ("warnings", "warnings"))
 # Where an older job (no recorded facts) kept the same things: the names its result metadata used.
 LEGACY_VIEW_FACTS = ("model", "size", "seconds", "azizam_resolved_model", "remixed_from_video_id", "extended_from_video_id",
                      "total_seconds")
@@ -98,6 +98,8 @@ class VideoViews:
             for name in LEGACY_VIEW_FACTS:
                 if view.result_metadata.get(name) is not None:
                     body[name] = view.result_metadata[name]
+        if facts is not None and facts.get("segments") is not None:
+            body["extended_from_video_id"] = facts.get("extended_from_video_id")
         if view.failure is not None:
             # The code is the wire's own word for any failed job, as it always was; the message keeps the cause.
             body["error"] = {"code": f"{self.wire_name}_generation_failed", "message": public_failure_message(view.failure)}

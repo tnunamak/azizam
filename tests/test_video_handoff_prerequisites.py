@@ -302,3 +302,36 @@ def test_queued_chain_uses_accepted_template_and_options(world):
         assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
 
     asyncio.run(drive())
+
+
+@pytest.mark.parametrize("extra", [
+    {"model": "ltx-2.5-long", "seconds": 16},
+    {"model": "ltx-2.5-t2v", "seconds": 16},
+    {"model": "ltx-2.5-t2v", "shots": [
+        {"prompt": "first", "seconds": 4}, {"prompt": "second", "seconds": 4}]},
+], ids=["direct", "long-variant", "storyboard"])
+def test_chain_post_and_get_keep_the_old_stitched_response(world, extra):
+    from tests.test_s7_parity_video_create import await_status
+    body = {"prompt": "stitched response", "seed": 7, **extra}
+    auth = access_context(everything(media_metadata="none", receipt_detail="full"))
+    fields = ("seconds", "total_seconds", "segments", "extended_from_video_id")
+    async def drive():
+        old = await proxy.proxy_graph_video_create(json_request(body), auth, body_override=body)
+        assert old.status_code == 200, old.body
+        old_body = json.loads(old.body)
+        made = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert made.status_code == 200, made.text
+        # Job ids and wall times are independent. Compare every other POST field.
+        independent = {"id", "created_at", "expires_at"}
+        assert {key: value for key, value in made.json().items() if key not in independent} == {
+            key: value for key, value in old_body.items() if key not in independent}
+        await await_status(world, made.json()["id"])
+        before = json.loads((await proxy.proxy_graph_video_status(old_body["id"], auth)).body)
+        after = (await world.rig.call("GET", "/v1/videos/" + made.json()["id"])).json()
+        expected_get = {key: before.get(key) for key in fields}
+        # The old GET calls the count segments_total; POST calls it segments.
+        expected_get["segments"] = before["segments_total"]
+        assert {key: after[key] for key in fields} == expected_get
+        shared = ("model", "size", "actual_seconds", "azizam_resolved_model", "status", "progress", "error")
+        assert {key: after[key] for key in shared} == {key: before[key] for key in shared}
+    asyncio.run(drive())

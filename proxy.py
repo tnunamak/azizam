@@ -28250,10 +28250,12 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
 
         def prepared(engine, spec, submission):
             size = f"{spec.width}x{spec.height}"
-            seconds = _seconds_text(submission["seconds_val"])
+            seconds = submission["payload_extra"]["seconds"]
             facts = {"model": public_model, "resolved_model": name, "size": size,
                      "seconds": seconds, "actual_seconds": round(submission["actual_seconds"], 4),
-                     "length_frames": submission["length"], "frame_rate": spec.fps, "seed": spec.seed}
+                     "length_frames": submission["length"], "frame_rate": spec.fps, "seed": spec.seed,
+                     "total_seconds": submission["payload_extra"]["total_seconds"],
+                     "segments": submission["payload_extra"]["segments"]}
             options = {"size": size, "seconds_frames": submission["length"], "frame_rate": spec.fps,
                        "chain_plan": {"template": engine.document(), "spec": asdict(spec)}}
             controls = video_controls.parse_video_controls(body)

@@ -648,6 +648,9 @@ class OpenAIVideoCreate(VideoViews, Shape):
             "completed_at": None, "expires_at": now + EXPIRY_S, "prompt": prompt,
             "remixed_from_video_id": facts.get("remixed_from_video_id"), "error": None,
             "size": facts.get("size"), "seconds": facts.get("seconds"), "actual_seconds": facts.get("actual_seconds")}
+        if facts.get("segments") is not None:
+            body.update(total_seconds=facts["total_seconds"], segments=facts["segments"],
+                        extended_from_video_id=facts.get("extended_from_video_id"))
         requested = facts.get("seconds")
         adjusted = None
         try:
