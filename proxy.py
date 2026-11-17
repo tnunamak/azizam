@@ -26298,7 +26298,8 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
     caller = auth_context.identity
     remote_options = {}
     remote_metadata = {}
-    if (connection_config(target.service).get('remote_dispatch') or {}).get('enabled') is True:
+    from gateway.remote_engine import remote_enabled
+    if remote_enabled(connection_config(target.service)):
         from gateway.remote_engine import factory_from_store
         factory = factory_from_store()
         try:

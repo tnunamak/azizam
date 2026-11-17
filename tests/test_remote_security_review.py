@@ -430,3 +430,22 @@ def test_remote_operation_slot_lasts_until_response_close(monkeypatch, tmp_path)
         await next_response.aclose()
         assert b.operation_slot.state is None
     asyncio.run(check())
+
+
+@pytest.mark.parametrize('raw', [None, False, True, [], 'enabled', 17, {}, {'enabled': 'true'}])
+def test_remote_malformed_policy_is_typed_and_excluded_on_load(raw):
+    from gateway import service_registry as sr, engine_egress
+    from gateway.remote_engine import refuse_unbound
+    registry, _, _, _, _, _ = case()
+    service = registry['services']['remote-box']
+    service['config']['connection']['remote_dispatch'] = raw
+    with pytest.raises(ProtocolError) as error:
+        refuse_unbound(service)
+    assert error.value.code == 'protocol_dispatch_refused'
+    with pytest.raises(ProtocolError):
+        engine_egress.project(registry['services'])
+    with pytest.raises(ValueError, match='remote_dispatch'):
+        sr.validate_record_connections(service)
+    effective, excluded = sr.read_registry(registry)
+    assert 'remote-box' not in effective['services']
+    assert any(row.id == 'remote-box' for row in excluded)

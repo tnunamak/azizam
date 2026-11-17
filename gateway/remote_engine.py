@@ -56,8 +56,17 @@ def refused() -> ProtocolError:
 
 def refuse_unbound(service: Mapping[str, Any]) -> None:
     """Legacy clients have no remote authority, even for owner-enabled records."""
-    if (connection_config(service).get('remote_dispatch') or {}).get('enabled') is True:
+    if remote_enabled(connection_config(service)):
         raise refused()
+
+
+def remote_enabled(connection: Mapping[str, Any]) -> bool:
+    if 'remote_dispatch' not in connection:
+        return False
+    raw = connection['remote_dispatch']
+    if not isinstance(raw, Mapping) or type(raw.get('enabled')) is not bool:
+        raise refused()
+    return raw['enabled']
 
 
 def refuse_unbound_connection(connection) -> None:

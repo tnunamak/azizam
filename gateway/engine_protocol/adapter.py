@@ -192,6 +192,8 @@ def connection_from_record(connection: Mapping[str, Any], secret: Callable[[str]
     ``secret`` looks a ``secret_ref`` up; a reference that resolves to nothing gives no credential (the request goes
     without a key, and the engine says so), never an empty one.
     """
+    from gateway.remote_engine import remote_enabled
+    remote_marker = remote_enabled(connection)
     transport = connection.get("transport", "http")
     if transport != "http":
         raise ProtocolError(f"The transport '{transport}' needs a reviewed adapter; the http-v1 executor speaks http only.",
@@ -220,5 +222,5 @@ def connection_from_record(connection: Mapping[str, Any], secret: Callable[[str]
             total_s=float(timeouts.get("total_s", defaults.total_s)),
         ),
         headers=headers,
-        remote_enabled=(connection.get("remote_dispatch") or {}).get("enabled") is True,
+        remote_enabled=remote_marker,
     )

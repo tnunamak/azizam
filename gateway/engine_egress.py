@@ -275,7 +275,8 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
             continue
         service_destinations[str(service_id)] = frozenset(destinations_of(record))
         from gateway.engine_contract_view import connection_config
-        if (connection_config(record).get("remote_dispatch") or {}).get("enabled") is True:
+        from gateway.remote_engine import remote_enabled
+        if remote_enabled(connection_config(record)):
             remote_destinations.update(destinations_of(record))
         policy = policy_for(str(service_id), services)
         if not policy.enabled:
@@ -313,7 +314,8 @@ def protect_registry_write(path, services) -> None:
         from gateway.engine_contract_view import connection_config
         remote = set(live.remote_destinations)
         for service_id, record in (services or {}).items():
-            if isinstance(record, Mapping) and (connection_config(record).get('remote_dispatch') or {}).get('enabled') is True:
+            from gateway.remote_engine import remote_enabled
+            if isinstance(record, Mapping) and remote_enabled(connection_config(record)):
                 remote.update(destinations_of(record))
                 remote.update(live.service_destinations.get(str(service_id), ()))
         install(Projection(live.destinations, live.probe_paths, frozenset(remote), live.service_destinations), registry_path=path,

@@ -1333,6 +1333,8 @@ def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
         if raw.get(field) is not None and not isinstance(raw[field], Mapping):
             raise ValueError(f"{where}: {field} must be an object")
     config = raw.get("config") if isinstance(raw.get("config"), Mapping) else {}
+    for block in (raw.get('connection'), config.get('connection')):
+        _validate_remote_dispatch_shape(block)
     if config.get("models") is not None and not isinstance(config["models"], (list, Mapping)):
         raise ValueError(f"{where}: models must be a list")
     protocol = config.get("protocol")
@@ -1562,6 +1564,15 @@ def _unsafe_address(address: str) -> bool:
     return any(char in address for char in "@\\") or any(char.isspace() or ord(char) < 32 for char in address)
 
 
+def _validate_remote_dispatch_shape(block) -> None:
+    if isinstance(block, Mapping):
+        from gateway.remote_engine import remote_enabled, ProtocolError
+        try:
+            remote_enabled(block)
+        except ProtocolError:
+            raise ValueError('connection.remote_dispatch must be a mapping with a boolean enabled field') from None
+
+
 def validate_record_connections(service: Mapping[str, Any]) -> None:
     """Check every ``connection`` block of a record: the top-level one and the one in its config.
 
@@ -1570,6 +1581,7 @@ def validate_record_connections(service: Mapping[str, Any]) -> None:
     config = service.get("config")
     blocks = [service.get("connection"), config.get("connection") if isinstance(config, Mapping) else None]
     for block in blocks:
+        _validate_remote_dispatch_shape(block)
         native_lane.validate_connection(block)
 
 
@@ -1600,12 +1612,13 @@ def validate_protocol_dispatch_configuration(service: Mapping[str, Any]) -> None
 def validate_protocol_dispatch_admission(service: Mapping[str, Any]) -> None:
     from gateway import remote_engine
     from gateway.engine_contract_view import connection_config
-    if remote_engine.PRODUCTION_READY and (connection_config(service).get('remote_dispatch') or {}).get('enabled') is True:
+    if remote_engine.PRODUCTION_READY:
         try:
-            remote_engine.policy(service)
+            if remote_engine.remote_enabled(connection_config(service)):
+                remote_engine.policy(service)
+                return
         except remote_engine.ProtocolError:
             raise ValueError('The remote engine policy is invalid or refused.') from None
-        return
     validate_protocol_dispatch_local_only(service)
 
 
