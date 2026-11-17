@@ -354,8 +354,9 @@ def test_a_service_app_uses_the_service_margin_from_the_saved_setting(tmp_path, 
     assert [hma.app_kind_of(k) for k in ("session", "app_key", "mcp_grant", "trusted_address", None)] == ["personal"] * 5
     # 15 GiB free: a person needs 10 + 2, a service App needs 10 + 30.
     def build():
+        clock = Clock()
         return hma.HostMemoryAdmission(policy(tmp_path, margin_bytes_by_kind={"personal": 99 * GIB, "service": 99 * GIB}),
-                                       read_available=lambda: 15 * GIB, sleep=Clock().sleep, clock=Clock(),
+                                       read_available=lambda: 15 * GIB, sleep=clock.sleep, clock=clock,
                                        saved_setting=lambda: hma.stored_setting(admin_db))
     run(build().admit(graph("a.safetensors"), hma.Ask(app_kind="personal")))
     with pytest.raises(hma.HostMemoryBusy):
@@ -364,7 +365,8 @@ def test_a_service_app_uses_the_service_margin_from_the_saved_setting(tmp_path, 
 
 def test_a_save_applies_to_the_next_admission_without_a_restart(tmp_path, admin_db):
     weights(tmp_path, "a.safetensors", 10 * GIB)
-    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=lambda: 15 * GIB, sleep=Clock().sleep, clock=Clock(),
+    clock = Clock()
+    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=lambda: 15 * GIB, sleep=clock.sleep, clock=clock,
                                    saved_setting=lambda: hma.stored_setting(admin_db))
     save(admin_db, {"margin_gb": {"personal": 10, "service": 10}, "wait_s": 5, "job_wait_s": 500})
     with pytest.raises(hma.HostMemoryBusy):
