@@ -312,7 +312,11 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         ext = {"source_video": {"video_id": SOURCE_ID},
                "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}
         ext.update(extra)
-        return self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "a woman", "extensions": {NS: ext}})
+        count = len(self.comfy.submitted)
+        response = self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "a woman", "extensions": {NS: ext}})
+        if response.status_code == 200:
+            self.comfy.wait_for_graphs(count + 1)
+        return response
 
     def test_reference_fit_is_on_by_default_and_can_be_turned_off(self) -> None:
         self.assertEqual(self._create().status_code, 200)

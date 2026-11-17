@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import patch
@@ -52,6 +53,13 @@ class FakeComfy:
         self.submitted: list[dict] = []
         self.gets: list[str] = []
         self.upload_status = 200        # the status the engine answers an upload with
+
+    def wait_for_graphs(self, count: int = 1) -> None:
+        deadline = time.monotonic() + 5
+        while len(self.submitted) < count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if len(self.submitted) < count:
+            raise AssertionError(f"expected {count} submitted graphs, got {len(self.submitted)}")
 
     def client_class(self) -> type:
         outer = self

@@ -300,6 +300,7 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
             }},
         })
         self.assertEqual(r.status_code, 200, r.text)
+        self.comfy.wait_for_graphs()
         return r.json()["id"]
 
     def test_extension_and_storyboard_resources_conform(self) -> None:

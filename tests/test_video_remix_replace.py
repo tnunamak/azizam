@@ -71,6 +71,7 @@ class RemixReplaceBase(unittest.TestCase):
 
     @property
     def graph(self) -> dict:
+        self.comfy.wait_for_graphs()
         self.assertEqual(len(self.comfy.submitted), 1, "expected one submitted graph")
         return self.comfy.submitted[0]
 
@@ -206,6 +207,7 @@ class CharacterReplaceTests(RemixReplaceBase):
             },
         )
         self.assertEqual(r.status_code, 200, r.text)
+        self.comfy.wait_for_graphs()
         self.assertGreater(len(self.comfy.uploads[1][1]), 2 * 1024 * 1024)
 
     def test_missing_inputs_are_rejected_before_any_upload(self) -> None:
