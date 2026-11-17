@@ -501,7 +501,7 @@ class NodeGraphRunner:
         def report(state: host_memory_admission.WaitState | None) -> None:
             media_jobs.append_event(ctx.job_id, "attempt", host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)
 
-        await admit(payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(ctx.caller), bounded=False, on_wait=report))
+        await admit(payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of(getattr(ctx.caller, "auth_kind", None)), bounded=False, on_wait=report))
 
     # -- the reviewed stages that read the run's own facts (a host may still supply a stage of the same name) ----------------
 

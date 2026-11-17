@@ -110,11 +110,10 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
 
 
 class _Caller:
-    """A request whose caller (an auth context, as the routes store it) has the given credential kind; it never disconnects."""
+    """A request whose caller has the given credential kind and never disconnects."""
 
-    def __init__(self, auth_kind: str) -> None:
-        identity = proxy.AuthIdentity(name="caller", key_hash="h", auth_kind=auth_kind)
-        self.state = type("State", (), {"caller": proxy.AuthContext(identity=identity)})()
+    def __init__(self, auth_kind: str | None) -> None:
+        self.state = type("State", (), {"caller": type("Caller", (), {"auth_kind": auth_kind})()})()
 
     async def is_disconnected(self) -> bool:
         return False

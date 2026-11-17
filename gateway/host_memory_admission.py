@@ -66,12 +66,6 @@ def app_kind_of(auth_kind: str | None) -> str:
     return SERVICE if auth_kind == "service_key" else PERSONAL
 
 
-def app_kind_of_caller(caller: Any) -> str:
-    """The App kind behind an authenticated caller. Requests and jobs carry an auth context whose ``identity`` holds the
-    credential kind; a caller without one (None, a resumed job whose caller cannot be rebuilt) has a person."""
-    return app_kind_of(getattr(getattr(caller, "identity", None), "auth_kind", None))
-
-
 def _engine_roots(directory: str, models_folder: str, extra_file: str) -> list[str]:
     base = Path(directory)
     roots = [str(base / models_folder)] if (base / models_folder).is_dir() else []
