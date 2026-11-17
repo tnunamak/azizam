@@ -213,6 +213,8 @@ def load_media_schema_registry(path: Path) -> MediaSchemaRegistry:
             error_params[domain] = MappingProxyType(dict(group))
     if unknown := sorted(set(error_endpoints) - set(error_params)):
         raise ValueError(f"{endpoint_label}: no wire_error_params group for {unknown}")
+    if unbound := sorted(set(error_params) - set(error_endpoints)):
+        raise ValueError(f"{endpoint_label}: no wire_error_param_endpoints binding for {unbound}")
     return MediaSchemaRegistry(
         endpoints=MappingProxyType(deepcopy(endpoints)),
         wire_error_params=MappingProxyType(error_params),

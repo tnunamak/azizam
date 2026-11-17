@@ -20,10 +20,14 @@ MAPS = {"identity_scene": {"reference_photos": "image"}, "segment_chain": {"sour
 
 def _document():
     return {"schema_version": 1, "endpoints": {"GET /v1/probe": {
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {
+            "type": "object", "properties": {"image": {"type": "string"}, "video": {"type": "string"}},
+        }}}},
         "responses": {"200": {"description": "Probe.", "content": {
             "application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}},
         }}},
-    }}, "wire_error_params": deepcopy(MAPS)}
+    }}, "wire_error_params": deepcopy(MAPS),
+        "wire_error_param_endpoints": {domain: "GET /v1/probe" for domain in MAPS}}
 
 
 def _write(tmp_path, document):
@@ -109,6 +113,7 @@ def test_wire_error_param_lookup_is_exact_and_closed(tmp_path):
 def test_shipped_error_params_match_declared_request_properties():
     registry = schemas.load_media_schema_registry(REGISTRY_PATH)
     assert dict(registry.wire_error_params) == MAPS
+    assert schemas.wire_error_param("identity_scene", "reference_photos", registry=registry) == "image"
     assert schemas.wire_error_param("segment_chain", "source_clip", registry=registry) == "video"
 
 
@@ -133,13 +138,13 @@ def test_error_param_does_not_use_response_properties(tmp_path):
         schemas.load_media_schema_registry(_write(tmp_path, document))
 
 
-def test_error_params_without_registry_endpoint_keep_syntax_validation(tmp_path):
+def test_error_params_without_registry_endpoint_are_rejected(tmp_path):
     document = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
     # The shipped registry binds identity_scene to its endpoint; this case is about a group with no binding.
     document["wire_error_param_endpoints"].pop("identity_scene", None)
     document["wire_error_params"]["identity_scene"]["reference_photos"] = "reference_image"
-    registry = schemas.load_media_schema_registry(_write(tmp_path, document))
-    assert schemas.wire_error_param("identity_scene", "reference_photos", registry=registry) == "reference_image"
+    with pytest.raises(ValueError, match="no wire_error_param_endpoints binding for.*identity_scene"):
+        schemas.load_media_schema_registry(_write(tmp_path, document))
 
     # A binding to an endpoint the registry lacks is a typo, not an opt-out of the check.
     document["wire_error_param_endpoints"]["identity_scene"] = "POST /v1/unregistered"
@@ -165,6 +170,45 @@ def test_media_registry_rejects_malformed_error_endpoint_bindings(tmp_path):
         document["wire_error_param_endpoints"] = bindings
         with pytest.raises(ValueError, match="wire_error_param_endpoints"):
             schemas.load_media_schema_registry(_write(tmp_path, document))
+
+
+@pytest.mark.parametrize("bindings", [None, {}], ids=["absent", "empty"])
+def test_media_registry_rejects_unbound_error_group(tmp_path, bindings):
+    document = _document()
+    document["wire_error_params"] = {"sentinel-domain": {"payload": "sentinel_paylaod"}}
+    if bindings is None:
+        del document["wire_error_param_endpoints"]
+    else:
+        document["wire_error_param_endpoints"] = bindings
+    path = _write(tmp_path, document)
+    with pytest.raises(ValueError) as failure:
+        schemas.load_media_schema_registry(path)
+    assert str(path) in str(failure.value)
+    assert "no wire_error_param_endpoints binding for" in str(failure.value)
+    assert "sentinel-domain" in str(failure.value)
+
+
+@pytest.mark.parametrize("case, message", [
+    ("empty-endpoints", "expected at least one endpoint"),
+    ("invalid-endpoint-key", "invalid HTTP method/path key"),
+    ("empty-responses", "empty responses"),
+    ("unknown-response-type", "invalid type"),
+], ids=["empty-endpoints", "invalid-endpoint-key", "empty-responses", "unknown-response-type"])
+def test_media_registry_rejects_malformed_endpoint_documents(tmp_path, case, message):
+    document = _document()
+    endpoint = document["endpoints"]["GET /v1/probe"]
+    if case == "empty-endpoints":
+        document["endpoints"] = {}
+    elif case == "invalid-endpoint-key":
+        document["endpoints"] = {"post /v1/probe": endpoint}
+    elif case == "empty-responses":
+        endpoint["responses"] = {}
+    else:
+        endpoint["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "strnig"
+    path = _write(tmp_path, document)
+    with pytest.raises(ValueError, match=message) as failure:
+        schemas.load_media_schema_registry(path)
+    assert str(path) in str(failure.value)
 
 
 def test_media_registry_rejects_malformed_error_maps(tmp_path):
@@ -202,6 +246,7 @@ def test_media_registry_rejects_malformed_error_maps(tmp_path):
 def test_media_registry_rejects_duplicate_merged_and_executable_yaml(tmp_path):
     document = _document()
     del document["wire_error_params"]
+    del document["wire_error_param_endpoints"]
     prefix = yaml.safe_dump(document)
     additions = [
         "wire_error_params:\n  domain:\n    key: first\n    key: second\n",
@@ -221,6 +266,7 @@ def test_media_registry_rejects_duplicate_merged_and_executable_yaml(tmp_path):
 def test_legacy_fragment_api_remains_compatible(tmp_path):
     document = _document()
     del document["wire_error_params"]
+    del document["wire_error_param_endpoints"]
     path = _write(tmp_path, document)
     registry = schemas.load_media_schema_registry(path)
     assert dict(registry.wire_error_params) == {}
@@ -319,7 +365,7 @@ def test_sentinel_binding_rejects_misspelled_request_property(tmp_path):
         assert expected in message
     assert "not a request property" in message
 
-    # Without the binding, that spelling is legal: the cross-reference must bite.
+    # Removing the binding cannot bypass validation.
     del document["wire_error_param_endpoints"]
-    registry = schemas.load_media_schema_registry(_write(tmp_path, document))
-    assert schemas.wire_error_param(domain, logical, registry=registry) == misspelled
+    with pytest.raises(ValueError, match="no wire_error_param_endpoints binding for.*sentinel-domain"):
+        schemas.load_media_schema_registry(_write(tmp_path, document))
