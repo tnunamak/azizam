@@ -937,3 +937,49 @@ admin_store.write_service_registry(value, path=path, actor=SimpleNamespace(roles
     assert engine_egress.is_remote_destination('https://engine.example')
     assert not recorder.connections and not recorder.writes
 
+
+
+@pytest.mark.parametrize('io', ['read', 'write'])
+def test_s6_external_process_revoke_stops_next_socket_io_without_watcher(owner, gateway, io):
+    import asyncio
+    import subprocess
+    import sys
+    from gateway.remote_engine import factory_from_store
+    from gateway.remote_engine_budget import GuardedStream
+    from tests.support.remote_protocol import add_remote
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True}).status_code == 200
+    factory = factory_from_store()
+    assert factory.db_path == gateway.path
+    bound = factory.transport(factory.admit('smell-box'))
+    script = """
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from gateway import admin_store
+path = Path(sys.argv[1])
+current = admin_store.get_service_registry_with_generation(path=path)
+value = current['value']
+value['services']['smell-box']['config']['connection']['remote_dispatch']['enabled'] = False
+admin_store.write_service_registry(value, path=path, actor=SimpleNamespace(roles={'owner'}),
+    updated_by='synthetic-cli', expected_generation=current['operator_settings_generation'])
+"""
+    result = subprocess.run([sys.executable, '-c', script, str(gateway.path)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert not bound.revoked and bound.monitor is None  # no shared-memory callback or watcher can help
+    calls = []
+    class Stream:
+        async def read(self, *args, **kwargs):
+            calls.append('read')
+            return b''
+        async def write(self, *args, **kwargs):
+            calls.append('write')
+    async def check():
+        stream = GuardedStream(Stream(), bound)
+        with pytest.raises(asyncio.CancelledError):
+            await (stream.read(1024) if io == 'read' else stream.write(b'synthetic'))
+    asyncio.run(check())
+    assert not calls
+

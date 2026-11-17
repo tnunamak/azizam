@@ -552,3 +552,18 @@ The owner rejected e1b49bb73 for merge. The ten corrections and their exact
 regression node IDs and test commands are recorded in
 [REMOTE_ENGINES_REVIEW.md](REMOTE_ENGINES_REVIEW.md). The next owner review and
 release gate remain required.
+
+### Re-review: cross-process I/O checks
+
+GuardedStream reads and writes call check_current before touching the socket and
+check again after I/O. The production factory reads a fresh SQLite integer
+registry generation in a worker thread on each check. An unchanged generation
+reuses parsed registry data, policy validation and hashes; a changed generation
+reloads and validates the authoritative record. This keeps SQLite off the event
+loop without making I/O depend on a watcher tick. The external-process test
+commits an owner opt-out through the real registry writer with no parent callback
+or watcher running, then proves both the next read and the next write refuse.
+
+The watcher interval bounds detection only while an operation is sleeping or
+blocked inside a previously authorized I/O; it is not permission for another I/O
+under a stale generation. Bytes already handed to the network cannot be recalled.

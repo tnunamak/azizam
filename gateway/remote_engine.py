@@ -375,6 +375,9 @@ def factory_from_store():
     def read():
         nonlocal cached
         with request_connections.request_scope():
+            revision = admin_store.service_registry_generation(path=path)
+            if cached is not None and cached['operator_settings_generation'] == revision:
+                return cached
             encoded = admin_store.get_service_registry_json_with_generation(path=path)
         if encoded is None:
             raise refused()
