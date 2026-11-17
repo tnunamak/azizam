@@ -27,6 +27,7 @@ from scripts.check_workflow_drift import name_diff, ui_inputs_by_name  # noqa: E
 
 FIXTURES = ROOT / "tests" / "fixtures" / "workflow_drift"
 NAMES = ["krea2-turbo", "qwen-image-2.1-edit", "video-wan-2.2-ti2v-5b-q8"]
+API_NODE_TYPE = "class_type"
 
 
 def load(name: str) -> tuple[dict, dict]:
@@ -98,9 +99,41 @@ def test_node_missing_from_ui_twin_is_drift():
     assert any("node 7 in API JSON" in d for d in name_diff(ui, api))
 
 
+@pytest.mark.parametrize(
+    "values",
+    [[0, "randomize", 8], [0, 8], [8]],
+    ids=["linked-control-slot", "linked-value-slot", "linked-slot-omitted"],
+)
+def test_linked_seed_layout_preserves_steps_drift(values):
+    ui = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "TransformA",
+                "inputs": [
+                    {"name": "seed", "widget": {"name": "seed"}, "link": 1},
+                    {"name": "steps", "widget": {"name": "steps"}},
+                ],
+                "widgets_values": values,
+            },
+            {"id": 9, "type": "SourceA", "inputs": [], "widgets_values": []},
+        ],
+        "links": [[1, 9, 0, 1, 0, "INT"]],
+    }
+    api = {
+        "1": {API_NODE_TYPE: "TransformA", "inputs": {"seed": ["9", 0], "steps": 8}},
+        "9": {API_NODE_TYPE: "SourceA", "inputs": {}},
+    }
+
+    assert ui_inputs_by_name(ui)["1"] == {"seed": ["9", 0], "steps": 8}
+    assert name_diff(ui, api) == []
+    api["1"]["inputs"]["steps"] = 999
+    assert name_diff(ui, api) == ["  ~ 1.inputs.steps: api 999 != ui 8"]
+
+
 def write_pair(tmp_path, name="pair", api_type="TransformA", ui_type="TransformA"):
     ui = {"nodes": [{"id": 1, "type": ui_type, "inputs": [], "widgets_values": []}], "links": []}
-    api = {"1": {"class_type": api_type, "inputs": {}}}
+    api = {"1": {API_NODE_TYPE: api_type, "inputs": {}}}
     ui_path = tmp_path / f"{name}.ui.json"
     api_path = tmp_path / f"{name}.json"
     ui_path.write_text(json.dumps(ui))
