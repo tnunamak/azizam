@@ -1,76 +1,74 @@
 # Video create hand-offs retired
 
-`tests/test_legacy_video_ratchet.py` now pins COUNT at zero. No owner oracle,
-shipped manifest, parity golden, model catalog or OpenAPI data was edited.
+`tests/test_legacy_video_ratchet.py` pins COUNT at zero. No owner oracle,
+shipped manifest, existing parity golden, model catalog or OpenAPI data was
+edited. The retained handler still serves remix and extension routes.
 
-## Reference-variant facts: original site 174
+## Main is the reference
 
-Accepted in commit 200ccae49. The registry schema requires size, length and grid.
-The tests reject each omission from an otherwise valid shipped reference
-manifest, then compare a valid variant through POST /v1/videos with the direct
-old handler. This removed an unreachable branch rather than a valid request
-class.
+Video engine comparisons use the handler bodies copied verbatim from
+`proxy.py` at `fd30cbfca`, plus that revision's video-grid module and registry
+files. `tests/fixtures/video_fd30cbfca.json` pins those bytes and the source
+hashes of the 190 unchanged proxy helpers reachable from the handler path.
+The loader binds those helpers to the frozen namespace and the test I/O ports;
+it refuses a changed helper body. The branch handler is not the oracle.
 
-## Long variants: original site 188
+The public-route measurements in the `video_*_fd30cbfca.json` fixtures were
+recorded on `fd30cbfca` with only the probe test added (proof commit
+`3cb3bf253`). `tests/fixtures/video_public_probe_fd30cbfca.py` retains the probe.
+The main probe batch passed: `317 passed in 31.77s`.
 
-Commit 2f711354b reuses the existing chain validation, segment planner and
-composer. The request captures the selected template document and ChainSpec in
-its declared run options. The graph runner reconstructs that accepted plan and
-composes the submitted graph. It does not reselect a template from live engine
-configuration. The old handler keeps its direct submission for the comparison
-oracle and extension routes.
+Graph comparisons use sorted JSON text, so integer and float differences are
+visible. Public response tests cover direct chains, long variants and
+storyboards. Plain creates with no workflow configuration row remain available
+from their manifest; cases needing the separate resolution configuration keep
+main's 404. When the manifest has no long variant, shots and over-limit seconds
+keep main's 400 answers even if operator configuration names a chain workflow.
 
-Storyboard and 16-second long-variant creates now return job ids. The public
-route and direct old handler submit identical engine bodies. Chain availability
-still follows the same operator configuration as the old path.
+## Declared execution
 
-Validation: `456 passed, 4 xfailed in 41.40s`.
+Chain creates reuse the existing planner and composer. Acceptance captures the
+selected template and options; execution submits the composed graph. Input
+preparation shares the existing merge, extension validation, source probing and
+asset resolution steps with the retained handler. Secondary assets enter
+`RunRequest.media`. Subject operations call the existing point and reference-fit
+functions. Facts with no video section read the declared configuration source.
 
-## Direct chains and missing facts: original site 163
+Number coercion is limited to video creates. The generic binder and frontend
+coercion preserve JSON integers; an image public-route test pins an integer at
+the engine boundary. Moved video creates retain the stored Library asset kind.
 
-Commit 0a9f792c7 moves direct long-workflow creates onto the same accepted plan.
-Validation: `456 passed, 4 xfailed in 40.85s`.
+Chain policy tests compare main's 403 body and verify no receipt or engine work
+on denial. Success tests compare all 42 non-volatile main receipt fields on both
+route spellings. They check the declared job link and the additional generic
+admission evidence separately. Chain progress and structured segment failure
+text are pinned against the frozen main handler.
 
-Commit 7deaaea02 removes the remaining missing-facts hand-off. Registry data in
-`registry/video_grid.yml:workflow_fact_source` declares the configuration section,
-table, field projection and binding-role destinations. Both paths read the same
-current videos.workflows rows, including operator overrides. No owner data moves.
+## Owner decisions
 
-A schema-valid no-section manifest is tested with an operator-set size and frame
-rate. Reference variant selection uses the same fact source when the variant
-has no video section. The complete submitted graph matches the old handler, including leaving
-binding destinations unchanged when the old configuration does not name them.
-The ratchet falls to one.
+- Moved chain and keyframe creates may return `video_<job id>` values, including
+  `video_mj_*`. Existing prompt-id records must still read.
+- A chain whose engine submission fails may answer POST with `200 queued` and
+  later expose a failed job. Main answered the error from POST. This change is
+  accepted because submission runs through the job path. The test pins the
+  failed job's public error as `video_generation_failed` with
+  `ComfyUI unavailable` in the isolated fake-engine case. Main's POST error also
+  included `at http://comfy.fk.test`; the existing job view removes backend
+  addresses. The submit receipt records the queued 200.
 
-Validation: `457 passed, 4 xfailed in 45.09s`.
+## Remaining upload issue
 
-## Workflow inputs and media: original site 197
+`proxy._submit_video_chain` still uploads an optional first frame before
+`submit_run`. A refusal can orphan it, and an Idempotency-Key replay can repeat
+it. A move after admission needs a declared media-staging contract for that
+optional chain input. This issue remains open.
 
-The final change uses the existing input merge and validation functions, image
-and video asset resolvers, and source probe. Primary and secondary media are
-staged into RunRequest.media and adopted by the job spool. The moved inputs keep
-the old upload filenames. Asset bytes and references are excluded from subject
-options and the retained workflow extension block.
+## Verification
 
-Source video supplies fps and default duration before frame sizing. Frame counts
-use the existing source-cap snap. Subject selection and reference fitting run
-through video_subject.apply_point and add_reference_fit in the graph runner.
-Edge-only selection inputs stay out of the static graph compiler.
-
-Public/direct-old comparisons cover scalar inputs, named image ids and objects,
-URLs, vision-style references, a differently named bound reference input,
-secondary keyframe assets, a short source at a different fps, selection points,
-and reference fitting enabled and disabled. The graph and upload filenames are
-compared. A queued-chain probe also changes the configured chain selection,
-removes the live template after acceptance and verifies the captured plan still
-submits the old handler's graph.
-
-The video shape inherits the generic no-hand-off hook. Its remaining code has no
-LegacyRoute constructor. Existing prompt-id record reads remain covered by the
-video lifecycle tests.
-
-No blocker or oracle change remains. Verification uses the hermetic runner with
-four workers and targeted files only: the hand-off probes, create shape and role
-tests, both boundary ratchets, the four S7 video parity files, adapter differential
-S7, video grid defaults, chain composition parity, and the OpenAPI/model metadata
-pins. The final command and quoted result are in the delivery report.
+Run the hermetic runner after committing, with four workers and targeted files.
+The wider batch includes workflow OpenAPI, video extend, keyframes, extensions,
+handler gaps, chain graphs, limits, every `test_video_create_*` file, the main
+oracle probes, grid data, image/video selectors and the boundary ratchets. The
+final batch also includes the original four S7 video parity files, adapter S7,
+video job views, shape order and the frozen route graph. Existing S7 traces and
+owner oracles remain untouched. No reviewer was started for this fix round.

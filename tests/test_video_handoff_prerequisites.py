@@ -556,3 +556,28 @@ def test_chain_create_keeps_main_receipt_fields_and_names_the_declared_job(world
             world.engine.pending = False
         await await_status(world, response.json()["id"])
     asyncio.run(drive())
+
+
+def test_chain_submit_failure_is_the_accepted_deferred_error_with_main_cause(world):
+    import httpx
+    from tests.support.fake_upstream import HandlerTransport
+    from tests.test_s7_parity_video_create import HOST, await_status, receipt
+    expected = json.loads((ROOT / "tests/fixtures/video_submit_failure_fd30cbfca.json").read_text())
+    assert expected["status"] == 502
+    def handle(request):
+        if request.method == "POST" and request.url.path == "/prompt":
+            raise httpx.ConnectError("connection refused", request=request)
+        return world.engine(request)
+    world.rig.monkeypatch.setitem(world.rig.fakes.router._routes, HOST, HandlerTransport(handle))
+    async def drive():
+        created = await world.rig.call("POST", "/v1/videos", json_body=expected["request"])
+        assert created.status_code == 200, created.text
+        assert created.json()["status"] == "queued"
+        assert created.json()["id"].startswith("video_mj_")
+        failed = await await_status(world, created.json()["id"], status="failed")
+        assert expected["body"]["error"]["message"] == "ComfyUI unavailable at http://comfy.fk.test"
+        # The existing job view removes backend addresses from public errors.
+        assert failed["error"] == {"code": "video_generation_failed", "message": "ComfyUI unavailable"}
+        kept = receipt(world, created.headers["x-request-id"])
+        assert kept["status"] == "succeeded" and kept["metadata"]["status_code"] == 200
+    asyncio.run(drive())
