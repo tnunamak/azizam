@@ -10,10 +10,7 @@ import { useFieldContext } from "./field";
  */
 function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   const field = useFieldContext();
-  const invalid =
-    field?.invalid ||
-    props["aria-invalid"] === true ||
-    props["aria-invalid"] === "true";
+  const invalid = field?.invalid ? true : props["aria-invalid"];
   const ownMin = /(?:^|\s)min-h-/.test(className ?? "");
   const ownSize = /(?:^|\s)text-(?:2xs|xs|sm|base|lg|xl|heading|body|meta|label|badge)\b/.test(
     className ?? "",
@@ -30,7 +27,7 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
       {...props}
       id={props.id ?? field?.id}
       aria-describedby={props["aria-describedby"] ?? field?.describedBy}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid}
     />
   );
 }

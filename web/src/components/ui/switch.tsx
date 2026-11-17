@@ -14,10 +14,7 @@ function Switch({
   size?: "sm" | "default";
 }) {
   const field = useFieldContext();
-  const invalid =
-    field?.invalid ||
-    props["aria-invalid"] === true ||
-    props["aria-invalid"] === "true";
+  const invalid = field?.invalid ? true : props["aria-invalid"];
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
@@ -29,7 +26,7 @@ function Switch({
       {...props}
       id={props.id ?? field?.id}
       aria-describedby={props["aria-describedby"] ?? field?.describedBy}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid}
     >
       <span
         data-slot="switch-track"

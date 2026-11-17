@@ -11,10 +11,7 @@ function Checkbox({
   ...props
 }: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
   const field = useFieldContext();
-  const invalid =
-    field?.invalid ||
-    props["aria-invalid"] === true ||
-    props["aria-invalid"] === "true";
+  const invalid = field?.invalid ? true : props["aria-invalid"];
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
@@ -25,7 +22,7 @@ function Checkbox({
       {...props}
       id={props.id ?? field?.id}
       aria-describedby={props["aria-describedby"] ?? field?.describedBy}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid}
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"

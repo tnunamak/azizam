@@ -53,4 +53,25 @@ describe.each([
     render(<Control aria-invalid={invalid} />);
     expect(screen.getByRole(role)).toHaveAttribute("aria-invalid", "true");
   });
+
+  describe.each([
+    { context: "standalone", wrapped: false, error: undefined },
+    { context: "field without error", wrapped: true, error: undefined },
+    { context: "field with error", wrapped: true, error: "Too long" },
+  ])("$context aria-invalid precedence", ({ wrapped, error }) => {
+    it.each([undefined, false, "false", true, "true", "spelling", "grammar"] as const)(
+      "preserves caller token %s unless the field has an error",
+      (invalid) => {
+        const control = <Control aria-invalid={invalid} />;
+        render(wrapped ? <Field label="Notes" help="Optional" error={error}>{control}</Field> : control);
+        const element = screen.getByRole(role);
+        const expected = error ? true : invalid;
+        if (expected === undefined) {
+          expect(element).not.toHaveAttribute("aria-invalid");
+        } else {
+          expect(element).toHaveAttribute("aria-invalid", String(expected));
+        }
+      },
+    );
+  });
 });
