@@ -397,6 +397,7 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         options["record_asset_kind"] = True
     if prepared.get("preserve_names"):
         options["input_filenames"] = {name: refs[0].filename for name, refs in media.items() if refs[0].filename}
+        options["input_order"] = list(prepared["assets"])
     if manifest.select_subject:
         options["subject_plan"] = {"block": {key: value for key, value in block.items() if not _is_asset(chosen, key)}, "roles": prepared["config"].get("node_roles") or {},
                                    "width": width, "height": height}

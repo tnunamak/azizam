@@ -27512,8 +27512,12 @@ class _WorkflowRunPort:
             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
         staged: dict[str, str] = {}
         kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
-        filenames = ((ctx.payload.get("body") or {}).get("options") or {}).get("input_filenames") or {}
-        for name, refs in ctx.media.items():
+        options = ((ctx.payload.get("body") or {}).get("options") or {})
+        filenames = options.get("input_filenames") or {}
+        order = options.get("input_order") or []
+        names = [name for name in order if name in ctx.media] + [name for name in ctx.media if name not in order]
+        for name in names:
+            refs = ctx.media[name]
             if name in kept_off_engine:
                 continue
             if len(refs) != 1:
