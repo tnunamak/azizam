@@ -358,8 +358,7 @@ def test_the_facts_hold_no_prompt_no_person_and_only_the_keys_the_design_names()
 
 
 def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_its_parsed_body() -> None:
-    for body in ({"prompt": "x", "model": "ltx-2.5-long"},                                 # a chain manifest
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
+    for body in ({"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
                  {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
         handoff = read(body)
         assert isinstance(handoff, _base.LegacyRoute), body
@@ -555,11 +554,11 @@ def _base_legacy() -> str:
     return video_create.LEGACY_CREATE
 
 
-def test_a_chain_create_reaches_the_old_handler_with_no_row_policy_and_no_row_receipt() -> None:
+def test_an_unresolved_reference_reaches_the_old_handler_with_no_row_policy_and_no_row_receipt() -> None:
     from starlette.testclient import TestClient
     calls: dict[str, list] = {key: [] for key in ("auth", "policy", "receipt", "report", "legacy")}
     client = TestClient(_row_app(calls))
-    answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-long"})
+    answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"})
     assert answer.status_code == 200 and answer.text == "old"
     assert calls["auth"] == ["/v1/videos"]                    # authenticated once, by the row
     assert calls["policy"] == [] and calls["receipt"] == [] and calls["report"] == []     # the old handler owns both

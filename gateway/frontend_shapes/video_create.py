@@ -159,8 +159,10 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
         return chosen
     manifest = video_grid.video_facts(chosen)
     reference = body.get("input_reference")
-    if manifest is None or manifest.chain or manifest.length is None:
+    if manifest is None or manifest.length is None:
         return LegacyRoute(LEGACY_CREATE, body)
+    if manifest.chain:
+        return chosen, manifest, short_name(chosen), public_model
     if reference:
         eligible = video_grid.reference_variants(manifest, snapshot.get, _reference_input)
         # Defensive only: a registry that passed check_video_variants cannot reach this branch.

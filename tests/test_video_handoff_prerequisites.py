@@ -69,7 +69,7 @@ def test_public_handoff_submits_the_old_handlers_graph(world, body):
         assert len(world.engine.prompts) == 1
         response = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert response.status_code == 200, response.text
-        if body["model"] == "ltx-2.5-t2v":
+        if body["model"] in ("ltx-2.5-t2v", "ltx-2.5-long"):
             assert response.json()["id"].startswith("video_mj_")
         await submitted(world, 2)
         assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
