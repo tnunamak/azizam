@@ -4293,6 +4293,16 @@ def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, A
     return record
 
 
+def service_registry_generation(*, path: Path = DB_PATH) -> int:
+    """Read only the registry CAS counter; remote I/O compares it before each hop."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'"
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+
 def get_service_registry_json_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
     """Read the encoded document and generation together, without parsing JSON."""
     # One statement, so the document and its CAS generation come from the same
@@ -4556,6 +4566,8 @@ def write_service_registry_in_transaction(
     from gateway.remote_engine import invalidate_registry
     database = next((row[2] for row in conn.execute('PRAGMA database_list') if row[1] == 'main'), None)
     if database:
+        from gateway.engine_egress import protect_registry_write
+        protect_registry_write(database, after_effective.get('services'))
         invalidate_registry(database, registry_layers.layer(before, release), after_effective)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     conn.execute(

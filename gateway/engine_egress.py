@@ -32,6 +32,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any
+from pathlib import Path
+import threading
+import asyncio
+import json
 from urllib.parse import urlsplit
 
 import httpx
@@ -233,16 +237,20 @@ class Projection:
     whole projection once and never combines the maps of two projections.
     """
 
-    __slots__ = ("destinations", "probe_paths", "remote_destinations")
+    __slots__ = ("destinations", "probe_paths", "remote_destinations", "registry_path", "registry_generation", "service_destinations")
 
-    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]], remote_destinations: frozenset[str] = frozenset()) -> None:
+    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]], remote_destinations: frozenset[str] = frozenset(), service_destinations=None) -> None:
         self.destinations = destinations
         self.probe_paths = probe_paths
         self.remote_destinations = remote_destinations
+        self.registry_path = None
+        self.registry_generation = None
+        self.service_destinations = service_destinations or MappingProxyType({})
 
 
 # The live projection: one reference, replaced whole by ``install``. Read it once per check.
 _live: Projection = Projection(MappingProxyType({}), MappingProxyType({}))
+_LIVE_LOCK = threading.RLock()
 
 
 def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> Projection:
@@ -260,10 +268,12 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
     built: dict[str, list[str]] = {}
     paths: dict[str, set[str]] = {}
     remote_destinations = set()
+    service_destinations = {}
     observer_paths = observer_paths_declared_by(services or {})
     for service_id, record in (services or {}).items():
         if not isinstance(record, Mapping):
             continue
+        service_destinations[str(service_id)] = frozenset(destinations_of(record))
         from gateway.engine_contract_view import connection_config
         if (connection_config(record).get("remote_dispatch") or {}).get("enabled") is True:
             remote_destinations.update(destinations_of(record))
@@ -280,13 +290,61 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
             paths.setdefault(key, set()).update(prefix + path for prefix in prefixes | {""} for path in declared)
             paths[key].update(rooted)
     return Projection(MappingProxyType({key: tuple(domains) for key, domains in built.items()}),
-                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}), frozenset(remote_destinations))
+                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}), frozenset(remote_destinations), MappingProxyType(service_destinations))
 
 
-def install(projection: Projection) -> None:
-    """Make a projection live: one reference swap, so a reader sees the old pair or the new pair, never a mix."""
+def install(projection: Projection, *, registry_path=None, registry_generation=None) -> None:
+    """Publish the projection before its config; keep legacy remote denials until restart."""
     global _live
-    _live = projection
+    with _LIVE_LOCK:
+        projection.registry_path = str(Path(registry_path).resolve()) if registry_path is not None else None
+        projection.registry_generation = registry_generation
+        if projection.registry_path is not None and projection.registry_path == _live.registry_path:
+            projection.remote_destinations = projection.remote_destinations | _live.remote_destinations
+        _live = projection
+
+
+def protect_registry_write(path, services) -> None:
+    """Fail closed before an active registry write commits, including a failed reload/rollback."""
+    with _LIVE_LOCK:
+        live = _live
+        if live.registry_path != str(Path(path).resolve()):
+            return  # another database, not the registry this process serves
+        from gateway.engine_contract_view import connection_config
+        remote = set(live.remote_destinations)
+        for service_id, record in (services or {}).items():
+            if isinstance(record, Mapping) and (connection_config(record).get('remote_dispatch') or {}).get('enabled') is True:
+                remote.update(destinations_of(record))
+                remote.update(live.service_destinations.get(str(service_id), ()))
+        install(Projection(live.destinations, live.probe_paths, frozenset(remote), live.service_destinations), registry_path=path,
+                registry_generation=live.registry_generation)
+
+
+def refresh_remote_destinations() -> None:
+    """Observe CLI writes before a legacy send, without relying on reload callbacks."""
+    live = _live
+    if live.registry_path is None:
+        return
+    from gateway import admin_store, request_connections, registry_layers, service_registry
+    from gateway.remote_engine import refused
+    path = Path(live.registry_path)
+    try:
+        with request_connections.request_scope():
+            revision = admin_store.service_registry_generation(path=path)
+            if revision == live.registry_generation:
+                return
+            encoded = admin_store.get_service_registry_json_with_generation(path=path)
+        if encoded is None:
+            raise refused()
+        raw = registry_layers.layer(json.loads(encoded['value_json']), service_registry.release_registry())
+        with _LIVE_LOCK:
+            if _live.registry_path == live.registry_path:
+                protect_registry_write(path, raw.get('services'))
+                current = _live
+                install(Projection(current.destinations, current.probe_paths, current.remote_destinations, current.service_destinations),
+                        registry_path=path, registry_generation=encoded['operator_settings_generation'])
+    except Exception:
+        raise refused() from None
 
 
 def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> None:
@@ -303,8 +361,10 @@ def is_remote_destination(address: str) -> bool:
     return _key_of_url(address) in _live.remote_destinations
 
 
-def check_request(request: httpx.Request, *, remote_bound=None) -> None:
+def check_request(request: httpx.Request, *, remote_bound=None, refreshed=False) -> None:
     """Refuse a request to a transition-enabled domain's address unless the task holds a lease for it."""
+    if not refreshed:
+        refresh_remote_destinations()
     marked = request.extensions.pop(PROBE_EXTENSION, False) is True and request.method == "GET"
     key = destination_key(request.url.host, request.url.port, request.url.scheme)
     live = _live  # one read: the destination map and the probe paths must come from the same projection
@@ -328,7 +388,8 @@ def check_request(request: httpx.Request, *, remote_bound=None) -> None:
 
 
 async def _check_async(request: httpx.Request) -> None:
-    check_request(request)
+    await asyncio.to_thread(refresh_remote_destinations)
+    check_request(request, refreshed=True)
 
 
 def _guard(created: Any, hook: Any) -> Any:
@@ -344,7 +405,7 @@ def async_client(*, _remote_bound=None, **kwargs: Any) -> httpx.AsyncClient:
         return _guard(httpx.AsyncClient(**kwargs), _check_async)
     async def check(request):
         await _remote_bound.check_current()
-        check_request(request, remote_bound=_remote_bound)
+        check_request(request, remote_bound=_remote_bound, refreshed=True)
     return _guard(httpx.AsyncClient(**kwargs), check)
 
 

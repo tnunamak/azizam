@@ -815,3 +815,125 @@ def test_s6_admin_can_disable_remote_service_but_only_owner_can_reenable(owner, 
     assert denied.status_code == 403, denied.text
     assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before
     assert client.patch(path, headers=_write_headers(client), json={'enabled': True}).status_code == 200
+
+
+@pytest.mark.parametrize('reload_fails', [False, True])
+def test_s6_registry_write_protects_next_legacy_send_before_hot_reload(owner, gateway, monkeypatch, reload_fails):
+    import asyncio
+    from gateway import engine_egress
+    from gateway.engine_protocol.errors import ProtocolError
+    from tests.support.remote_protocol import add_remote, SocketRecorder
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    before = engine_egress._live
+    assert not engine_egress.is_remote_destination('https://engine.example')
+    if reload_fails:
+        def fail():
+            raise RuntimeError('synthetic reload failure')
+        monkeypatch.setattr(gateway.proxy.ADMIN_STORE, 'on_service_registry_changed', fail)
+    registry = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    config = registry['services']['smell-box']['config']
+    config.update({'cost_class': 'free-local', 'native_passthrough': False,
+                   'host': 'engine.example', 'port': 443, 'scheme': 'https',
+                   'address': 'https://engine.example', 'base_url': 'https://engine.example'})
+    config['connection'].update({'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}})
+    response = client.put('/admin/api/operator/service-registry', headers=_write_headers(client), json=registry)
+    assert response.status_code == (500 if reload_fails else 200), response.text
+    if reload_fails:
+        assert response.json()['error']['code'] == 'registry_saved_not_applied'
+    assert engine_egress._live is not before
+    recorder = SocketRecorder(monkeypatch)
+    async def send():
+        async with engine_egress.async_client() as legacy:
+            with pytest.raises(ProtocolError):
+                await legacy.get('https://engine.example/health', extensions=engine_egress.probe())
+    asyncio.run(send())
+    assert not recorder.connections and not recorder.writes
+
+
+@pytest.mark.parametrize('writer', ['plain', 'audit', 'coupled', 'transaction'])
+def test_s6_every_registry_writer_refreshes_legacy_remote_protection(owner, gateway, writer):
+    from types import SimpleNamespace
+    from gateway import admin_store, engine_egress
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    current = admin_store.get_service_registry_with_generation(path=gateway.path)
+    registry = current['value']
+    cfg = registry['services']['smell-box']['config']
+    cfg['connection'].update({'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}})
+    cfg.update({'cost_class': 'free-local', 'native_passthrough': False,
+                'host': 'engine.example', 'port': 443, 'scheme': 'https',
+                'address': 'https://engine.example', 'base_url': 'https://engine.example'})
+    before = engine_egress._live
+    common = {'expected_generation': current['operator_settings_generation'], 'updated_by': 'test-owner',
+              'actor': SimpleNamespace(roles={'owner'})}
+    if writer == 'plain':
+        admin_store.write_service_registry(registry, path=gateway.path, **common)
+    elif writer == 'audit':
+        admin_store.write_service_registry_with_audit(registry, path=gateway.path, audit_action='test',
+            audit_actor_kind='user', audit_actor_id='test-owner', audit_actor_label=None,
+            audit_target_kind='test', audit_target_id='test', **common)
+    elif writer == 'coupled':
+        admin_store.write_service_registry_and_setting_with_audits(registry, path=gateway.path,
+            setting_key='test', setting_value={}, audits=[], **common)
+    else:
+        with admin_store._conn(gateway.path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            admin_store.write_service_registry_in_transaction(conn, registry, now=1, **common)
+            conn.commit()
+    assert engine_egress._live is not before
+    import httpx
+    from gateway.engine_protocol.errors import ProtocolError
+    with pytest.raises(ProtocolError):
+        engine_egress.check_request(httpx.Request('GET', 'https://engine.example/health'))
+
+
+@pytest.mark.parametrize('wire', ['http', 'websocket'])
+def test_s6_cli_opt_in_refuses_next_legacy_send_without_reload(owner, gateway, monkeypatch, wire):
+    import asyncio
+    import subprocess
+    import sys
+    from gateway import engine_egress
+    from gateway.engine_protocol.errors import ProtocolError
+    from tests.support.remote_protocol import SocketRecorder
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    assert not engine_egress.is_remote_destination('https://engine.example')
+    old_address = client.get('/admin/api/operator/service-registry').json()['service_registry']['services']['smell-box']['config']['connection']['address']
+    script = """
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from gateway import admin_store
+path = Path(sys.argv[1])
+current = admin_store.get_service_registry_with_generation(path=path)
+value = current['value']
+config = value['services']['smell-box']['config']
+config.update({'cost_class': 'free-local', 'native_passthrough': False, 'host': 'engine.example',
+ 'port': 443, 'scheme': 'https', 'address': 'https://engine.example', 'base_url': 'https://engine.example'})
+config['connection'].update({'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}})
+admin_store.write_service_registry(value, path=path, actor=SimpleNamespace(roles={'owner'}),
+ updated_by='synthetic-cli', expected_generation=current['operator_settings_generation'])
+"""
+    result = subprocess.run([sys.executable, '-c', script, str(gateway.path)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert not engine_egress.is_remote_destination('https://engine.example')
+    recorder = SocketRecorder(monkeypatch)
+    async def check():
+        if wire == 'websocket':
+            from gateway.engine_protocol.node_graph import NodeGraphAdapter
+            from gateway.engine_protocol.types import Connection
+            with pytest.raises(ProtocolError):
+                await anext(NodeGraphAdapter().watch(Connection(address=old_address)))
+        else:
+            async with engine_egress.async_client() as legacy:
+                for address in (old_address, 'https://engine.example'):
+                    with pytest.raises(ProtocolError):
+                        await legacy.get(address + '/health')
+    asyncio.run(check())
+    assert engine_egress.is_remote_destination('https://engine.example')
+    assert not recorder.connections and not recorder.writes
+

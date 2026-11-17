@@ -814,7 +814,7 @@ def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Map
     # The egress map follows the config the gateway boots with (registry overlay, partial and empty fallbacks included),
     # not the bootstrap file: a service held only in the registry is mapped from the first request. It goes live
     # before the snapshot, so no request sees an enabled domain without its map entry.
-    engine_egress.install(_project_egress(snapshot.config.get("backends")))
+    engine_egress.install(_project_egress(snapshot.config.get("backends")), registry_path=ADMIN_DB_PATH, registry_generation=registry_generation)
     CONFIG_HOME.publish(snapshot)
     globals().update(_workflow_alias_tables(snapshot.config))
     return CONFIG_HOME.holder.current().config
@@ -1756,7 +1756,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # The map goes live before the snapshot: between the two, the old config meets the new map, and a destination the
     # new map adds is refused without a lease (fail closed). The other order would let the new config send to an
     # enabled domain that the old map does not know, with no lease check.
-    engine_egress.install(egress)
+    engine_egress.install(egress, registry_path=ADMIN_DB_PATH, registry_generation=registry_generation)
     # Publish the snapshot first: runtime() reads only the holder, so a request that starts from here on binds the new
     # snapshot whole, and `config` and the derived names below follow from it, never ahead of it.
     CONFIG_HOME.publish(snapshot)
@@ -21443,9 +21443,12 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     if (not service or not service.get("port") or not service.get("host")
             or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
-    from gateway.remote_engine import refuse_unbound
+    from gateway.remote_engine import refuse_unbound, refused
     try:
+        await asyncio.to_thread(engine_egress.refresh_remote_destinations)
         refuse_unbound(service)
+        if engine_egress.is_remote_destination(service_registry.engine_base_address(service)):
+            raise refused()
     except ProtocolError as error:
         return await _deny_realtime(websocket, _protocol_failure(error))
     admission = _dispatch_admission_response(

@@ -809,6 +809,8 @@ class NodeGraphAdapter:
         after every frame, binary ones included, and ends the channel when it answers true.
         """
         from gateway.remote_engine import refuse_unbound_connection
+        import asyncio
+        await asyncio.to_thread(engine_egress.refresh_remote_destinations)
         refuse_unbound_connection(conn)
         try:
             from websockets.asyncio.client import connect as ws_connect

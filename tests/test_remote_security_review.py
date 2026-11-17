@@ -334,3 +334,32 @@ def test_remote_graph_websocket_guard_precedes_actual_dial(monkeypatch, caller):
                 await task
     asyncio.run(check())
     assert not dials and not recorder.connections and not recorder.writes
+
+
+def test_remote_boot_map_protects_before_first_snapshot_and_send(monkeypatch):
+    import copy
+    import proxy
+    from gateway import engine_egress
+    registry, _, _, _, _, _ = case()
+    candidate = copy.deepcopy(dict(proxy.config))
+    candidate['backends'] = registry['services']
+    monkeypatch.setattr(engine_egress, '_live', engine_egress.project({}))
+    recorder, seen = SocketRecorder(monkeypatch), []
+    real = proxy.CONFIG_HOME
+    class BeforePublish(Exception):
+        pass
+    class Home:
+        def __getattr__(self, name):
+            return getattr(real, name)
+        def publish(self, snapshot):
+            async def first_send():
+                async with engine_egress.async_client() as client:
+                    with pytest.raises(ProtocolError):
+                        await client.get('https://engine.example/state')
+            asyncio.run(first_send())
+            seen.append(True)
+            raise BeforePublish
+    monkeypatch.setattr(proxy, 'CONFIG_HOME', Home())
+    with pytest.raises(BeforePublish):
+        proxy._publish_boot_snapshot(candidate, None)
+    assert seen and not recorder.connections and not recorder.writes
