@@ -26,7 +26,7 @@ def workflow_files(root: Path) -> list[tuple[Path, Path | None]]:
         document = yaml.safe_load(package.read_text(encoding="utf-8")) or {}
         for ref in (document.get("objects") or {}).get("workflows") or []:
             if not isinstance(ref, str):
-                continue
+                raise ValueError(f"{package} names an invalid workflow file reference {ref!r}; expected a string")
             if not (package.parent / ref).is_file():
                 raise ValueError(f"{package} names the workflow file {ref}, which does not exist")
             found[package.parent / ref] = package.parent
