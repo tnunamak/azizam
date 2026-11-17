@@ -1,0 +1,135 @@
+{
+  "_reference": {
+    "revision": "fd30cbfcaa8e7f079474b4c8e6d221bb5f18a814",
+    "proof_commit": "3cb3bf253",
+    "probe_sha256": "c43eb01c821e302351c67af805659723c31e71bab28a394042771e7ee0de105e",
+    "route": "POST /v1/videos"
+  },
+  "receipt_exclusions": [
+    "accepted_at_ms",
+    "finished_at_ms",
+    "job_id",
+    "latency_ms",
+    "request_id",
+    "started_at_ms",
+    "updated_at_ms"
+  ],
+  "chain-denied": {
+    "request": {
+      "model": "ltx-2.5-long",
+      "prompt": "x",
+      "seconds": 16,
+      "seed": 7
+    },
+    "status": 403,
+    "body": {
+      "error": {
+        "code": "not_in_access_plan",
+        "details": {
+          "plans": [
+            "plan_test"
+          ],
+          "side": "person"
+        },
+        "message": "Video isn't in your access plan.",
+        "type": "access_error"
+      }
+    },
+    "receipts": []
+  },
+  "chain-receipt": {
+    "request": {
+      "model": "ltx-2.5-long",
+      "prompt": "x",
+      "seconds": 16,
+      "seed": 7
+    },
+    "status": 200,
+    "body": {
+      "actual_seconds": 16.0417,
+      "azizam_resolved_model": "video-ltx-2.5-long",
+      "error": null,
+      "extended_from_video_id": null,
+      "model": "ltx-2.5-long",
+      "object": "video",
+      "progress": 0,
+      "prompt": "x",
+      "remixed_from_video_id": null,
+      "seconds": "16.042",
+      "segments": 2,
+      "size": "960x512",
+      "status": "queued",
+      "total_seconds": 16.042
+    },
+    "receipts": [
+      {
+        "accepted_inputs": [],
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "attempt_number": 1,
+        "backend": "comfyui",
+        "client_address": null,
+        "client_hint": null,
+        "connection_id": null,
+        "cost": null,
+        "effective_output_limit": null,
+        "fallback_reasons": [],
+        "first_output_at_ms": null,
+        "ignored_inputs": {},
+        "intent": "video.generate",
+        "manifest_hash": null,
+        "manifest_id": null,
+        "manifest_version": null,
+        "metadata": {
+          "status_code": 200,
+          "terminal_reason": "http_200"
+        },
+        "owner_key_hash": "app:app_test",
+        "parent_request_id": null,
+        "path": "/v1/videos",
+        "policy_decision": "allowed",
+        "policy_reasons": [
+          "route_authorized",
+          "allowed by your access plan"
+        ],
+        "policy_sources": [
+          "runtime_route_policy",
+          "access_plan:plan_everything"
+        ],
+        "protocol": "openai.video",
+        "queued_at_ms": null,
+        "rejected_inputs": {},
+        "remote": false,
+        "requested_model": "ltx-2.5-long",
+        "requested_workflow": null,
+        "resolved_model": null,
+        "resolved_workflow": null,
+        "retention": [
+          {
+            "decision": "not_kept",
+            "kind": "library_prompt",
+            "reason": "no_person"
+          }
+        ],
+        "retention_facts": [
+          "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+          "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+          "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+          "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+          "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+          "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+          "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+          "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
+        ],
+        "source_kind": "app",
+        "source_label": "test-app",
+        "status": "succeeded",
+        "stream": false,
+        "usage": null,
+        "visibility": "full",
+        "warnings": []
+      }
+    ]
+  }
+}

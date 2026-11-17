@@ -456,8 +456,8 @@ class RunRequest:
 AUDIO_FACT = AUDIO_CONTROL     # the one fact key a request option of the same name also uses (silent result: false)
 REQUEST_FACT_KEYS = frozenset({
     "model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate", "seed", AUDIO_FACT,
-    "metadata_mode", "provenance", "remixed_from_video_id", "extended_from_video_id", "source_asset_id", "total_seconds",
-    "warnings"})
+    "metadata_mode", "provenance", "remixed_from_video_id", "extended_from_video_id", "source_asset_id", "total_seconds", "segments",
+    "warnings", "duration_adjustment_reason", "requested_seconds"})
 
 
 class RequestFacts(Mapping[str, Any]):

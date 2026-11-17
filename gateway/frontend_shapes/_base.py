@@ -8,7 +8,6 @@ no model and no engine; the input names it sets come from the chosen workflow's 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from starlette.requests import Request
@@ -38,16 +37,6 @@ IDEMPOTENCY_HEADER = "Idempotency-Key"
 TERMINAL = ("succeeded", "failed", "canceled")
 # How a job store failure category is spelled on the wire.
 _STATUS_BY_CATEGORY = {"client": 400, "policy": 403, "capacity": 503, "upstream": 502, "timeout": 504}
-
-
-@dataclass(frozen=True)
-class LegacyRoute:
-    """What ``Shape.to_run_request`` returns for a request the data path does not serve yet: the name of the registered
-    legacy handler and the body the shape already read (the request stream is spent). The row server answers it by calling
-    that handler. Every site that returns one is counted by ``tests/test_legacy_video_ratchet.py``, which may only fall."""
-
-    name: str
-    body: Mapping[str, Any]
 
 
 def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
@@ -260,11 +249,6 @@ class Shape:
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""
         return inputs
-
-    async def legacy_route(self, request: Any, row: FrontendRow, snapshot: RegistrySnapshot) -> "LegacyRoute | None":
-        """Hook: a request the old pipeline serves, asked before the row enforces the route policy or opens a receipt (the old
-        handler owns both). None: the data path serves it."""
-        return None
 
     async def after_submit(self, request: Any, view: RunJobView, caller: CallerContext) -> None:
         """Hook: what the wire does once a job was submitted (``view.disposition`` tells a new job from a replay)."""

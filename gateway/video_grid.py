@@ -30,6 +30,36 @@ BUNDLED_PATH = _REGISTRY_DIR / "video_grid.yml"
 SCHEMA_PATH = _REGISTRY_DIR / "video_grid.schema.json"
 
 
+
+def _checked_fact_rules(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Reject an incomplete projection before it can produce missing video facts."""
+    source = document.get("workflow_fact_source") or {}
+    facts = source.get("facts") or {}
+    required = {"size": ("default", "max", "multiple"),
+                "length": ("min_seconds", "max_seconds"), "grid": ("fps", "step", "offset")}
+    for group, names in required.items():
+        fields = facts.get(group)
+        if not isinstance(fields, Mapping):
+            raise ValueError(f"workflow_fact_source.facts.{group}: missing group")
+        for name in names:
+            rule = fields.get(name)
+            path = f"workflow_fact_source.facts.{group}.{name}"
+            if not isinstance(rule, Mapping):
+                raise ValueError(f"{path}: missing rule")
+            for key in ("key", "default"):
+                if key not in rule:
+                    raise ValueError(f"{path}.{key}: missing field")
+    step = facts["grid"]["step"]["default"]
+    if type(step) is not int or step <= 0:
+        raise ValueError("workflow_fact_source.facts.grid.step.default must be a positive integer")
+    for name, rule in (source.get("roles") or {}).items():
+        for key in ("keys", "fields"):
+            if not isinstance(rule.get(key), list) or not rule[key]:
+                raise ValueError(f"workflow_fact_source.roles.{name}.{key}: missing selector")
+        if "index" in rule and (type(rule["index"]) is not int or rule["index"] < 0):
+            raise ValueError(f"workflow_fact_source.roles.{name}.index must be an exact nonnegative integer")
+    return facts
+
 def _load_document(path: Path) -> dict[str, Any]:
     """Read and validate the defaults and wire reasons together."""
     try:
@@ -51,6 +81,7 @@ def _load_document(path: Path) -> dict[str, Any]:
                     }
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator(schema).validate(checked)
+        _checked_fact_rules(document)
         defaults = document["grid_defaults"]
         for key in ("length_step", "length_offset", "minimum_side"):
             if type(defaults[key]) is not int:
@@ -81,7 +112,7 @@ _LENGTH_STEP = _GRID_DEFAULTS["length_step"]
 _LENGTH_OFFSET = _GRID_DEFAULTS["length_offset"]
 
 
-def stride_reason(step: int) -> str:
+def stride_reason(step: int | None) -> str:
     """Published duration-adjustment reason for the frame grid used by a request."""
     return _STRIDE_REASONS["by_step"].get(step, _STRIDE_REASONS["default"])
 
@@ -157,6 +188,7 @@ def reference_variants(
     manifest: VideoManifest,
     get_workflow: Callable[[str], Any | None],
     reference_input: Callable[[Any], str | None],
+    facts_for: Callable[[Any], VideoManifest | None] = video_facts,
 ) -> list[tuple[Any, VideoManifest]]:
     """Variants whose declared role is the input carried by the create protocol's reference field.
 
@@ -168,7 +200,7 @@ def reference_variants(
         candidate = get_workflow(workflow_id)
         if candidate is None:
             continue
-        candidate_manifest = video_facts(candidate)
+        candidate_manifest = facts_for(candidate)
         if candidate_manifest is None:
             continue
         candidate_input = reference_input(candidate)
@@ -242,3 +274,38 @@ def resolve_size(requested: str | None, size: SizeSpec) -> tuple[int, int]:
     width, height = min(width, largest[0]), min(height, largest[1])
     multiple = max(1, int(size.multiple))
     return max(MINIMUM_SIDE, (width // multiple) * multiple), max(MINIMUM_SIDE, (height // multiple) * multiple)
+
+
+def workflow_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The configuration table declared as the source of legacy workflow facts."""
+    source = _DOCUMENT["workflow_fact_source"]
+    return (config.get(source["section"]) or {}).get(source["table"]) or {}
+
+
+def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> VideoManifest:
+    """Project the same configuration values and node-role bindings both create paths use."""
+    rules = _checked_fact_rules(_DOCUMENT)
+    raw = {group: {name: config.get(rule["key"], rule["default"]) for name, rule in fields.items()}
+           for group, fields in rules.items()}
+    roles = {role: item["input"] for role, item in configured_input_targets(config, contract).items()}
+    raw["roles"] = roles
+    return video_facts({"capability": "video", "video": raw})
+
+
+def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:
+    """The precise binding destinations named by the configuration's node roles."""
+    _checked_fact_rules(_DOCUMENT)
+    meta = config.get("node_roles") or {}
+    roles = {}
+    for role, rule in _DOCUMENT["workflow_fact_source"]["roles"].items():
+        selected = next((key for key in rule["keys"] if meta.get(key)), None)
+        nodes = meta.get(selected, [])
+        if isinstance(nodes, (list, tuple)) and selected == rule.get("indexed_key") and "index" in rule:
+            nodes = nodes[rule["index"]:rule["index"] + 1]
+        nodes = nodes if isinstance(nodes, (list, tuple)) else [nodes]
+        for binding in (contract.get("bindings") or {}).values():
+            for name, targets in (binding.get("map") or {}).items():
+                if any(target.get("node") in nodes and target.get("input") in rule["fields"] for target in targets):
+                    roles[role] = {"input": name, "targets": [target for target in targets
+                        if target.get("node") in nodes and target.get("input") in rule["fields"]]}
+    return roles

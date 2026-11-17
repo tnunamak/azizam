@@ -1409,7 +1409,7 @@ def _video_default_workflow() -> str:
 
 
 def _video_workflow_table() -> Mapping[str, Any]:
-    return _videos().get("workflows") or {}
+    return video_grid.workflow_config(runtime().config)
 
 
 def _video_remix_workflow() -> str | None:
@@ -12136,6 +12136,57 @@ async def proxy_graph_video_create(
     ))
 
 
+async def _prepare_video_workflow_inputs(request, body, manifest, cfg, caller, *, holder=None, has_extensions=None):
+    """Validate workflow inputs and probe duration-bearing assets before any upload."""
+    assets, probe, accepted = {}, None, {}
+    block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+             if isinstance(body.get("extensions"), Mapping) else body.get("extensions"))
+    if isinstance(block, Mapping):
+        block = {key: value for key, value in block.items() if key not in provenance.RESERVED_GATEWAY_CONTROLS}
+    if has_extensions is None:
+        has_extensions = bool(cfg.get("requires_extensions") or body.get("inputs") or block)
+    try:
+        if has_extensions:
+            body = merge_workflow_inputs(body)
+            ext = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+            if cfg.get("requires_extensions") and isinstance(ext, Mapping):
+                body["extensions"] = {**body["extensions"], WORKFLOW_EXTENSION_NAMESPACE:
+                    video_inputs.coerce_form_scalars(ext, manifest.get("inputs") or {})}
+            validation, unknown = validate_video_workflow_extensions(body, manifest, backend=DERIVED._GRAPH_BINDING)
+            for name, reason in validation.rejected.items():
+                spec = (manifest.get("inputs") or {}).get(name) or {}
+                if reason == "required input missing" and spec.get("type") == "asset":
+                    message = f"{name} is required for this model"
+                    if name == cfg.get("source_video_input"):
+                        message += ": pass a video id, URL or data URI"
+                    raise _VideoAssetError(message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}")
+            rejected = {**validation.rejected, **unknown}
+            if rejected:
+                name, reason = next(iter(rejected.items()))
+                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+            accepted = validation.accepted
+            if cfg.get("requires_extensions") and cfg.get("source_video_input"):
+                assets, probe = await _resolve_video_workflow_assets(body, manifest, cfg, caller, request=request, holder=holder)
+        if cfg.get("subject_select"):
+            video_subject.validate_selection(frontend_video_create._workflow_block(body))
+    except ExtensionError as exc:
+        return _json_error(400, str(exc), code="invalid_workflow_extension")
+    except _VideoAssetError as exc:
+        return _video_asset_error_response(exc)
+    except video_subject.SubjectError as exc:
+        return _gateway_input_error(str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                                    code="invalid_workflow_extension")
+    return {"body": body, "probe": probe, "assets": assets, "config": cfg, "accepted": accepted}
+
+
+async def _resolve_secondary_video_inputs(request, body, manifest, cfg, caller, *, assets, holder=None):
+    """Resolve picture inputs after duration validation; keep already probed sources."""
+    if not assets and any((manifest.get("inputs", {}).get(key) or {}).get("type") == "asset"
+                          for key in frontend_video_create._workflow_block(body)):
+        assets, _ = await _resolve_video_workflow_assets(body, manifest, cfg, caller, request=request, holder=holder)
+    return assets
+
+
 async def _proxy_graph_video_create(
     request: Request,
     auth_context: AuthContext,
@@ -12342,8 +12393,6 @@ async def _proxy_graph_video_create(
     # Video-conditioned workflows (remix, character replace) take a source video
     # as an extension input. Resolve and probe it now: its frame rate and length
     # decide the frame count below. Upload happens later, after validation.
-    staged_assets: dict[str, tuple[bytes, str, str]] = {}
-    source_probe = None
     video_manifest = None
     _workflow_block = (
         (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
@@ -12358,9 +12407,6 @@ async def _proxy_graph_video_create(
     has_workflow_extensions = (
         bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
     )
-    # An explicit `frames` input, when the manifest declares one, is the
-    # authoritative length: it wins over the length derived from `seconds`.
-    requested_frames: int | None = None
     if has_workflow_extensions:
         try:
             video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
@@ -12380,68 +12426,20 @@ async def _proxy_graph_video_create(
                 status_code=500,
                 media_type="application/json",
             )
-        try:
-            body = merge_workflow_inputs(body)
-            ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-            if workflow_cfg.get("requires_extensions") and isinstance(ext_block, Mapping):
-                body["extensions"] = {
-                    **body["extensions"],
-                    WORKFLOW_EXTENSION_NAMESPACE: video_inputs.coerce_form_scalars(
-                        ext_block, video_manifest.get("inputs") or {}
-                    ),
-                }
-            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest, backend=DERIVED._GRAPH_BINDING)
-            rejected = {**validation.rejected, **unknown_fields}
-            # Preserve the required-picture errors before reporting other invalid inputs.
-            for name, reason in validation.rejected.items():
-                spec = (video_manifest.get("inputs") or {}).get(name) or {}
-                if reason == "required input missing" and spec.get("type") == "asset":
-                    message = f"{name} is required for this model"
-                    if name == workflow_cfg.get("source_video_input"):
-                        message += ": pass a video id, URL or data URI"
-                    raise _VideoAssetError(
-                        message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
-                    )
-            if rejected:
-                name, reason = next(iter(rejected.items()))
-                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
-            if "frames" in ((video_manifest or {}).get("inputs") or {}):
-                supplied_frames = validation.accepted.get("frames")
-                if supplied_frames is not None:
-                    requested_frames = int(supplied_frames)
-            if workflow_cfg.get("requires_extensions") and workflow_cfg.get("source_video_input"):
-                staged_assets, source_probe = await _resolve_video_workflow_assets(
-                    body, video_manifest, workflow_cfg, auth_context, request=request, holder=media_holder,
-                )
-        except ExtensionError as e:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": str(e),
-                    "type": "invalid_request_error",
-                    "code": "invalid_workflow_extension",
-                }}),
-                status_code=400,
-                media_type="application/json",
-            )
-        except _VideoAssetError as e:
-            return _video_asset_error_response(e)
-
-    if workflow_cfg.get("subject_select"):
-        # Character replace: the person selection only edits the graph, so a bad
-        # one is refused here, before any picture or video reaches the engine's
-        # input directory. The rules live in video_subject, and the graph edit
-        # below reads the same point helper once the extensions are bound.
-        try:
-            video_subject.validate_selection(
-                ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
-            )
-        except video_subject.SubjectError as exc:
-            return _gateway_input_error(str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
-                                        code="invalid_workflow_extension")
+    prepared = await _prepare_video_workflow_inputs(
+        request, body, video_manifest, workflow_cfg, auth_context,
+        holder=media_holder, has_extensions=has_workflow_extensions)
+    if isinstance(prepared, Response):
+        return prepared
+    body, staged_assets, source_probe = prepared["body"], prepared["assets"], prepared["probe"]
+    supplied_frames = prepared["accepted"].get("frames")
+    requested_frames = (int(supplied_frames) if supplied_frames is not None
+                        and "frames" in ((video_manifest or {}).get("inputs") or {}) else None)
 
     # Validate / clamp request inputs.
-    max_seconds = float(workflow_cfg.get("max_seconds", 8))
-    min_seconds = float(workflow_cfg.get("min_seconds", 1))
+    configured = video_grid.configured_facts(workflow_cfg, {})
+    max_seconds = float(configured.length.max_seconds)
+    min_seconds = float(configured.length.min_seconds)
     source_fps = source_probe.fps if source_probe is not None else None
     source_seconds = (
         source_probe.frames / source_probe.fps if source_probe is not None else None
@@ -12480,18 +12478,17 @@ async def _proxy_graph_video_create(
             media_type="application/json",
         )
 
-    size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
-    width, height = video_grid.resolve_size(size, video_grid.SizeSpec(
-        default="", max=workflow_cfg.get("max_size", "1280x720"), multiple=int(workflow_cfg.get("size_multiple", 32))))
+    size = size_from_body or configured.size.default
+    width, height = video_grid.resolve_size(size, configured.size)
     # The output keeps the source clip's frame rate for video-conditioned workflows.
-    frame_rate = float(source_fps or workflow_cfg.get("frame_rate", 25))
+    frame_rate = float(source_fps or configured.grid.fps)
     # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5; Wan: 4k+1).
-    length_step = int(workflow_cfg.get("length_step", 8))
+    length_step = configured.grid.step
     length = video_grid.seconds_to_length(
         seconds_val,
         frame_rate,
         step=length_step,
-        offset=int(workflow_cfg.get("length_offset", 1)),
+        offset=configured.grid.offset,
     )
     if source_probe is not None or workflow_cfg.get("max_length"):
         # Never ask for more frames than the source has, or than the model was tested at.
@@ -12499,7 +12496,7 @@ async def _proxy_graph_video_create(
         length = video_inputs.snap_length_down(
             length,
             step=length_step,
-            offset=int(workflow_cfg.get("length_offset", 1)),
+            offset=configured.grid.offset,
             available=min(
                 [v for v in (cap, source_probe.frames if source_probe is not None else None) if v]
                 or [length]
@@ -12518,9 +12515,8 @@ async def _proxy_graph_video_create(
     # Picture assets do not affect duration or dimensions; validate those before fetching.
     if workflow_cfg.get("requires_extensions") and not workflow_cfg.get("source_video_input"):
         try:
-            staged_assets, source_probe = await _resolve_video_workflow_assets(
-                body, video_manifest, workflow_cfg, auth_context, request=request, holder=media_holder,
-            )
+            staged_assets = await _resolve_secondary_video_inputs(
+                request, body, video_manifest, workflow_cfg, auth_context, assets=staged_assets, holder=media_holder)
         except _VideoAssetError as exc:
             return _video_asset_error_response(exc)
 
@@ -13008,6 +13004,7 @@ async def _submit_video_chain(
     source_video_id: str | None = None,
     media_holder: media_inputs.Holder | None = None,
     admission_intent: str,
+    prepare: Any = None,
 ) -> Response:
     """Plan, build and queue a long-video chain (create with shots or long
     seconds, or an extension of `source`). ``admission_intent`` is the intent the calling route admits under."""
@@ -13152,7 +13149,7 @@ async def _submit_video_chain(
     }
     seconds_requested = sum(s for _, s in shots) + source_frames / fps
     reason = engine.stride_reason if abs(total_seconds - seconds_requested) > 0.05 else None
-    return await _submit_video_graph(
+    submission = dict(
         workflow=built.graph,
         auth_context=auth_context,
         workflow_name=workflow_name,
@@ -13175,6 +13172,10 @@ async def _submit_video_chain(
         progress_units=built.units,
         admission_intent=admission_intent,
     )
+
+    if prepare is not None:
+        return prepare(engine, spec, submission)
+    return await _submit_video_graph(**submission)
 
 
 def _seconds_text(value: float) -> str:
@@ -27472,6 +27473,7 @@ class _WorkflowRunPort:
             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
         staged: dict[str, str] = {}
         kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
+        filenames = ((ctx.payload.get("body") or {}).get("options") or {}).get("input_filenames") or {}
         for name, refs in ctx.media.items():
             if name in kept_off_engine:
                 continue
@@ -27481,7 +27483,7 @@ class _WorkflowRunPort:
             data = await self.read_media(ctx, ref)
             suffix = asset_types.suffix_for_media_type(ref.media_type)
             try:
-                staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                staged[name] = await stage(connection(), filename=filenames.get(name, "input" + suffix), data=data,
                                            media_type=ref.wire_media_type or ref.media_type)
             except (TransportFailure, ProtocolUpstreamError) as exc:
                 # An engine that answered 200 without a name for the file is told apart from one that refused it.
@@ -27702,6 +27704,37 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
             interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
 
+    def chain_record(ctx):
+        return ((media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}).get("metadata") or {}).get("chain")
+
+    def submitted(ctx, prompt_id, graph):
+        chain = chain_record(ctx)
+        if not isinstance(chain, Mapping):
+            return
+        _video_chain_units[prompt_id] = copy.deepcopy(chain["units"])
+        _video_workflows[prompt_id] = copy.deepcopy(dict(graph))
+        _video_progress[prompt_id] = {"status": "queued", "percent": 0, "step": 0, "total": 0,
+                                      "phase": "encoding", "updated_at": time.time()}
+
+    def observed(ctx, status, graph):
+        from dataclasses import replace
+        chain = chain_record(ctx)
+        if not isinstance(chain, Mapping):
+            return status
+        live = _video_progress_snapshot(status.ref.id) or {}
+        done = video_extend.segment_of_node(chain["units"], str(live.get("unit_node") or ""), progress_only=True)
+        counts = {"segments_total": chain["segments"], "segments_completed": done or 0}
+        if status.state.value == "succeeded":
+            counts["segments_completed"] = chain["segments"]
+        if status.state.value == "failed":
+            error = _chain_failure_error({"chain": chain}, getattr(status.record, "job", None), status.detail or "")
+            counts["segments_completed"] = error.get("segments_completed", counts["segments_completed"])
+            ctx.record_result_metadata({**counts, "chain_error": error})
+            return replace(status, detail=error["message"])
+        ctx.record_progress(int(live.get("percent") or 0))
+        ctx.record_result_metadata(counts)
+        return status
+
     return node_graph_runner.GraphHost(
         engine=_workflow_engine, identity=identity,
         problem=_graph_binding_problem,
@@ -27709,7 +27742,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, ctx.pin.envelope.service_id) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
-        sources=run_sources,
+        sources=run_sources, submitted=submitted, observed=observed,
         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
         wire_id=lambda job_id: _job_wire_id(job_id))
 
@@ -27772,9 +27805,45 @@ _RESULT_STAGES["post_composite_mask"] = _stage_post_composite_mask
 
 
 async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Variant | None:
-    """Which graph a run of a picture workflow submits: the one with the cutout step, or the one without. The caller's
-    ``background`` choice (or the language model's answer when it left the choice open) decides; a request with a mask never
-    asks for a cutout. A workflow whose template has no second graph reports that, and runs the one it has."""
+    """Apply the accepted composition, binding destinations or subject plan.
+
+    Picture workflows without such a plan retain their background decision.
+    """
+    options = (ctx.payload.get("body") or {}).get("options") or {}
+    plan = options.get("chain_plan")
+    if plan is not None:
+        from gateway import segment_chain
+        engine = video_extend.ChainEngine(segment_chain.load(plan["template"]))
+        values = dict(plan["spec"])
+        values["segments"] = [video_extend.Segment(**item) for item in values["segments"]]
+        if values.get("source") is not None:
+            values["source"] = video_extend.SourceVideo(**values["source"])
+        built = engine.build(video_extend.ChainSpec(**values))
+
+        def composed(graph):
+            graph.clear()
+            graph.update(copy.deepcopy(built.graph))
+
+        return node_graph_runner.Variant(composed, {})
+    targets = options.get("input_targets")
+    subject = options.get("subject_plan")
+    numbers = options.get("number_bindings")
+    if targets is not None or subject is not None or numbers is not None:
+        def selected(graph):
+            if targets is not None:
+                template = ctx.pin.graph()
+                for name, accepted in targets.items():
+                    for target in (ctx.pin.binding.get("map") or {}).get(name, ()):
+                        if dict(target) not in accepted:
+                            node, field = target["node"], target["input"]
+                            graph[node]["inputs"][field] = copy.deepcopy(template[node]["inputs"][field])
+            for target in numbers or ():
+                graph[target["node"]]["inputs"][target["input"]] = target["value"]
+            if subject is not None:
+                video_subject.apply_point(graph, subject["block"], subject["width"], subject["height"], subject["roles"])
+                if subject["block"].get("reference_fit", True) not in (False, "false", "False", 0):
+                    video_subject.add_reference_fit(graph, subject["roles"])
+        return node_graph_runner.Variant(selected, {})
     media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
     if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
         return None
@@ -28063,6 +28132,160 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
     controls of the body, and the prompt memory."""
 
+    def run_options(self, chosen, frame_rate=None, prepared=None):
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
+            return {}
+        targets = video_grid.configured_input_targets(cfg, chosen.contract)
+        selected = ({item["input"]: item["targets"] for item in targets.values()}
+                    if video_grid.video_facts(chosen) is None else {})
+        options = {}
+        manifest = self.facts(chosen)
+        rate_input = manifest.roles.get("frame_rate", "frame_rate")
+        if frame_rate is not None and rate_input in chosen.contract["inputs"] and (prepared or {}).get("wire_frame_rate"):
+            destinations = (targets.get("frame_rate") or {}).get("targets", [])
+            selected[rate_input] = destinations
+            # The wire has always written frame rate as a float. Keep the
+            # portable integer input checked, then set its configured wire fields.
+            options["number_bindings"] = [{**dict(target), "value": float(frame_rate)} for target in destinations]
+        if selected:
+            options["input_targets"] = workflow_run.plain(selected)
+        return options
+
+    def reference_input(self, chosen):
+        target = frontend_video_create._reference_input(chosen)
+        if target is not None:
+            return target
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        return (video_grid.configured_input_targets(cfg, chosen.contract).get("image") or {}).get("input")
+
+    async def prepare_inputs(self, request, body, chosen):
+        caller = request.state.caller
+        manifest = workflow_run.plain(chosen.contract)
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        manifest_facts = self.facts(chosen)
+        extended = video_grid.video_facts(chosen) is None or frontend_video_create.needs_resolution(
+            chosen, body, manifest_facts, frontend_video_create._reference_input(chosen))
+        if not extended:
+            return {"body": body, "probe": None, "assets": {}, "config": cfg or {}}
+        if cfg is None:
+            requested = body.get("model") or _video_default_workflow()
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{requested}' is not available for video generation.", code="model_not_found"))
+        requested = body.get("model") or _video_default_workflow()
+        resolution = resolve_model_for_operation("videos", requested)
+        effective = resolution.effective_model if resolution.is_openai_alias else requested
+        if _resolve_video_workflow(effective)[1] is None:
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{effective}' is not available for video generation.", code="model_not_found"))
+        prepared = await _prepare_video_workflow_inputs(request, body, manifest, cfg, caller)
+        if isinstance(prepared, Response):
+            return prepared
+        return {**prepared, "wire_frame_rate": extended}
+
+    async def resolve_inputs(self, request, prepared, chosen, spool):
+        from gateway.frontend_shapes import _wire
+        body, cfg = prepared["body"], prepared["config"]
+        prepared["preserve_names"] = bool(video_grid.video_facts(chosen) is None or cfg.get("requires_extensions") or
+            (body.get("input_reference") is not None and (frontend_video_create._reference_bytes(body["input_reference"]) is None or
+                                                       frontend_video_create._reference_input(chosen) is None)) or
+            any((chosen.contract.get("inputs", {}).get(key) or {}).get("type") == "asset"
+                for key in frontend_video_create._workflow_block(body)))
+        manifest = workflow_run.plain(chosen.contract)
+        assets = prepared["assets"]
+        caller = request.state.caller
+        try:
+            assets = await _resolve_secondary_video_inputs(request, body, manifest, cfg, caller, assets=assets)
+            reference = body.get("input_reference")
+            if reference is not None:
+                target = self.reference_input(chosen)
+                if target is None:
+                    return _json_error(400, f"Workflow {frontend_video_create.short_name(chosen)} does not support I2V.")
+                data, filename = await _resolve_input_reference(
+                    reference, caller, request=request, accepts=_input_accepts(manifest, target))
+                assets = {target: (data, filename, "image/png"), **assets}
+        except _InputReferenceError as exc:
+            return _json_error(400, str(exc))
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
+        return await _wire.stage_uploads(spool, [
+            (name, frontend_video_create._BytesUpload(data, filename, mime))
+            for name, (data, filename, mime) in assets.items()], {name: name for name in assets})
+
+    def facts(self, chosen):
+        found = video_grid.video_facts(chosen)
+        if found is not None:
+            return found
+        from dataclasses import replace
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
+            return None
+        found = video_grid.configured_facts(cfg, chosen.contract)
+        variants = {role: workflow_id_for_video_key(cfg[key]) for role, key in
+                    (("image", "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
+        requires = {"image"} if cfg.get("requires_input_reference") else set()
+        if cfg.get("requires_extensions"):
+            requires.add("extensions")
+        if cfg.get("source_video_input"):
+            requires.add("source")
+        return replace(found, variants=variants, requires=frozenset(requires),
+                       select_subject=bool(cfg.get("subject_select")), chain=bool(cfg.get("builder")))
+
+    async def chain_request(self, request, body, row, chosen, public_model, snapshot):
+        from dataclasses import asdict
+        from gateway.workflow_runtime_types import RunRequest
+        name = frontend_video_create.short_name(chosen)
+        resolution = resolve_model_for_operation("videos", public_model)
+        effective = resolution.effective_model if resolution.is_openai_alias else public_model
+        chain_name, _ = _chain_workflow_for(effective)
+        if chain_name is None:
+            original_name, cfg = _resolve_video_workflow(public_model)
+            return _gateway_input_error(
+                gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                    model=original_name, max_seconds=f"{cfg.get('max_seconds', 8):g}"),
+                param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
+
+        chosen = snapshot.get(workflow_id_for_video_key(chain_name))
+        if chosen is None:
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{public_model}' is not available for video generation.", code="model_not_found"))
+        name = chain_name
+
+        def prepared(engine, spec, submission):
+            size = f"{spec.width}x{spec.height}"
+            seconds = submission["payload_extra"]["seconds"]
+            facts = {"model": public_model, "resolved_model": name, "size": size,
+                     "seconds": seconds, "actual_seconds": round(submission["actual_seconds"], 4),
+                     "length_frames": submission["length"], "frame_rate": spec.fps, "seed": spec.seed,
+                     "total_seconds": submission["payload_extra"]["total_seconds"],
+                     "segments": submission["payload_extra"]["segments"],
+                     "requested_seconds": _seconds_text(submission["seconds_val"]),
+                     "duration_adjustment_reason": submission["duration_adjustment_reason"]}
+            options = {"size": size, "seconds_frames": submission["length"], "frame_rate": spec.fps,
+                       "record_asset_kind": True,
+                       "chain_plan": {"template": engine.document(), "spec": asdict(spec)}}
+            controls = video_controls.parse_video_controls(body)
+            if controls.get(video_controls.AUDIO_CONTROL) is False:
+                options[video_controls.AUDIO_CONTROL] = False
+                facts[video_controls.AUDIO_CONTROL] = False
+            inputs = {"prompt": submission["prompt"], "width": spec.width, "height": spec.height, "seed": spec.seed}
+            if "negative_prompt" in chosen.contract["inputs"]:
+                inputs["negative_prompt"] = spec.negative
+            frontend_video_create._wire.fact("requested_model", public_model)
+            request.state.video_facts = facts
+            request.state.video_prompt = submission["prompt"]
+            return RunRequest(workflow_id=chosen.id, inputs=inputs, options=options, facts=facts,
+                              frontend_id=row.id, retries=row.job_retries, failure_text=row.job_failure_text,
+                              idempotency_key=request.headers.get("Idempotency-Key"),
+                              prompt_retention=self.prompt_retention(request.state.caller, body),
+                              job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True,
+                                                       "chain": {key: value for key, value in submission["record_extra"]["chain"].items()
+                                                                 if key != "shots"}}})
+
+        return await _submit_video_chain(request, request.state.caller, body=body, workflow_name=name,
+                                        requested_model=effective, public_model=public_model,
+                                        admission_intent=domain_rows.VIDEO_GENERATE, prepare=prepared)
+
     def resolve_model(self, name: str) -> Any:
         try:
             resolution = resolve_model_for_operation("videos", name)
@@ -28108,17 +28331,6 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                                            admin_path=ADMIN_STORE.path, created_at=memory.created_at))
 
 
-async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapping[str, Any]) -> Response:
-    """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline on the body
-    already read. It enforces the route policy and opens its one receipt itself, as the removed route did, because the row has
-    opened none. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
-    policy_response = await asyncio.to_thread(
-        lambda: _enforce_runtime_route_policy(caller, "/v1/videos", policy=DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/videos") or _row_route_policy("/v1/videos")))
-    if policy_response is not None:
-        return policy_response
-    return await proxy_graph_video_create(request, caller, body_override=body)
-
-
 frontend_wire_shapes.VIDEO_HOOKS = _DeploymentVideoHooks()
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIVideoCreate.shape_id] = lambda: _video_default_workflow()
 
@@ -28143,7 +28355,6 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     pinned=_pinned_of_job,
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
-    legacy={frontend_video_create.LEGACY_CREATE: _legacy_video_create},
     openapi={_MOUNTED_VIDEO_ROW_IDS[0]: VIDEOS_CREATE_OPENAPI},
     record_refusal=_record_row_refusal,
     job_record=_row_job_record,
@@ -28362,7 +28573,26 @@ async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
     if shape is None:
         return None
     hit = await asyncio.to_thread(_video_ledger(shape).lookup, video_id, auth_context)
-    return hit.view if isinstance(hit, JobHit) else None
+    if not isinstance(hit, JobHit):
+        return None
+    from dataclasses import replace
+    view = hit.view
+    job = media_jobs.get(view.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+    metadata = job.get("metadata") or {}
+    chain = metadata.get("chain")
+    if not isinstance(chain, Mapping):
+        return view
+    live = _video_progress_snapshot(str(metadata.get(node_graph_runner.ENGINE_PROMPT_KEY) or "")) or {}
+    counts = {"segments_total": chain["segments"],
+              "segments_completed": view.result_metadata.get("segments_completed", 0)}
+    if view.status == "succeeded":
+        counts["segments_completed"] = chain["segments"]
+    elif view.status not in ("failed", "canceled"):
+        index = video_extend.segment_of_node(chain["units"], str(live.get("unit_node") or ""), progress_only=True)
+        if index is not None:
+            counts["segments_completed"] = index
+    return replace(view, progress=max(view.progress or 0, int(live.get("percent") or 0)),
+                   result_metadata={**view.result_metadata, **counts})
 
 
 def _names_a_video_job(shape, video_id: str) -> bool:

@@ -32,7 +32,6 @@ from starlette.responses import Response
 from gateway import operation_security, request_history_capture
 from gateway.access_plans import capability_for_intent
 from gateway.frontend_shapes import _wire, build_shape, bundled_rows
-from gateway.frontend_shapes._base import LegacyRoute
 from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
     JOB_NOT_CREATED, FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
@@ -77,11 +76,8 @@ class RowRouteDeps:
     # record_facts(owner, facts): what the shape adjusted, each as (name, value, warning): the receipt keeps the value under
     # ``metadata[name]`` and raises the warning.
     record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
-    # legacy: the handlers a shape may hand a request to (``LegacyRoute.name``), each ``handler(request, caller, body)``, which enforces the route policy and owns its receipt itself ->
-    # the answer. They exist for requests the data path does not serve yet; ``tests/test_legacy_video_ratchet.py`` counts them.
     # openapi: the OpenAPI operation documents of rows, by row id (the request and answer schemas the generic route does not know).
     openapi: Mapping[str, Mapping[str, Any]] = dataclasses.field(default_factory=dict)
-    legacy: Mapping[str, Callable[[Request, Any, Mapping[str, Any]], Awaitable[Response]]] = dataclasses.field(default_factory=dict)
     # record_refusal(owner, caller, refused): the receipt of a request the run core refused keeps the evidence of why the
     # service could not take it (the resource decision), as an admission refusal would have left it.
     record_refusal: Callable[[Any, Any, RunRefused], None] | None = None
@@ -168,12 +164,6 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         if isinstance(caller, Response):
             return caller
         request.state.caller = caller            # the shapes that look a stored source up read it here
-        handoff = await shape.legacy_route(request, row, deps.snapshot()) if deps.core() is not None else None
-        if handoff is not None:
-            # The old handler alone enforces the policy and owns the one receipt and request id: no row receipt exists yet.
-            handler = deps.legacy.get(handoff.name)
-            if handler is not None:
-                return await handler(request, caller, handoff.body)
         request_id = deps.new_request_id()
         if row.receipt_opens == "before_policy":
             # The receipt is open when the policy decides, so a denial leaves a closed receipt behind it.
@@ -222,9 +212,6 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
     with deps.scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         record_inputs(deps, owner, request)
-        if isinstance(run_request, LegacyRoute):         # the shape must have said so in ``legacy_route``; never a second owner
-            owner.report(status="failed", reason="legacy_handoff_late")
-            return _wire.error_response(500, "This request is not served", kind="api_error")
         if isinstance(run_request, Response):
             owner.report(status=refusal_status(row, run_request.status_code), reason=f"http_{run_request.status_code}")
             return run_request

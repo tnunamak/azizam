@@ -18,7 +18,7 @@ import json
 
 from gateway import client_errors, image_extensions, image_output, provenance
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import TERMINAL, LegacyRoute, Shape, coerce, job_object
+from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
 from gateway.frontend_shapes.video_views import VideoViews
 from gateway.workflow_runtime_types import (
     CallerContext,
@@ -558,6 +558,27 @@ class VideoHooks:
     """What a deployment adds to a video create: the model name it serves, the delivery rules it applies to the body and the
     prompt it remembers. The defaults do nothing; the main module installs a subclass in ``VIDEO_HOOKS`` at start."""
 
+    def run_options(self, chosen, frame_rate=None, prepared=None):
+        return {}
+
+    def reference_input(self, chosen):
+        from gateway.frontend_shapes.video_create import _reference_input
+        return _reference_input(chosen)
+
+    async def prepare_inputs(self, request, body, chosen):
+        return {"body": body, "probe": None, "assets": {}, "config": {}}
+
+    async def resolve_inputs(self, request, prepared, chosen, spool):
+        return {}
+
+    def facts(self, chosen):
+        from gateway import video_grid
+        return video_grid.video_facts(chosen)
+
+    async def chain_request(self, request, body, row, chosen, public_model, snapshot):
+        """Prepare a declared chain run using the deployment's pinned planning data."""
+        return _wire.error_response(503, "Chain planning is not configured")
+
     def resolve_model(self, name: str) -> str | Response:
         """The workflow name a public model name stands for (or the refusal the deployment gives for it)."""
         return name
@@ -611,10 +632,6 @@ class OpenAIVideoCreate(VideoViews, Shape):
         from gateway.frontend_shapes import video_create
         return await video_create.to_run_request(self, request, row, snapshot, spool=spool)
 
-    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
-        from gateway.frontend_shapes import video_create
-        return await video_create.legacy_route(self, request, row, snapshot)
-
     async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
         if isinstance(outcome, RunRefused):
             return await super().to_response(outcome, row, jobs=jobs, caller=caller, request=request)
@@ -631,12 +648,19 @@ class OpenAIVideoCreate(VideoViews, Shape):
             "completed_at": None, "expires_at": now + EXPIRY_S, "prompt": prompt,
             "remixed_from_video_id": facts.get("remixed_from_video_id"), "error": None,
             "size": facts.get("size"), "seconds": facts.get("seconds"), "actual_seconds": facts.get("actual_seconds")}
-        requested = facts.get("seconds")
+        if facts.get("segments") is not None:
+            body.update(total_seconds=facts["total_seconds"], segments=facts["segments"],
+                        extended_from_video_id=facts.get("extended_from_video_id"))
+        requested = facts.get("requested_seconds", facts.get("seconds"))
+        if facts.get("segments") is not None and not facts.get("duration_adjustment_reason"):
+            requested = None
         adjusted = None
         try:
             actual = float(facts["length_frames"]) / float(facts["frame_rate"])
             if requested is not None and actual != float(requested):
-                adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason=frame_count_stride"
+                from gateway import video_grid
+                reason = facts.get("duration_adjustment_reason") or video_grid.stride_reason(None)
+                adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason={reason}"
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             adjusted = None
         headers = _wire.result_headers(row.result_headers, {"duration_adjusted": adjusted})
@@ -664,9 +688,6 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         return await Shape.to_response(self, outcome, row, jobs=jobs, caller=caller, request=request)
 
     async def after_submit(self, request, view, caller) -> None:
-        return None
-
-    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
         return None
 
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
@@ -718,7 +739,6 @@ class OpenAIVideoRemix(OpenAIVideoCreate):
     shape_id = "openai.video.remix"
     files = OpenAIVideoEdit.files
     file_inputs = OpenAIVideoEdit.file_inputs
-    legacy_route = OpenAIVideoEdit.legacy_route
 
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
         from gateway.frontend_shapes import video_create

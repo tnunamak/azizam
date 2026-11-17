@@ -13,6 +13,7 @@ from gateway import video_grid
 def document():
     return {
         "stride_reasons": {"default": "generic_stride", "by_step": {4: "selected_stride"}},
+        "workflow_fact_source": yaml.safe_load(video_grid.BUNDLED_PATH.read_text())["workflow_fact_source"],
         "grid_defaults": {
             "length_step": 4, "length_offset": 0, "minimum_side": 32,
             "size_when_unparsed": [512, 512],
@@ -126,3 +127,73 @@ def test_shipped_defaults_preserve_base_behavior():
     assert video_grid.resolve_size("40x40", video_grid.SizeSpec(default="512x512", max="1024x1024", multiple=32)) == (64, 64)
     # Base formula: frames=120; k=round((120-1)/8)=15; 15*8+1=121.
     assert video_grid.seconds_to_length(5, 24) == 121
+
+
+@pytest.mark.parametrize("case", ["missing-default", "missing-fields", "string-index", "float-index"])
+def test_workflow_fact_rules_are_refused_at_load(tmp_path, case):
+    data = document()
+    source = data["workflow_fact_source"]
+    if case == "missing-default":
+        del source["facts"]["grid"]["fps"]["default"]
+    elif case == "missing-fields":
+        del source["roles"]["height"]["fields"]
+    else:
+        source["roles"]["height"]["index"] = "1" if case == "string-index" else 1.0
+    path = tmp_path / "bad-fact-rules.yml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match="workflow_fact_source"):
+        video_grid.load_stride_reasons(path)
+
+
+def test_dedicated_singleton_height_does_not_take_the_pair_index():
+    contract = {"bindings": {"graph": {"map": {"canvas_height": [{"node": "H", "input": "value"}]}}}}
+    facts = video_grid.configured_facts({"node_roles": {"height_node": ["H"]}}, contract)
+    assert facts.roles["height"] == "canvas_height"
+
+
+def test_paired_size_nodes_select_width_and_height_by_position():
+    contract = {"bindings": {"graph": {"map": {
+        "canvas_width": [{"node": "W", "input": "value"}],
+        "canvas_height": [{"node": "H", "input": "value"}],
+    }}}}
+    facts = video_grid.configured_facts({"node_roles": {"size_node": ["W", "H"]}}, contract)
+    assert facts.roles["width"] == "canvas_width"
+    assert facts.roles["height"] == "canvas_height"
+
+
+@pytest.mark.parametrize("case,path_name", [("empty", "size"), ("size", "max"), ("grid", "fps"), ("length", "max_seconds")])
+def test_fact_groups_and_keys_fail_at_load_even_without_schema_validation(tmp_path, monkeypatch, case, path_name):
+    data = document()
+    facts = data["workflow_fact_source"]["facts"]
+    if case == "empty":
+        facts.clear()
+    elif case == "length":
+        facts["length"] = {"min_seconds": facts["length"]["min_seconds"]}
+    else:
+        del facts[case][path_name]
+    path = tmp_path / "incomplete-facts.yml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match=path_name):
+        video_grid.load_stride_reasons(path)
+    # The semantic load check remains when a caller bypasses the JSON schema.
+    monkeypatch.setattr(video_grid.jsonschema.Draft202012Validator, "validate", lambda *_: None)
+    with pytest.raises(ValueError, match=path_name):
+        video_grid.load_stride_reasons(path)
+    monkeypatch.setattr(video_grid, "_DOCUMENT", data)
+    with pytest.raises(ValueError, match=path_name):
+        video_grid.configured_facts({}, {})
+
+
+def test_zero_workflow_step_default_is_rejected_at_load(tmp_path, monkeypatch):
+    data = document()
+    data["workflow_fact_source"]["facts"]["grid"]["step"]["default"] = 0
+    path = tmp_path / "zero-workflow-step.yml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match="step"):
+        video_grid.load_stride_reasons(path)
+    monkeypatch.setattr(video_grid.jsonschema.Draft202012Validator, "validate", lambda *_: None)
+    with pytest.raises(ValueError, match="workflow_fact_source.facts.grid.step.default"):
+        video_grid.load_stride_reasons(path)
+    monkeypatch.setattr(video_grid, "_DOCUMENT", data)
+    with pytest.raises(ValueError, match="workflow_fact_source.facts.grid.step.default"):
+        video_grid.configured_facts({}, {})

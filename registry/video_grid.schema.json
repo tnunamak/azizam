@@ -6,7 +6,8 @@
   "additionalProperties": false,
   "required": [
     "stride_reasons",
-    "grid_defaults"
+    "grid_defaults",
+    "workflow_fact_source"
   ],
   "properties": {
     "stride_reasons": {
@@ -63,6 +64,138 @@
           }
         }
       }
+    },
+    "workflow_fact_source": {
+      "type": "object",
+      "required": [
+        "section",
+        "table",
+        "facts",
+        "roles"
+      ],
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "object",
+          "required": [
+            "size",
+            "length",
+            "grid"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "object",
+              "required": [
+                "default",
+                "max",
+                "multiple"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "max": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "multiple": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "length": {
+              "type": "object",
+              "required": [
+                "min_seconds",
+                "max_seconds"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "min_seconds": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "max_seconds": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            },
+            "grid": {
+              "type": "object",
+              "required": [
+                "fps",
+                "step",
+                "offset"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "fps": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "step": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "offset": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/roleRule"
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$defs": {
@@ -72,6 +205,60 @@
       "pattern": "^[a-z][a-z0-9_]*$",
       "not": {
         "pattern": "[^a-z0-9_]"
+      }
+    },
+    "factRule": {
+      "type": "object",
+      "required": [
+        "key",
+        "default"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "type": [
+            "string",
+            "number"
+          ]
+        }
+      }
+    },
+    "roleRule": {
+      "type": "object",
+      "required": [
+        "keys",
+        "fields"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indexed_key": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

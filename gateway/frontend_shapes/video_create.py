@@ -1,8 +1,8 @@
-"""Read a ``POST /v1/videos`` request against the ``video`` block of a manifest (CODE_TO_DATA_S7_VIDEO_MOVE.md 4.2 to 4.5).
+"""Read POST /v1/videos into a declared run using manifest or configured facts.
 
-The checks run in the order the old route made them, and each refusal has the old status and words. A request this module
-does not serve yet (a storyboard, a chain, workflow extensions, a reference it cannot resolve without the main module) is
-returned as a ``LegacyRoute`` with the body already read. Nothing here names a workflow, a model or an engine."""
+The checks retain the video wire's refusal order. Deployment hooks resolve media,
+probe sources and capture chain plans; the declared job runner submits the graph.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from starlette.responses import Response
 
 from gateway import provenance, video_controls, video_grid, video_form, media_delivery
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import LegacyRoute, coerce
+from gateway.frontend_shapes._base import coerce
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE, detect_unknown_top_level_fields
 from gateway.video_extensions import STANDARD_VIDEO_CREATE_FIELDS
 from gateway.workflow_openapi import reference_input
@@ -29,7 +29,6 @@ from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapsho
 if TYPE_CHECKING:
     from gateway.frontend_shapes.shapes import OpenAIVideoCreate
 
-LEGACY_CREATE = "videos.create"
 DEFAULT_SECONDS = 5.0
 FORM_TYPES = ("multipart/form-data", "application/x-www-form-urlencoded")
 MIN_BASE64_BYTES = 64               # a reference that is plain base64 must decode to more than this, as it always had to
@@ -85,7 +84,7 @@ def _reference_bytes(value: Any) -> tuple[bytes, str, str | None] | None:
 
 
 async def read_body(shape: OpenAIVideoCreate, request: Request) -> dict[str, Any] | Response:
-    """The parsed body, read once: the hand-off check and the run request both ask, and an upload stream reads only once."""
+    """Cache the parsed body so an upload stream is consumed once."""
     cached = getattr(request.state, "video_body", None)
     if cached is None:
         cached = request.state.video_body = await _parse_body(request)
@@ -141,10 +140,8 @@ def _old_spelling(snapshot: RegistrySnapshot, row: FrontendRow, name: str) -> st
 
 
 def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, snapshot: RegistrySnapshot,
-           hooks: Any) -> Picked | LegacyRoute | Response:
-    """The workflow a create runs, or the reason it does not run here: a refusal, or a hand-off to the old pipeline for what the
-    data path does not serve yet (a chain, workflow extensions, a reference it cannot read). Reads nothing but the body and the
-    registry, so the row can ask it before it opens a receipt."""
+           hooks: Any) -> Picked | Response:
+    """Select the workflow from the body and registry before a receipt opens."""
     named = body.get("model") or shape.default_target()
     if named is not None and not isinstance(named, str):
         return refuse(400, "model must be a string", param="model")
@@ -157,12 +154,14 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                                                                    param="model", code="model_not_found"))
     if isinstance(chosen, Response):
         return chosen
-    manifest = video_grid.video_facts(chosen)
+    manifest = hooks.facts(chosen)
     reference = body.get("input_reference")
-    if manifest is None or manifest.chain or manifest.length is None:
-        return LegacyRoute(LEGACY_CREATE, body)
+    if manifest is None or manifest.length is None:
+        return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
+    if manifest.chain:
+        return chosen, manifest, short_name(chosen), public_model
     if reference:
-        eligible = video_grid.reference_variants(manifest, snapshot.get, _reference_input)
+        eligible = video_grid.reference_variants(manifest, snapshot.get, hooks.reference_input, hooks.facts)
         # Defensive only: a registry that passed check_video_variants cannot reach this branch.
         if len(eligible) > 1:
             return refuse(500,
@@ -170,9 +169,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                           code="registry_conflict")
         if eligible:
             chosen, manifest = eligible[0]
-    if manifest.length is None or manifest.grid is None or manifest.size is None:
-        return LegacyRoute(LEGACY_CREATE, body)
-    target = _reference_input(chosen)
+    # Every selected reference variant has passed the same section schema as the
+    # initial workflow: length, grid and size are mandatory registry facts.
+    target = hooks.reference_input(chosen)
     reference_roles = {
         role for role in manifest.requires
         if target is not None and manifest.roles.get(role, role) == target
@@ -183,34 +182,32 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     seconds = body.get("seconds")
     limit = manifest.length.max_seconds
     shots = body.get("shots") is not None
-    if shots or (_beyond(seconds, limit) and manifest.variants.get("long")):
-        if manifest.variants.get("long"):
-            return LegacyRoute(LEGACY_CREATE, body)
+    long_id = manifest.variants.get("long")
+    if shots or (_beyond(seconds, limit) and long_id):
+        if long_id:
+            chosen = snapshot.get(long_id)
+            if chosen is None:
+                return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
+            manifest = hooks.facts(chosen)
+            return chosen, manifest, short_name(chosen), public_model
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
                       param="shots", code="long_video_not_supported")
-    block = _workflow_block(body)
-    if ((manifest.requires - reference_roles - {"extensions"}) or manifest.select_subject or body.get("inputs")
-            or ("extensions" in manifest.requires and not block)
-            or (reference is not None and target is None)
-            or (reference is not None and _reference_bytes(reference) is None)
-            or any(not _wire.declared(chosen, key) or _is_asset(chosen, key) for key in block)):
-        return LegacyRoute(LEGACY_CREATE, body)
     return chosen, manifest, name, public_model
 
 
-async def legacy_route(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot) -> LegacyRoute | None:
-    """Whether the old pipeline serves this create. The row asks before it enforces the route policy or opens a receipt, so the
-    old handler alone owns its policy check, its one receipt and its request id. Any refusal is left to ``to_run_request``."""
-    from gateway.frontend_shapes import shapes
-    body = await read_body(shape, request)
-    if isinstance(body, Response):
-        return None
-    picked = select(shape, body, row, snapshot, shapes.VIDEO_HOOKS or shapes.VideoHooks())
-    return picked if isinstance(picked, LegacyRoute) else None
+def needs_resolution(entry, body, manifest, target):
+    """Inputs that need workflow validation or asset resolution beyond inline bytes."""
+    reference = body.get("input_reference")
+    block = _workflow_block(body)
+    reference_roles = {role for role in manifest.requires if target is not None and manifest.roles.get(role, role) == target}
+    return bool((manifest.requires - reference_roles - {"extensions"}) or manifest.select_subject or body.get("inputs")
+                or ("extensions" in manifest.requires and not block)
+                or (reference is not None and (target is None or _reference_bytes(reference) is None))
+                or any(not _wire.declared(entry, key) or _is_asset(entry, key) for key in block))
 
 
 async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
-                         spool: RequestSpool) -> RunRequest | LegacyRoute | Response:
+                         spool: RequestSpool) -> RunRequest | Response:
     result = await _to_run_request(shape, request, row, snapshot, spool=spool)
     if isinstance(result, Response) and result.status_code >= 400:
         _wire.fact("status_code", result.status_code)      # the old route's receipt keeps the status of every refusal it gave
@@ -218,7 +215,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
 
 
 async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
-                          spool: RequestSpool) -> RunRequest | LegacyRoute | Response:
+                          spool: RequestSpool) -> RunRequest | Response:
     from gateway.frontend_shapes import shapes
     hooks = shapes.VIDEO_HOOKS or shapes.VideoHooks()
     caller = getattr(request.state, "caller", None)
@@ -245,29 +242,47 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     if not prompt and body.get("shots") is None:
         return refuse(400, "prompt is required")
     picked = select(shape, body, row, snapshot, hooks)
-    if isinstance(picked, (Response, LegacyRoute)):
+    if isinstance(picked, Response):
         return picked
     chosen, manifest, name, public_model = picked
+    if manifest.chain:
+        return await hooks.chain_request(request, body, row, chosen, public_model, snapshot)
+    prepared = await hooks.prepare_inputs(request, body, chosen)
+    if isinstance(prepared, Response):
+        return prepared
+    body = prepared["body"]
+    probe = prepared["probe"]
     reference, seconds = body.get("input_reference"), body.get("seconds")
 
     grid, limits = manifest.grid, manifest.length
     try:
-        seconds_value = float(seconds) if seconds is not None else min(limits.default_seconds or DEFAULT_SECONDS, limits.max_seconds)
+        if seconds is not None:
+            seconds_value = float(seconds)
+        elif probe is not None:
+            cfg = prepared["config"]
+            seconds_value = min(float(cfg.get("default_seconds", limits.max_seconds)), limits.max_seconds, probe.frames / probe.fps)
+        else:
+            seconds_value = min(limits.default_seconds or DEFAULT_SECONDS, limits.max_seconds)
     except (TypeError, ValueError):
         return refuse(400, "seconds must be a number")
     if not math.isfinite(seconds_value):
         return refuse(400, "seconds must be a number")
     if seconds_value < limits.min_seconds or seconds_value > limits.max_seconds:
         return refuse(400, f"seconds must be between {float(limits.min_seconds)} and {float(limits.max_seconds)} for model {name}")
+    if probe is not None and seconds_value > probe.frames / probe.fps + 0.05:
+        return refuse(400, f"seconds ({seconds_value:g}) is longer than the source video ({probe.frames / probe.fps:.2f} s)", param="seconds")
     if body.get("size") is not None and not isinstance(body["size"], str):
         return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
     width, height = video_grid.resolve_size(body.get("size"), manifest.size)
     roles = manifest.roles
     block = _workflow_block(body)
+    unknown_inputs = [key for key in block if not _wire.declared(chosen, key)]
+    if unknown_inputs:
+        return refuse(400, "unknown input", param=unknown_inputs[0], code="invalid_workflow_extension")
     # The frame rate the run uses is resolved once: the workflow's own, or the typed one the caller sent as an extension. The
     # frame count, the recorded duration, the engine input, the facts and the options all take this one value.
     rate_key = roles.get("frame_rate", "frame_rate")
-    frame_rate = float(grid.fps)
+    frame_rate = float(probe.fps if probe is not None else grid.fps)
     if block.get(rate_key) is not None:
         try:
             frame_rate = float(coerce(chosen, rate_key, block[rate_key]))
@@ -276,6 +291,11 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         if not math.isfinite(frame_rate) or frame_rate <= 0:
             return refuse(400, f"{rate_key} must be a positive number", param=rate_key)
     length = video_grid.frame_count(seconds_value, frame_rate, grid)
+    if probe is not None or prepared["config"].get("max_length"):
+        from gateway import video_inputs
+        cap = prepared["config"].get("max_length")
+        length = video_inputs.snap_length_down(length, step=grid.step, offset=grid.offset,
+            available=min([int(value) for value in (cap, probe.frames if probe is not None else None) if value] or [length]))
     chosen_length = block.get(roles.get("length", "length"))
     if chosen_length is not None:                    # the manifest's own length input (frames) wins over seconds, as it always did
         try:
@@ -294,7 +314,9 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     size = f"{width}x{height}"
     seconds_text = str(int(seconds_value)) if seconds_value.is_integer() else str(seconds_value)
 
-    media: Mapping[str, Any] = {}
+    media = await hooks.resolve_inputs(request, prepared, chosen, spool)
+    if isinstance(media, Response):
+        return media
     inputs: dict[str, Any] = {"prompt": prompt}
     if seed is not None:
         inputs["seed"] = seed
@@ -308,22 +330,32 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     put("height", height)
     put("length", length)
     put("frame_rate", int(frame_rate) if frame_rate.is_integer() else frame_rate)
+    edge_only = {name for binding in chosen.contract.get("bindings", {}).values() for name in binding.get("edge_only_inputs", ())}
     for key, value in block.items():
-        if _wire.declared(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height"), rate_key):
+        if _wire.declared(chosen, key) and key not in edge_only and not _is_asset(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height"), rate_key):
             inputs[key] = coerce(chosen, key, value)
+    # This wire writes number nodes as floats. Keep that choice out of the
+    # generic compiler and the other frontend shapes, including JSON integers.
+    for key, spec in chosen.contract.get("inputs", {}).items():
+        if spec.get("type") == "number":
+            value = inputs.get(key, spec.get("default"))
+            if type(value) in (int, float):
+                inputs[key] = float(value)
     if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:
-        target = _reference_input(chosen)
-        assert target is not None, "select hands a reference with no request-map target to the old handler"
-        decoded = _reference_bytes(reference)
-        refused_reference = hooks.check_reference(caller, decoded[0], chosen.contract, target)
-        if refused_reference is not None:
-            return refused_reference
-        staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
-        if isinstance(staged, Response):
-            return staged
-        media = staged
+        target = hooks.reference_input(chosen)
+        if target not in media:
+            decoded = _reference_bytes(reference)
+            if target is None or decoded is None:
+                return refuse(400, "input_reference could not be resolved", param="input_reference")
+            refused_reference = hooks.check_reference(caller, decoded[0], chosen.contract, target)
+            if refused_reference is not None:
+                return refused_reference
+            staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
+            if isinstance(staged, Response):
+                return staged
+            media = {**media, **staged}
         if body.get("image_strength") is not None:
             try:
                 put("image_strength", max(0.0, min(1.0, float(body["image_strength"]))))
@@ -349,6 +381,8 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
             kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
             seed=seed, parameters=parameters, created_at=now)}
+    if prepared.get("wire_frame_rate"):
+        facts["duration_adjustment_reason"] = video_grid.stride_reason(grid.step)
     if seed is not None:
         facts["seed"] = seed
     refs: list[FactRef] = []
@@ -358,12 +392,24 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         facts[video_controls.AUDIO_CONTROL] = False
     if context is not None and context.requested_mode:
         facts["metadata_mode"] = context.requested_mode
-    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate}
+    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate, **hooks.run_options(chosen, frame_rate, prepared)}
+    if prepared.get("wire_frame_rate"):
+        options["record_asset_kind"] = True
+    if prepared.get("preserve_names"):
+        options["input_filenames"] = {name: refs[0].filename for name, refs in media.items() if refs[0].filename}
+    if manifest.select_subject:
+        options["subject_plan"] = {"block": {key: value for key, value in block.items() if not _is_asset(chosen, key)}, "roles": prepared["config"].get("node_roles") or {},
+                                   "width": width, "height": height}
     if audio_off:
         options[video_controls.AUDIO_CONTROL] = False
     request.state.video_facts = facts
     request.state.video_prompt = prompt
     extensions = body.get("extensions")
+    if isinstance(extensions, Mapping):
+        extensions = dict(extensions)
+        workflow_inputs = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+        if isinstance(workflow_inputs, Mapping):
+            extensions[WORKFLOW_EXTENSION_NAMESPACE] = {key: value for key, value in workflow_inputs.items() if not _is_asset(chosen, key)}
     from gateway.frontend_shapes._base import IDEMPOTENCY_HEADER
     return RunRequest(
         workflow_id=chosen.id, inputs=inputs, media=media,
