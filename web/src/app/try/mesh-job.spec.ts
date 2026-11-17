@@ -88,6 +88,48 @@ describe("followMeshJob", () => {
     });
     expect((await followMeshJob("mj_1", value)).kind).toBe("done");
     expect(tries).toBe(2);
+    expect(value.poll).toHaveBeenCalledTimes(1);
+  });
+
+
+  test("persistent content failures become unreachable without polling again", async () => {
+    let tries = 0;
+    const { value, waits, reconnecting } = deps([{ status: "succeeded" }], {
+      unreachableAfterMs: 6000,
+      // Safety bound makes the original infinite-retry bug fail instead of hanging.
+      stopped: () => tries > 10,
+      content: vi.fn(async () => {
+        tries += 1;
+        throw new TypeError("Failed to fetch");
+      }),
+    });
+    expect(await followMeshJob("mj_1", value)).toEqual({ kind: "unreachable" });
+    expect(value.poll).toHaveBeenCalledTimes(1);
+    expect(tries).toBe(4);
+    expect(waits).toEqual([2000, 2500, 3000]);
+    expect(reconnecting).toEqual([false, true, true, true, false]);
+  });
+
+  test("stopping during a content retry wait prevents another download", async () => {
+    let stop = false;
+    const { value } = deps([{ status: "succeeded" }], {
+      stopped: () => stop,
+      content: vi.fn(async () => { throw new TypeError("Failed to fetch"); }),
+      wait: vi.fn(async () => { stop = true; }),
+    });
+    expect(await followMeshJob("mj_1", value)).toEqual({ kind: "stopped" });
+    expect(value.poll).toHaveBeenCalledTimes(1);
+    expect(value.content).toHaveBeenCalledTimes(1);
+  });
+
+  test("a non-network content error is not retried", async () => {
+    const { value } = deps([{ status: "succeeded" }], {
+      content: vi.fn(async () => { throw new RangeError("bad content"); }),
+    });
+    await expect(followMeshJob("mj_1", value)).rejects.toThrow("bad content");
+    expect(value.poll).toHaveBeenCalledTimes(1);
+    expect(value.content).toHaveBeenCalledTimes(1);
+    expect(value.wait).not.toHaveBeenCalled();
   });
 
   test("a failed job returns its message, or a plain one when it has none", async () => {
