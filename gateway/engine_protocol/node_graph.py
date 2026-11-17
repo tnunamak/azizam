@@ -759,7 +759,7 @@ class NodeGraphAdapter:
         job = history[ref.id]
         state, error = history_state(job, self.label, graph)
         if state == "failed":
-            return JobStatus(ref, JobState.failed, error)
+            return JobStatus(ref, JobState.failed, error, record=FinishedRecord(job, len(reply.raw or b"")))
         if state == "running":
             return JobStatus(ref, JobState.running)
         # No declared handle is an empty result, not a protocol fault: the run core answers it ("No videos generated").

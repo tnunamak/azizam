@@ -27722,6 +27722,37 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
             interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
 
+    def chain_record(ctx):
+        return ((media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}).get("metadata") or {}).get("chain")
+
+    def submitted(ctx, prompt_id, graph):
+        chain = chain_record(ctx)
+        if not isinstance(chain, Mapping):
+            return
+        _video_chain_units[prompt_id] = copy.deepcopy(chain["units"])
+        _video_workflows[prompt_id] = copy.deepcopy(dict(graph))
+        _video_progress[prompt_id] = {"status": "queued", "percent": 0, "step": 0, "total": 0,
+                                      "phase": "encoding", "updated_at": time.time()}
+
+    def observed(ctx, status, graph):
+        from dataclasses import replace
+        chain = chain_record(ctx)
+        if not isinstance(chain, Mapping):
+            return status
+        live = _video_progress_snapshot(status.ref.id) or {}
+        done = video_extend.segment_of_node(chain["units"], str(live.get("unit_node") or ""), progress_only=True)
+        counts = {"segments_total": chain["segments"], "segments_completed": done or 0}
+        if status.state.value == "succeeded":
+            counts["segments_completed"] = chain["segments"]
+        if status.state.value == "failed":
+            error = _chain_failure_error({"chain": chain}, getattr(status.record, "job", None), status.detail or "")
+            counts["segments_completed"] = error.get("segments_completed", counts["segments_completed"])
+            ctx.record_result_metadata({**counts, "chain_error": error})
+            return replace(status, detail=error["message"])
+        ctx.record_progress(int(live.get("percent") or 0))
+        ctx.record_result_metadata(counts)
+        return status
+
     return node_graph_runner.GraphHost(
         engine=_workflow_engine, identity=identity,
         problem=_graph_binding_problem,
@@ -27729,7 +27760,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, ctx.pin.envelope.service_id) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
-        sources=run_sources,
+        sources=run_sources, submitted=submitted, observed=observed,
         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
         wire_id=lambda job_id: _job_wire_id(job_id))
 
@@ -28295,7 +28326,9 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                               frontend_id=row.id, retries=row.job_retries, failure_text=row.job_failure_text,
                               idempotency_key=request.headers.get("Idempotency-Key"),
                               prompt_retention=self.prompt_retention(request.state.caller, body),
-                              job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True}})
+                              job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True,
+                                                       "chain": {key: value for key, value in submission["record_extra"]["chain"].items()
+                                                                 if key != "shots"}}})
 
         return await _submit_video_chain(request, request.state.caller, body=body, workflow_name=name,
                                         requested_model=effective, public_model=public_model,
@@ -28600,7 +28633,26 @@ async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
     if shape is None:
         return None
     hit = await asyncio.to_thread(_video_ledger(shape).lookup, video_id, auth_context)
-    return hit.view if isinstance(hit, JobHit) else None
+    if not isinstance(hit, JobHit):
+        return None
+    from dataclasses import replace
+    view = hit.view
+    job = media_jobs.get(view.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+    metadata = job.get("metadata") or {}
+    chain = metadata.get("chain")
+    if not isinstance(chain, Mapping):
+        return view
+    live = _video_progress_snapshot(str(metadata.get(node_graph_runner.ENGINE_PROMPT_KEY) or "")) or {}
+    counts = {"segments_total": chain["segments"],
+              "segments_completed": view.result_metadata.get("segments_completed", 0)}
+    if view.status == "succeeded":
+        counts["segments_completed"] = chain["segments"]
+    elif view.status not in ("failed", "canceled"):
+        index = video_extend.segment_of_node(chain["units"], str(live.get("unit_node") or ""), progress_only=True)
+        if index is not None:
+            counts["segments_completed"] = index
+    return replace(view, progress=max(view.progress or 0, int(live.get("percent") or 0)),
+                   result_metadata={**view.result_metadata, **counts})
 
 
 def _names_a_video_job(shape, video_id: str) -> bool:

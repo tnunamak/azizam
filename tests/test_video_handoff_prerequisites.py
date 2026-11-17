@@ -410,4 +410,55 @@ def test_existing_row_duration_reason_keeps_the_main_public_answer(world):
             "model": "video-ltx-2.5-t2v", "prompt": "main reference", "seconds": 3.2, "seed": 7})
         assert answer.status_code == 200, answer.text
         assert answer.headers["x-duration-adjusted"] == "requested=3.2 actual=3.3750 reason=frame_count_stride"
+def test_declared_chain_failure_matches_the_old_segment_error(world):
+    import httpx
+    from tests.support.fake_upstream import HandlerTransport
+    from tests.test_s7_parity_video_create import HOST, await_status
+    world.engine.failed = True
+    def handle(request):
+        response = world.engine(request)
+        if request.url.path.startswith('/history/'):
+            body = response.json()
+            for entry in body.values():
+                entry['status']['messages'] = [['execution_error', {'node_id': 's1_sample', 'exception_message': 'boom'}]]
+            return httpx.Response(200, json=body)
+        return response
+    world.rig.monkeypatch.setitem(world.rig.fakes.router._routes, HOST, HandlerTransport(handle))
+    body = {'model':'ltx-2.5-long', 'prompt':'failing chain', 'seconds':20, 'seed':7}
+    auth = access_context(everything(media_metadata='none', receipt_detail='full'))
+    async def drive():
+        old = await proxy.proxy_graph_video_create(json_request(body), auth, body_override=body)
+        before = json.loads((await proxy.proxy_graph_video_status(json.loads(old.body)['id'], auth)).body)
+        made = await world.rig.call('POST','/v1/videos',json_body=body)
+        after = await await_status(world, made.json()['id'], status='failed')
+        assert after['error'] == before['error']
+        assert after['error']['message'].startswith('segment 2 of 3 failed (1 finished);')
+    asyncio.run(drive())
+
+
+def test_declared_chain_progress_uses_all_units_and_live_node_events(world):
+    from tests.support.fake_upstream import HandlerTransport
+    from tests.test_s7_parity_video_create import HOST, await_status
+    gate = asyncio.Event()
+    async def handle(request):
+        if request.url.path.startswith('/history/'):
+            await gate.wait()
+        return world.engine(request)
+    world.rig.monkeypatch.setitem(world.rig.fakes.router._routes, HOST, HandlerTransport(handle))
+    async def drive():
+        made = await world.rig.call('POST','/v1/videos',json_body={'model':'ltx-2.5-long','prompt':'progress','seconds':20,'seed':7})
+        await submitted(world, 1)
+        # Submission registration precedes the first history observation.
+        for _ in range(100):
+            if 'p1' in proxy._video_chain_units and len(proxy._video_chain_units['p1']) == 3:
+                break
+            await asyncio.sleep(0)
+        units = proxy._video_chain_units['p1']
+        assert len(units) == 3
+        await proxy._record_event({'type':'progress','data':{'prompt_id':'p1','node':units[1]['sample'],'value':5,'max':10}})
+        status = (await world.rig.call('GET','/v1/videos/'+made.json()['id'])).json()
+        assert status['segments_total'] == 3 and status['segments_completed'] == 1
+        assert status['progress'] == proxy._video_percent('p1', units[1]['sample'], 'sampling', 0.5)
+        gate.set()
+        await await_status(world, made.json()['id'])
     asyncio.run(drive())

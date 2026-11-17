@@ -169,6 +169,8 @@ class GraphHost:
     # Which graph the run submits when the workflow has a second one for a second answer to the same request (a cutout of the
     # picture): ``ctx -> Variant | None``. None: the graph as compiled.
     variant: Callable[[RunContext], Awaitable["Variant | None"]] | None = None
+    submitted: Callable[[RunContext, str, Mapping[str, Any]], None] = lambda ctx, prompt_id, graph: None
+    observed: Callable[[RunContext, Any, Mapping[str, Any]], Any] = lambda ctx, status, graph: status
 
 
 def retry_reason_of(kind: str, binding_key: str) -> str | None:
@@ -442,6 +444,7 @@ class NodeGraphRunner:
         def keep_prompt(prompt_id: str) -> None:
             """The engine's id of the prompt, kept at once, for the jobs whose request asked for it (a later delete asks the
             engine to forget the prompt). Other jobs leave no trace of it in their document."""
+            host.submitted(ctx, prompt_id, graph)
             if job_metadata().get(KEEP_PROMPT_FLAG):
                 media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={ENGINE_PROMPT_KEY: prompt_id},
                                          path=media_jobs.DB_PATH)
@@ -454,7 +457,8 @@ class NodeGraphRunner:
                 control_timeout=host.control_timeout(), resume_prompt_id=resume, cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
                 on_progress=ctx.record_progress if job_metadata().get(ENGINE_PROGRESS_FLAG) else (lambda _percent: None),
-                on_submitted=lambda prompt_id: keep_prompt(prompt_id))
+                on_submitted=lambda prompt_id: keep_prompt(prompt_id),
+                observe=lambda status: host.observed(ctx, status, graph))
         except graph_round.RoundFailure as failed:
             # The submit marker only means "a submit may be in flight": a round that ended in failure leaves none.
             if resume is None:

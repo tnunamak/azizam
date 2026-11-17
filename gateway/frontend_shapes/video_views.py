@@ -100,9 +100,14 @@ class VideoViews:
                     body[name] = view.result_metadata[name]
         if facts is not None and facts.get("segments") is not None:
             body["extended_from_video_id"] = facts.get("extended_from_video_id")
+        for key in ("segments_total", "segments_completed"):
+            if key in view.result_metadata:
+                body[key] = view.result_metadata[key]
         if view.failure is not None:
             # The code is the wire's own word for any failed job, as it always was; the message keeps the cause.
             body["error"] = {"code": f"{self.wire_name}_generation_failed", "message": public_failure_message(view.failure)}
+            if isinstance(view.result_metadata.get("chain_error"), Mapping):
+                body["error"] = dict(view.result_metadata["chain_error"])
         return body
 
     def list_item(self, view: RunJobView, facts: Mapping[str, Any] | None = None) -> dict[str, Any]:
