@@ -380,9 +380,9 @@ def test_remote_service_shares_one_watcher_and_caps_active_operations(monkeypatc
     excess = second.transport(second.admit('remote-box'))
     ticks = []
     real = ServiceWatcher._check
-    def check(self, active):
+    async def check(self, active):
         ticks.append((self, len(active)))
-        real(self, active)
+        await real(self, active)
     monkeypatch.setattr(ServiceWatcher, '_check', check)
     async def run():
         async with a.operation():

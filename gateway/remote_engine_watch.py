@@ -20,14 +20,14 @@ class ServiceWatcher:
         self.bindings = weakref.WeakSet()
         self.task = None
 
-    def _check(self, active):
-        # One worker submission per service tick, never one per transport.
+    async def _check(self, active):
+        # Stable store-backed authority needs no worker, including idle sockets.
         for bound in active:
             if bound.revoked:
                 continue
             try:
-                bound.factory.check(bound.capability, service_id=bound.capability.service_id,
-                                    address=bound.capability.exact_origin)
+                await bound.factory.check_async(bound.capability, service_id=bound.capability.service_id,
+                                                address=bound.capability.exact_origin)
                 bound.budget.remaining()
             except Exception:
                 bound.revoke()  # unreadable authority is not permission to continue
@@ -39,7 +39,7 @@ class ServiceWatcher:
                 return
             delay = min(b.budget.limits['authority_check_s'] for b in active)
             await asyncio.sleep(delay)
-            await asyncio.to_thread(self._check, active)
+            await self._check(active)
 
 
 def watch(bound):

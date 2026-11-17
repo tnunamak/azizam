@@ -198,7 +198,7 @@ class Capability:
 class ClientFactory:
     """Mint authority only from current registry data and recheck it on each send."""
 
-    def __init__(self, registry: Callable[[], Mapping[str, Any]], *, transport=None, connector=None, db_path=None):
+    def __init__(self, registry: Callable[[], Mapping[str, Any]], *, transport=None, connector=None, db_path=None, registry_version=None):
         self._registry = registry
         self._transport = transport
         self._connector = connector
@@ -212,15 +212,21 @@ class ClientFactory:
         self._lock = threading.RLock()
         self._current_cache = {}
         self._policy_cache = {}
+        self._registry_version = registry_version
+        self._service_checks = weakref.WeakKeyDictionary()
         with _FACTORY_LOCK:
             _FACTORIES.add(self)
 
     def _current(self, service_id):
         with self._lock:
+            # Capture before reading: a concurrent commit must remain visible to
+            # the next I/O, even if it lands while this snapshot is being parsed.
+            version = self._registry_version.version() if self._registry_version is not None else None
             snapshot = self._registry()
             revision = snapshot.get('operator_settings_generation', snapshot.get('generation'))
             cached = self._current_cache.get(service_id)
             if revision is not None and cached is not None and cached[0] == revision:
+                self._current_cache[service_id] = (*cached[:3], version)
                 return cached[1], cached[2]
             registry = snapshot.get('value', snapshot)
             record = (registry.get('services') or {}).get(service_id)
@@ -234,7 +240,7 @@ class ClientFactory:
                 if raw is not None:
                     policy(raw)
                 self._policy_cache[service_id] = policy(record)
-            self._current_cache[service_id] = (revision, record, digest)
+            self._current_cache[service_id] = (revision, record, digest, version)
             return record, digest
 
     def admit(self, service_id: str) -> Capability:
@@ -246,13 +252,38 @@ class ClientFactory:
         self._minted[id(cap)] = cap
         return cap
 
-    def check(self, cap: Capability, *, service_id: str, address: str, service=None) -> None:
+    def _check_identity(self, cap, service_id, address):
         if (cap in self._revoked or self._minted.get(id(cap)) is not cap or cap.service_id != service_id
                 or origin(address) != cap.exact_origin):
             raise refused()
+
+    def check(self, cap: Capability, *, service_id: str, address: str, service=None) -> None:
+        self._check_identity(cap, service_id, address)
         record, generation = self._current(service_id)
         if generation != cap.policy_generation or (service is not None and service != record):
             raise refused()
+
+    async def check_async(self, cap, *, service_id, address):
+        if self._registry_version is None:
+            # Injected sources without a commit token must still be read freshly.
+            await asyncio.to_thread(self.check, cap, service_id=service_id, address=address)
+            return
+        locks = self._service_checks.setdefault(asyncio.get_running_loop(), {})
+        async with locks.setdefault(service_id, asyncio.Lock()):
+            try:
+                self._check_identity(cap, service_id, address)
+                version = self._registry_version.version()
+                cached = self._current_cache.get(service_id)
+                if cached is None or cached[3] != version:
+                    await asyncio.to_thread(self.check, cap, service_id=service_id, address=address)
+                    # Do not authorize I/O from a snapshot overtaken during refresh.
+                    version = self._registry_version.version()
+                    cached = self._current_cache.get(service_id)
+                if cached is None or cached[3] != version or cached[2] != cap.policy_generation:
+                    raise refused()
+                self._check_identity(cap, service_id, address)
+            except Exception:
+                raise refused() from None
 
     def transport(self, cap: Capability):
         self.check(cap, service_id=cap.service_id, address=cap.exact_origin)
@@ -294,8 +325,8 @@ class BoundTransport:
     async def check_current(self):
         self.check()
         try:
-            await asyncio.to_thread(self.factory.check, self.capability,
-                                    service_id=self.capability.service_id, address=self.capability.exact_origin)
+            await self.factory.check_async(self.capability,
+                                           service_id=self.capability.service_id, address=self.capability.exact_origin)
         except ProtocolError:
             self.revoke()
             raise asyncio.CancelledError('Remote engine authority was revoked.') from None
@@ -376,13 +407,20 @@ class BoundTransport:
 def factory_from_store():
     """Use a fresh authoritative snapshot, independent of request connection caches."""
     from gateway import admin_store, request_connections, secret_refs, service_registry
+    from gateway.registry_version import RegistryVersion
     path = secret_refs.database()
+    reader = RegistryVersion(path)
     cached = None
+    cached_version = None
     def read():
-        nonlocal cached
+        nonlocal cached, cached_version
+        version = reader.version()
+        if cached is not None and version == cached_version:
+            return cached
         with request_connections.request_scope():
             revision = admin_store.service_registry_generation(path=path)
             if cached is not None and cached['operator_settings_generation'] == revision:
+                cached_version = version
                 return cached
             encoded = admin_store.get_service_registry_json_with_generation(path=path)
         if encoded is None:
@@ -393,5 +431,6 @@ def factory_from_store():
             raw = registry_layers.layer(json.loads(encoded['value_json']), service_registry.release_registry())
             cached = {'raw_value': raw, 'value': service_registry.read_registry(raw)[0],
                       'operator_settings_generation': revision}
+        cached_version = version
         return cached
-    return ClientFactory(read, db_path=path)
+    return ClientFactory(read, db_path=path, registry_version=reader)

@@ -112,12 +112,14 @@ class SocketRecorder:
         self.posts = []
         self.paths = []
         self.responses = []
+        self.read_sizes = []
         recorder = self
 
         class Stream:
             def __init__(self):
                 self.response = b''
                 self.answered = False
+                self.remaining = 0
             async def write(self, buffer, timeout=None):
                 if getattr(recorder, 'on_write', None) is not None:
                     recorder.on_write()
@@ -127,7 +129,11 @@ class SocketRecorder:
                     path = line.split(b' ')[1].decode()
                     recorder.paths.append(path)
                     self.path = path
-                    if recorder.responses:
+                    if getattr(recorder, 'body_size', None) is not None:
+                        self.remaining = recorder.body_size
+                        self.response = (b'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ' +
+                                         str(self.remaining).encode() + b'\r\nConnection: close\r\n\r\n')
+                    elif recorder.responses:
                         self.response = recorder.responses.pop(0)
                     else:
                         payload = (b'{"job":{"id":"j"}}' if path == '/v1/infer' else
@@ -146,7 +152,13 @@ class SocketRecorder:
                 if getattr(recorder, 'read_delay', None):
                     await asyncio.sleep(recorder.read_delay)
                 max_bytes = min(max_bytes, getattr(recorder, 'fragment_size', max_bytes))
-                data, self.response = self.response[:max_bytes], self.response[max_bytes:]
+                if self.response:
+                    data, self.response = self.response[:max_bytes], self.response[max_bytes:]
+                else:
+                    size = min(max_bytes, self.remaining)
+                    data = b'x' * size
+                    self.remaining -= size
+                recorder.read_sizes.append(len(data))
                 return data
             async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
                 import ssl
