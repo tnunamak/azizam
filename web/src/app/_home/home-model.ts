@@ -257,13 +257,19 @@ function inFlightKind(
   if (row?.output_modalities?.length && receipt.intent && row.intent === receipt.intent) {
     return row.output_modalities.find((output) => mediaOutputKinds.includes(output)) ?? "item";
   }
-  // Otherwise the established media presentation names the kind.
+  // Otherwise the established media presentation names the kind, held to the same gateway list as declared outputs.
+  const named = presentedKind(receipt);
+  if (named && mediaOutputKinds.includes(named)) return named;
+  return row || named ? "item" : null;
+}
+
+function presentedKind(receipt: HomeReceipt): MakingKind | null {
   const intent = String(receipt.intent ?? "").toLowerCase();
   const path = String(receipt.path ?? "").toLowerCase();
   if (intent.startsWith("image") || path.includes("/images/")) return "image";
   if (intent.startsWith("video") || path.includes("/videos")) return "video";
   if (intent.startsWith("audio") || intent.startsWith("speech") || path.includes("/audio/")) return "audio";
-  return row ? "item" : null;
+  return null;
 }
 
 export type RecentItem =

@@ -44,3 +44,9 @@ it("calls an output item when the gateway names no media kinds", () => {
   const row = { capability: "x", intent: "x.make", output_modalities: ["image"] } as HomeCapability;
   expect(making(row, [])).toMatchObject({ making: "item" });
 });
+
+it("holds the intent fallback to the gateway's making kinds, as declared outputs are", () => {
+  const legacy = { capability: "x", intent: "image.generate" } as HomeCapability;
+  expect(making(legacy, MEDIA_KINDS)).toMatchObject({ making: "image" });
+  expect(making(legacy, ["video", "audio"])).toMatchObject({ making: "item" });
+});

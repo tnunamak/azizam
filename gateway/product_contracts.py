@@ -255,8 +255,7 @@ class HomeProjection(TypedDict):
     # The person's own kept chats, newest first. Empty when history kept none.
     recent_chats: list[HomeChat]
     # The media kinds Home names on a tile while a request that makes them runs (registry/asset_kinds.yml, ``making``).
-    # NotRequired: older gateways omit it.
-    media_output_kinds: NotRequired[list[str]]
+    media_output_kinds: list[str]
 
 
 class SetupObservation(TypedDict):
