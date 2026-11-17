@@ -812,8 +812,8 @@ def test_remote_opt_out_closes_pool_and_cancels_queued_poll(monkeypatch, tmp_pat
         checks = []
         def owner_write():
             with sqlite3.connect(database, timeout=0) as conn:
-                with pytest.raises(sqlite3.OperationalError, match='locked'):
-                    conn.execute('BEGIN IMMEDIATE')
+                conn.execute('BEGIN IMMEDIATE')
+                conn.execute('INSERT INTO owner_policy VALUES (1)')
             checks.append(True)
         recorder.on_write = owner_write
         await runtime.invoke('state', {})

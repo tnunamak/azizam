@@ -185,8 +185,9 @@ Registry updates publish a new generation atomically with admission revocation.
 Opt-out refuses new work immediately, invalidates idle pools and cancels admitted
 running work, queued polls and observations; close active sockets and mark the job
 cancelled with a bounded reason. Do not finish remote work under revoked authority.
-Serialize send authorization with revocation so no send begins after revocation
-commits; bytes already sent cannot be recalled. No cleanup/cancel request to the
+Check generation before and after each I/O and cancel active work on revocation.
+A generation change stops the next read or write; bytes already handed to the
+network cannot be recalled. No database writer lock is held across network I/O. No cleanup/cancel request to the
 remote service is exempt. A policy change requires fresh admission, not silent
 rebinding of an old job. Persist the binding with queued work; reload must recheck.
 
@@ -333,8 +334,8 @@ Defaults and hard maxima live in `registry/remote_egress.yml`. In addition to
 the reviewed table, `connections` defaults to 1 and has maximum 4, shared across
 operations for a service/database on each serving event loop;
 `authority_check_s` defaults to 0.05 s and has maximum 1 s. This watcher observes
-cross-process revocation while a job sleeps. SQLite write fences independently
-prevent sends and success publication under a revoked generation.
+cross-process revocation while a job sleeps. Generation checks independently
+refuse the next I/O and success publication under revoked authority.
 
 The first implementation refuses encoded/compressed responses before decoding,
 transfer encodings (including chunked bodies and trailers),
@@ -352,9 +353,9 @@ revocation does not authorize a TLS shutdown or backend cleanup request.
 
 Registry mutations revoke existing in-process authority before commit, through
 `admin_store.write_service_registry_in_transaction`, including caller-owned
-transactions. A rollback conservatively requires fresh admission too. Socket
-connect, TLS, write and final publication fences use the same SQLite writer lock
-as registry edits, so revocation is not dependent on a reload callback. The
+transactions. A rollback conservatively requires fresh admission too. Network
+fences check authority without holding SQLite transactions during connect, TLS
+or writes; an in-progress I/O is cancelled and the next I/O must recheck. The
 registry generation and a digest of the full record pin queued work. The normal
 restart behavior fails interrupted declared jobs rather than rebinding them.
 
@@ -426,8 +427,8 @@ tests/test_engine_protocol_round3.py::test_remote_header_limits_and_cancellation
 One admission deadline and counters survive control, observations, retries,
 polls and assets. Raw HTTP bytes and headers are limited before parser buffering;
 identity body bytes have an independent aggregate cap. The tests include closed
-sockets on cancellation/overflow, a slow trickle and SQLite exclusion while a
-socket write is authorized. Later journey qualification shares connection limits
+sockets on cancellation/overflow, a slow trickle and admin-write progress while a
+socket connect is blocked. Later journey qualification shares connection limits
 across independent factories on a serving loop and fences final job publication.
 
 ### Stage 4 — public generic jobs
@@ -466,7 +467,7 @@ used the following target lists, always with `nice -n 15`,
 
 No full suite, live gateway, deployment restart, paid provider, external engine,
 or sustained load test was used. The connection ceiling is per serving event
-loop; the SQLite authorization fence spans processes. Cross-process active-work
+loop; generation checks observe commits across processes. Cross-process active-work
 cancellation is observed by the bounded watcher. There is no idle-connection
 reuse feature to qualify. Both compressed responses and unsafe ancillary paths
 are refused instead of being repaired or followed.
@@ -479,7 +480,7 @@ change is proposed.
 
 Expect it to work because all six production paths enter the same bound
 transport; the real connector records approved peers and TLS identity, and
-registry changes serialize with network writes and completion. Confidence:
+registry changes are checked around network I/O and completion. Confidence:
 0.86 in the tested implementation, pending the separate reviewer and release gate.
 
 ### Release admission receipt

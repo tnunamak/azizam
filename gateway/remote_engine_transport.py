@@ -20,12 +20,18 @@ class _BoundNetwork(httpcore.AsyncNetworkBackend):
         self.inner, self.bound = inner, bound
 
     async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
-        async with self.bound.fence():
-            budget = self.bound.budget
-            async with asyncio.timeout(min(budget.remaining(), budget.limits['connect_s'])):
-                stream = await self.inner.connect_tcp(host, port, timeout=min(budget.remaining(), budget.limits['connect_s']),
-                                                      local_address=local_address, socket_options=socket_options)
-        return GuardedStream(stream, self.bound)
+        stream = None
+        try:
+            async with self.bound.fence():
+                budget = self.bound.budget
+                async with asyncio.timeout(min(budget.remaining(), budget.limits['connect_s'])):
+                    stream = await self.inner.connect_tcp(host, port, timeout=min(budget.remaining(), budget.limits['connect_s']),
+                                                          local_address=local_address, socket_options=socket_options)
+            return GuardedStream(stream, self.bound)
+        except BaseException:
+            if stream is not None:
+                await asyncio.shield(stream.aclose())
+            raise
 
     async def connect_unix_socket(self, *args, **kwargs):
         raise refused()

@@ -115,3 +115,59 @@ def test_remote_unbound_egress_hook_refuses_probe_and_inference(monkeypatch):
                 client.get('https://engine.example/health')
     asyncio.run(check())
     assert not recorder.connections and not recorder.writes
+
+
+def test_remote_blackholed_connect_does_not_block_admin_write(monkeypatch, tmp_path):
+    import sqlite3
+    import httpcore
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
+        database = tmp_path / 'admin.db'
+        with sqlite3.connect(database) as conn:
+            conn.execute('CREATE TABLE admin_write (value INTEGER)')
+        factory.db_path = database
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = httpcore.AnyIOBackend.connect_tcp
+        async def blackhole(backend, *args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(backend, *args, **kwargs)
+        monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', blackhole)
+        task = asyncio.create_task(runtime.invoke('state', {}))
+        await entered.wait()
+        def admin_write():
+            with sqlite3.connect(database, timeout=.1) as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                conn.execute('INSERT INTO admin_write VALUES (1)')
+        async with asyncio.timeout(1):
+            await asyncio.to_thread(admin_write)
+        assert not task.done()
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['enabled'] = False
+        release.set()
+        with pytest.raises((asyncio.CancelledError, ProtocolError)):
+            await task
+        assert not recorder.writes and recorder.closed
+    asyncio.run(check())
+
+
+def test_remote_generation_change_stops_next_socket_io(monkeypatch):
+    from gateway.remote_engine_budget import GuardedStream
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        registry, _, _, runtime, _, _ = socket_case(monkeypatch)
+        calls = []
+        class Stream:
+            async def read(self, *args, **kwargs):
+                calls.append('read')
+                registry['services']['remote-box']['config']['connection']['remote_dispatch']['enabled'] = False
+                return b'HTTP/1.1 200 OK\r\n'
+            async def write(self, *args, **kwargs):
+                calls.append('write')
+        stream = GuardedStream(Stream(), runtime._transport)
+        with pytest.raises(asyncio.CancelledError):
+            await stream.read(1024)
+        with pytest.raises(asyncio.CancelledError):
+            await stream.write(b'synthetic-must-not-send')
+        assert calls == ['read']
+    asyncio.run(check())

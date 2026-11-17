@@ -35,7 +35,7 @@ def invalidate_registry(path):
     """Revoke before a registry mutation can commit, including caller-owned transactions.
 
     A later rollback does not restore old authority: fresh admission is required.
-    Socket writes hold the database write fence, so they serialize with this mutation.
+    Active tasks are cancelled; the next I/O rechecks authority.
     """
     with _FACTORY_LOCK:
         factories = tuple(_FACTORIES)
@@ -298,34 +298,11 @@ class BoundTransport:
 
     @asynccontextmanager
     async def fence(self):
-        if self.factory.db_path is None:
-            async with self.factory._send_lock:
-                self.check()
-                yield
-            return
-        from gateway.sqlite_startup import connect
-        def acquire():
-            conn = connect(self.factory.db_path, timeout=min(self.budget.remaining(), self.budget.limits['connect_s']),
-                           check_same_thread=False)
-            try:
-                conn.execute('BEGIN IMMEDIATE')
-            except BaseException:
-                conn.close()
-                raise
-            return conn
-        pending = asyncio.create_task(asyncio.to_thread(acquire))
-        try:
-            conn = await asyncio.shield(pending)
-        except asyncio.CancelledError:
-            conn = await pending
-            conn.close()
-            raise
-        try:
-            self.check()
-            yield
-        finally:
-            conn.rollback()
-            conn.close()
+        # A check authorizes the next I/O only. Never hold a database transaction
+        # or a writer lock while the peer controls completion of that operation.
+        self.check()
+        yield
+        self.check()
 
     async def send(self, request, timeouts):
         from gateway.remote_engine_budget import BoundResponse, service_capacity

@@ -155,11 +155,15 @@ class GuardedStream:
     async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
         self.bound.check()
         budget = self.bound.budget
-        async with self.bound.fence():
-            async with asyncio.timeout(min(budget.remaining(), budget.limits['tls_s'])):
-                stream = await self.inner.start_tls(ssl_context, server_hostname=server_hostname,
-                                                    timeout=min(timeout or budget.remaining(), budget.limits['tls_s'], budget.remaining()))
-        return GuardedStream(stream, self.bound, self.raw)
+        try:
+            async with self.bound.fence():
+                async with asyncio.timeout(min(budget.remaining(), budget.limits['tls_s'])):
+                    stream = await self.inner.start_tls(ssl_context, server_hostname=server_hostname,
+                                                        timeout=min(timeout or budget.remaining(), budget.limits['tls_s'], budget.remaining()))
+            return GuardedStream(stream, self.bound, self.raw)
+        except BaseException:
+            await self.aclose()
+            raise
 
     async def aclose(self):
         # Connections are never reused. Close TCP without a TLS shutdown write
