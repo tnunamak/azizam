@@ -109,7 +109,7 @@ printf '<testsuites><testsuite name="pytest"><testcase classname="tests.test_ok"
 """,
     "scripts/ci/mcp-conformance": "#!/usr/bin/env bash\n",
     "scripts/e2e/fresh_instance.sh": """#!/usr/bin/env bash
-if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING_RUN"; fi
+if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING_RUN" || exit $?; fi
 if [[ ${1:-} == --compose && -n ${FRESH_INSTANCE_TIMING_OUT:-} ]]; then
   printf '{"pull_s": 1.0, "build_s": 2.0, "up_s": 3.0, "bringup_s": %s}\\n' "${FAKE_COMPOSE_S:-120}" > "$FRESH_INSTANCE_TIMING_OUT"
 fi
@@ -501,6 +501,16 @@ def test_abandoned_and_legacy_kept_scratch_are_swept(world: World) -> None:
     untouched.mkdir()
     assert world.run().returncode == 0
     assert world.run_dirs() == [untouched]
+
+
+def test_native_journey_hook_failure_fails_the_gate(world: World) -> None:
+    result = world.run(FAKE_DURING_RUN="false")
+    assert result.returncode == 1, result.stdout + result.stderr
+    step = (world.receipts / "steps/fresh-native.tsv").read_text().split("\t")
+    assert step[:2] == ["fresh-native", "1"]
+    assert (world.receipts / "FAIL").is_file()
+    assert not (world.receipts / "PASS").exists()
+    assert world.run_dirs() == []
 
 
 def test_finished_installs_are_released_before_native_journey(world: World) -> None:
