@@ -172,7 +172,9 @@ def test_status_probes_join_the_endpoint_before_the_query(field, base, pattern, 
     asyncio.run(status_endpoint._enriched_aux_health(config))
     asyncio.run(status_endpoint._graph_queue_and_stats(config))
     asyncio.run(status_endpoint._chat_props_and_slots(config))
-    assert sorted(probed) == sorted(pattern.format(e) for e in ("health", "queue", "system_stats", "props"))
+    # The graph probes now go through the engine adapter, whose Connection refuses an address that holds a query, so a
+    # query-bearing graph address is not probed at all; the other probes still join the endpoint before the query.
+    assert sorted(probed) == sorted(pattern.format(e) for e in ("health", "props"))
 
 
 @pytest.mark.parametrize("field", FIELDS)
