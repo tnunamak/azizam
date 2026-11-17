@@ -78,14 +78,3 @@ def lookup(host: str, class_type: str) -> Optional[dict[str, Any]]:
     _CACHE[key] = info
     _disk_write(class_type, info)
     return info
-
-
-def fetch_fresh(host: str, class_type: str) -> dict[str, Any]:
-    """Fetch ``class_type`` from the engine, bypassing the process cache and the disk copy; raise on any failure."""
-    with engine_egress.client(timeout=httpx.Timeout(10, connect=3)) as client:
-        response = client.get(f"{host}/object_info/{quote(class_type, safe='')}", extensions=engine_egress.probe())
-    response.raise_for_status()
-    info = response.json().get(class_type)
-    if not isinstance(info, dict):
-        raise ValueError(f"engine returned no definition for {class_type}")
-    return info
