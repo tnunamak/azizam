@@ -8,7 +8,7 @@ from gateway import declared_operation_job, media_jobs, result_bundle
 from gateway.engine_protocol.types import CanonicalRequest, Completed, JsonResult, ResultBundle, ResultContext
 
 
-@pytest.mark.parametrize('fails', [False, True], ids=['answer', 'delivery-fails'])
+@pytest.mark.parametrize('fails', [False, True, 'typed'], ids=['answer', 'delivery-fails', 'typed-refusal'])
 def test_delivery_observes_published_success_and_cannot_undo_it(tmp_path, monkeypatch, fails):
     path = tmp_path / 'jobs.db'
     media_jobs.init_db(path)
@@ -25,6 +25,8 @@ def test_delivery_observes_published_success_and_cannot_undo_it(tmp_path, monkey
         assert media_jobs.get(job.job_id, path=path)['status'] == 'succeeded'
         assert result_bundle.bundle_summary(job.job_id, path=path) is not None
         seen.append(published)
+        if fails == 'typed':
+            raise result_bundle.ResultRefused('asset_too_large', 'delivery refused')
         if fails:
             raise ValueError('delivery refused')
         return b'client answer'
@@ -35,8 +37,11 @@ def test_delivery_observes_published_success_and_cannot_undo_it(tmp_path, monkey
                               result_context=lambda: ResultContext(result_bundle.ResultLimits()), deliver=deliver)
     call = declared_operation_job.run(runtime, 'specimen.render', {}, job_id=job.job_id)
     if fails:
-        with pytest.raises(ValueError, match='delivery refused'):
+        kind = result_bundle.ResultRefused if fails == 'typed' else ValueError
+        with pytest.raises(kind, match='delivery refused') as caught:
             asyncio.run(call)
+        if fails == 'typed':
+            assert caught.value.code == 'asset_too_large'
     else:
         assert asyncio.run(call) == b'client answer'
     assert seen == [bundle]
