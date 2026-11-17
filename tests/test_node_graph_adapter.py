@@ -75,6 +75,125 @@ def session(client: Any) -> GraphSession:
 # --- each operation is the call the gateway always made --------------------------------------------------------
 
 
+@pytest.mark.parametrize("queue,stats,expected_queue", [
+    ({"queue_running": [[0, "r1"], [1, 7]], "queue_pending": [[2, None]]},
+     {"system": {"version": "opaque"}, "devices": [{"name": "device", "memory": 9}]},
+     {"running": 2, "pending": 1, "running_ids": ["r1", 7], "pending_ids": [None]}),
+    ({"queue_running": [], "queue_pending": []}, {"system": {}, "devices": []},
+     {"running": 0, "pending": 0, "running_ids": [], "pending_ids": []}),
+    ([], {"system": {}, "devices": []}, None),
+    ({"queue_running": "invalid", "queue_pending": []}, {"system": {}, "devices": []},
+     {"running": 7, "pending": 0, "running_ids": [], "pending_ids": []}),
+    ({"queue_running": [[0, None], "skip"], "queue_pending": []}, {"system": {}, "devices": []},
+     {"running": 2, "pending": 0, "running_ids": [None], "pending_ids": []}),
+    ({}, {}, {"running": 0, "pending": 0, "running_ids": [], "pending_ids": []}),
+])
+def test_observe_normalizes_or_reports_unknown(monkeypatch, queue, stats, expected_queue):
+    client = RecordingClient(lambda method, url, kwargs:
+                             Response(200, queue if url.endswith("/queue") else stats))
+    impl = NodeGraphAdapter()
+
+    @asynccontextmanager
+    async def opened(conn):
+        assert conn is CONN
+        yield session(client)
+
+    monkeypatch.setattr(impl, "open", opened)
+    from gateway import status_words
+    expected_runtime = {status_words.words("images")["version_key"]: None,
+                        "python_version": None, "pytorch_version": None,
+                        "ram_total_bytes": None, "ram_free_bytes": None, "argv": None}
+    assert run(impl.observe(CONN)) == {
+        "queue": expected_queue, "stats_runtime": expected_runtime,
+        "devices": stats.get("devices") or [], "raw_stats": stats}
+    assert client.calls == [
+        ("GET", f"http://{HOST}/queue", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+        ("GET", f"http://{HOST}/system_stats", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+    ]
+
+
+@pytest.mark.parametrize("failed_path", ["/queue", "/system_stats"])
+@pytest.mark.parametrize("timeout", [False, True])
+def test_observe_non_success_is_unknown_and_health_is_unchanged(monkeypatch, failed_path, timeout):
+    payload = {"queue_running": [], "queue_pending": [], "system": {}, "devices": []}
+    def answer(method, url, kwargs):
+        if url.endswith(failed_path):
+            if timeout:
+                raise httpx.ReadTimeout("fixture")
+            return Response(503, {})
+        return Response(200, payload)
+    client = RecordingClient(answer)
+    impl = NodeGraphAdapter()
+
+    @asynccontextmanager
+    async def opened(conn):
+        yield session(client)
+
+    monkeypatch.setattr(impl, "open", opened)
+    observed = run(impl.observe(CONN))
+    if failed_path == "/queue":
+        assert observed["queue"] is None
+        assert observed["raw_stats"] == payload
+        assert observed["stats_runtime"] is not None
+        assert observed["devices"] == []
+    else:
+        assert observed["queue"] == {"running": 0, "pending": 0, "running_ids": [], "pending_ids": []}
+        assert observed["raw_stats"] is observed["stats_runtime"] is observed["devices"] is None
+    assert len(client.calls) == 2
+    health = run(impl.health(CONN))
+    if timeout and failed_path == "/system_stats":
+        assert health.state == "failing"
+    else:
+        assert health == node_graph.Health(
+            "failing" if failed_path == "/system_stats" else "ok",
+            "HTTP 503" if failed_path == "/system_stats" else "", "graph.stats")
+
+
+
+@pytest.mark.parametrize("failed_path", ["/queue", "/system_stats"], ids=["queue", "stats"])
+@pytest.mark.parametrize("failure", ["transport", "json"])
+def test_observe_read_failure_preserves_other_nonempty_part(monkeypatch, failed_path, failure):
+    queue = {"queue_running": [[0, "active"]], "queue_pending": [[1, "waiting"]]}
+    stats = {"system": {"python_version": "fixture", "ram_free": 17},
+             "devices": [{"name": "device", "memory": 9}]}
+
+    def answer(method, url, kwargs):
+        if url.endswith(failed_path):
+            if failure == "transport":
+                raise httpx.ConnectError("fixture")
+            # The recording response's json() raises ValueError for this HTTP 200.
+            return Response(200, payload=None)
+        return Response(200, queue if url.endswith("/queue") else stats)
+
+    client = RecordingClient(answer)
+    impl = NodeGraphAdapter()
+
+    @asynccontextmanager
+    async def opened(conn):
+        assert conn is CONN
+        yield session(client)
+
+    monkeypatch.setattr(impl, "open", opened)
+    observed = run(impl.observe(CONN))
+    assert set(observed) == {"queue", "stats_runtime", "devices", "raw_stats"}
+    if failed_path == "/queue":
+        assert observed["queue"] is None
+        assert observed["raw_stats"] == stats
+        assert observed["devices"] == stats["devices"]
+        assert observed["stats_runtime"]["python_version"] == "fixture"
+        assert observed["stats_runtime"]["ram_free_bytes"] == 17
+    else:
+        assert observed["queue"] == {
+            "running": 1, "pending": 1, "running_ids": ["active"], "pending_ids": ["waiting"]}
+        assert observed["raw_stats"] is None
+        assert observed["stats_runtime"] is None
+        assert observed["devices"] is None
+    assert client.calls == [
+        ("GET", f"http://{HOST}/queue", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+        ("GET", f"http://{HOST}/system_stats", {"timeout": node_graph.CONTROL_TIMEOUT_S}),
+    ]
+
+
 def test_each_operation_issues_the_exact_client_call() -> None:
     client = RecordingClient()
     s = session(client)
