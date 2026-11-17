@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import accounts, admin_store, receipt_store
+from gateway import accounts, admin_store, asset_types, receipt_store
 from tests.support.access import access, plan_for, service_app, store_plan  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.admin_oidc import AdminSession
@@ -110,6 +110,16 @@ def home_case(tmp_path):
 def alias_rows(data):
     """The person's own alias rows: Home lists aliases as capability rows now, not as a separate list."""
     return [row for row in data["capabilities"] if "alias" in row.get("tags", [])]
+
+
+def test_home_names_the_media_kinds_it_shows_while_they_are_made_from_the_kind_data(home_case, monkeypatch):
+    data = home_case.http.get("/me/api/home").json()
+    assert data["media_output_kinds"] == ["image", "video", "audio"]
+    TypeAdapter(HomeProjection).validate_python(data)
+    # A kind marked in the data file is named; nothing else in the payload code holds the list.
+    kinds = {**asset_types.KIND_NAMES, "blueprint": {**asset_types.KIND_NAMES["file"], "making": True}}
+    monkeypatch.setattr(asset_types, "KIND_NAMES", kinds)
+    assert home_case.http.get("/me/api/home").json()["media_output_kinds"] == ["image", "video", "audio", "blueprint"]
 
 
 def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):

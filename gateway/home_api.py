@@ -472,6 +472,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                           "csrf_token": csrf_token(session), "public_base_url": base,
                           "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
                           "status": summary, "receipts": activity["receipts"],
+                          "media_output_kinds": asset_types.making_kinds(),
                           "recent_chats": recent_chats(session.subject)})
 
         return await asyncio.to_thread(build_home)
