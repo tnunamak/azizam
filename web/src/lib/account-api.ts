@@ -259,10 +259,14 @@ export function administratorsToConfirm(caught: unknown): AdministratorsOnRecord
 export const accountApi = {
   discovery: () => accountRequest<GatewayDiscovery>("/.well-known/azizam"),
   session: () => accountRequest<AccountSnapshot>("/me/api/session"),
-  createApp: (name: string) =>
+  /** One request makes the app, its kind, its plan and who answers for it. A plain name makes a personal app. */
+  createApp: (
+    name: string,
+    fields: { kind?: "personal" | "service"; access_plan?: string; owner_user_id?: string } = {},
+  ) =>
     accountRequest<{ app: AccountApp }>("/me/api/apps", {
       method: "POST",
-      body: { name },
+      body: { name, ...fields },
     }).then((r) => r.app),
   /** Rename an app. The answer is the saved record: show its name, not the one sent. */
   renameApp: (appId: string, name: string) =>

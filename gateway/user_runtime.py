@@ -34,7 +34,8 @@ from gateway.content_access import Own, ReceiptRecord, Viewer, decide
 from gateway import content_makers
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
-from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
+from gateway.admin_api import AdminContext
+from gateway.admin_runtime import AdminSQLiteStore, app_key_prompt_memory, generate_app_api_key
 from gateway.access_plans import CategoryLabels
 from gateway.category_enforcement import category_labels
 from gateway.runtime_auth import hash_api_key
@@ -1038,9 +1039,17 @@ def create_user_app(
     session: AdminSession,
     *,
     name: str,
+    kind: str = "personal",
+    access_plan: str = admin_store.PERSON_ASSIGNMENT,
+    owner_user_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Create a new user-owned App: "Same as my access plan" (design §2.9)."""
+    """Create an App for the signed-in person through the admin create core (service apps design §5).
+
+    The rules (who may make a service app, who may pick a plan, who may name another accountable
+    person) live in ``AdminSQLiteStore.create_app``; this only builds the actor from the live session.
+    A plain ``name`` makes a personal App on the person's own plan, as before.
+    """
     user = _user_from_session(session, path=path)
     cleaned_name = " ".join(str(name or "").split())
     if not cleaned_name:
@@ -1055,22 +1064,24 @@ def create_user_app(
             "App names must be 80 characters or fewer.",
             status_code=400,
         )
-    app = admin_store.create_app(
-        cleaned_name,
-        kind="personal",
-        owner_user_id=str(user["id"]),
-        access_plan=admin_store.PERSON_ASSIGNMENT,
-        path=path,
-    )
-    admin_store.record_audit(
-        "app.self_create",
+    person_id = str(user["id"])
+    actor = AdminContext(
+        subject=person_id,
+        email=user.get("email"),
         actor_kind="user",
-        actor_id=str(user["id"]),
-        target_kind="app",
-        target_id=str(app["id"]),
-        metadata={"email": user.get("email"), "name": cleaned_name},
-        path=path,
+        actor_id=person_id,
+        roles=admin_store.effective_admin_roles("user", person_id, path=path),
     )
+    body: dict[str, Any] = {"name": cleaned_name, "kind": kind, "access_plan": access_plan}
+    if owner_user_id:
+        body["owner_user_id"] = owner_user_id
+    try:
+        record = AdminSQLiteStore(path).create_app(data=body, actor=actor)
+    except PermissionError as exc:
+        raise UserPortalError("app_create_forbidden", str(exc), status_code=403) from exc
+    except ValueError as exc:
+        raise UserPortalError("app_create_invalid", str(exc), status_code=400) from exc
+    app = admin_store.get_app(str(record["id"]), path=path) or record
     return {"app": _app_payload(app, path=path)}
 
 

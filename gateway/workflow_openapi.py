@@ -393,7 +393,19 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
         if guard and all(name in inputs for name in guard):
             continue
         # The strict reader restricts field values to scalars.
-        out.append(dict(field_row["value"]))
+        out.append(_manifest_bounded(field_row["value"], record.contract))
+    return out
+
+
+def _manifest_bounded(value: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:
+    """A route input with the bounds its workflow's manifest declares (``minimum_from``, ``maximum_from``)."""
+    out = {k: v for k, v in value.items() if k not in ("minimum_from", "maximum_from")}
+    for key, source in (("minimum", value.get("minimum_from")), ("maximum", value.get("maximum_from"))):
+        found: Any = contract
+        for part in str(source or "").split("."):
+            found = found.get(part) if isinstance(found, Mapping) else None
+        if isinstance(found, (int, float)) and not isinstance(found, bool):
+            out[key] = found
     return out
 
 

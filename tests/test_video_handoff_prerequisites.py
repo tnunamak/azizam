@@ -27,6 +27,141 @@ from tests.test_s7_parity_video_create import submitted, world  # noqa: F401
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture
+def non_video_scalar_contract():
+    from tests.workflow_runtime_fakes import entry
+
+    contract = {
+        "schema_version": 2, "id": "test.scalar", "version": "1", "intent": "test.scalar",
+        "inputs": {"amount": {"type": "number"}, "enabled": {"type": "boolean"}},
+        "outputs": {"result": {"media_type": "application/json"}},
+        "bindings": {"test": {"map": {
+            "amount": [{"path": "payload.amount"}],
+            "enabled": [{"path": "payload.enabled"}],
+        }}},
+    }
+    return contract, entry(contract)
+
+
+@pytest.mark.parametrize("name,value,expected_type,token", [
+    pytest.param("amount", 4, int, "4", id="json-int"),
+    pytest.param("amount", 4.0, float, "4.0", id="json-float"),
+    pytest.param("enabled", True, bool, "true", id="json-boolean"),
+    pytest.param("amount", "4", float, "4.0", id="form-number"),
+])
+def test_non_video_scalar_coercion_and_binding_preserve_json_types(
+        non_video_scalar_contract, name, value, expected_type, token):
+    from gateway.frontend_shapes._base import coerce
+    from gateway.manifests import bind_backend_request, validate_inputs
+
+    contract, chosen = non_video_scalar_contract
+    supplied = {name: value}
+    supplied_type = type(value)
+    supplied_json = json.dumps(supplied, sort_keys=True, separators=(",", ":"))
+    coerced = {name: coerce(chosen, name, value)}
+    assert type(coerced[name]) is expected_type
+    assert json.dumps(coerced[name]) == token
+    validated = validate_inputs(contract, coerced)
+    assert validated.rejected == {}
+    assert validated.errors == []
+    accepted = validated.accepted
+    expected_json = '{"' + name + '":' + token + '}'
+    assert type(accepted[name]) is expected_type
+    assert json.dumps(accepted, sort_keys=True, separators=(",", ":")) == expected_json
+
+    template = {"payload": {"untouched": "keep"}}
+    template_before = copy.deepcopy(template)
+    bound = bind_backend_request(contract, "test", template, accepted)
+    assert bound.applied_inputs == [name]
+    assert bound.ignored_inputs == {}
+    assert type(bound.request["payload"][name]) is expected_type
+    assert json.dumps(bound.request["payload"][name]) == token
+    assert json.dumps(bound.request, sort_keys=True, separators=(",", ":")) == (
+        '{"payload":{"' + name + '":' + token + ',"untouched":"keep"}}'
+    )
+
+    # Equality alone cannot detect an int changed to float, or a bool to an int.
+    assert type(supplied[name]) is supplied_type
+    assert json.dumps(supplied, sort_keys=True, separators=(",", ":")) == supplied_json
+    assert type(coerced[name]) is expected_type
+    assert type(accepted[name]) is expected_type
+    assert json.dumps(coerced, sort_keys=True, separators=(",", ":")) == expected_json
+    assert json.dumps(accepted, sort_keys=True, separators=(",", ":")) == expected_json
+    assert template == template_before
+
+
+def test_non_video_number_refuses_json_boolean_without_coercing_it(non_video_scalar_contract):
+    from gateway.frontend_shapes._base import coerce
+    from gateway.manifests import validate_inputs
+
+    contract, chosen = non_video_scalar_contract
+    supplied = {"amount": True}
+    coerced = {"amount": coerce(chosen, "amount", supplied["amount"])}
+    assert type(coerced["amount"]) is bool
+    assert json.dumps(coerced, separators=(",", ":")) == '{"amount":true}'
+    validated = validate_inputs(contract, coerced)
+    assert validated.accepted == {}
+    assert validated.rejected == {"amount": "amount must be a number"}
+    assert [(error.path, error.code) for error in validated.errors] == [
+        (("inputs", "amount"), "value_invalid"),
+    ]
+    assert type(supplied["amount"]) is bool
+    assert type(coerced["amount"]) is bool
+    assert json.dumps(supplied, separators=(",", ":")) == '{"amount":true}'
+    assert json.dumps(coerced, separators=(",", ":")) == '{"amount":true}'
+
+
+SUBMIT_FAILURE_FIXTURE_CONTRACT = {
+    "_reference": {
+        "revision": "fd30cbfcaa8e7f079474b4c8e6d221bb5f18a814",
+        "proof_commit": "3cb3bf253",
+        "probe_sha256": "c43eb01c821e302351c67af805659723c31e71bab28a394042771e7ee0de105e",
+        "route": "POST /v1/videos",
+    },
+    "request": {
+        "model": "ltx-2.5-long",
+        "prompt": "x",
+        "seconds": 16,
+        "seed": 7,
+    },
+    "status": 502,
+    "body": {
+        "error": {
+            "message": "ComfyUI unavailable at http://comfy.fk.test",
+            "type": "api_error",
+        },
+    },
+}
+
+
+def validate_submit_failure_fixture(fixture: dict) -> None:
+    assert fixture == SUBMIT_FAILURE_FIXTURE_CONTRACT, "submit failure fixture drift"
+
+
+def test_submit_failure_fixture_contract():
+    fixture = json.loads(
+        (ROOT / "tests/fixtures/video_submit_failure_fd30cbfca.json").read_text()
+    )
+    assert fixture == SUBMIT_FAILURE_FIXTURE_CONTRACT
+    validate_submit_failure_fixture(fixture)
+
+
+@pytest.mark.parametrize("field", ["revision", "error.type"])
+def test_submit_failure_fixture_contract_rejects_drift(field):
+    fixture = json.loads(
+        (ROOT / "tests/fixtures/video_submit_failure_fd30cbfca.json").read_text()
+    )
+    validate_submit_failure_fixture(fixture)
+    changed = copy.deepcopy(fixture)
+    if field == "revision":
+        changed["_reference"]["revision"] = "changed-revision"
+    else:
+        changed["body"]["error"]["type"] = "changed-error-type"
+    with pytest.raises(AssertionError, match="submit failure fixture drift"):
+        validate_submit_failure_fixture(changed)
+    assert fixture == SUBMIT_FAILURE_FIXTURE_CONTRACT
+
+
 @pytest.fixture(autouse=True)
 def fixed_submission_session(monkeypatch):
     # Old and job-backed calls create independent websocket sessions. Pin only
@@ -310,6 +445,79 @@ def test_queued_chain_uses_accepted_template_and_options(world):
     asyncio.run(drive())
 
 
+def test_queued_chain_keeps_accepted_grid_size_and_segments(world):
+    from tests.support.config_snapshot import publish_section
+    from tests.test_s7_parity_video_create import MODEL, await_status
+    from gateway import video_extend
+
+    world.rig.set(proxy, "_WORKFLOW_JOB_SPOOL", None)
+    name, configured = proxy._chain_workflow_for(MODEL)
+    assert name is not None and configured is not None
+    original = copy.deepcopy(configured)
+    engine = video_extend.engine_for(original["builder"])
+    assert engine is not None
+    body = {"model": MODEL, "prompt": "accepted configuration", "seconds": 16, "seed": 7}
+    shots = [(body["prompt"], body["seconds"])]
+    segments = engine.plan_segments(
+        shots, fps=float(original.get("frame_rate", 24)), has_source=False,
+        max_segment_seconds=float(original.get("chain_segment_seconds", proxy._video_chain_segment_seconds())))
+    expected_segments = len(segments)
+    assert expected_segments > 1
+    queued = []
+    world.rig.set(proxy, "_schedule_workflow_run", queued.append)
+
+    async def drive():
+        auth = access_context(everything(media_metadata="none", receipt_detail="full"))
+        old = await main_video.create(json_request(body), auth, body_override=body)
+        assert old.status_code == 200, old.body
+        old_post = json.loads(old.body)
+        expected_graph = copy.deepcopy(world.engine.prompts["p1"])
+        assert old_post["segments"] == expected_segments
+        old_status = await main_video.status(old_post["id"], auth)
+        assert old_status.status_code == 200, old_status.body
+        before = json.loads(old_status.body)
+        fields = ("seconds", "actual_seconds", "total_seconds", "size")
+        expected = {key: before[key] for key in fields}
+        assert before["segments_total"] == expected_segments
+
+        response = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert response.status_code == 200, response.text
+        accepted = response.json()
+        assert accepted["id"].startswith("video_mj_")
+        assert len(queued) == 1 and len(world.engine.prompts) == 1
+        assert {key: accepted[key] for key in fields} == {key: old_post[key] for key in fields}
+        assert accepted["segments"] == expected_segments
+
+        videos = copy.deepcopy(proxy.config["videos"])
+        changed = videos["workflows"][name]
+        changed.update(frame_rate=12, default_size="320x192", chain_segment_seconds=4)
+        assert float(original.get("frame_rate", 24)) != changed["frame_rate"]
+        assert old_post["size"] != changed["default_size"]
+        changed_segments = engine.plan_segments(
+            shots, fps=12, has_source=False, max_segment_seconds=4)
+        assert len(changed_segments) != expected_segments
+        publish_section(world.rig.monkeypatch, "videos", videos)
+        live_name, live = proxy._chain_workflow_for(MODEL)
+        assert live_name == name
+        assert {key: live[key] for key in ("frame_rate", "default_size", "chain_segment_seconds")} == {
+            "frame_rate": 12, "default_size": "320x192", "chain_segment_seconds": 4}
+        assert video_extend.engine_for(original["builder"]) is engine
+
+        await proxy._run_workflow_job(queued[0])
+        await await_status(world, accepted["id"])
+        assert len(world.engine.prompts) == 2
+        assert json.dumps(world.engine.prompts["p2"], sort_keys=True) == json.dumps(expected_graph, sort_keys=True)
+        assert len(proxy._video_chain_units["p2"]) == expected_segments
+        status = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
+        assert status.status_code == 200, status.text
+        after = status.json()
+        assert {key: after[key] for key in fields} == expected
+        assert after["segments"] == expected_segments
+        assert after["segments_total"] == expected_segments
+
+    asyncio.run(drive())
+
+
 @pytest.mark.parametrize("extra", [
     {"model": "ltx-2.5-long", "seconds": 16},
     {"model": "ltx-2.5-t2v", "seconds": 16},
@@ -580,4 +788,99 @@ def test_chain_submit_failure_is_the_accepted_deferred_error_with_main_cause(wor
         assert failed["error"] == {"code": "video_generation_failed", "message": "ComfyUI unavailable"}
         kept = receipt(world, created.headers["x-request-id"])
         assert kept["status"] == "succeeded" and kept["metadata"]["status_code"] == 200
+    asyncio.run(drive())
+
+
+def test_queued_chain_freezes_operator_facts_through_execution_and_polling(world):
+    from tests.support.config_snapshot import publish_section
+    from tests.support.fake_upstream import HandlerTransport
+    from tests.test_s7_parity_video_create import HOST
+    from gateway import video_extend
+
+    body = {"model": "ltx-2.5-long", "prompt": "accepted operator plan", "seconds": 20, "seed": 7,
+            "extensions": {"com.azizam.workflow": {"state_ledger": "same scene", "context_seconds": 1.0}}}
+    auth = access_context(everything(media_metadata="none", receipt_detail="full"))
+    name = "video-ltx-2.5-long"
+    plan_a = copy.deepcopy(proxy.config["videos"])
+    plan_a["workflows"][name].update(frame_rate=24, default_size="960x512", chain_segment_seconds=8)
+    builder_a = plan_a["workflows"][name]["builder"]
+    builder_b = plan_a["workflows"]["video-minimax-h3-long"]["builder"]
+    assert builder_a != builder_b
+    assert builder_a in video_extend.ENGINES and builder_b in video_extend.ENGINES
+    publish_section(world.rig.monkeypatch, "videos", plan_a)
+    queued = []
+    world.rig.set(proxy, "_schedule_workflow_run", queued.append)
+
+    async def drive():
+        # The frozen main handler, under A, supplies the independent complete
+        # graph and units before either the accepted job or any config mutation.
+        old = await main_video.create(json_request(body), auth, body_override=body)
+        assert old.status_code == 200, old.body
+        expected_post = json.loads(old.body)
+        expected_graph = copy.deepcopy(world.engine.prompts["p1"])
+        expected_units = copy.deepcopy(proxy._video_chain_units["p1"])
+        assert expected_post["segments"] >= 2
+        assert len(expected_units) >= 2
+        made = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert made.status_code == 200, made.text
+        accepted = made.json()
+        fields = ("seconds", "total_seconds", "segments", "size", "actual_seconds",
+                  "model", "azizam_resolved_model", "extended_from_video_id")
+        assert {key: accepted[key] for key in fields} == {key: expected_post[key] for key in fields}
+        assert len(queued) == 1 and len(world.engine.prompts) == 1
+
+        # These are the actual workflow-row keys used by the existing main
+        # oracle, not invented runner hooks. Keep both templates installed.
+        plan_b = copy.deepcopy(plan_a)
+        plan_b["workflows"][name].update(
+            builder=builder_b, frame_rate=12, default_size="640x384", chain_segment_seconds=4)
+        publish_section(world.rig.monkeypatch, "videos", plan_b)
+        assert builder_a in video_extend.ENGINES and builder_b in video_extend.ENGINES
+
+        # Discriminate a no-op fixture: a fresh main request now observes B.
+        # Never use this graph as the expected result for the accepted A job.
+        live = await main_video.create(json_request(body), auth, body_override=body)
+        assert live.status_code == 200, live.body
+        live_post = json.loads(live.body)
+        assert live_post["size"] != expected_post["size"]
+        assert live_post["segments"] != expected_post["segments"]
+        assert world.engine.prompts["p2"] != expected_graph
+        assert proxy._video_chain_units["p2"] != expected_units
+
+        gate = asyncio.Event()
+        async def handle(request):
+            if request.url.path == "/history/p3":
+                await gate.wait()
+            return world.engine(request)
+        world.rig.monkeypatch.setitem(world.rig.fakes.router._routes, HOST, HandlerTransport(handle))
+        runner = asyncio.create_task(proxy._run_workflow_job(queued[0]))
+        try:
+            await submitted(world, 3)
+            async def registered_units():
+                while "p3" not in proxy._video_chain_units:
+                    await asyncio.sleep(0)
+            await asyncio.wait_for(registered_units(), timeout=5)
+            assert json.dumps(world.engine.prompts["p3"], sort_keys=True) == json.dumps(expected_graph, sort_keys=True)
+            assert proxy._video_chain_units["p3"] == expected_units
+
+            # C is published before either public GET or the blocked engine
+            # history observation. Both the pending and finished views keep A.
+            plan_c = copy.deepcopy(plan_b)
+            plan_c["workflows"][name].update(
+                builder=builder_a, frame_rate=30, default_size="320x192", chain_segment_seconds=2)
+            publish_section(world.rig.monkeypatch, "videos", plan_c)
+            pending = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
+            assert pending.status_code == 200, pending.text
+            assert {key: pending.json()[key] for key in fields} == {key: accepted[key] for key in fields}
+            gate.set()
+            await asyncio.wait_for(runner, timeout=10)
+            finished = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
+            assert finished.status_code == 200, finished.text
+            assert finished.json()["status"] == "completed"
+            assert {key: finished.json()[key] for key in fields} == {key: accepted[key] for key in fields}
+        finally:
+            gate.set()
+            if not runner.done():
+                await asyncio.wait_for(runner, timeout=10)
+
     asyncio.run(drive())

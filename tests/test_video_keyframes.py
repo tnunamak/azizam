@@ -883,7 +883,22 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
     def test_job_is_tracked_listed_and_reports_status(self) -> None:
         created = self._create()
         self.assertTrue(created["id"].startswith("video_mj_"))
-        self.assertEqual((created["object"], created["status"]), ("video", "queued"))
+        def normalized(answer: dict) -> dict:
+            self.assertIs(type(answer["created_at"]), int)
+            self.assertIs(type(answer["expires_at"]), int)
+            self.assertIsNone(answer["completed_at"])
+            self.assertEqual(answer["expires_at"] - answer["created_at"], 86400)
+            return {**answer, "id": "<generated>", "created_at": 0,
+                    "completed_at": None, "expires_at": 86400}
+
+        self.assertEqual(normalized(created), {
+            "id": "<generated>", "object": "video", "model": "video-minimax-h3-keyframes",
+            "azizam_resolved_model": "video-minimax-h3-keyframes",
+            "status": "queued", "progress": 0, "created_at": 0,
+            "completed_at": None, "expires_at": 86400, "prompt": "a lighthouse",
+            "remixed_from_video_id": None, "error": None,
+            "size": "960x544", "seconds": "5", "actual_seconds": 5.1667,
+        })
         record = proxy._workflow_job_service().request_facts(created["id"].removeprefix("video_"), access_context())
         self.assertEqual(record["resolved_model"], "video-minimax-h3-keyframes")
         self.assertEqual(record["provenance"]["workflow_id"], "video.generate.minimax-h3-keyframes")
@@ -893,8 +908,23 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         self.assertNotIn("last_frame", json.dumps(record["provenance"]))
         listed = self.client.get("/v1/videos").json()
         self.assertEqual([item["id"] for item in listed["data"]], [created["id"]])
-        self.assertEqual(self.client.get(f"/v1/videos/{created['id']}").json()["azizam_resolved_model"],
-                         "video-minimax-h3-keyframes")
+        response = self.client.get(f"/v1/videos/{created['id']}")
+        self.assertEqual(response.status_code, 200, response.text)
+        retrieved = response.json()
+        self.assertEqual(retrieved["id"], created["id"])
+        self.assertEqual(retrieved["created_at"], created["created_at"])
+        self.assertEqual(retrieved["expires_at"], created["expires_at"])
+        # The store's last-write time varies; pin its type without normalizing it.
+        self.assertIs(type(retrieved["updated_at"]), int)
+        self.assertEqual(normalized(retrieved), {
+            "id": "<generated>", "object": "video", "azizam_object": "video.generation",
+            "status": "queued", "azizam_status": "queued", "progress": 0,
+            "created_at": 0, "completed_at": None, "expires_at": 86400,
+            "prompt": None, "remixed_from_video_id": None, "error": None,
+            "updated_at": retrieved["updated_at"],
+            "model": "video-minimax-h3-keyframes", "size": "960x544", "seconds": "5",
+            "actual_seconds": 5.1667, "azizam_resolved_model": "video-minimax-h3-keyframes",
+        })
 
     def test_finished_clip_lands_in_the_library_as_a_video(self) -> None:
         import anyio

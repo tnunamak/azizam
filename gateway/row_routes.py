@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import re
 from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Any, AsyncContextManager, Awaitable, Callable, ContextManager, Iterable, Mapping
@@ -39,6 +40,13 @@ from gateway.workflow_runtime_types import (
 log = logging.getLogger(__name__)
 
 PREFER_ASYNC = "respond-async"
+# Validate the complete preference, not just the name before its value or
+# parameters. Quoted words allow quoted-pair escapes, never bare controls.
+_PREFER_TOKEN = r"[!#$%&'*+\-.^_\x60|~0-9A-Za-z]+"
+_PREFER_QUOTED_WORD = r'"(?:[\x09\x20\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\x09\x20-\x7e\x80-\xff])*"'
+_PREFER_WORD = rf"(?:{_PREFER_TOKEN}|{_PREFER_QUOTED_WORD})"
+_PREFER_OPTIONAL_VALUE = rf"(?:[ \t]*=[ \t]*{_PREFER_WORD})?"
+_PREFER_ELEMENT = re.compile(rf"[ \t]*(?P<name>{_PREFER_TOKEN}){_PREFER_OPTIONAL_VALUE}(?:[ \t]*;[ \t]*{_PREFER_TOKEN}{_PREFER_OPTIONAL_VALUE})*[ \t]*")
 REQUEST_ID_HEADER = "x-request-id"
 
 
@@ -110,7 +118,8 @@ def prefers_async(value: str | None) -> bool:
             start = index + 1
     preferences.append(value[start:])
     for preference in preferences:
-        if preference.split(";", 1)[0].split("=", 1)[0].strip().lower() == PREFER_ASYNC:
+        match = _PREFER_ELEMENT.fullmatch(preference)
+        if match is not None and match.group("name").lower() == PREFER_ASYNC:
             return True
     return False
 
