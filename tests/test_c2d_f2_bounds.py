@@ -144,3 +144,48 @@ def test_delta_old_value_requires_the_exact_json_type(path, golden) -> None:
         listed.apply_deltas(golden, [Delta("envelope_v2", path, 0, 1, "the envelope is version 2")])
     out = listed.apply_deltas(golden, [Delta("envelope_v2", path, False, True, "the envelope is version 2")])
     assert out is not None
+
+
+def _nested_object_body(depth: int, kind: str) -> bytes:
+    # The root object is depth 1; its scalar leaf is not a container.
+    opening, closing = (b"[", b"]") if kind == "array" else (b'{"child":', b"}")
+    return b'{"extensions":' + opening * (depth - 1) + b"0" + closing * (depth - 1) + b"}"
+
+
+@pytest.mark.parametrize("kind", ["array", "object"])
+def test_json_container_depth_at_limit_is_unchanged(kind) -> None:
+    assert _wire.MAX_JSON_DEPTH == 128
+    body = _nested_object_body(128, kind)
+    expected = json.loads(body)
+    result = asyncio.run(_wire.json_object(make_request(body)))
+    assert isinstance(result, dict)
+    assert result == expected
+
+
+@pytest.mark.parametrize("kind", ["array", "object"])
+def test_json_container_depth_one_past_limit_is_refused(kind) -> None:
+    body = _nested_object_body(129, kind)
+    assert isinstance(json.loads(body), dict), "the parser accepts this body"
+    result = asyncio.run(_wire.json_object(make_request(body)))
+    parser_failure = asyncio.run(_wire.json_object(make_request(DEEP)))
+    assert isinstance(result, Response) and result.status_code == 400
+    assert isinstance(parser_failure, Response) and parser_failure.status_code == 400
+    assert result.body == parser_failure.body
+    assert json.loads(result.body)["error"]["message"] == "Invalid JSON body"
+
+
+def test_object_beyond_parser_depth_keeps_json_refusal() -> None:
+    body = _nested_object_body(10_000, "array")
+    result = asyncio.run(_wire.json_object(make_request(body)))
+    parser_failure = asyncio.run(_wire.json_object(make_request(DEEP)))
+    assert isinstance(result, Response) and result.status_code == 400
+    assert isinstance(parser_failure, Response) and parser_failure.status_code == 400
+    assert result.body == parser_failure.body
+    assert json.loads(result.body)["error"]["message"] == "Invalid JSON body"
+
+
+def test_wide_shallow_json_is_unchanged() -> None:
+    expected = {str(index): [] for index in range(10_000)}
+    result = asyncio.run(_wire.json_object(make_request(json.dumps(expected).encode())))
+    assert isinstance(result, dict)
+    assert result == expected
