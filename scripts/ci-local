@@ -396,6 +396,7 @@ web_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
   step compat-node env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" bash -c "cd tests/compat/node && npm ci --no-audit --no-fund && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=\"\$1\" --test-reporter-destination=stderr probe-gates.test.mjs" _ "$PWD/scripts/ci/node-case-receipts.mjs"
+  step sweep-report-node env CASE_RECEIPTS_FILE="$receipts/raw/sweep-report-node.cases.jsonl" node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$PWD/scripts/ci/node-case-receipts.mjs" --test-reporter-destination=stderr web/e2e/sweep/report.test.mjs
   cleanup_step compat-node tests/compat/node/node_modules
   step pi-unit env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" scripts/ci/pi-unit "$PWD/scripts/ci/node-case-receipts.mjs"
   cleanup_step pi-unit integrations/pi/node_modules
@@ -489,6 +490,9 @@ git worktree remove --force "$run/fresh"
 # Case receipts: one cases.jsonl from every framework's report, then the
 # test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
 merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$receipts/raw/vitest.cases.jsonl" "$work")
+if [[ -f $receipts/raw/sweep-report-node.cases.jsonl ]]; then
+  merge_args+=(--receipts "$receipts/raw/sweep-report-node.cases.jsonl" "$work")
+fi
 if [[ -f $receipts/raw/compat-node.cases.jsonl ]]; then
   merge_args+=(--receipts "$receipts/raw/compat-node.cases.jsonl" "$work")
 fi
