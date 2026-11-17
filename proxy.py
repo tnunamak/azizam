@@ -28199,7 +28199,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         if target is not None:
             return target
         cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
-        return (video_grid.configured_input_targets(cfg, chosen.contract).get("image") or {}).get("input")
+        return (video_grid.configured_input_targets(cfg, chosen.contract).get(domain_rows.IMAGE) or {}).get("input")
 
     async def prepare_inputs(self, request, body, chosen):
         caller = request.state.caller
@@ -28266,8 +28266,8 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             return None
         found = video_grid.configured_facts(cfg, chosen.contract)
         variants = {role: workflow_id_for_video_key(cfg[key]) for role, key in
-                    (("image", "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
-        requires = {"image"} if cfg.get("requires_input_reference") else set()
+                    ((domain_rows.IMAGE, "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
+        requires = {domain_rows.IMAGE} if cfg.get("requires_input_reference") else set()
         if cfg.get("requires_extensions"):
             requires.add("extensions")
         if cfg.get("source_video_input"):
