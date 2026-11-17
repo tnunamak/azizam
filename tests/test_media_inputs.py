@@ -753,3 +753,141 @@ def test_the_store_port_names_a_claim_only_for_an_owner_its_sidecar_lists(tmp_pa
     sidecars[asset].write_text(json.dumps({"owner_key_hashes": ["bob"]}))
     assert port.has_claim(asset, "bob") and not port.has_claim(asset, "alice")
     assert port.has_claim(asset, ""), "with no owner key, a stored file counts"
+
+# --- named library inputs: trusted declarations, not request authority --------
+
+
+@pytest.mark.parametrize("name", ["source", "unfamiliar.operation/input-z"])
+def test_named_asset_uses_only_its_own_declaration_and_preserves_bytes(db, clock, name):
+    resolver, assets, _ = build(db, clock, max_bytes=1)
+    asset = assets.add(PNG, "alice")
+    declared = {"other": ("audio/*",), name: ("image/png",)}
+    returned_name, resolved = resolver.resolve_named_asset(
+        name, asset, person("alice"), holder=JOB, destination=LOCAL, declared_inputs=declared,
+    )
+    assert returned_name == name
+    assert resolved.data == PNG and resolved.ref.asset_id == asset
+    assert resolved.ref.media_type == "image/png"
+    assert resolved.ref.size_bytes == len(PNG)
+    assert resolved.ref.sha256 == hashlib.sha256(PNG).hexdigest()
+    assert resolved.ref.lease_id.startswith("mil_")
+    assert live(db, JOB) == [asset]
+    assert assets.calls == ["read"]
+    assert rows(db, "media_input_effect") == 0
+    assert rows(db, "media_input_created") == 0
+
+
+def test_named_asset_unknown_name_refuses_before_touching_the_asset_port(db, clock):
+    resolver, assets, _ = build(db, clock)
+    asset = assets.add(PNG, "alice")
+
+    def must_not_parse(_):
+        pytest.fail("an unknown name must refuse before even parsing the asset")
+
+    assets.parse = must_not_parse
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_named_asset(
+            "absent", asset, person("alice"), holder=JOB, destination=LOCAL,
+            declared_inputs={"other": ("image/*",)},
+        )
+    assert refused.value.code == media_inputs.INVALID
+    assert assets.calls == []
+    assert rows(db, "media_input_lease") == 0
+    assert rows(db, "media_input_effect") == 0
+    assert rows(db, "media_input_created") == 0
+
+
+@pytest.mark.parametrize("case,code,read_count", [
+    ("malformed", media_inputs.INVALID, 0),
+    ("url", media_inputs.INVALID, 0),
+    ("path", media_inputs.INVALID, 0),
+    ("absent", MISSING, 0),
+    ("other-owner", FORBIDDEN, 0),
+    ("empty", EMPTY, 1),
+    ("unsupported", UNSUPPORTED, 1),
+    ("wrong-declaration", UNSUPPORTED, 1),
+    ("unknown-destination", DISCLOSURE_REFUSED, 0),
+    ("remote-denied", DISCLOSURE_REFUSED, 0),
+])
+def test_named_asset_refusals_cannot_borrow_another_names_acceptance(db, clock, case, code, read_count):
+    resolver, assets, _ = build(db, clock)
+    body = b"" if case == "empty" else b"not measured media" if case == "unsupported" else PNG
+    asset = assets.add(body, "bob" if case == "other-owner" else "alice")
+    original_files = dict(assets.files)
+    if case == "malformed":
+        asset = "not an id"
+    elif case == "url":
+        asset = "https://example.test/input.png"
+    elif case == "path":
+        asset = "/tmp/input.png"
+    elif case == "absent":
+        asset = "img_" + "0" * 64
+    destination = (Destination("ghost", known=False) if case == "unknown-destination"
+                   else REMOTE if case == "remote-denied" else LOCAL)
+    # The first entry would allow both PNG and unidentified bytes. It must
+    # never relax the declaration selected for this input.
+    declared = {"other": ("image/*", "application/octet-stream"),
+                "selected": ("audio/*",) if case == "wrong-declaration" else ("image/png",)}
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_named_asset(
+            "selected", asset, person("alice"), holder=JOB, destination=destination,
+            declared_inputs=declared,
+        )
+    assert refused.value.code == code
+    assert assets.calls == ["read"] * read_count
+    assert assets.files == original_files
+    assert rows(db, "media_input_lease") == 0
+    assert rows(db, "media_input_effect") == 0
+    assert rows(db, "media_input_created") == 0
+
+
+def test_named_asset_rejection_does_not_release_an_established_holder(db, clock):
+    resolver, assets, _ = build(db, clock)
+    asset = assets.add(PNG, "alice")
+    declared = {"first": ("image/png",), "second": ("audio/*",)}
+    resolver.resolve_named_asset(
+        "first", asset, person("alice"), holder=JOB, destination=LOCAL, declared_inputs=declared,
+    )
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_named_asset(
+            "second", asset, person("alice"), holder=JOB, destination=LOCAL, declared_inputs=declared,
+        )
+    assert refused.value.code == UNSUPPORTED
+    assert live(db, JOB) == [asset]
+    assert rows(db, "media_input_lease") == 1
+    assert assets.files[asset] == PNG and assets.calls == ["read", "read"]
+    assert rows(db, "media_input_effect") == 0
+
+
+def test_named_asset_post_lease_sweep_race_keeps_the_holders_cleanup_duty(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()
+    original_lease = ledger.lease
+    holder = Holder("request", "r_named")
+
+    def sweep_then_lease(*args, **kwargs):
+        assert ledger.discard_unheld(found, assets.discard) == 1
+        original_lease(*args, **kwargs)
+
+    ledger.lease = sweep_then_lease
+    assets.calls.clear()
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_named_asset(
+            "selected", asset, person("alice"), holder=holder, destination=LOCAL,
+            declared_inputs={"selected": ("image/png",)},
+        )
+    assert refused.value.code == MISSING
+    assert live(db, holder) == [asset], "the exceptional post-lease refusal leaves cleanup to its holder"
+    assert assets.calls == ["read"] and asset not in assets.files
+    assert rows(db, "media_input_effect") == 0
+
+
+def test_named_asset_signature_has_no_request_authority_overrides():
+    import inspect
+    signature = inspect.signature(MediaInputResolver.resolve_named_asset)
+    assert list(signature.parameters) == [
+        "self", "name", "asset_id", "caller", "holder", "destination", "declared_inputs",
+    ]
+    for name in ("holder", "destination", "declared_inputs"):
+        assert signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
