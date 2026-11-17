@@ -13176,12 +13176,11 @@ async def _submit_video_chain(
         payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
                        "segments": len(segments), "seconds": _seconds_text(total_seconds)},
         progress_units=built.units,
-        admission_intent=admission_intent,
     )
 
     if prepare is not None:
         return prepare(engine, spec, submission)
-    return await _submit_video_graph(**submission)
+    return await _submit_video_graph(**submission, admission_intent=admission_intent)
 
 
 def _seconds_text(value: float) -> str:
