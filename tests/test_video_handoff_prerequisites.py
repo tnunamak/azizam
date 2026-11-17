@@ -72,7 +72,7 @@ def test_public_handoff_submits_the_old_handlers_graph(world, body):
         if body["model"] in ("ltx-2.5-t2v", "ltx-2.5-long"):
             assert response.json()["id"].startswith("video_mj_")
         await submitted(world, 2)
-        assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
+        assert json.dumps(world.engine.prompts["p1"], sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
 
     asyncio.run(drive())
 
@@ -126,7 +126,15 @@ def test_valid_reference_variant_matches_old_submission_without_a_handoff(world)
         assert response.status_code == 200, response.text
         assert response.json()["id"].startswith("video_mj_")
         await submitted(world, 2)
-        assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
+        # This schema-valid variant already used the row path on main, whose
+        # integer frame-rate representation is a published V5c delta. Pin that
+        # exact representation; new hand-off cases compare old bytes unchanged.
+        expected = copy.deepcopy(world.engine.prompts["p1"])
+        for target in manifest["bindings"]["comfyui"]["map"]["frame_rate"]:
+            field = expected["prompt"][target["node"]]["inputs"]
+            assert type(field[target["input"]]) is float
+            field[target["input"]] = int(field[target["input"]])
+        assert json.dumps(expected, sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
 
     asyncio.run(drive())
 
@@ -175,7 +183,7 @@ def test_missing_video_section_reads_the_same_configured_facts_as_the_old_handle
         assert response.json()["id"].startswith("video_mj_")
         await submitted(world, 2)
         left, right = (world.engine.prompts[key]["prompt"] for key in ("p1", "p2"))
-        assert left == right, {key: (left.get(key), right.get(key)) for key in left.keys() | right.keys() if left.get(key) != right.get(key)}
+        assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True), {key: (left.get(key), right.get(key)) for key in left.keys() | right.keys() if left.get(key) != right.get(key)}
         assert response.json()["size"] == "640x384"
         assert world.engine.prompts["p2"]["prompt"]["23"]["inputs"]["value"] == 12
 
@@ -262,7 +270,7 @@ def test_complex_inputs_submit_the_old_handlers_graph_on_the_declared_path(world
         assert response.json()["id"].startswith("video_mj_")
         await submitted(world, 2)
         left, right = (world.engine.prompts[key] for key in ("p1", "p2"))
-        assert left == right, {key: (left["prompt"].get(key), right["prompt"].get(key))
+        assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True), {key: (left["prompt"].get(key), right["prompt"].get(key))
                                for key in left["prompt"].keys() | right["prompt"].keys()
                                if left["prompt"].get(key) != right["prompt"].get(key)}
         assert upload_names()[len(old_names):] == old_names
@@ -299,7 +307,7 @@ def test_queued_chain_uses_accepted_template_and_options(world):
         world.rig.monkeypatch.delitem(video_extend.ENGINES, key)
         await proxy._run_workflow_job(queued[0])
         assert len(world.engine.prompts) == 2
-        assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
+        assert json.dumps(world.engine.prompts["p1"], sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
 
     asyncio.run(drive())
 
@@ -375,5 +383,5 @@ def test_missing_config_row_is_not_a_present_row_with_optional_facts_omitted(wor
         else:
             assert new.status_code == 200
             await submitted(world, 2)
-            assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
+            assert json.dumps(world.engine.prompts["p1"], sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
     asyncio.run(drive())

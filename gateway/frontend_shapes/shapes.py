@@ -558,7 +558,7 @@ class VideoHooks:
     """What a deployment adds to a video create: the model name it serves, the delivery rules it applies to the body and the
     prompt it remembers. The defaults do nothing; the main module installs a subclass in ``VIDEO_HOOKS`` at start."""
 
-    def run_options(self, chosen):
+    def run_options(self, chosen, frame_rate=None, prepared=None):
         return {}
 
     def reference_input(self, chosen):

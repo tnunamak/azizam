@@ -27814,7 +27814,8 @@ async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Vari
         return node_graph_runner.Variant(composed, {})
     targets = options.get("input_targets")
     subject = options.get("subject_plan")
-    if targets is not None or subject is not None:
+    numbers = options.get("number_bindings")
+    if targets is not None or subject is not None or numbers is not None:
         def selected(graph):
             if targets is not None:
                 template = ctx.pin.graph()
@@ -27823,6 +27824,8 @@ async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Vari
                         if dict(target) not in accepted:
                             node, field = target["node"], target["input"]
                             graph[node]["inputs"][field] = copy.deepcopy(template[node]["inputs"][field])
+            for target in numbers or ():
+                graph[target["node"]]["inputs"][target["input"]] = target["value"]
             if subject is not None:
                 video_subject.apply_point(graph, subject["block"], subject["width"], subject["height"], subject["roles"])
                 if subject["block"].get("reference_fit", True) not in (False, "false", "False", 0):
@@ -28116,12 +28119,25 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
     controls of the body, and the prompt memory."""
 
-    def run_options(self, chosen):
-        if video_grid.video_facts(chosen) is not None:
+    def run_options(self, chosen, frame_rate=None, prepared=None):
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
             return {}
-        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
         targets = video_grid.configured_input_targets(cfg, chosen.contract)
-        return {"input_targets": workflow_run.plain({item["input"]: item["targets"] for item in targets.values()})}
+        selected = ({item["input"]: item["targets"] for item in targets.values()}
+                    if video_grid.video_facts(chosen) is None else {})
+        options = {}
+        manifest = self.facts(chosen)
+        rate_input = manifest.roles.get("frame_rate", "frame_rate")
+        if frame_rate is not None and rate_input in chosen.contract["inputs"] and (prepared or {}).get("wire_frame_rate"):
+            destinations = (targets.get("frame_rate") or {}).get("targets", [])
+            selected[rate_input] = destinations
+            # The wire has always written frame rate as a float. Keep the
+            # portable integer input checked, then set its configured wire fields.
+            options["number_bindings"] = [{**dict(target), "value": float(frame_rate)} for target in destinations]
+        if selected:
+            options["input_targets"] = workflow_run.plain(selected)
+        return options
 
     def reference_input(self, chosen):
         target = frontend_video_create._reference_input(chosen)
@@ -28181,7 +28197,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         except video_subject.SubjectError as exc:
             return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
                                code="invalid_workflow_extension")
-        return {"body": body, "probe": probe, "assets": assets, "config": cfg}
+        return {"body": body, "probe": probe, "assets": assets, "config": cfg, "wire_frame_rate": extended}
 
     async def resolve_inputs(self, request, prepared, chosen, spool):
         from gateway.frontend_shapes import _wire

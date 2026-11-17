@@ -739,9 +739,9 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
             graph[node]["inputs"].update(fields)
         return graph
 
-    # V5c: a first-picture-only create runs the row path. Two named deltas to the engine's graph, neither a change of meaning:
-    # the manifest types frame_rate as an integer, so a float node carries 24 where the old route wrote 24.0; and the run
-    # stages the picture under the name "input" + suffix, as every run of the job runner does, not "input_reference.png".
+    # These requests already used the row path on main. Preserve its published
+    # integer frame-rate representation and upload naming. Newly moved keyframe
+    # requests below preserve the old handler's float wire representation.
     def test_ltx_i2v_graph_is_the_stored_graph_with_only_the_request_values(self) -> None:
         r = self.client.post("/v1/videos", json={
             "model": "video-ltx-2.5-i2v", "prompt": "p", "seconds": 5, "seed": 3, "size": "1280x704",
