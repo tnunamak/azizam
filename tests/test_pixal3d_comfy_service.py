@@ -39,10 +39,10 @@ def full_run(history: list[dict], *, view: bool = True) -> list[dict]:
     return steps
 
 
-def serve(fakes, exchanges: list[dict], *, timeout: float = 2.0):
+def serve(fakes, exchanges: list[dict], *, timeout: float = 2.0, max_image_bytes: int = 32 * 1024 * 1024):
     fake = fakes.asgi(scenario_from_data({"protocol": "comfyui", "name": "pixal3d-run", "provenance": PROVENANCE,
                                           "exchanges": exchanges}), host="comfy.fk.test")
-    app = svc.create_app(fake.base_url, poll_interval=0.001, timeout=timeout)
+    app = svc.create_app(fake.base_url, poll_interval=0.001, timeout=timeout, max_image_bytes=max_image_bytes)
     return fake, app
 
 
@@ -460,3 +460,36 @@ def test_cancellation_during_failed_wait_cleanup_finishes_delete():
                 await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_upload_over_cap_is_413_without_engine_calls(fake_upstreams) -> None:
+    fake, app = serve(fake_upstreams, [], max_image_bytes=8)
+    response = post(app, image=b"123456789")
+    assert response.status_code == 413
+    assert response.json() == {"error": "image exceeds the 8 byte limit"}
+    assert not fake.requests
+
+
+def test_upload_at_cap_keeps_success_response(fake_upstreams) -> None:
+    fake, app = serve(fake_upstreams, full_run([DONE]), max_image_bytes=8)
+    response = post(app, image=b"12345678")
+    assert (response.status_code, response.headers["content-type"], response.content) == (200, "model/gltf-binary", GLB)
+    assert b"12345678" in fake.calls("upload")[0].body
+    assert len(fake.calls("prompt")) == 1
+
+
+def test_image_cap_environment_setting(monkeypatch) -> None:
+    captured = {}
+    sentinel = object()
+
+    def create(base_url, **settings):
+        captured.update(settings)
+        return sentinel
+
+    monkeypatch.setattr(svc, "create_app", create)
+    monkeypatch.delenv("PIXAL3D_MAX_IMAGE_BYTES", raising=False)
+    assert svc._app_from_env() is sentinel
+    assert captured["max_image_bytes"] == svc.DEFAULT_MAX_IMAGE_BYTES == 32 * 1024 * 1024
+    monkeypatch.setenv("PIXAL3D_MAX_IMAGE_BYTES", "8")
+    assert svc._app_from_env() is sentinel
+    assert captured["max_image_bytes"] == 8
