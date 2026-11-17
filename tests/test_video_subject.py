@@ -417,7 +417,8 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         response = self._create()
         self.comfy.history[NEW_PROMPT_ID] = {
             "status": {"completed": True, "status_str": "success", "messages": []},
-            "outputs": {"60": {"videos": [{"filename": "x.mp4", "subfolder": "video", "type": "output"}]},
+            # Node 60 is a SaveVideo node, which lists its file under "images"; the shipped manifest selector reads that key.
+            "outputs": {"60": {"images": [{"filename": "x.mp4", "subfolder": "video", "type": "output"}]},
                         PROBE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
         self.comfy.view_bytes["x.mp4"] = b"fake video"
         status = self.comfy.wait_for_status(self.client, response.json()["id"], "completed")
