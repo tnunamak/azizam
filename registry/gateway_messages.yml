@@ -1,4 +1,8 @@
 schema_version: 1
+prompt_namespace_description: "Per-request prompt retention choice; this control is removed before backend dispatch."
+workflow_namespace_description: "Gateway-owned workflow controls for image, video, and audio routes."
+chat_namespace_description: "Gateway-owned chat diagnostics controls."
+routing_namespace_description: "Gateway-owned routing hints that cannot override app profile policy."
 metadata_description: >-
   Whether delivered media keeps its embedded ComfyUI workflow
   and gateway provenance (full) or has all metadata removed
