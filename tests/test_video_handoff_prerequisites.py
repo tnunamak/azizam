@@ -520,3 +520,43 @@ def test_missing_workflow_row_matches_the_main_public_route(world, case):
         else:
             assert world.engine.prompts == {}
     asyncio.run(drive())
+
+
+@pytest.mark.parametrize("path", ["/v1/videos", "/openai/v1/videos"])
+def test_chain_policy_denial_matches_main_before_engine_or_receipt(world, path):
+    from tests.support.access import authenticated, identity, plan_for
+    from tests.test_s7_parity_video_create import rows
+    expected = json.loads((ROOT / "tests/fixtures/video_chain_receipts_fd30cbfca.json").read_text())["chain-denied"]
+    async def drive():
+        with authenticated(identity(plan_for(caps=(), categories=()))):
+            response = await world.rig.call("POST", path, json_body=expected["request"])
+        assert response.status_code == expected["status"] == 403
+        assert response.json() == expected["body"]
+        assert rows(world.rig.receipts_db, "receipts") == expected["receipts"] == []
+        assert world.engine.calls == []
+    asyncio.run(drive())
+
+
+@pytest.mark.parametrize("path", ["/v1/videos", "/openai/v1/videos"])
+def test_chain_create_keeps_main_receipt_fields_and_names_the_declared_job(world, path):
+    from tests.test_s7_parity_video_create import rows, receipt, await_status
+    captured = json.loads((ROOT / "tests/fixtures/video_chain_receipts_fd30cbfca.json").read_text())
+    expected = captured["chain-receipt"]
+    world.engine.pending = True
+    async def drive():
+        try:
+            response = await world.rig.call("POST", path, json_body=expected["request"])
+            assert response.status_code == expected["status"] == 200, response.text
+            assert len(rows(world.rig.receipts_db, "receipts")) == 1
+            kept = receipt(world, response.headers["x-request-id"])
+            # Wall times and independent ids vary; a declared submit receipt
+            # additionally names its job, as the accepted job-path contract says.
+            assert kept["job_id"] == response.json()["id"].removeprefix("video_")
+            evidence = kept.pop("resource_decision")
+            assert evidence["outcome"] == "allowed"
+            assert any(fact["name"] == "available" and fact["value"] is True for fact in evidence["facts"])
+            assert {key:value for key,value in kept.items() if key not in captured["receipt_exclusions"]} == expected["receipts"][0]
+        finally:
+            world.engine.pending = False
+        await await_status(world, response.json()["id"])
+    asyncio.run(drive())
