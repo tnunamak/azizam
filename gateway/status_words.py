@@ -6,6 +6,7 @@ a missing file, a broken file or a missing key is an error, never a guess. Roles
 
 from __future__ import annotations
 
+import copy
 import functools
 import json
 from pathlib import Path
@@ -20,12 +21,12 @@ SCHEMA_PATH = _REGISTRY_DIR / "status_words.schema.json"
 
 
 @functools.lru_cache(maxsize=4)
-def _read(path: Path, schema_path: Path, modified_ns: int) -> dict[str, dict[str, Any]]:
-    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8"))).validate(document)
+def _read(document_bytes: bytes, schema_bytes: bytes) -> dict[str, dict[str, Any]]:
+    document = yaml.safe_load(document_bytes.decode("utf-8")) or {}
+    jsonschema.Draft202012Validator(json.loads(schema_bytes.decode("utf-8"))).validate(document)
     return {role: dict(words) for role, words in document["status_words"].items()}
 
 
 def words(role: str, path: Path = BUNDLED_PATH) -> dict[str, Any]:
     """The words of capability role *role*, checked against the schema; ``KeyError`` for a role the file does not hold."""
-    return _read(path, SCHEMA_PATH, path.stat().st_mtime_ns)[role]
+    return copy.deepcopy(_read(path.read_bytes(), SCHEMA_PATH.read_bytes())[role])
