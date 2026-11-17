@@ -158,6 +158,11 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
     that same commit. Raises ``ResultRefused`` for a result that breaks a limit (nothing is published, the stage is
     aborted) and ``CancellationPending`` for a cancel that has not settled."""
     limits = _result_context(runtime).limits
+    # Optional public projection fields share the bundle's completion transaction.
+    publication_options = getattr(runtime, 'publication_options', None)
+    if publication_options is not None:
+        status_args = {**publication_options(), **status_args}
+    publication_metadata = status_args.pop('metadata_patch', None) or {}
 
     def stage(conn, attempt: int) -> None:
         for name, result in bundle.results.items():
@@ -167,7 +172,8 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
                 items = [{'asset_ref': asset.id, 'media_type': asset.content_type, 'size_bytes': asset.size} for asset in result.assets]
                 result_bundle.stage_assets_in(conn, job_id, attempt, name, items, limits=limits)
 
-    patch = {**({'protocol_submitting': False} if clear_marker else {}), **(metadata or {})} or None
+    patch = {**({'protocol_submitting': False} if clear_marker else {}),
+             **publication_metadata, **(metadata or {})} or None
     result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH, **status_args)
     return bundle
 

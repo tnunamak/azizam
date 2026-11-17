@@ -16,7 +16,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import Request
 from starlette.responses import Response
 
-from gateway import asset_types, media_delivery, media_jobs, provenance, receipt_store
+from gateway import asset_types, media_delivery, media_jobs, provenance, receipt_store, result_bundle
 from gateway.capability_ids import AUDIO_RULE
 from gateway.discovery_metadata import operation_intent, registered_operation
 from gateway.receipts import RouteReceipt, new_request_id, record_retention_fact_failure, run_receipt_write
@@ -295,6 +295,7 @@ def store_audio_response(
     receipt: RouteReceipt,
     *,
     store_asset: Callable[..., str],
+    limits: result_bundle.ResultLimits | None = None,
 ) -> list[dict[str, Any]]:
     """Store and index a buffered audio response for a synchronous route."""
     if not content:
@@ -311,6 +312,8 @@ def store_audio_response(
         normalized_media_type = "audio/wav"
     provenance_record = _audio_provenance_record(receipt, normalized_media_type)
     stored = media_delivery.attach_provenance(stored, suffix, provenance_record)
+    if limits is not None:
+        result_bundle.check_assets(limits, [len(stored)])
     asset_id = store_asset(
         stored,
         kind=asset_types.ASSET_PREFIX_BY_TOP_TYPE[_AUDIO_KIND],

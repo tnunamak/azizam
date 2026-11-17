@@ -25,13 +25,15 @@ import asyncio
 import json
 import logging
 import math
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 import httpx
 
-from gateway import asset_types, engine_egress, job_retry_hint, media_jobs, result_bundle
+from gateway import asset_types, declared_operation_job, engine_egress, job_retry_hint, media_jobs, result_bundle
+from gateway.engine_protocol.types import AssetRef, AssetsResult, CanonicalRequest, Completed, ResultBundle, ResultContext
 from gateway.engine_protocol import description as protocol_description
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2
 from gateway.exclusive_pool import (
@@ -129,13 +131,13 @@ def _send_timeout_s(config: Mapping[str, Any]) -> float:
     if value is None:
         return _DEFAULT_TIMEOUT_S
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}")
+        raise RunError(SERVICE_UNAVAILABLE, "capacity")
     try:
         timeout = float(value)
     except OverflowError as error:
-        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}") from error
+        raise RunError(SERVICE_UNAVAILABLE, "capacity") from error
     if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}")
+        raise RunError(SERVICE_UNAVAILABLE, "capacity")
     return timeout
 
 
@@ -301,7 +303,8 @@ class MultipartRunner:
         file_field, file, fields = await self._form(ctx, binding)
         observer_issue, observer_url = observer_problem(self._host.services(), spec)
         client = self._host.client_factory()
-        try:
+        async with AsyncExitStack() as resources:
+            resources.push_async_callback(client.aclose)
             if not await _healthy(client, base, config):
                 raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True)
             try:
@@ -310,8 +313,8 @@ class MultipartRunner:
                 LOG.info("multipart egress refused: %s", type(error).__name__)
                 raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True) from error
             try:
-                answer = await self._lease_and_send(
-                    ctx, client, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
+                await self._lease_and_run(
+                    ctx, client, resources, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
                     fields, _send_timeout_s(config))
             except (PoolCapacityError, PoolObserverError) as error:
                 LOG.info("multipart capacity refused: %s", error)
@@ -320,13 +323,10 @@ class MultipartRunner:
             except MultipartFailure as error:
                 LOG.warning("multipart downstream failed: %s", error)
                 raise _run_error(error) from error
-        finally:
-            await client.aclose()
-        await self._publish(ctx, file, answer)
 
-    async def _lease_and_send(self, ctx: RunContext, client: httpx.AsyncClient, spec: ExclusivePoolSpec,
+    async def _lease_and_run(self, ctx: RunContext, client: httpx.AsyncClient, resources: AsyncExitStack, spec: ExclusivePoolSpec,
                               observer: tuple[str | None, str], url: str, file_field: str, file: ImageAsset,
-                              fields: Mapping[str, str], timeout: float) -> bytes:
+                              fields: Mapping[str, str], timeout: float) -> None:
         """One lease, held from the observation until the service answers. A pool whose lease is held is refused at
         once, never queued."""
         observer_issue, observer_url = observer
@@ -336,17 +336,11 @@ class MultipartRunner:
                 raise PoolObserverError(observer_issue)
             return await read_observer(client, spec, observer_url)
 
-        async with self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False):
-            media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
-                                     path=self._host.jobs_path())
-            try:
-                # The client's timeout bounds each read, so a service that sends a byte now and then would hold the
-                # lease without end; this bounds the whole call.
-                async with asyncio.timeout(timeout):
-                    return await post_multipart(client, url, image_field=file_field, image=file, fields=fields,
-                                                timeout_seconds=timeout, max_response_bytes=MAX_ANSWER_BYTES)
-            except TimeoutError as error:
-                raise MultipartFailure(KIND_TIMEOUT) from error
+        await resources.enter_async_context(
+            self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False))
+        prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout, resources.aclose)
+        await declared_operation_job.run(prepared, str(ctx.pin.contract["intent"]),
+                                         {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id)
 
     def _tell_retry_after(self, job_id: str, spec: ExclusivePoolSpec) -> None:
         try:
@@ -383,8 +377,8 @@ class MultipartRunner:
         suffix = asset_types.suffix_for_media_type(ref.media_type)
         return ImageAsset(data, "input" + suffix, ref.media_type)
 
-    async def _publish(self, ctx: RunContext, file: ImageAsset, answer: bytes) -> None:
-        """Keep the answer in the Library and publish it as the job's one result, clearing the attempt marker."""
+    async def _result(self, ctx: RunContext, file: ImageAsset, answer: bytes) -> ResultBundle:
+        """Keep the answer with its input provenance; core publishes the returned bundle."""
         (name, output), = (ctx.pin.contract.get("outputs") or {}).items()
         media_type = str(output.get("media_type"))
         stored = asset_types.WorkflowOutput(
@@ -393,20 +387,57 @@ class MultipartRunner:
             inputs=(asset_types.OutputInput(file.data, _source_name(ctx), file.content_type),), takes_text=False)
         try:
             asset_id = await asyncio.to_thread(self._host.store_output, ctx.caller, stored)
+        except result_bundle.ResultRefused:
+            raise
         except Exception:  # noqa: BLE001 - a result that cannot be kept fails the job, as an unsaved result must
             LOG.exception("the result was not stored")
             asset_id = None
         if not asset_id:
             raise RunError(MODEL_NOT_KEPT, "internal")
-        limits = self._host.limits()
+        return ResultBundle({name: AssetsResult((AssetRef(asset_id, media_type, len(answer)),))})
 
-        def stage(conn: Any, attempt: int) -> None:
-            result_bundle.stage_assets_in(
-                conn, ctx.job_id, attempt, name,
-                [{"asset_ref": asset_id, "media_type": media_type, "size_bytes": len(answer)}], limits=limits)
 
-        result_bundle.complete_job(ctx.job_id, stage, limits=limits, metadata_patch={"protocol_submitting": False},
-                                   path=self._host.jobs_path())
+@dataclass
+class _MultipartRun:
+    """One prepared multipart invocation; the generic runner owns its durable completion."""
+
+    runner: MultipartRunner
+    ctx: RunContext
+    client: httpx.AsyncClient
+    url: str
+    file_field: str
+    file: ImageAsset
+    fields: Mapping[str, str]
+    timeout: float
+    finish_send: Callable[[], Awaitable[None]]
+    interface_version = ADAPTER_INTERFACE_VERSION_V2
+
+    @property
+    def adapter(self) -> _MultipartRun:
+        return self
+
+    def connection_for(self, op: str) -> None:
+        return None  # The checked, leased client above is this invocation's connection.
+
+    def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
+        return CanonicalRequest(op=op, body=body)
+
+    def poll_timing(self, op: str) -> tuple[float, float]:
+        return 0, self.timeout  # This adapter always completes in start.
+
+    def result_context(self) -> ResultContext:
+        return ResultContext(self.runner._host.limits())
+
+    async def start(self, conn: Any, op: str, request: CanonicalRequest) -> Completed:
+        try:
+            async with asyncio.timeout(self.timeout):
+                answer = await post_multipart(
+                    self.client, self.url, image_field=self.file_field, image=self.file,
+                    fields=self.fields, timeout_seconds=self.timeout, max_response_bytes=MAX_ANSWER_BYTES)
+        except TimeoutError as error:
+            raise MultipartFailure(KIND_TIMEOUT) from error
+        await self.finish_send()  # Release the pool and close the client before Library storage, as before.
+        return Completed(await self.runner._result(self.ctx, self.file, answer))
 
 
 def _body(binding: Any) -> Mapping[str, Any]:

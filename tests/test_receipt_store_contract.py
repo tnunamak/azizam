@@ -499,3 +499,14 @@ def test_a_cost_block_may_not_carry_forbidden_keys_and_a_receipt_with_a_forbidde
     with pytest.raises(ValueError):
         rs.record({**accepted(request_id="bad"), "metadata": {"prompt": "x"}}, path=db)
     assert [r["request_id"] for r in raw(db, "SELECT request_id FROM receipts")] == ["r1"]
+
+
+def test_finalize_preserves_the_linked_bundle_over_stale_request_metadata(db):
+    rs.begin(accepted(job_id='j1'), now_ms=1000, path=db)
+    linked = {'bundle_version': 1, 'bundle': 'bundle:j1:1', 'results': []}
+    assert rs.merge_job_metadata('j1', {'result_bundle': linked}, path=db) == 1
+    rs.finalize({'request_id': 'r1', 'status': 'failed', 'updated_at_ms': 2000,
+                 'metadata': {'terminal_reason': 'http_502', 'result_bundle': {'bundle': 'stale'}}}, path=db)
+    stored = rs.get('r1', path=db)
+    assert stored['status'] == 'failed'
+    assert stored['metadata'] == {'terminal_reason': 'http_502', 'result_bundle': linked}
