@@ -28165,6 +28165,10 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             options["input_targets"] = workflow_run.plain(selected)
         return options
 
+    def long_workflow(self, chosen):
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        return workflow_id_for_video_key(cfg["chain_workflow"]) if cfg.get("chain_workflow") else None
+
     def reference_input(self, chosen):
         target = frontend_video_create._reference_input(chosen)
         if target is not None:

@@ -561,6 +561,9 @@ class VideoHooks:
     def run_options(self, chosen, frame_rate=None, prepared=None):
         return {}
 
+    def long_workflow(self, chosen):
+        return None
+
     def reference_input(self, chosen):
         from gateway.frontend_shapes.video_create import _reference_input
         return _reference_input(chosen)

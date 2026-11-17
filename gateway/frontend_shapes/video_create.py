@@ -182,9 +182,12 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     seconds = body.get("seconds")
     limit = manifest.length.max_seconds
     shots = body.get("shots") is not None
-    if shots or (_beyond(seconds, limit) and manifest.variants.get("long")):
-        if manifest.variants.get("long"):
-            chosen = snapshot.get(manifest.variants["long"])
+    long_id = manifest.variants.get("long") or hooks.long_workflow(chosen)
+    if shots or (_beyond(seconds, limit) and long_id):
+        if long_id:
+            chosen = snapshot.get(long_id)
+            if chosen is None:
+                return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
             manifest = hooks.facts(chosen)
             return chosen, manifest, short_name(chosen), public_model
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",

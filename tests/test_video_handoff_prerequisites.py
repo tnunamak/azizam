@@ -400,13 +400,6 @@ def test_duration_reason_matches_the_old_handler_for_configured_and_generic_grid
     asyncio.run(drive())
 
 
-def test_existing_row_duration_reason_keeps_the_main_public_answer(world):
-    # Measured on fd30cbfca through POST /v1/videos, not the unmounted old handler.
-    async def drive():
-        answer = await world.rig.call("POST", "/v1/videos", json_body={
-            "model": "video-ltx-2.5-t2v", "prompt": "main reference", "seconds": 3.2, "seed": 7})
-        assert answer.status_code == 200, answer.text
-        assert answer.headers["x-duration-adjusted"] == "requested=3.2 actual=3.3750 reason=frame_count_stride"
 def test_declared_chain_failure_matches_the_old_segment_error(world):
     import httpx
     from tests.support.fake_upstream import HandlerTransport
@@ -458,4 +451,47 @@ def test_declared_chain_progress_uses_all_units_and_live_node_events(world):
         assert status['progress'] == proxy._video_percent('p1', units[1]['sample'], 'sampling', 0.5)
         gate.set()
         await await_status(world, made.json()['id'])
+    asyncio.run(drive())
+
+
+def test_existing_row_duration_reason_keeps_the_main_public_answer(world):
+    # Measured on fd30cbfca through POST /v1/videos, not the unmounted old handler.
+    async def drive():
+        answer = await world.rig.call("POST", "/v1/videos", json_body={
+            "model": "video-ltx-2.5-t2v", "prompt": "main reference", "seconds": 3.2, "seed": 7})
+        assert answer.status_code == 200, answer.text
+        assert answer.headers["x-duration-adjusted"] == "requested=3.2 actual=3.3750 reason=frame_count_stride"
+    asyncio.run(drive())
+
+
+@pytest.mark.parametrize("extra", [{"seconds": 16}, {"shots": [
+    {"prompt": "first", "seconds": 4}, {"prompt": "second", "seconds": 4}]}], ids=["seconds", "storyboard"])
+def test_operator_chain_workflow_works_without_a_manifest_long_variant(world, extra):
+    from dataclasses import replace
+    from gateway.workflow_run import plain
+    original = proxy.WORKFLOW_SNAPSHOTS.current()
+    key = "video.generate.ltx-2.5-t2v"
+    entry = original.get(key)
+    contract = plain(entry.contract)
+    contract["video"]["variants"].pop("long")
+    enforce_contract(contract)
+    changed = replace(entry, contract=contract)
+    class Snapshot:
+        workflows = {**original.workflows, key: changed}
+        def get(self, workflow_id):
+            return changed if workflow_id == key else original.get(workflow_id)
+        def by_intent(self, intent):
+            return tuple(self.get(item.id) for item in original.by_intent(intent))
+        def __getattr__(self, name):
+            return getattr(original, name)
+    world.rig.set(proxy, "WORKFLOW_SNAPSHOTS", type("Provider", (), {"current": lambda self: Snapshot()})())
+    body = {"model": "ltx-2.5-t2v", "prompt": "configured chain", "seed": 7, **extra}
+    async def drive():
+        old = await proxy.proxy_graph_video_create(json_request(body), access_context(), body_override=body)
+        new = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert new.status_code == old.status_code == 200, new.text
+        await submitted(world, 2)
+        assert json.dumps(world.engine.prompts["p1"], sort_keys=True) == json.dumps(world.engine.prompts["p2"], sort_keys=True)
+        for field in ("seconds", "total_seconds", "segments", "extended_from_video_id"):
+            assert new.json()[field] == json.loads(old.body)[field]
     asyncio.run(drive())
