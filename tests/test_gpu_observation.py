@@ -110,3 +110,70 @@ def test_renderer_tooltip_uses_configured_executable(monkeypatch):
     assert firehose_render._vram_row_label({"service": "__total"}) == (
         '<b title="GPU memory.used (authoritative)">[total]</b>'
     )
+
+
+@pytest.mark.parametrize("registry_state", ["missing", "malformed"])
+def test_renderer_survives_registry_error(tmp_path, monkeypatch, registry_state):
+    import firehose_render
+    from gateway import gpu_observation
+
+    path = tmp_path / "observation.yml"
+    if registry_state == "malformed":
+        path.write_text("argv: [", encoding="utf-8")
+    original_load = gpu_observation.load_registry
+    def broken_registry(_path):
+        return original_load(path)
+    monkeypatch.setattr(gpu_observation, "load_registry", broken_registry)
+    # Give the label cache a distinct provider, without changing strict observation.
+    original_executable = gpu_observation.executable
+    monkeypatch.setattr(gpu_observation, "executable", lambda: original_executable())
+    payload = {"vram_attribution": {"per_gpu": [{
+        "index": 0, "memory_used_mb": 1, "memory_total_mb": 2,
+        "services": [{"service": "__unattributed", "used_mb": 1}],
+    }]}, firehose_render._GRAPH_WORDS["view_key"]: {
+        "device": {"name": "Example device"}, "python_version": "example",
+    }}
+    for _ in range(2):
+        page = firehose_render.render_html(payload)
+        assert 'title="GPU memory not attributed to a compute process"' in page
+        assert "--query-compute-apps" not in page
+        assert "Device name" in page and "Example device" in page
+        assert "</html>" in page
+    with pytest.raises((OSError, yaml.YAMLError, ValueError)):
+        gpu_observation.observe(lambda _argv: (0, "", ""))
+
+
+def test_renderer_label_cached_by_provider(monkeypatch):
+    import firehose_render
+    from gateway import gpu_observation
+
+    calls = []
+    def label():
+        calls.append(True)
+        return "configured-probe"
+    monkeypatch.setattr(gpu_observation, "executable", label)
+    for _ in range(2):
+        assert "configured-probe --query-compute-apps" in firehose_render._vram_row_label(
+            {"service": "__unattributed"})
+    assert calls == [True]
+    monkeypatch.setattr(gpu_observation, "executable", lambda: "replacement-probe")
+    assert "replacement-probe --query-compute-apps" in firehose_render._vram_row_label(
+        {"service": "__unattributed"})
+
+
+def test_renderer_display_refreshes_after_warm_render(monkeypatch):
+    import firehose_render
+    from gateway import gpu_observation
+
+    firehose_render._render_budgets({})
+    firehose_render._render_graph_view({"device": {}})
+    display = {"devices": [{"label": "<card>", "budget_key": "example",
+                           "roles": [{"label": "custom", "key": "reserve"}]}],
+               "runtime": {"device_label": "Changed device", "python_label": "Interpreter",
+                           "runtime_label": "Runtime"}}
+    monkeypatch.setattr(gpu_observation, "display_config", lambda: display)
+    assert "&lt;card&gt; custom GB</th><td>12" in firehose_render._render_budgets(
+        {"example": {"reserve": 12}})
+    assert "Changed device name" in firehose_render._render_graph_view({"device": {}})
+    display["devices"][0]["label"] = "New card"
+    assert "New card custom GB" in firehose_render._render_budgets({})
