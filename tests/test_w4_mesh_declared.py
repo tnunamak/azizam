@@ -1,11 +1,13 @@
 """Same route and inputs through the old multipart loop and declared job runner."""
 import pytest
 
-from gateway import declared_operation_job, multipart_adapter
+from gateway import declared_operation_job, multipart_adapter, receipt_store
+from tests.support.adapter_differential import Normalizer, dump_sqlite
+from tests.support.adapter_differential_rig import reset_store
 from tests import test_adapter_differential_s7_mesh_rows as mesh
 
 
-@pytest.mark.parametrize('name', ['success_raw', 'success_sync', 'async_job', 'engine_failure', 'health_503', 'observer_refusal'])
+@pytest.mark.parametrize('name', sorted(mesh.CELLS))
 def test_mesh_old_and_declared_wire(tmp_path, name):
     observations = []
     for declared in (False, True):
@@ -13,9 +15,16 @@ def test_mesh_old_and_declared_wire(tmp_path, name):
         root.mkdir()
         with pytest.MonkeyPatch.context() as patch:
             harness = mesh.rig.__wrapped__(patch, root)
+            reset_store(receipt_store.DB_PATH)
+            original_answer = mesh.answer
+            def complete_answer(response):
+                return {**original_answer(response), 'headers': mesh._mask(dict(response.headers))}
+            patch.setattr(mesh, 'answer', complete_answer)
             if declared:
                 patch.setattr(multipart_adapter.MultipartRunner, 'run', multipart_adapter.MultipartRunner.run_declared)
-            observations.append(mesh.CELLS[name](harness))
+            facts = mesh.CELLS[name](harness)
+            facts['receipts'] = dump_sqlite(receipt_store.DB_PATH, Normalizer([root]), skip_tables=('receipt_history',))
+            observations.append(facts)
     assert observations[0] == observations[1]
 
 

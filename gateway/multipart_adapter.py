@@ -22,12 +22,13 @@ result, as for every adapter. A run that meets the marker without a result does 
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 import json
 import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 import httpx
 
@@ -371,7 +372,8 @@ class MultipartRunner:
         file_field, file, fields = await self._form(ctx, binding)
         observer_issue, observer_url = observer_problem(self._host.services(), spec)
         client = self._host.client_factory()
-        try:
+        async with AsyncExitStack() as resources:
+            resources.push_async_callback(client.aclose)
             if not await _healthy(client, base, config):
                 raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True)
             try:
@@ -381,7 +383,7 @@ class MultipartRunner:
                 raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True) from error
             try:
                 await self._lease_and_run(
-                    ctx, client, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
+                    ctx, client, resources, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
                     fields, _send_timeout_s(config))
             except (PoolCapacityError, PoolObserverError) as error:
                 LOG.info("multipart capacity refused: %s", error)
@@ -390,10 +392,8 @@ class MultipartRunner:
             except MultipartFailure as error:
                 LOG.warning("multipart downstream failed: %s", error)
                 raise _run_error(error) from error
-        finally:
-            await client.aclose()
 
-    async def _lease_and_run(self, ctx: RunContext, client: httpx.AsyncClient, spec: ExclusivePoolSpec,
+    async def _lease_and_run(self, ctx: RunContext, client: httpx.AsyncClient, resources: AsyncExitStack, spec: ExclusivePoolSpec,
                               observer: tuple[str | None, str], url: str, file_field: str, file: ImageAsset,
                               fields: Mapping[str, str], timeout: float) -> None:
         """One lease, held from the observation until the service answers. A pool whose lease is held is refused at
@@ -405,10 +405,11 @@ class MultipartRunner:
                 raise PoolObserverError(observer_issue)
             return await read_observer(client, spec, observer_url)
 
-        async with self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False):
-            prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout)
-            await declared_operation_job.run(prepared, str(ctx.pin.contract["intent"]),
-                                             {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id)
+        await resources.enter_async_context(
+            self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False))
+        prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout, resources.aclose)
+        await declared_operation_job.run(prepared, str(ctx.pin.contract["intent"]),
+                                         {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id)
 
     def _tell_retry_after(self, job_id: str, spec: ExclusivePoolSpec) -> None:
         try:
@@ -499,6 +500,7 @@ class _MultipartRun:
     file: ImageAsset
     fields: Mapping[str, str]
     timeout: float
+    finish_send: Callable[[], Awaitable[None]]
     interface_version = ADAPTER_INTERFACE_VERSION_V2
 
     @property
@@ -525,6 +527,7 @@ class _MultipartRun:
                     fields=self.fields, timeout_seconds=self.timeout, max_response_bytes=MAX_ANSWER_BYTES)
         except TimeoutError as error:
             raise MultipartFailure(KIND_TIMEOUT) from error
+        await self.finish_send()  # Release the pool and close the client before Library storage, as before.
         return Completed(await self.runner._result(self.ctx, self.file, answer))
 
 
