@@ -66,7 +66,6 @@ def test_remix_reads_the_path_source_and_binds_its_role_with_lineage(monkeypatch
     request.scope["path_params"] = {"video_id": "video_mj_source"}
     request.state.caller = caller
 
-    assert asyncio.run(shape.legacy_route(request, row, snapshot)) is None
     run_request = asyncio.run(shape.to_run_request(request, row, snapshot, spool=fixtures.FakeSpool()))
     assert isinstance(run_request, RunRequest), getattr(run_request, "body", run_request)
     assert seen == [("mj_source", "video_mj_source", caller)]

@@ -119,9 +119,6 @@ def test_valid_reference_variant_matches_old_submission_without_a_handoff(world)
         assert old.status_code == 200, old.body
         assert len(world.engine.prompts) == 1
 
-        async def no_handoff(*args, **kwargs):
-            raise AssertionError("the declared create reached the old handler")
-        world.rig.monkeypatch.setitem(proxy._ROW_ROUTE_DEPS.legacy, video_create.LEGACY_CREATE, no_handoff)
         response = await world.rig.call("POST", "/v1/videos", json_body=body)
         assert response.status_code == 200, response.text
         assert response.json()["id"].startswith("video_mj_")

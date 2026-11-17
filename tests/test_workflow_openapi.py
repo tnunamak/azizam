@@ -819,11 +819,10 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
     async def run_body(self, body):
         return await self.shape.to_run_request(self.request(body), self.row, self.snapshot, spool=self.spool)
 
-    def assert_handoff(self, result, body):
-        from gateway.frontend_shapes._base import LegacyRoute
-
-        self.assertIsInstance(result, LegacyRoute)
-        self.assertEqual(result, LegacyRoute(self.video_create.LEGACY_CREATE, body))
+    def assert_unresolved_reference(self, result):
+        self.assertIsInstance(result, Response)
+        self.assertEqual(result.status_code, 400)
+        self.assertEqual(json.loads(result.body)["error"]["param"], "input_reference")
         self.check_reference.assert_not_called()
         self.stage.assert_not_awaited()
 
@@ -861,7 +860,7 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
         self.check_reference.assert_not_called()
         self.stage.assert_not_awaited()
 
-    async def test_frontend_video_create_reference_without_mapping_hands_off_before_effects(self):
+    async def test_frontend_video_create_reference_without_mapping_refuses_before_effects(self):
         from gateway.workflow_runtime_types import RunRequest
 
         self.entries.pop(self.candidate.id)
@@ -869,14 +868,14 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
         record = SimpleNamespace(id=self.base.id, intent=self.base.contract["intent"], contract=self.base.contract)
         self.assertIsNone(reference_input(record, "async"))
         picked = self.video_create.select(self.shape, self.body, self.row, self.snapshot, self.hooks)
-        self.assert_handoff(picked, self.body)
-        self.assert_handoff(await self.run_body(self.body), self.body)
+        self.assertEqual(picked[0], self.base)
+        self.assert_unresolved_reference(await self.run_body(self.body))
         for reference in ("", None):
             with self.subTest(reference=reference):
                 body = {**self.body, "input_reference": reference}
                 result = await self.run_body(body)
                 if reference is not None:
-                    self.assert_handoff(result, body)
+                    self.assert_unresolved_reference(result)
                 else:
                     self.assertIsInstance(result, RunRequest)
         body = {key: value for key, value in self.body.items() if key != "input_reference"}
@@ -888,9 +887,9 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
         self.check_reference.assert_not_called()
         self.stage.assert_not_awaited()
 
-    async def test_frontend_video_create_invalid_reference_keeps_decode_handoff(self):
+    async def test_frontend_video_create_unresolved_reference_refuses_before_effects(self):
         body = {**self.body, "input_reference": "https://example.invalid/reference.png"}
-        self.assert_handoff(await self.run_body(body), body)
+        self.assert_unresolved_reference(await self.run_body(body))
         # Empty and null still use the missing-reference branch for a required role.
         for reference in ("", None):
             with self.subTest(reference=reference):
@@ -921,7 +920,7 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
         # A candidate accepting a reference is not enough: this edge names duration.
         self.manifests[self.base.id].variants = {"duration": self.candidate.id}
         self.manifests[self.candidate.id].roles["duration"] = "clip_length"
-        self.assert_handoff(await self.run_body(self.body), self.body)
+        self.assert_unresolved_reference(await self.run_body(self.body))
         # A same-name role/input is the structural fallback, without a special spelling.
         self.manifests[self.base.id].variants = {"guide_frame": self.candidate.id}
         self.manifests[self.candidate.id].roles = {}

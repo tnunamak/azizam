@@ -29,7 +29,6 @@ from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapsho
 if TYPE_CHECKING:
     from gateway.frontend_shapes.shapes import OpenAIVideoCreate
 
-LEGACY_CREATE = "videos.create"
 DEFAULT_SECONDS = 5.0
 FORM_TYPES = ("multipart/form-data", "application/x-www-form-urlencoded")
 MIN_BASE64_BYTES = 64               # a reference that is plain base64 must decode to more than this, as it always had to

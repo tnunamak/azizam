@@ -18,7 +18,7 @@ import json
 
 from gateway import client_errors, image_extensions, image_output, provenance
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import TERMINAL, LegacyRoute, Shape, coerce, job_object
+from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
 from gateway.frontend_shapes.video_views import VideoViews
 from gateway.workflow_runtime_types import (
     CallerContext,
@@ -690,9 +690,6 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
     async def after_submit(self, request, view, caller) -> None:
         return None
 
-    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
-        return None
-
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
         run = await Shape.to_run_request(self, request, row, snapshot, spool=spool)
         if isinstance(run, Response):
@@ -742,7 +739,6 @@ class OpenAIVideoRemix(OpenAIVideoCreate):
     shape_id = "openai.video.remix"
     files = OpenAIVideoEdit.files
     file_inputs = OpenAIVideoEdit.file_inputs
-    legacy_route = OpenAIVideoEdit.legacy_route
 
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
         from gateway.frontend_shapes import video_create

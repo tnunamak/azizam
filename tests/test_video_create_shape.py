@@ -517,16 +517,12 @@ def test_the_facts_wait_for_the_drawn_seed_by_named_refs_that_never_enter_identi
     assert resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={})["provenance"].get("seed") is None
 
 
-# ----------------------------------------- a chain is the old handler's alone: no row policy, no row receipt (review 13)
+# ----------------------------------------- row policy and request receipt
 
 
 def _row_app(calls: dict[str, list], snapshot=SNAP):
     from fastapi import FastAPI
     from gateway import row_routes
-
-    async def legacy(request, caller, body):
-        calls["legacy"].append((caller, dict(body)))
-        return Response("old", status_code=200)
 
     class _Owner:
         def report(self, **_): calls["report"].append(1)
@@ -540,16 +536,10 @@ def _row_app(calls: dict[str, list], snapshot=SNAP):
         core=lambda: object(), snapshot=lambda: snapshot, jobs=lambda: None, new_spool=FakeSpool,
         scope=lambda request, spool: __import__("contextlib").nullcontext(), refused=lambda r: Response("refused", status_code=r.http_status),
         new_request_id=lambda: "req-1", open_receipt=lambda *a: calls["receipt"].append(a) or _Owner(),
-        name_receipt=lambda *a: None, pinned=lambda job_id: None, legacy={_base_legacy(): legacy})
+        name_receipt=lambda *a: None, pinned=lambda job_id: None)
     app = FastAPI()
     row_routes.mount_rows(app, deps, ("videos-create",))
     return app
-
-
-def _base_legacy() -> str:
-    from gateway.frontend_shapes import video_create
-    return video_create.LEGACY_CREATE
-
 
 
 def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_receipt_after_the_policy() -> None:
@@ -601,7 +591,7 @@ def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
         core=lambda: Core(), snapshot=lambda: SNAP, jobs=lambda: None, new_spool=FakeSpool,
         scope=lambda request, spool: __import__("contextlib").nullcontext(), refused=lambda r: Response("refused", status_code=r.http_status),
         new_request_id=lambda: "req-1", open_receipt=lambda *a: Owner(),
-        name_receipt=lambda *a: calls["named"].append(a), pinned=lambda job_id: None, legacy={},
+        name_receipt=lambda *a: calls["named"].append(a), pinned=lambda job_id: None,
         record_inputs=lambda owner, notes: calls["inputs"].append(notes), record_facts=lambda owner, facts: calls["facts"].append(facts))
     app = FastAPI()
     row_routes.mount_rows(app, deps, ("videos-create",))
@@ -768,23 +758,3 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
             400, "Source video is not completed (status=queued)", "video_not_ready", "video")
     finally:
         shapes.VIDEO_HOOKS = None
-
-
-def test_a_legacy_hand_off_enforces_the_row_routes_policy_before_the_old_pipeline_runs(monkeypatch) -> None:
-    """The create route leaves the registered routes, so the route policy for its path is the row's own data. The hand-off
-    must still ask for it, or a chain create would skip the plan check the row path makes."""
-    import proxy
-    seen: dict[str, Any] = {}
-
-    def deny(caller, path, *, policy=None):
-        seen.update(path=path, policy=policy)
-        return Response(status_code=403)
-
-    async def never(*args, **kwargs):
-        raise AssertionError("the old pipeline ran after a denial")
-
-    monkeypatch.setattr(proxy, "_enforce_runtime_route_policy", deny)
-    monkeypatch.setattr(proxy, "proxy_graph_video_create", never)
-    response = asyncio.run(proxy._legacy_video_create(None, object(), {"prompt": "x"}))
-    assert response.status_code == 403 and seen["path"] == "/v1/videos"
-    assert seen["policy"] and seen["policy"]["intent"] == "video.generate" and seen["policy"]["protocol"] == "openai.video"
