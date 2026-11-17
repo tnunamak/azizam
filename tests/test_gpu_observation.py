@@ -177,3 +177,189 @@ def test_renderer_display_refreshes_after_warm_render(monkeypatch):
     assert "Changed device name" in firehose_render._render_graph_view({"device": {}})
     display["devices"][0]["label"] = "New card"
     assert "New card custom GB" in firehose_render._render_budgets({})
+
+def _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes=False, amend=None):
+    import status_endpoint as status
+    from gateway import gpu_observation
+
+    config = load_registry()
+    if amend is not None:
+        amend(config)
+    if reversed_indexes:
+        for device in config["devices"]:
+            device["index"] = 1 - device["index"]
+        config["runtime_display"]["device_index"] = 1
+    path = tmp_path / "observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    original = gpu_observation.display_config
+    monkeypatch.setattr(gpu_observation, "display_config", lambda: original(path))
+    budget = tmp_path / "budget.sh"
+    budget.write_text(
+        "GPU_TOTAL_GB=24\nGPU0_DESKTOP=2\nGPU0_TTS=3\n"
+        + status._GRAPH_WORDS["gpu_budget_var"] + "=4\n"
+        "GPU0_HEADROOM=5\nGPU1_LLM=18\nGPU1_HEADROOM=6\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(status, "_GPU_BUDGET_PATH", budget)
+    monkeypatch.setattr(status, "_BUDGET_CACHE", {"ts": 0.0, "data": None})
+    monkeypatch.setattr(status, "_get_compute_apps", lambda **kwargs: [])
+    monkeypatch.setattr(status, "_service_pids", lambda *args, **kwargs: {})
+    return status
+
+
+def _headroom_rows(status, indexes):
+    gpus = [{"index": index, "uuid": str(index), "memory_used_mb": 4096,
+             "memory_total_mb": 24576} for index in indexes]
+    return status._vram_attribution(gpus)["per_gpu"]
+
+
+def test_status_budget_and_headroom_shipped_rows(monkeypatch, tmp_path):
+    status = _status_budget_fixture(monkeypatch, tmp_path)
+    graph_key = status._GRAPH_WORDS["gpu_budget_key"]
+    graph_var = status._GRAPH_WORDS["gpu_budget_var"]
+    assert status._read_gpu_budget() == {
+        "gpu0": {"total_gb": 24, "desktop_gb": 2, "tts_gb": 3,
+                 graph_key: 4, "headroom_gb": 5},
+        "gpu1": {"total_gb": 24, "llm_gb": 18, "headroom_gb": 6},
+        "raw": {"GPU_TOTAL_GB": 24, "GPU0_DESKTOP": 2, "GPU0_TTS": 3,
+                graph_var: 4, "GPU0_HEADROOM": 5, "GPU1_LLM": 18, "GPU1_HEADROOM": 6},
+    }
+    rows = _headroom_rows(status, [0, 1])
+    assert [next(row for row in device["services"] if row["service"] == "__headroom")
+            for device in rows] == [
+        {"service": "__headroom", "used_mb": 20480, "used_gb": 20.0,
+         "budget_gb": 5, "pct_of_budget": 400.0, "over_budget": False,
+         "headroom_short": False, "spillover": False, "note": "free VRAM (total − used)"},
+        {"service": "__headroom", "used_mb": 20480, "used_gb": 20.0,
+         "budget_gb": 6, "pct_of_budget": 333.3, "over_budget": False,
+         "headroom_short": False, "spillover": False, "note": "free VRAM (total − used)"},
+    ]
+    assert [device["services"][-1]["budget_gb"] for device in rows] == [24, 24]
+
+
+def test_status_budget_roles_follow_reversed_indexes(monkeypatch, tmp_path):
+    status = _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes=True)
+    rows = _headroom_rows(status, [0, 1])
+    assert [next(row["budget_gb"] for row in device["services"]
+                 if row["service"] == "__headroom") for device in rows] == [6, 5]
+    import asyncio
+    workloads = asyncio.run(status._gpu_workloads(
+        [{"index": 0}, {"index": 1}], {"running": 1, "pending": 2}, []))
+    assert [row["active_workload"]["label"] for row in workloads] == ["loaded", "running"]
+
+
+def test_status_unmapped_device_has_unknown_role_and_no_budget(monkeypatch, tmp_path):
+    status = _status_budget_fixture(monkeypatch, tmp_path)
+    third = _headroom_rows(status, [0, 1, 2])[2]
+    assert third["role"] == "unknown"
+    assert all(row["budget_gb"] is None for row in third["services"])
+    assert "idle" not in third.values()
+    import asyncio
+    devices = asyncio.run(status._gpu_workloads([{"index": 2}], {"running": 0}, []))
+    assert devices[0]["active_workload"]["label"] == "unknown"
+
+
+def test_status_role_label_and_bucket_names_follow_registry(monkeypatch, tmp_path):
+    import asyncio
+
+    def amend(config):
+        config["attribution_buckets"] = {
+            "unowned": "unowned-renamed", "headroom": "reserve-renamed",
+            "unattributed": "unmeasured-renamed", "total": "sum-renamed",
+        }
+        for device in config["devices"]:
+            if device["workload"] == "slots":
+                for role in device["roles"]:
+                    if role["key"] == device["workload_role"]:
+                        role["label"] = "Renamed workload"
+
+    status = _status_budget_fixture(monkeypatch, tmp_path, amend=amend)
+    monkeypatch.setattr(status, "_get_compute_apps", lambda **kwargs: [
+        {"pid": 91919, "gpu_uuid": "0", "used_mb": 1024, "process_name": "fixture"},
+    ])
+    monkeypatch.setattr(status, "_read_proc_comm", lambda pid: "fixture")
+    services = _headroom_rows(status, [0])[0]["services"]
+    assert [row["service"] for row in services] == [
+        "unowned-renamed", "unmeasured-renamed", "reserve-renamed", "sum-renamed",
+    ]
+    assert services[0]["budget_gb"] == 2
+    assert services[0]["top_contributors"] == [
+        {"pid": 91919, "used_mb": 1024, "comm": "fixture"},
+    ]
+    assert services[2]["budget_gb"] == 5
+    for slots, used, expected in [
+        ([{"is_processing": True}, {}], 0, "Renamed workload: 1 active / 2 slots"),
+        (None, 8192, "Renamed workload: model resident (slots endpoint unavailable)"),
+        (None, 0, "Renamed workload: no model resident"),
+    ]:
+        result = asyncio.run(status._gpu_workloads(
+            [{"index": 1, "memory_used_mb": used}], None, slots))
+        assert result[0]["active_workload"]["detail"] == expected
+
+
+def test_status_shipped_workload_strings_and_bucket_names(monkeypatch, tmp_path):
+    import asyncio
+
+    status = _status_budget_fixture(monkeypatch, tmp_path)
+    for slots, used, expected in [
+        ([{"is_processing": True}, {}], 0, "LLM: 1 active / 2 slots"),
+        (None, 8192, "LLM: model resident (slots endpoint unavailable)"),
+        (None, 0, "LLM: no model resident"),
+    ]:
+        result = asyncio.run(status._gpu_workloads(
+            [{"index": 1, "memory_used_mb": used}], None, slots))
+        assert result[0]["active_workload"]["detail"] == expected
+    assert [row["service"] for row in _headroom_rows(status, [0])[0]["services"]] == [
+        "__unattributed", "__headroom", "__total",
+    ]
+
+
+@pytest.mark.parametrize("defect", [
+    "missing", "duplicate", "selector", "duplicate-role", "unknown-bucket",
+    "queue-selector", "queue-null-selector", "invalid-bucket-value",
+    "invalid-buckets-shape", "extra-bucket",
+])
+def test_registry_rejects_invalid_attribution_bindings(tmp_path, defect):
+    from gateway.gpu_observation import display_config
+
+    config = load_registry()
+    device = next(row for row in config["devices"] if row["workload"] == "slots")
+    code = "observation_attribution_buckets_invalid"
+    identity = ["bucket total"]
+    if defect == "missing":
+        del config["attribution_buckets"]["total"]
+    elif defect == "duplicate":
+        config["attribution_buckets"]["total"] = config["attribution_buckets"]["headroom"]
+        identity.append(config["attribution_buckets"]["headroom"])
+    elif defect == "invalid-bucket-value":
+        config["attribution_buckets"]["total"] = []
+    elif defect == "invalid-buckets-shape":
+        config["attribution_buckets"] = []
+        identity = ["attribution_buckets", "list"]
+    elif defect == "extra-bucket":
+        config["attribution_buckets"]["extra"] = "extra-output"
+        identity = ["bucket extra"]
+    elif defect == "duplicate-role":
+        role = device["roles"][0]
+        device["roles"].append(dict(role))
+        code = "observation_device_role_duplicate"
+        identity = [f"device {device['index']}", f"role {role['key']}"]
+    elif defect == "unknown-bucket":
+        role = device["roles"][0]
+        role["bucket"] = "missing-bucket"
+        code = "observation_role_bucket_invalid"
+        identity = [f"device {device['index']}", f"role {role['key']}",
+                    "bucket missing-bucket"]
+    else:
+        if defect.startswith("queue-"):
+            device = next(row for row in config["devices"] if row["workload"] == "queue")
+        device["workload_role"] = None if defect == "queue-null-selector" else "missing-role"
+        code = "observation_workload_role_invalid"
+        identity = [f"device {device['index']}", f"role {device['workload_role']}"]
+    path = tmp_path / "invalid-observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        display_config(path)
+    message = str(exc.value)
+    assert message.startswith(code + ":")
+    assert all(part in message for part in identity)
