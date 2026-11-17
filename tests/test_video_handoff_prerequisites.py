@@ -27,6 +27,57 @@ from tests.test_s7_parity_video_create import submitted, world  # noqa: F401
 ROOT = Path(__file__).resolve().parent.parent
 
 
+SUBMIT_FAILURE_FIXTURE_CONTRACT = {
+    "_reference": {
+        "revision": "fd30cbfcaa8e7f079474b4c8e6d221bb5f18a814",
+        "proof_commit": "3cb3bf253",
+        "probe_sha256": "c43eb01c821e302351c67af805659723c31e71bab28a394042771e7ee0de105e",
+        "route": "POST /v1/videos",
+    },
+    "request": {
+        "model": "ltx-2.5-long",
+        "prompt": "x",
+        "seconds": 16,
+        "seed": 7,
+    },
+    "status": 502,
+    "body": {
+        "error": {
+            "message": "ComfyUI unavailable at http://comfy.fk.test",
+            "type": "api_error",
+        },
+    },
+}
+
+
+def validate_submit_failure_fixture(fixture: dict) -> None:
+    assert fixture == SUBMIT_FAILURE_FIXTURE_CONTRACT, "submit failure fixture drift"
+
+
+def test_submit_failure_fixture_contract():
+    fixture = json.loads(
+        (ROOT / "tests/fixtures/video_submit_failure_fd30cbfca.json").read_text()
+    )
+    assert fixture == SUBMIT_FAILURE_FIXTURE_CONTRACT
+    validate_submit_failure_fixture(fixture)
+
+
+@pytest.mark.parametrize("field", ["revision", "error.type"])
+def test_submit_failure_fixture_contract_rejects_drift(field):
+    fixture = json.loads(
+        (ROOT / "tests/fixtures/video_submit_failure_fd30cbfca.json").read_text()
+    )
+    validate_submit_failure_fixture(fixture)
+    changed = copy.deepcopy(fixture)
+    if field == "revision":
+        changed["_reference"]["revision"] = "changed-revision"
+    else:
+        changed["body"]["error"]["type"] = "changed-error-type"
+    with pytest.raises(AssertionError, match="submit failure fixture drift"):
+        validate_submit_failure_fixture(changed)
+    assert fixture == SUBMIT_FAILURE_FIXTURE_CONTRACT
+
+
 @pytest.fixture(autouse=True)
 def fixed_submission_session(monkeypatch):
     # Old and job-backed calls create independent websocket sessions. Pin only
