@@ -188,16 +188,20 @@ def _graph_id(nodes: Mapping[str, Mapping]) -> str:
 def _frontend_ids(api: Mapping[str, Any]) -> dict[str, int]:
     """Map API node ids to the integer ids the frontend needs.
 
-    Numeric ids keep their value, so links and titles match the API graph.
-    Catalog templates also use readable ids such as ``s0_text``; those get the
+    Canonical positive ASCII numeric ids keep their value.
+    Other keys, including readable ids such as ``s0_text``, get the
     next free integers in sorted order, which keeps the result deterministic.
     """
     ids: dict[str, int] = {}
     for key in api:
+        if not (key.isascii() and key.isdigit()):
+            continue
         try:
-            ids[key] = int(key)
+            value = int(key)
         except ValueError:
-            pass
+            continue
+        if value > 0 and str(value) == key:
+            ids[key] = value
     taken = set(ids.values())
     nxt = max(taken, default=0)
     for key in sorted(k for k in api if k not in ids):
