@@ -286,4 +286,4 @@ def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(
 
     run(go())
     assert [label for label, _ in order] == ["person", "background"]
-    assert order[0][1] <= 6 and order[1][1] >= 40 - 2    # the person ran when memory freed; background after more freed
+    assert 4 <= order[0][1] < 40 <= order[1][1]    # the person ran when 12 000 freed; background only when 60 000 did
