@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { runImageJob, type ImageJobDeps } from "./image-job";
+import { runImageJob, SUBMIT_ATTEMPTS, type ImageJobDeps } from "./image-job";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -83,3 +83,82 @@ test("without a stop, submits, waits, polls and returns the content", async () =
   expect(deps.content).toHaveBeenCalledTimes(1);
   expect(deps.content).toHaveBeenCalledWith("job");
 });
+
+for (const network of [false, true]) {
+  for (const attempt of [1, SUBMIT_ATTEMPTS]) {
+    test(`stops after submit attempt ${attempt} rejects (network=${network})`, async () => {
+      const { deps, stop } = fixture();
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const failure = new Error("pending submit failure");
+      // Earlier attempts must be retried to reach the last-attempt boundary.
+      deps.isNetworkFailure.mockReturnValue(true);
+      for (let i = 1; i < attempt; i += 1) {
+        deps.submit.mockRejectedValueOnce(new Error("earlier network failure"));
+      }
+      deps.submit.mockImplementationOnce(async () => {
+        entered.resolve();
+        await release.promise;
+        throw failure;
+      });
+      const result = runImageJob(deps).then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        await entered.promise;
+        expect(deps.submit).toHaveBeenCalledTimes(attempt);
+        deps.isNetworkFailure.mockReturnValue(network);
+        const calls = [deps.submit, deps.poll, deps.content, deps.wait, deps.now, deps.isNetworkFailure];
+        const counts = calls.map((call) => call.mock.calls.length);
+        stop();
+        release.resolve();
+        expect(await result).toEqual({ value: { kind: "stopped" } });
+        expect(calls.map((call) => call.mock.calls.length)).toEqual(counts);
+      } finally {
+        stop();
+        release.resolve();
+        await result;
+      }
+    });
+  }
+
+  for (const phase of ["content", "poll"] as const) {
+    test(`stops after pending ${phase} rejects (network=${network})`, async () => {
+      const { deps, stop } = fixture();
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const failure = new Error("pending read failure");
+      const pending = async (): Promise<never> => {
+        entered.resolve();
+        await release.promise;
+        throw failure;
+      };
+      deps.isNetworkFailure.mockReturnValue(network);
+      if (phase === "content") {
+        deps.submit.mockResolvedValueOnce({ id: "job", status: "completed" });
+        deps.content.mockImplementationOnce(pending);
+      } else {
+        deps.poll.mockImplementationOnce(pending);
+      }
+      const result = runImageJob(deps).then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        await entered.promise;
+        expect(deps[phase]).toHaveBeenCalledTimes(1);
+        const calls = [deps.submit, deps.poll, deps.content, deps.wait, deps.now, deps.isNetworkFailure];
+        const counts = calls.map((call) => call.mock.calls.length);
+        stop();
+        release.resolve();
+        expect(await result).toEqual({ value: { kind: "stopped" } });
+        expect(calls.map((call) => call.mock.calls.length)).toEqual(counts);
+      } finally {
+        stop();
+        release.resolve();
+        await result;
+      }
+    });
+  }
+}

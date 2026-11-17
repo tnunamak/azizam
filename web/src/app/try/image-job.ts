@@ -56,6 +56,7 @@ export async function runImageJob<Content>(
       job = await deps.submit();
       if (deps.stopped()) return { kind: "stopped" };
     } catch (error) {
+      if (deps.stopped()) return { kind: "stopped" };
       if (!deps.isNetworkFailure(error)) throw error;
       if (attempt === SUBMIT_ATTEMPTS - 1) return { kind: "lost" };
       await deps.wait(POLL_MS * (attempt + 1));
@@ -78,6 +79,7 @@ export async function runImageJob<Content>(
         if (deps.stopped()) return { kind: "stopped" };
         return { kind: "done", content, jobId: job.id, requestId };
       } catch (error) {
+        if (deps.stopped()) return { kind: "stopped" };
         if (!deps.isNetworkFailure(error)) throw error;
         // Fall through: wait, then try the content again.
       }
@@ -104,6 +106,7 @@ export async function runImageJob<Content>(
         };
       }
     } catch (error) {
+      if (deps.stopped()) return { kind: "stopped" };
       if (!deps.isNetworkFailure(error)) throw error;
     }
   }
