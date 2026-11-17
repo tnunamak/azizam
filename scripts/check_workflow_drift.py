@@ -132,7 +132,11 @@ def _layout(widget_names: list[str], linked: set[str], values: list) -> list[str
 
     for keep_linked, control in ((True, True), (True, False), (False, True), (False, False)):
         slots = build(keep_linked, control)
-        if len(slots) == len(values):
+        if len(slots) == len(values) and all(
+            name is not None
+            or (isinstance(value, str) and value in _CONTROL_VALUES)
+            for name, value in zip(slots, values)
+        ):
             return slots
     slots = []
     for name in widget_names:
