@@ -29057,7 +29057,7 @@ class _PreparedAudioGeneration:
                 workflow=self.workflow_id, backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
                 app_profile=plan_ref(caller), app_id=caller.app_id if caller else None,
                 owner_key_hash=_asset_owner_key(self.auth_context), api_key_name=caller.name if caller else None,
-                metadata={"mode": "sync_media_route", "publication_pending": True})
+                status=media_jobs.STATUS_RUNNING, metadata={"mode": "sync_media_route", "publication_pending": True})
             self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
         try:
             return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)

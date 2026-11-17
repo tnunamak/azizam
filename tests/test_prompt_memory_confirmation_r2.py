@@ -390,7 +390,7 @@ def test_async_identity_failure_does_not_save_backend_prompt_echo(household, mon
 
 @pytest.mark.parametrize("intent", ["audio.generate", "music.generate", "sfx.generate"])
 def test_successful_audio_worker_preserves_forget_and_releases_payload(
-    household, monkeypatch, intent
+    household, monkeypatch, intent, fake_upstreams
 ):
     import io
     import struct
@@ -420,6 +420,17 @@ def test_successful_audio_worker_preserves_forget_and_releases_payload(
     tagged = b"RIFF" + struct.pack("<I", len(riff_body)) + riff_body
     seen = []
 
+    from dataclasses import replace
+    from tests.support.adapter_differential_rig import comfy_exchanges, history_done, scenario
+    fake = fake_upstreams.asgi(scenario('comfyui', 'forgotten-audio-worker', comfy_exchanges(
+        history=history_done('audios', 'tone.wav', node='3'), views=[(tagged, 'audio/wav')], strict=False)),
+        host='audio-worker.test')
+    adapter = proxy._graph_adapter(proxy._AUDIO_GRAPH_CAPABILITY)
+    connection = replace(proxy._graph_connection(capability=proxy._AUDIO_GRAPH_CAPABILITY), address=fake.base_url)
+    monkeypatch.setattr(proxy, '_graph', lambda client, *a, **k: adapter.attach(connection, client))
+    monkeypatch.setattr(proxy, '_service_availability_response', lambda *a, **k: None)
+    real_generate = proxy.proxy_audio_generate
+
     async def fake_generate(request, auth_context, *, store_full=False, receipt=None, pinned=None,
                             pinned_workflow=None):
         # The worker runs the job from the pin the submit recorded, and names the workflow the row recorded.
@@ -433,7 +444,8 @@ def test_successful_audio_worker_preserves_forget_and_releases_payload(
         proxy._begin_media_delivery(auth_context)
         assert proxy._note_media_metadata_body(body) is None
         assert proxy.media_delivery.current().prompt_decision.keep is False
-        return proxy.Response(content=tagged, media_type="audio/wav")
+        return await real_generate(request, auth_context, store_full=store_full, receipt=receipt,
+                                   pinned=pinned, pinned_workflow=pinned_workflow)
 
     monkeypatch.setattr(proxy, "proxy_audio_generate", fake_generate)
 
@@ -442,7 +454,7 @@ def test_successful_audio_worker_preserves_forget_and_releases_payload(
             request=_StubJsonRequest({}),
             payload={"intent": intent,
                      "request": {"model": "tangoflux", "prompt": sentinel,
-                                 "response_format": "wav"},
+                                 "response_format": "native"},
                      "extensions": FORGET},
             audience="client",
         )
