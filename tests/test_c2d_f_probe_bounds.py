@@ -149,3 +149,31 @@ def test_probe_rejects_compressed_expansion_before_buffering_excess() -> None:
         tracemalloc.stop()
     assert peak < 2 * MIB, f"a decoded buffer of {peak} bytes was held"
     assert seen[0].headers.get("accept-encoding") == "identity"
+
+
+@pytest.mark.parametrize("config", [{}, {"timeout": None}], ids=["absent", "null"])
+def test_send_timeout_defaults_only_when_absent_or_null(config) -> None:
+    assert multipart_adapter._send_timeout_s(config) == 900.0
+
+
+@pytest.mark.parametrize("value", [120, 0.5], ids=["integer", "fraction"])
+def test_send_timeout_accepts_positive_finite_numbers(value) -> None:
+    result = multipart_adapter._send_timeout_s({"timeout": value})
+    assert result == float(value)
+    assert isinstance(result, float)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, float("nan"), float("inf"), float("-inf"), True, False, "120", 10 ** 1000],
+    ids=["zero", "negative", "nan", "infinity", "negative-infinity", "true", "false", "string", "overflow"],
+)
+def test_send_timeout_rejects_invalid_values(value) -> None:
+    with pytest.raises(ValueError) as caught:
+        multipart_adapter._send_timeout_s({"timeout": value})
+    assert "timeout" in str(caught.value)
+    assert repr(value) in str(caught.value)
+
+
+def test_unused_file_limit_is_removed() -> None:
+    assert not hasattr(multipart_adapter, "MAX_FILE_BYTES")
