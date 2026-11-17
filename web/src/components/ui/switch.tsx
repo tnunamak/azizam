@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/cn";
+import { useFieldContext } from "./field";
 import { Switch as SwitchPrimitive } from "radix-ui";
 
 /** A 32 × 20 track (Linear 29 × 20); a 44 × 44 hit area below 640 px. */
@@ -12,6 +13,8 @@ function Switch({
 }: React.ComponentProps<typeof SwitchPrimitive.Root> & {
   size?: "sm" | "default";
 }) {
+  const field = useFieldContext();
+  const invalid = field?.invalid ? true : props["aria-invalid"];
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
@@ -21,6 +24,9 @@ function Switch({
         className,
       )}
       {...props}
+      id={props.id ?? field?.id}
+      aria-describedby={props["aria-describedby"] ?? field?.describedBy}
+      aria-invalid={invalid}
     >
       <span
         data-slot="switch-track"
