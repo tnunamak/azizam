@@ -7,8 +7,10 @@ The word "smell" must not appear in the code of ``gateway/`` (comments and docst
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
+import io
 import json
 import tokenize
 from pathlib import Path
@@ -99,14 +101,116 @@ def test_the_smell_offering_never_resubmits_after_a_lost_reply(jobs_db):  # noqa
     assert len(posts) == 1, "the submit was sent again after its reply was lost"
 
 
-def test_no_core_module_names_the_smell_offering():
-    """The offering lives in its description and tests; no code token in gateway/ mentions it."""
-    hits = []
-    for path in sorted((ROOT / "gateway").rglob("*.py")):
-        with path.open("rb") as handle:
-            for token in tokenize.tokenize(handle.readline):
-                if token.type == tokenize.COMMENT or (token.type == tokenize.STRING and token.string.startswith(('"""', "'''"))):
-                    continue  # comments and docstrings may describe anything
+def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
+    """Scan a repository-shaped tree and report source locations only."""
+    folder = root / "web" / "src" if web else root / "gateway"
+    hits: set[str] = set()
+    for path in sorted(folder.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.relative_to(folder).parts:
+            continue
+        if web and (
+            path.suffix not in {".ts", ".tsx"}
+            or ".spec." in path.name
+            or ".test." in path.name
+        ):
+            continue
+        relative = path.relative_to(root).as_posix()
+        if not web and path.suffix == ".py":
+            with tokenize.open(path) as handle:
+                source = handle.read()
+            tree = ast.parse(source, filename=str(path))
+            docstring_lines = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    first = node.body[0] if node.body else None
+                    if (
+                        isinstance(first, ast.Expr)
+                        and isinstance(first.value, ast.Constant)
+                        and isinstance(first.value.value, str)
+                    ):
+                        docstring_lines.add(first.value.lineno)
+            for token in tokenize.generate_tokens(io.StringIO(source).readline):
+                if token.type == tokenize.COMMENT or (
+                    token.type == tokenize.STRING and token.start[0] in docstring_lines
+                ):
+                    continue
                 if "smell" in token.string.lower():
-                    hits.append(f"{path.relative_to(ROOT)}:{token.start[0]}: {token.string[:60]!r}")
-    assert hits == []
+                    hits.add(f"{relative}:{token.start[0]}")
+            continue
+        raw = path.read_bytes()
+        if b"\x00" in raw:
+            continue
+        try:
+            source = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue  # Binary assets are not source text.
+        for line_number, line in enumerate(source.splitlines(), start=1):
+            if web and line.lstrip().startswith(("//", "*", "/*")):
+                continue
+            if "smell" in line.lower():
+                hits.add(f"{relative}:{line_number}")
+    return sorted(hits)
+
+
+def test_no_core_module_names_the_smell_offering():
+    """The offering lives in its description and tests, not gateway code or data."""
+    assert _offering_hits(ROOT) == []
+
+
+def test_no_web_source_names_the_smell_offering():
+    """The web app must not hard-code an offering outside tests or comments."""
+    assert _offering_hits(ROOT, web=True) == []
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "source", "web", "expected_lines"),
+    [
+        ("gateway/constant.py", 'QUERY = """SMELL"""\n', False, [1]),
+        (
+            "gateway/docs.py",
+            '"""smell module"""\n'
+            'class Example:\n    """smell class"""\n'
+            '    def method(self):\n        """smell function"""\n        pass\n'
+            'async def task():\n    """smell async function"""\n    pass\n',
+            False,
+            [],
+        ),
+        ("gateway/data.json", '{"offering": "SmElL"}\n', False, [1]),
+        ("gateway/data.yml", "offering: smell\n", False, [1]),
+        ("gateway/comment.py", "# smell\nvalue = 1\n", False, []),
+        ("gateway/__pycache__/cached.json", '{"offering": "smell"}\n', False, []),
+        ("web/src/component.tsx", 'const offering = "SmElL";\n', True, [1]),
+        ("web/src/component.ts", 'const offering = "smell";\n', True, [1]),
+        ("web/src/component.spec.tsx", 'const offering = "smell";\n', True, []),
+        ("web/src/component.test.ts", 'const offering = "smell";\n', True, []),
+        ("web/src/comments.ts", "// smell\n  /* smell\n * smell\n */\n", True, []),
+    ],
+    ids=[
+        "triple-quoted-constant",
+        "real-docstrings",
+        "gateway-json",
+        "gateway-yaml",
+        "python-comment",
+        "cache",
+        "typescript-component",
+        "typescript-source",
+        "spec-file",
+        "test-file",
+        "typescript-comments",
+    ],
+)
+def test_offering_scan(tmp_path, relative_path, source, web, expected_lines):
+    path = tmp_path / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    assert _offering_hits(tmp_path, web=web) == [
+        f"{relative_path}:{line}" for line in expected_lines
+    ]
+
+
+def test_offering_scan_skips_binary_files(tmp_path):
+    package = tmp_path / "gateway"
+    package.mkdir()
+    (package / "invalid.bin").write_bytes(b"smell\xff")
+    (package / "nul.bin").write_bytes(b"smell\x00")
+    assert _offering_hits(tmp_path) == []
