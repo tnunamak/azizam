@@ -1,9 +1,11 @@
 """Same route and inputs through the old multipart loop and declared job runner."""
+import asyncio
 import difflib
 import json
 from collections import Counter
 
 import pytest
+import proxy
 
 from gateway import admin_store, declared_operation_job, multipart_adapter, receipt_store
 from tests.support.adapter_differential import Normalizer, dump_sqlite
@@ -25,6 +27,16 @@ def test_mesh_old_and_declared_wire(tmp_path, name):
             patch.setattr(admin_store, '_gen_id', stable_id)
             harness = mesh.rig.__wrapped__(patch, root)
             reset_store(receipt_store.DB_PATH)
+            original_run = mesh.run
+            def settled_run(harness, scenario):
+                async def settled(client):
+                    facts = await scenario(client)
+                    tasks = tuple(proxy._workflow_run_tasks)
+                    if tasks:
+                        await asyncio.gather(*tasks)
+                    return facts
+                return original_run(harness, settled)
+            patch.setattr(mesh, 'run', settled_run)
             original_answer = mesh.answer
             def complete_answer(response):
                 return {**original_answer(response), 'headers': mesh._mask(dict(response.headers))}
