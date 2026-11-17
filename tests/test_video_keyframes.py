@@ -913,7 +913,8 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         self.assertEqual(job["workflow"], "video.generate.minimax-h3-keyframes")
         self.assertEqual(job["backend"], "comfyui")
         self.assertEqual(job["status"], media_jobs.STATUS_SUCCEEDED)
-        self.assertEqual((proxy._parse_asset_id(job["assets"][0]["asset_id"])[0], job["assets"][0]["media_type"]), ("vid", "video/mp4"))
+        self.assertEqual(job["assets"][0]["kind"], "video")
+        self.assertEqual(job["assets"][0]["media_type"], "video/mp4")
         self.assertTrue(job["assets"][0]["asset_id"].startswith("vid_"))
 
 

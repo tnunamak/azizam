@@ -325,7 +325,9 @@ class NodeGraphRunner:
         ctx.record_result_metadata({"rounds": rounds, "returned": len(processed), "warnings": list(plan.warnings),
                                     **dict(facts), **({"models_freed": True} if freed else {})})
         # The job lists its files and keeps the run's bookkeeping, as the job routes always did (what a job document shows).
-        listed = [{"asset_id": asset.id, "media_type": asset.content_type}
+        record_kind = ((ctx.payload.get("body") or {}).get("options") or {}).get("record_asset_kind") is True
+        listed = [{"asset_id": asset.id, "media_type": asset.content_type,
+                   **({"kind": asset_types.kind_for_media_type(asset.content_type)} if record_kind else {})}
                   for result in bundle.results.values() for asset in getattr(result, "assets", ())]
         current = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
         protocol_jobs._commit_bundle(

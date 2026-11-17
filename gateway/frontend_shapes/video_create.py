@@ -393,6 +393,8 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     if context is not None and context.requested_mode:
         facts["metadata_mode"] = context.requested_mode
     options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate, **hooks.run_options(chosen, frame_rate, prepared)}
+    if prepared.get("wire_frame_rate"):
+        options["record_asset_kind"] = True
     if prepared.get("preserve_names"):
         options["input_filenames"] = {name: refs[0].filename for name, refs in media.items() if refs[0].filename}
     if manifest.select_subject:

@@ -28280,6 +28280,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                      "requested_seconds": _seconds_text(submission["seconds_val"]),
                      "duration_adjustment_reason": submission["duration_adjustment_reason"]}
             options = {"size": size, "seconds_frames": submission["length"], "frame_rate": spec.fps,
+                       "record_asset_kind": True,
                        "chain_plan": {"template": engine.document(), "spec": asdict(spec)}}
             controls = video_controls.parse_video_controls(body)
             if controls.get(video_controls.AUDIO_CONTROL) is False:
