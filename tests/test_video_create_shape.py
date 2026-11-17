@@ -807,15 +807,3 @@ def test_a_legacy_hand_off_enforces_the_row_routes_policy_before_the_old_pipelin
     response = asyncio.run(proxy._legacy_video_create(None, object(), {"prompt": "x"}))
     assert response.status_code == 403 and seen["path"] == "/v1/videos"
     assert seen["policy"] and seen["policy"]["intent"] == "video.generate" and seen["policy"]["protocol"] == "openai.video"
-
-
-def test_reference_variant_without_grid_and_size_uses_legacy_defaults():
-    base = video_contract(variants={"image": "video.generate.reference"})
-    reference = video_contract("reference", image=True, requires=["image"])
-    del reference["video"]["grid"]
-    del reference["video"]["size"]
-    result = read({"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": base64.b64encode(PNG).decode()}, snap(base, reference))
-    assert isinstance(result, RunRequest)
-    assert result.inputs["frame_rate"] == 25
-    assert result.inputs["width"] == 1280
-    assert result.inputs["height"] == 704

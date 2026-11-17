@@ -115,8 +115,6 @@ def test_shipped_defaults_preserve_base_behavior():
     assert data == {
         "length_step": 8, "length_offset": 1, "minimum_side": 64,
         "size_when_unparsed": [1024, 1024],
-        "fallback_fps": 25, "fallback_size": "1280x720", "fallback_size_multiple": 32,
-        "fallback_min_seconds": 1, "fallback_max_seconds": 8,
     }
     assert (video_grid.GridSpec(fps=24).step, video_grid.GridSpec(fps=24).offset) == (8, 1)
     facts = video_grid.video_facts({"capability": "clip", "clip": {"grid": {"fps": 24}}})

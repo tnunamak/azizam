@@ -153,21 +153,6 @@ def video_facts(entry: Any) -> VideoManifest | None:
     )
 
 
-def with_fallbacks(manifest: VideoManifest) -> VideoManifest:
-    """Fill omitted video facts with the historical create defaults from registry data."""
-    from dataclasses import replace
-
-    defaults = _GRID_DEFAULTS
-    return replace(
-        manifest,
-        size=manifest.size or SizeSpec(default=defaults["fallback_size"], max=defaults["fallback_size"],
-                                       multiple=defaults["fallback_size_multiple"]),
-        length=manifest.length or LengthSpec(min_seconds=defaults["fallback_min_seconds"],
-                                             max_seconds=defaults["fallback_max_seconds"]),
-        grid=manifest.grid or GridSpec(fps=defaults["fallback_fps"]),
-    )
-
-
 def reference_variants(
     manifest: VideoManifest,
     get_workflow: Callable[[str], Any | None],

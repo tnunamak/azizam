@@ -170,7 +170,8 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                           code="registry_conflict")
         if eligible:
             chosen, manifest = eligible[0]
-    manifest = video_grid.with_fallbacks(manifest)
+    if manifest.length is None or manifest.grid is None or manifest.size is None:
+        return LegacyRoute(LEGACY_CREATE, body)
     target = _reference_input(chosen)
     reference_roles = {
         role for role in manifest.requires
