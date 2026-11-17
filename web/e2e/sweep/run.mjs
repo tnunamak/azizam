@@ -22,6 +22,7 @@ for (let index = 0; index < args.length; index++) {
 }
 const env = { ...process.env, SWEEP_TARGET: target };
 
+env.SWEEP_RUN_STARTED_MS = String(Date.now());
 const run = spawnSync("npx", ["playwright", "test", "--config", "playwright.sweep.config.ts", ...passThrough], {
   cwd: web,
   env,
@@ -33,4 +34,4 @@ const report = spawnSync("node", ["e2e/sweep/report.mjs", env.SWEEP_TARGET, ...r
   stdio: "inherit",
 });
 // The report decides: with --baseline only new findings fail; without it, any finding fails.
-process.exit(report.status ?? (run.status || 1));
+process.exit(run.error || run.signal ? 1 : (report.status ?? (run.status || 1)));
