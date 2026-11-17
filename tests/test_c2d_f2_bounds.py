@@ -189,3 +189,24 @@ def test_wide_shallow_json_is_unchanged() -> None:
     result = asyncio.run(_wire.json_object(make_request(json.dumps(expected).encode())))
     assert isinstance(result, dict)
     assert result == expected
+
+
+@pytest.mark.parametrize("depth", [128, 129])
+def test_mixed_json_container_depth_boundary(depth) -> None:
+    assert _wire.MAX_JSON_DEPTH == 128
+    payload = b"0"
+    for level in range(depth - 1):
+        payload = b"[" + payload + b"]" if level % 2 == 0 else b'{"child":' + payload + b"}"
+    body = b'{"extensions":' + payload + b"}"
+    expected = json.loads(body)
+    assert isinstance(expected, dict), "the parser accepts this body"
+    result = asyncio.run(_wire.json_object(make_request(body)))
+    if depth == 128:
+        assert isinstance(result, dict)
+        assert result == expected
+    else:
+        parser_failure = asyncio.run(_wire.json_object(make_request(DEEP)))
+        assert isinstance(result, Response) and result.status_code == 400
+        assert isinstance(parser_failure, Response) and parser_failure.status_code == 400
+        assert result.body == parser_failure.body
+        assert json.loads(result.body)["error"]["message"] == "Invalid JSON body"
