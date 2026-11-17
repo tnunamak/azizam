@@ -233,7 +233,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["message"], "This service is not available right now.")
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
-    async def test_executor_uses_audio_route_and_stores_returned_bytes_as_audio_asset(self) -> None:
+    async def test_executor_uses_audio_route_and_consumes_its_published_audio_asset(self) -> None:
         body = {
             "model": "tangoflux",
             "prompt": "private prompt",
@@ -253,6 +253,26 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(kwargs.get("store_full"))  # jobs store full metadata
             replayed = await request.json()
             self.assertEqual(replayed["prompt"], "private prompt")
+            # Publication belongs to the route's declared run; the executor consumes it.
+            from gateway import audio_media_jobs, declared_operation_job, result_bundle
+            from gateway.engine_protocol.types import AssetRef, AssetsResult, CanonicalRequest, Completed, ResultBundle, ResultContext
+
+            artifacts = audio_media_jobs.audio_artifacts_from_result(
+                b"audio bytes", response_format="mp3", media_type="audio/mpeg")
+            assets = audio_media_jobs.store_audio_artifacts(artifacts, store_asset=proxy.store_asset_bytes)
+            bundle = ResultBundle({"audio": AssetsResult(tuple(
+                AssetRef(asset["asset_id"], asset["media_type"], asset["size_bytes"]) for asset in assets))})
+
+            async def start(conn, op, request):
+                return Completed(bundle)
+
+            runtime = SimpleNamespace(
+                adapter=SimpleNamespace(interface_version=2, start=start),
+                connection_for=lambda op: None, poll_timing=lambda op: (0, 1),
+                request=lambda op, body: CanonicalRequest(op=op, body=body),
+                result_context=lambda: ResultContext(result_bundle.ResultLimits()),
+                publication_options=lambda: {"add_assets": assets})
+            await declared_operation_job.run(runtime, "sfx.generate", replayed, job_id=job_id)
             return Response(
                 content=b"audio bytes",
                 status_code=200,
