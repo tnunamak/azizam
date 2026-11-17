@@ -69,10 +69,10 @@ function serve(apps: Array<Record<string, unknown>>) {
   return calls;
 }
 
-function renderPeople() {
+function renderPeople(viewer: Viewer = owner) {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ViewerContext.Provider value={owner}>
+      <ViewerContext.Provider value={viewer}>
         <PeoplePage />
       </ViewerContext.Provider>
     </QueryClientProvider>,
@@ -120,7 +120,7 @@ it("shows no list when the person answers for no service app", async () => {
 });
 
 it("moves a service app to another person after showing the plan it will have, then drops it from the list", async () => {
-  const calls = serve([app({ id: "door", name: "Door camera" })]);
+  const calls = serve([app({ id: "door", name: "Door camera", live_keys: 2, trusted_addresses: 1 })]);
   renderPeople();
   const user = userEvent.setup();
   await openMenu(user, "Remove person");
@@ -132,6 +132,10 @@ it("moves a service app to another person after showing the plan it will have, t
   expect(screen.queryByRole("option", { name: "Sam" })).toBeNull();
   await user.click(await screen.findByRole("option", { name: "Kim" }));
   expect(move.getByText(/Kim has no access plan/)).toBeVisible();
+  // The confirmation says plainly what stops now and who makes the new key.
+  expect(
+    await move.findByText("Door camera's 2 keys and 1 trusted address stop now. Kim makes a new key on Apps & keys."),
+  ).toBeVisible();
   await user.click(move.getByRole("button", { name: "Move app" }));
   await waitFor(() =>
     expect(calls).toContainEqual({ method: "PATCH", path: "/admin/api/apps/door", body: { owner_user_id: "kim" } }),
