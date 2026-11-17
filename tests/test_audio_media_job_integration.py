@@ -233,90 +233,48 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["message"], "This service is not available right now.")
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
-    async def test_executor_uses_audio_route_and_consumes_its_published_audio_asset(self) -> None:
-        body = {
-            "model": "tangoflux",
-            "prompt": "private prompt",
-            "type": "sfx",
-            "response_format": "mp3",
-        }
-        with patch.object(proxy, "_schedule_audio_media_job", lambda _job_id: True):
-            response = await proxy._dispatch_gateway_media_job_submission(
-                request=_StubJsonRequest({}),  # type: ignore[arg-type]
-                payload={"intent": "sfx.generate", "request": body},
-                audience="client",
-            )
-        assert response is not None
-        job_id = json.loads(response.body.decode("utf-8"))["job_id"]
+    async def test_executor_uses_audio_route_and_stores_returned_bytes_as_audio_asset(self) -> None:
+        import io
+        import wave
 
-        async def fake_proxy_audio_generate(request, _auth_context, **kwargs):
-            self.assertTrue(kwargs.get("store_full"))  # jobs store full metadata
-            replayed = await request.json()
-            self.assertEqual(replayed["prompt"], "private prompt")
-            # Publication belongs to the route's declared run; the executor consumes it.
-            from gateway import audio_media_jobs, declared_operation_job, result_bundle
-            from gateway.engine_protocol.types import AssetRef, AssetsResult, CanonicalRequest, Completed, ResultBundle, ResultContext
+        from tests import test_adapter_differential as base
+        from tests.support.adapter_differential_rig import GatewayRig
 
-            artifacts = audio_media_jobs.audio_artifacts_from_result(
-                b"audio bytes", response_format="mp3", media_type="audio/mpeg")
-            assets = audio_media_jobs.store_audio_artifacts(artifacts, store_asset=proxy.store_asset_bytes)
-            bundle = ResultBundle({"audio": AssetsResult(tuple(
-                AssetRef(asset["asset_id"], asset["media_type"], asset["size_bytes"]) for asset in assets))})
+        with GatewayRig('executor-stores-audio', self.root / 'real-route') as rig:
+            base._audio_comfy(rig)
+            rig.set(proxy, '_schedule_audio_media_job', lambda _job_id: True)
+            stored_bytes = []
+            store = proxy.store_asset_bytes
 
-            async def start(conn, op, request):
-                return Completed(bundle)
+            def record_store(content, **options):
+                stored_bytes.append((content, options))
+                return store(content, **options)
 
-            runtime = SimpleNamespace(
-                adapter=SimpleNamespace(interface_version=2, start=start),
-                connection_for=lambda op: None, poll_timing=lambda op: (0, 1),
-                request=lambda op, body: CanonicalRequest(op=op, body=body),
-                result_context=lambda: ResultContext(result_bundle.ResultLimits()),
-                publication_options=lambda: {"add_assets": assets})
-            await declared_operation_job.run(runtime, "sfx.generate", replayed, job_id=job_id)
-            return Response(
-                content=b"audio bytes",
-                status_code=200,
-                media_type="audio/mpeg",
-            )
-
-        stored_assets: list[dict[str, Any]] = []
-
-        def fake_store_asset_bytes(
-            content: bytes,
-            *,
-            kind: str = "img",
-            suffix: str = ".png",
-            owner_key_hash: str | None = None,
-        ) -> str:
-            stored_assets.append(
-                {
-                    "content": content,
-                    "kind": kind,
-                    "suffix": suffix,
-                    "owner_key_hash": owner_key_hash,
-                }
-            )
-            return "aud_" + "a" * 64
-
-        with patch.object(proxy, "proxy_audio_generate", fake_proxy_audio_generate), patch.object(
-            proxy,
-            "store_asset_bytes",
-            fake_store_asset_bytes,
-        ):
+            rig.set(proxy, 'store_asset_bytes', record_store)
+            response = await rig.call('POST', '/gateway/v1/media/jobs', json_body={
+                'intent': 'sfx.generate', 'request': {'model': 'tangoflux', 'prompt': 'a door creaks',
+                                                     'type': 'sfx', 'response_format': 'wav'}})
+            self.assertEqual(response.status_code, 202)
+            job_id = response.json()['job_id']
+            self.assertEqual(stored_bytes, [])
+            self.assertEqual(media_jobs.get(job_id, path=media_jobs.DB_PATH)['assets'], [])
             await proxy._run_audio_media_job(job_id)
-
-        stored = media_jobs.get(job_id, audience="internal", path=self.db)
-        assert stored is not None
-        self.assertEqual(stored["status"], media_jobs.STATUS_SUCCEEDED)
-        self.assertEqual(stored["progress"], 100)
-        self.assertEqual(stored["assets"][0]["asset_id"], "aud_" + "a" * 64)
-        self.assertEqual(stored["assets"][0]["media_type"], "audio/mpeg")
-        self.assertEqual(stored_assets[0]["content"], b"audio bytes")
-        self.assertEqual(stored_assets[0]["kind"], "aud")
-        self.assertEqual(stored_assets[0]["suffix"], ".mp3")
-        self.assertIsNone(proxy._load_audio_media_job_payload(job_id))
-        events = media_jobs.events(job_id, audience="internal", path=self.db)
-        self.assertIn("completed", [event["event_type"] for event in events])
+            job = media_jobs.get(job_id, path=media_jobs.DB_PATH)
+            self.assertEqual(job['status'], 'succeeded', job.get('error'))
+            self.assertEqual(len(stored_bytes), 1)
+            content, options = stored_bytes[0]
+            self.assertEqual(options['kind'], 'aud')
+            self.assertEqual(options['suffix'], '.wav')
+            with wave.open(io.BytesIO(content)) as actual, wave.open(io.BytesIO(base._wav())) as expected:
+                self.assertEqual(actual.getparams(), expected.getparams())
+                self.assertEqual(actual.readframes(actual.getnframes()), expected.readframes(expected.getnframes()))
+            asset, = job['assets']
+            cached = proxy.IMAGE_CACHE_DIR / (asset['asset_id'].removeprefix('aud_') + '.wav')
+            self.assertTrue(cached.is_file())
+            self.assertEqual(asset['size_bytes'], len(content))
+            self.assertIsNone(proxy._load_audio_media_job_payload(job_id))
+            events = media_jobs.events(job_id, audience='internal', path=media_jobs.DB_PATH)
+            self.assertIn('completed', [event['event_type'] for event in events])
 
     async def test_content_route_returns_signed_audio_asset_payload(self) -> None:
         from urllib.parse import parse_qs, urlsplit

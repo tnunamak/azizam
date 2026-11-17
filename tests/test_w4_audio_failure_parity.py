@@ -1,7 +1,7 @@
 """Failure/publication comparisons against frozen fd30cbfca handlers.
 
-The two intentional sync changes (limits and empty storage) are asserted as
-approved refusals rather than hidden in a normalization rule.
+The owner-approved synchronous limit refusal is explicit; empty storage keeps
+the original successful byte response.
 """
 import asyncio
 from pathlib import Path
@@ -20,9 +20,11 @@ SOURCE = Path(__file__).parent / 'fixtures/w4_audio_fd30cbfca.py'
 BODY = {'prompt': 'a door creaks', 'model': 'tangoflux', 'duration': 4}
 
 
-def old_handlers():
+def old_handlers(route_handler=None):
     namespace = dict(vars(proxy))
     exec(compile(SOURCE.read_text(), str(SOURCE), 'exec'), namespace)
+    if route_handler is not None:
+        namespace['proxy_audio_generate'] = route_handler
     return namespace['proxy_audio_generate'], namespace['_run_audio_media_job']
 
 
@@ -75,9 +77,11 @@ def observe(tmp_path, old, mode, case, capsys):
                         from gateway.engine_protocol.httpx_wire import reply_from
                         import httpx
                         return reply_from(httpx.Response(200, json={'p1': {'status': {'status_str': 'success'}, 'outputs': {}}}))
+                    if case == 'sync_cancel_pending':
+                        raise media_jobs.CancellationPending('injected cancellation')
                     if case == 'shutdown':
                         raise asyncio.CancelledError()
-                    if case == 'generation_timeout':
+                    if case in ('generation_timeout', 'poll_limit_600'):
                         from gateway.engine_protocol.httpx_wire import reply_from
                         import httpx
                         return reply_from(httpx.Response(200, json={}))
@@ -87,7 +91,13 @@ def observe(tmp_path, old, mode, case, capsys):
                     return await session.history(*args, **kwargs)
 
                 async def view(self, *args, **kwargs):
-                    return await session.view(*args, **kwargs)
+                    response = await session.view(*args, **kwargs)
+                    if case in ('unsupported_type', 'opus_without_ogg'):
+                        from gateway.engine_protocol.httpx_wire import reply_from
+                        import httpx
+                        media_type = 'application/octet-stream' if case == 'unsupported_type' else 'audio/opus'
+                        return reply_from(httpx.Response(200, content=response.raw, headers={'content-type': media_type}))
+                    return response
             return Wire()
         rig.set(proxy, '_graph', graph)
         if case == 'generation_timeout' and not old:
@@ -107,11 +117,27 @@ def observe(tmp_path, old, mode, case, capsys):
             else:
                 rig.set(proxy.audio_media_jobs, 'audio_artifacts_from_result', lambda *args, **kwargs: [])
 
+        async def cancelled_route(*args, **kwargs):
+            raise media_jobs.CancellationPending('injected route cancellation')
+
+        if case == 'get_before_delivery':
+            deliver = proxy._PreparedAudioGeneration.deliver
+            async def read_before_delivery(prepared, bundle):
+                answer = await rig.call('GET', f'/gateway/v1/media/jobs/{prepared.job_id}', label='read committed job')
+                assert answer.status_code == 200, answer.text
+                document = answer.json()
+                assert document['status'] == 'succeeded' and document['assets'], document
+                during.append('succeeded with assets')
+                return await deliver(prepared, bundle)
+            rig.set(proxy._PreparedAudioGeneration, 'deliver', read_before_delivery)
+
         if old:
-            handler, worker = old_handlers()
+            handler, worker = old_handlers(cancelled_route if case == 'cancel_during_route' else None)
             rig.set(proxy, "proxy_audio_generate", handler)
         else:
             worker = proxy._run_audio_media_job
+            if case == 'cancel_during_route':
+                rig.set(proxy, 'proxy_audio_generate', cancelled_route)
 
         async def drive():
             nonlocal job_id
@@ -146,12 +172,20 @@ def observe(tmp_path, old, mode, case, capsys):
                    'job_status': visible['status'] if visible else None, 'receipt_status': receipt['status'],
                    'job_error': visible.get('error') if visible else None,
                    'error_info': {key: visible.get(key) for key in media_jobs.ERROR_FIELDS} if visible else None}
-        if case.startswith(('submit_', 'history_')) or case == 'generation_timeout':
+        if case.startswith(('submit_', 'history_')) or case in ('generation_timeout', 'poll_limit_600'):
             summary['message'] = error.get('message')
-        if case in ('limit', 'empty'):
+        if case in ('limit', 'empty', 'unsupported_type', 'opus_without_ogg'):
             summary['stored'] = counters['stored']
         if case == 'pending_visibility':
             summary['during'] = during
+        if case == 'get_before_delivery':
+            assert during == ['succeeded with assets']
+        if case == 'poll_limit_600':
+            assert counters['history'] == 600
+        if case in ('empty', 'unsupported_type', 'opus_without_ogg') and mode == 'sync':
+            summary['wire'] = rig.calls[-1]['response']
+        if case == 'cancel_during_route':
+            summary['receipt_http_status'] = receipt['metadata']['status_code']
         if case == 'publication_atomic':
             assert all(count > 0 for status, count in publication), publication
             assert visible and visible['status'] == 'succeeded' and visible['assets']
@@ -161,12 +195,7 @@ def observe(tmp_path, old, mode, case, capsys):
                 summary['rewrite_log'] = 'audio metadata rewrite failed: scrubbed rewrite failure' in logs
         if case.startswith('history_'):
             assert counters['history'] == 1
-        if case == 'shutdown' and mode == 'sync':
-            if not old:
-                pending, = media_jobs.unfinished(path=media_jobs.DB_PATH)
-                assert pending['status'] == 'running'
-                assert media_jobs.get(pending['job_id'], audience='client', path=media_jobs.DB_PATH) is None
-            proxy._recover_media_jobs()
+        if case in ('shutdown', 'sync_cancel_pending') and mode == 'sync':
             assert media_jobs.unfinished(path=media_jobs.DB_PATH) == []
         return summary
 
@@ -203,7 +232,48 @@ def test_queued_result_refusals_match_old_and_sync_refusals_leave_no_asset(tmp_p
     assert new == old
     baseline = observe(tmp_path / 'sync-old', True, 'sync', case, capsys)
     refused = observe(tmp_path / 'sync-new', False, 'sync', case, capsys)
-    # Explicit owner-approved tightening: sync limits and empty storage no longer succeed.
     assert baseline['status'] == 200
-    assert refused['status'] == 502 and refused['receipt_status'] == 'failed'
-    assert refused['job_status'] is None and refused['stored'] == 0
+    if case == 'empty':
+        assert refused == baseline
+    else:
+        # Owner decision: synchronous result limits refuse before any asset is stored.
+        assert refused['status'] == 502 and refused['receipt_status'] == 'failed'
+        assert refused['code'] == 'result_refused'
+        assert refused['job_status'] is None and refused['stored'] == 0
+
+
+@pytest.mark.parametrize('mode', ['sync', 'queued'])
+def test_600_poll_timeout_matches_the_frozen_handler(tmp_path, mode, capsys):
+    old = observe(tmp_path / 'old', True, mode, 'poll_limit_600', capsys)
+    new = observe(tmp_path / 'new', False, mode, 'poll_limit_600', capsys)
+    assert new == old
+    if mode == 'sync':
+        assert old['status'] == 504 and old['message'] == 'Audio generation timeout'
+    else:
+        assert old['job_status'] == 'failed' and old['job_error'] == 'Audio generation timeout'
+
+
+@pytest.mark.parametrize('case', ['unsupported_type', 'opus_without_ogg'])
+def test_unindexed_sync_audio_keeps_the_original_bytes_and_200(tmp_path, case, capsys):
+    old = observe(tmp_path / 'old', True, 'sync', case, capsys)
+    new = observe(tmp_path / 'new', False, 'sync', case, capsys)
+    assert old['status'] == 200 and old['stored'] == 0 and old['job_status'] is None
+    assert new == old
+
+
+def test_cancelled_sync_call_discards_its_owned_row(tmp_path, capsys):
+    observe(tmp_path, False, 'sync', 'sync_cancel_pending', capsys)
+
+
+def test_cancelled_queued_route_keeps_the_original_500_receipt(tmp_path, capsys):
+    old = observe(tmp_path / 'old', True, 'queued', 'cancel_during_route', capsys)
+    new = observe(tmp_path / 'new', False, 'queued', 'cancel_during_route', capsys)
+    assert old['receipt_http_status'] == new['receipt_http_status'] == 500
+    assert old['receipt_status'] == new['receipt_status'] == 'failed'
+    # Native settlement fixes the old swallowed cancellation; the receipt still matches.
+    assert new['job_status'] == 'canceled' and new['job_error'] == 'Canceled by requester'
+
+
+@pytest.mark.parametrize('mode', ['sync', 'queued'])
+def test_get_between_commit_and_delivery_includes_assets(tmp_path, mode, capsys):
+    observe(tmp_path, False, mode, 'get_before_delivery', capsys)
