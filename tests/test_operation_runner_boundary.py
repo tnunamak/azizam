@@ -35,19 +35,68 @@ def _docstring_nodes(tree: ast.Module) -> set[int]:
     return skipped
 
 
-def _folded_text(node: ast.AST) -> str | None:
-    """The text a chain of ``+`` between string literals builds, or ``None`` when any part is not a literal.
+_UNFOLDED = object()
 
-    Implicit concatenation (``"a" "b"``) is one Constant in the tree already; explicit ``+`` is folded here, so a name
-    cut into pieces is seen whole.
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+
+def _folded_value(node: ast.AST):
+    """Evaluate only literal construction, never source names or arbitrary calls."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int, float, bool, type(None))):
         return node.value
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _folded_text(node.left), _folded_text(node.right)
-        if left is not None and right is not None:
+        left, right = _folded_value(node.left), _folded_value(node.right)
+        if isinstance(left, str) and isinstance(right, str):
             return left + right
-    return None
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for part in node.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                parts.append(part.value)
+                continue
+            if not isinstance(part, ast.FormattedValue):
+                return _UNFOLDED
+            value = _folded_value(part.value)
+            spec = "" if part.format_spec is None else _folded_text(part.format_spec)
+            if value is _UNFOLDED or spec is None:
+                return _UNFOLDED
+            if part.conversion == ord("s"):
+                value = str(value)
+            elif part.conversion == ord("r"):
+                value = repr(value)
+            elif part.conversion == ord("a"):
+                value = ascii(value)
+            elif part.conversion != -1:
+                return _UNFOLDED
+            try:
+                parts.append(format(value, spec))
+            except (ValueError, TypeError):
+                return _UNFOLDED
+        return "".join(parts)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        receiver = _folded_text(node.func.value)
+        if receiver is None:
+            return _UNFOLDED
+        if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
+            values = node.args[0]
+            if isinstance(values, (ast.List, ast.Tuple)):
+                parts = [_folded_text(value) for value in values.elts]
+                if all(isinstance(part, str) for part in parts):
+                    return receiver.join(parts)
+        if node.func.attr == "format":
+            args = [_folded_value(value) for value in node.args]
+            kwargs = {item.arg: _folded_value(item.value) for item in node.keywords}
+            if None in kwargs or any(value is _UNFOLDED for value in [*args, *kwargs.values()]):
+                return _UNFOLDED
+            try:
+                return receiver.format(*args, **kwargs)
+            except (ValueError, TypeError, IndexError, KeyError, AttributeError):
+                return _UNFOLDED
+    return _UNFOLDED
+
+
+def _folded_text(node: ast.AST) -> str | None:
+    """Fold literal string construction without importing or executing source code."""
+    value = _folded_value(node)
+    return value if isinstance(value, str) else None
 
 
 def _violations(source: str) -> list[str]:
@@ -55,6 +104,10 @@ def _violations(source: str) -> list[str]:
     skipped = _docstring_nodes(tree)
     found: list[str] = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"getattr", "setattr"}:
+            attribute = node.args[1] if len(node.args) > 1 else None
+            if attribute is None or _folded_text(attribute) is None:
+                found.append(f"line {node.lineno}: {node.func.id} attribute argument does not fold to a literal")
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if any(part in module for part in FORBIDDEN_MODULES):
@@ -72,6 +125,12 @@ def _violations(source: str) -> list[str]:
         elif isinstance(node, ast.Attribute):
             if FORBIDDEN_IDENTIFIER.search(node.attr):
                 found.append(f"line {node.lineno}: attribute {node.attr!r}")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if FORBIDDEN_IDENTIFIER.search(node.name):
+                found.append(f"line {node.lineno}: declaration {node.name!r}")
+        elif isinstance(node, ast.keyword):
+            if node.arg is not None and FORBIDDEN_IDENTIFIER.search(node.arg):
+                found.append(f"line {node.lineno}: keyword {node.arg!r}")
         elif isinstance(node, ast.arg):
             if FORBIDDEN_IDENTIFIER.search(node.arg):
                 found.append(f"line {node.lineno}: parameter {node.arg!r}")
@@ -81,12 +140,12 @@ def _violations(source: str) -> list[str]:
                 found.append(f"line {node.lineno}: literal {value!r}")
             elif DIGITS_ONLY.match(value):
                 found.append(f"line {node.lineno}: literal {value!r} is a bare id")
-        elif isinstance(node, ast.BinOp) and _folded_text(node) is not None:
+        elif isinstance(node, (ast.BinOp, ast.JoinedStr, ast.Call)) and _folded_text(node) is not None:
             value = _folded_text(node)
             if FORBIDDEN_LITERAL.search(value):
-                found.append(f"line {node.lineno}: literal {value!r} (concatenated)")
+                found.append(f"line {node.lineno}: literal {value!r} (folded)")
             elif DIGITS_ONLY.match(value):
-                found.append(f"line {node.lineno}: literal {value!r} is a bare id (concatenated)")
+                found.append(f"line {node.lineno}: literal {value!r} is a bare id (folded)")
     return found
 
 
@@ -208,3 +267,39 @@ def test_the_workflow_rule_catches_import_and_literal_concatenation(source):
 ])
 def test_the_runner_rule_catches_concatenated_backend_words(source):
     assert _violations(source), source
+
+@pytest.mark.parametrize("source", [
+    pytest.param('x = f"{\'com\'}{\'fy\'}"\n', id="constant-fstring"),
+    pytest.param('x = "".join(["com", "fy"])\n', id="constant-join"),
+    pytest.param('x = "{}{}".format("com", "fy")\n', id="constant-format"),
+    pytest.param('x = getattr(obj, field)\n', id="dynamic-getattr"),
+    pytest.param('setattr(obj, field, value)\n', id="dynamic-setattr"),
+    pytest.param('from settings import FIELD\nx = getattr(obj, FIELD)\n', id="imported-attribute"),
+    pytest.param('call(comfy=True)\n', id="keyword-name"),
+    pytest.param('def comfy(): pass\n', id="function-name"),
+    pytest.param('async def comfy(): pass\n', id="async-function-name"),
+    pytest.param('class Comfy: pass\n', id="class-name"),
+])
+def test_runner_boundary_closes_syntax_gaps(source):
+    findings = _violations(source)
+    assert len(findings) == 1, (source, findings)
+
+
+def test_runner_boundary_plain_names_and_folded_attributes_are_clean():
+    source = """class Runner:
+    def run(self, item):
+        call(value=item)
+        getattr(item, "sta" + "tus")
+        setattr(item, "{}".format("status"), "ready")
+        label = f"{'safe'}{' text'}"
+        text = "-".join(["safe", "text"])
+"""
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("source", [
+    'getattr(obj, field)\n',
+    'setattr(obj, field, value)\n',
+])
+def test_runner_boundary_reports_unresolved_attribute(source):
+    assert "attribute argument does not fold to a literal" in _violations(source)[0]
