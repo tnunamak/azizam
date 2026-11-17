@@ -3,6 +3,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repo/e2e/codex_e2e_wait.sh"
 # Resolve the real codex binary BEFORE HOME is swapped: a mise shim (or a shell wrapper)
 # cannot run under the scratch HOME used below.
 codex_bin=${CODEX_BIN:-$(command -v codex || true)}
@@ -16,11 +17,9 @@ mkdir -p "$state_base"
 state=$(mktemp -d "$state_base/run.XXXXXXXX")
 cleanup() {
   local code=$?
+  trap - EXIT INT TERM
   for pid in "${gateway_pid:-}" "${backend_pid:-}"; do
-    [[ -n "$pid" ]] && kill -- "-$pid" 2>/dev/null || true
-  done
-  for pid in "${gateway_pid:-}" "${backend_pid:-}"; do
-    [[ -n "$pid" ]] && wait "$pid" 2>/dev/null || true
+    [[ -n "$pid" ]] && stop_group "$pid" 5 || true
   done
   echo "Codex e2e evidence retained at $state" >&2
   exit "$code"
@@ -100,11 +99,7 @@ base_env=(env -i "PATH=$PATH" "HOME=$home" "PYTHONPATH=$repo" "PYTHONDONTWRITEBY
 setsid "${base_env[@]}" "$python_bin" -m uvicorn e2e.codex_e2e_backend:app --host 127.0.0.1 --port "$backend_port" >"$state/backend.log" 2>&1 & backend_pid=$!
 setsid "${base_env[@]}" "$python_bin" -m e2e.codex_e2e_gateway "$gateway_port" "$backend_port" >"$state/gateway.log" 2>&1 & gateway_pid=$!
 
-for _ in {1..100}; do
-  if curl --fail --silent "http://127.0.0.1:$gateway_port/health" >/dev/null; then break; fi
-  sleep .1
-done
-curl --fail --silent "http://127.0.0.1:$gateway_port/health" >/dev/null || { tail -80 "$state/gateway.log" >&2; exit 1; }
+wait_ready "http://127.0.0.1:$gateway_port/health" 10 || { tail -80 "$state/gateway.log" >&2; exit 1; }
 
 command=("$codex_bin" exec --json --sandbox danger-full-access --skip-git-repo-check --ephemeral --color never -C "$scratch" "Use apply_patch, and only apply_patch, to create hello.txt containing exactly: hello from Azizam e2e. Then state that it was created.")
 printf '%q ' "${command[@]}" > "$state/codex-command.txt"; printf '\n' >> "$state/codex-command.txt"
