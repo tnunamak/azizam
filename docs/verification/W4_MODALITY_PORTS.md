@@ -86,3 +86,45 @@ nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-mesh-verified.xm
 reported `324 passed in 23.80s`. This includes queued execution and content retrieval for the 3D routes, the unchanged S7 wire recordings, the OpenAPI pin, both architectural guards, and bounded probe checks. Intermediate receipt-snapshot failures exposed the pre-existing scheduling race described above; no production receipt fix or masked retention field was introduced.
 
 Confidence: 90% for the 3D code port and hermetic wire preservation. Live external-engine behavior is unverified.
+
+## Audio continuation: stopped at publication versus delivery
+
+The duration test commit 7dbdd0ec5 was cherry-picked first (05d95f63d). Its public route tests prove that omitting duration
+sends 30 seconds to the graph for both shipped audio workflows while the published request schemas omit the default.
+Baseline command:
+`nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-default-baseline.xml -n 4 tests/test_audio_duration_publication.py tests/test_audio_route_selectors.py`
+reported `9 passed in 9.03s`.
+
+The next step stopped at `media_ingestion.store_audio_response()` followed by `media_delivery.deliver_bytes()`.
+The existing store helper calls `index_receipt_assets()`, which creates a succeeded Library job and links it to the
+receipt. The old route does this BEFORE stripping for delivery. If stripping raises MediaMetadataError, the response
+is 502 (Could not prepare audio for delivery), the receipt fails, and its Library job remains succeeded with one asset.
+
+A declared result callback runs before core's completion transaction. Its receipt is linked to the running job, so the
+same `store_audio_response()` saves bytes but `index_receipt_assets()` explicitly skips indexing a linked receipt.
+The same stripping failure therefore prevents returning Completed: the job has no published assets or results. These
+are different observable publication states even though the input result bytes and helper calls are identical.
+
+`tests/test_audio_declared_result_boundary.py` reproduces the old outcome through the real public route and fake engine,
+then drives the real declared runner with the same result bytes and existing storage/stripping helpers. Its adapter
+callback is a bounded result-stage probe, not a candidate route implementation. This is not a full old/new route parity
+claim. No audio production code or route body was changed, and no half-port was left behind.
+
+Expect the reproduction to hold because it exercises the existing storage/indexing functions against real stores and
+injects the failure exactly at the following delivery rewrite. The output was:
+
+- `Old route: HTTP 502, failed receipt, succeeded Library job with one asset.`
+- `Declared result callback: rewrite raises before completion; linked job remains running with no assets or results.`
+
+Command:
+`nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-boundary.xml -n 4 tests/test_audio_declared_result_boundary.py tests/test_audio_duration_publication.py -o junit_logging=all`
+reported `5 passed in 8.60s`.
+
+To continue without changing this case, the declared result path needs a delivery stage AFTER publication (or another
+explicit way to preserve a published Library result when delivery fails). The current pre-completion result callback
+cannot carry both outcomes by calling the existing helpers unchanged. No change to that completion/delivery contract
+was made. Confidence: 95% in the reproduced boundary; the audio port is not implemented.
+
+The continuation adds five tests: four from the duration cherry-pick and one boundary probe. Proposed budget delta is
++5 on top of the accepted 3D delta of +18: at the original tests/budgets.toml line 678, `pytest = 29830` would become
+`pytest = 29853` (+23 total), before reconciling other lanes. The owner oracle remains unedited.
