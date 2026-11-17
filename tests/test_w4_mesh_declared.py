@@ -1,4 +1,7 @@
 """Same route and inputs through the old multipart loop and declared job runner."""
+import difflib
+import json
+
 import pytest
 
 from gateway import declared_operation_job, multipart_adapter, receipt_store
@@ -25,7 +28,9 @@ def test_mesh_old_and_declared_wire(tmp_path, name):
             facts = mesh.CELLS[name](harness)
             facts['receipts'] = dump_sqlite(receipt_store.DB_PATH, Normalizer([root]), skip_tables=('receipt_history',))
             observations.append(facts)
-    assert observations[0] == observations[1]
+    assert observations[0] == observations[1], '\n'.join(difflib.unified_diff(
+        json.dumps(observations[0], indent=2, sort_keys=True).splitlines(),
+        json.dumps(observations[1], indent=2, sort_keys=True).splitlines()))
 
 
 def test_mesh_default_runs_declared_job(rig, monkeypatch):
