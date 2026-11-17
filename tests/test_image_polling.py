@@ -107,3 +107,47 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
 
     assert images == []
     assert (error.status_code, json.loads(error.body)) == (502, {"error": {"message": f"ComfyUI unavailable at {refused}", "type": "api_error"}})
+
+
+class _Caller:
+    """A request whose caller has the given credential kind and never disconnects."""
+
+    def __init__(self, auth_kind: str | None) -> None:
+        self.state = type("State", (), {"caller": type("Caller", (), {"auth_kind": auth_kind})()})()
+
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize(("request_", "kind"), [
+    (None, "personal"),
+    (_Caller("app_key"), "personal"),
+    (_Caller("service_key"), "service"),
+])
+def test_a_synchronous_round_asks_host_memory_admission_with_the_callers_app_kind(
+        fake_upstreams, monkeypatch, request_, kind) -> None:
+    """The synchronous round asks admission before it submits, bounded, as the App kind behind the caller's credential."""
+    from gateway import host_memory_admission
+
+    asks: list[host_memory_admission.Ask] = []
+    adapter = proxy._graph_adapter(proxy._GRAPH_CAPABILITY)
+
+    async def admit_prompt(self, payload, ask=host_memory_admission.Ask()):
+        asks.append(ask)
+
+    monkeypatch.setattr(type(adapter), "admit_prompt", admit_prompt)
+    scenario = load_scenario("comfyui/image-complete", text="poll test")
+    fake = fake_upstreams.asgi(scenario, host="comfy.fk.test")
+    set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
+
+    async def call():
+        async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", request=request_,
+                                                max_wait_s=2, capability=proxy._GRAPH_CAPABILITY, **IMAGE_AT_NODE_1)
+
+    with derived_patch("GRAPH_TIMEOUT", 100):
+        error, images = asyncio.run(call())
+
+    assert error is None
+    assert images == [bytes.fromhex("89504e470d0a1a0a")]
+    assert [(ask.app_kind, ask.bounded) for ask in asks] == [(kind, True)]
