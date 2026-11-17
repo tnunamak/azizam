@@ -47,7 +47,7 @@ function Table({
       ref={containerRef}
       data-slot="table-container"
       tabIndex={scrolls ? 0 : undefined}
-      role={scrolls ? "region" : undefined}
+      role={scrolls && (labelledBy || label || captionId) ? "region" : undefined}
       aria-labelledby={scrolls ? labelledBy || (label ? undefined : captionId) : undefined}
       aria-label={scrolls ? label : undefined}
       className="relative w-full overflow-x-auto"

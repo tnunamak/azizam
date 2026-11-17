@@ -27,6 +27,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test("scrolling table without a name stays focusable without a region", () => {
+  const view = render(<Table />);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(container.getAttribute("tabindex")).toBe("0");
+  expect(container.hasAttribute("role")).toBe(false);
+  expect(screen.queryByRole("region")).toBeNull();
+});
+
+test("scrolling table with a plain caption stays focusable without a region", () => {
+  const view = render(<Table><caption>Plain caption</caption></Table>);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(container.getAttribute("tabindex")).toBe("0");
+  expect(container.hasAttribute("role")).toBe(false);
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(screen.getByRole("table", { name: "Plain caption" })).toBeTruthy();
+});
+
 test("scrolling table copies its aria-label to a focusable named region", () => {
   render(<Table aria-label="Usage" />);
   const region = screen.getByRole("region", { name: "Usage" });
@@ -40,6 +57,7 @@ test("scrolling table uses its rendered caption as the region name", () => {
   const caption = screen.getByText("Requests");
   expect(caption.id).not.toBe("");
   expect(region.getAttribute("aria-labelledby")).toBe(caption.id);
+  expect(region.getAttribute("tabindex")).toBe("0");
 });
 
 test("aria-labelledby takes priority over aria-label and caption", () => {
@@ -81,6 +99,9 @@ test("caption registration respects an explicit ID and cleans up when removed", 
   expect(region.getAttribute("aria-labelledby")).toBe("custom-caption");
   view.rerender(<Table />);
   expect(region.hasAttribute("aria-labelledby")).toBe(false);
+  expect(region.hasAttribute("role")).toBe(false);
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(region.getAttribute("tabindex")).toBe("0");
 });
 
 test("caption outside Table keeps working without an injected ID", () => {
