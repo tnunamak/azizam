@@ -170,8 +170,8 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                           code="registry_conflict")
         if eligible:
             chosen, manifest = eligible[0]
-    if manifest.length is None or manifest.grid is None or manifest.size is None:
-        return LegacyRoute(LEGACY_CREATE, body)
+    # Every selected reference variant has passed the same section schema as the
+    # initial workflow: length, grid and size are mandatory registry facts.
     target = _reference_input(chosen)
     reference_roles = {
         role for role in manifest.requires
