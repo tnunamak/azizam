@@ -383,6 +383,11 @@ CREATE TABLE IF NOT EXISTS account_access (
  user_id TEXT PRIMARY KEY REFERENCES users(id), plan_id TEXT REFERENCES access_plans(id),
  disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
 );
+-- One row exists only inside the write that hands a service App to another person (reassign_service_app). The
+-- App-binding guard lets an App with keys change person only while this row names the App and the new person.
+CREATE TABLE IF NOT EXISTS app_handovers (
+ app_id TEXT PRIMARY KEY REFERENCES apps(id), to_user_id TEXT NOT NULL REFERENCES users(id)
+);
 -- A person whose latest sign-in was refused. Their personal keys stop working
 -- until a sign-in succeeds, which deletes the row (reversible by design).
 CREATE TABLE IF NOT EXISTS account_signin_refusals (
@@ -2315,6 +2320,49 @@ def _audit_in_write(conn: sqlite3.Connection, audit: Mapping[str, Any], *, targe
         conn, str(audit["action"]), actor_kind=audit.get("actor_kind"), actor_id=audit.get("actor_id"),
         actor_label=audit.get("actor_label"), target_kind=target_kind, target_id=target_id,
         metadata={**dict(audit.get("metadata") or {}), **metadata}, now=_now())
+
+
+def reassign_service_app(
+    app_id: str,
+    to_user_id: str,
+    *,
+    session: session_guard.BrowserSession | None = None,
+    audit: Mapping[str, Any] | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Hand a service App to another person: the person who answers for it, and whose plan bounds it.
+
+    This is a different act from ``update_app``, whose ``owner_user_id`` only filters. The keys and trusted
+    addresses stay as they are: they keep the person who issued them as their creator, and keep working under the
+    new person's plan. Only a service App moves; the new person must be a signed-up person who is neither
+    suspended nor removed. One audit row names the old and the new person, in the same transaction. Returns the
+    App, or ``None`` when it does not exist.
+    """
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        current = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        if current is None:
+            return None
+        if current["kind"] != "service":
+            raise ValueError("only a service app can be handed to another person; a personal app keeps its person")
+        if str(current["owner_user_id"]) == to_user_id:
+            raise ValueError("that person already answers for this app")
+        if conn.execute("SELECT 1 FROM users WHERE id = ?", (to_user_id,)).fetchone() is None:
+            raise ValueError("the person who will answer for this app was not found")
+        state = conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
+                             (to_user_id,)).fetchone()
+        if state is not None and (state["disabled_at"] is not None or state["removed_at"] is not None):
+            raise ValueError("an app can only be handed to an active person")
+        conn.execute("INSERT INTO app_handovers(app_id, to_user_id) VALUES (?, ?)", (app_id, to_user_id))
+        conn.execute("UPDATE apps SET owner_user_id = ? WHERE id = ?", (to_user_id, app_id))
+        conn.execute("DELETE FROM app_handovers WHERE app_id = ?", (app_id,))
+        if audit is not None:
+            _audit_in_write(conn, audit, target_kind="app", target_id=app_id, metadata={
+                "from_user_id": current["owner_user_id"], "to_user_id": to_user_id, "name": current["name"]})
+        conn.commit()
+        row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+    return _row_to_dict(row)
 
 
 def update_app(
