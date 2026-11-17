@@ -647,13 +647,7 @@
               ],
               "wait_deadline": "<time>"
             },
-            "retention": [
-              {
-                "decision": "not_kept",
-                "kind": "request_history",
-                "reason": "app_off"
-              }
-            ],
+            "retention": [],
             "source_kind": "app",
             "source_label": "Fixture app",
             "started_at_ms": null,
@@ -1989,13 +1983,7 @@
               ],
               "wait_deadline": "<time>"
             },
-            "retention": [
-              {
-                "decision": "not_kept",
-                "kind": "request_history",
-                "reason": "app_off"
-              }
-            ],
+            "retention": [],
             "source_kind": "app",
             "source_label": "Fixture app",
             "started_at_ms": null,

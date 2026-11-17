@@ -22,10 +22,10 @@ result, as for every adapter. A run that meets the marker without a result does 
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack
 import json
 import logging
 import math
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
@@ -303,75 +303,6 @@ class MultipartRunner:
         file_field, file, fields = await self._form(ctx, binding)
         observer_issue, observer_url = observer_problem(self._host.services(), spec)
         client = self._host.client_factory()
-        try:
-            if not await _healthy(client, base, config):
-                raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True)
-            try:
-                self._host.require_egress(service_id)
-            except Exception as error:  # noqa: BLE001 - a refused send is one bounded outcome
-                LOG.info("multipart egress refused: %s", type(error).__name__)
-                raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True) from error
-            try:
-                answer = await self._lease_and_send(
-                    ctx, client, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
-                    fields, _send_timeout_s(config))
-            except (PoolCapacityError, PoolObserverError) as error:
-                LOG.info("multipart capacity refused: %s", error)
-                self._tell_retry_after(ctx.job_id, spec)
-                raise RunError(RESOURCE_UNAVAILABLE, "capacity", retryable=True, client_message=GPU_BUSY_COPY) from error
-            except MultipartFailure as error:
-                LOG.warning("multipart downstream failed: %s", error)
-                raise _run_error(error) from error
-        finally:
-            await client.aclose()
-        await self._publish(ctx, file, answer)
-
-    async def _lease_and_send(self, ctx: RunContext, client: httpx.AsyncClient, spec: ExclusivePoolSpec,
-                              observer: tuple[str | None, str], url: str, file_field: str, file: ImageAsset,
-                              fields: Mapping[str, str], timeout: float) -> bytes:
-        """One lease, held from the observation until the service answers. A pool whose lease is held is refused at
-        once, never queued."""
-        observer_issue, observer_url = observer
-
-        async def observe() -> Any:
-            if observer_issue is not None:
-                raise PoolObserverError(observer_issue)
-            return await read_observer(client, spec, observer_url)
-
-        async with self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False):
-            media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
-                                     path=self._host.jobs_path())
-            try:
-                # The client's timeout bounds each read, so a service that sends a byte now and then would hold the
-                # lease without end; this bounds the whole call.
-                async with asyncio.timeout(timeout):
-                    return await post_multipart(client, url, image_field=file_field, image=file, fields=fields,
-                                                timeout_seconds=timeout, max_response_bytes=MAX_ANSWER_BYTES)
-            except TimeoutError as error:
-                raise MultipartFailure(KIND_TIMEOUT) from error
-
-    async def run_declared(self, ctx: RunContext) -> None:
-        path = self._host.jobs_path()
-        job = media_jobs.get(ctx.job_id, audience="internal", include_deleted=True, path=path) or {}
-        if media_jobs.is_terminal(str(job.get("status") or "")):
-            return
-        if (job.get("metadata") or {}).get("protocol_submitting"):
-            # A send whose answer was never committed is not repeated: the service may have done the work.
-            raise RunError(SUBMISSION_UNKNOWN, "upstream")
-        binding = _body(ctx.pin.binding)
-        service_id = str(binding.get(self._fields["service"]) or "")
-        capability = ctx.pin.contract.get("capability")
-        problem, spec, service = exclusive_pool_problem(
-            self._host.services(), service_id, capability if isinstance(capability, str) else None)
-        if problem is not None or spec is None or service is None:
-            raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True)
-        config = config_of(service)
-        base = service_base_url(config)
-        if not base:
-            raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True)
-        file_field, file, fields = await self._form(ctx, binding)
-        observer_issue, observer_url = observer_problem(self._host.services(), spec)
-        client = self._host.client_factory()
         async with AsyncExitStack() as resources:
             resources.push_async_callback(client.aclose)
             if not await _healthy(client, base, config):
@@ -446,32 +377,8 @@ class MultipartRunner:
         suffix = asset_types.suffix_for_media_type(ref.media_type)
         return ImageAsset(data, "input" + suffix, ref.media_type)
 
-    async def _publish(self, ctx: RunContext, file: ImageAsset, answer: bytes) -> None:
-        """Keep the answer in the Library and publish it as the job's one result, clearing the attempt marker."""
-        (name, output), = (ctx.pin.contract.get("outputs") or {}).items()
-        media_type = str(output.get("media_type"))
-        stored = asset_types.WorkflowOutput(
-            data=answer, suffix=asset_types.suffix_for_media_type(media_type),
-            workflow_name=ctx.pin.contract.get("display_name"), request_id=ctx.job_id,
-            inputs=(asset_types.OutputInput(file.data, _source_name(ctx), file.content_type),), takes_text=False)
-        try:
-            asset_id = await asyncio.to_thread(self._host.store_output, ctx.caller, stored)
-        except Exception:  # noqa: BLE001 - a result that cannot be kept fails the job, as an unsaved result must
-            LOG.exception("the result was not stored")
-            asset_id = None
-        if not asset_id:
-            raise RunError(MODEL_NOT_KEPT, "internal")
-        limits = self._host.limits()
-
-        def stage(conn: Any, attempt: int) -> None:
-            result_bundle.stage_assets_in(
-                conn, ctx.job_id, attempt, name,
-                [{"asset_ref": asset_id, "media_type": media_type, "size_bytes": len(answer)}], limits=limits)
-
-        result_bundle.complete_job(ctx.job_id, stage, limits=limits, metadata_patch={"protocol_submitting": False},
-                                   path=self._host.jobs_path())
     async def _result(self, ctx: RunContext, file: ImageAsset, answer: bytes) -> ResultBundle:
-        """Keep the answer in the Library and publish it as the job's one result, clearing the attempt marker."""
+        """Keep the answer with its input provenance; core publishes the returned bundle."""
         (name, output), = (ctx.pin.contract.get("outputs") or {}).items()
         media_type = str(output.get("media_type"))
         stored = asset_types.WorkflowOutput(
@@ -504,22 +411,22 @@ class _MultipartRun:
     interface_version = ADAPTER_INTERFACE_VERSION_V2
 
     @property
-    def adapter(self):
+    def adapter(self) -> _MultipartRun:
         return self
 
-    def connection_for(self, op):
+    def connection_for(self, op: str) -> None:
         return None  # The checked, leased client above is this invocation's connection.
 
-    def request(self, op, body):
+    def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
         return CanonicalRequest(op=op, body=body)
 
-    def poll_timing(self, op):
+    def poll_timing(self, op: str) -> tuple[float, float]:
         return 0, self.timeout  # This adapter always completes in start.
 
-    def result_context(self):
+    def result_context(self) -> ResultContext:
         return ResultContext(self.runner._host.limits())
 
-    async def start(self, conn, op, request):
+    async def start(self, conn: Any, op: str, request: CanonicalRequest) -> Completed:
         try:
             async with asyncio.timeout(self.timeout):
                 answer = await post_multipart(
