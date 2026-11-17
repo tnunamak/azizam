@@ -361,7 +361,7 @@ def test_a_marked_get_of_the_doubled_readiness_route_is_refused():
         with pytest.raises(TransitionUnavailable):
             send("/v1/v1/models")
     finally:
-        engine_egress.install(previous)
+        engine_egress._live = previous
 
 
 # -- path confinement ----------------------------------------------------------------------------------------------------

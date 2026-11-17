@@ -316,7 +316,8 @@ class RemoteRefusalTests(RouteCase):
         service = self.cfg['backends'][service_id]
         service['connection'] = {'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}}
         previous = engine_egress._live
-        self.addCleanup(engine_egress.install, previous)
+        # Restore the reference, including its registry reader and version state.
+        self.addCleanup(setattr, engine_egress, '_live', previous)
         engine_egress.publish(self.cfg['backends'])
         self.assertFalse(proxy._is_local_swap_backend(service_id))
         with pytest.MonkeyPatch.context() as monkeypatch:
@@ -326,3 +327,24 @@ class RemoteRefusalTests(RouteCase):
             self.assertEqual(response.status_code, 502, response.text)
             self.assertEqual(response.json()['error']['code'], 'protocol_dispatch_refused')
             self.assertFalse(recorder.connections or recorder.writes)
+
+
+def test_remote_refusal_cleanup_preserves_legacy_audio_failure_order(tmp_path, capsys):
+    """Run all three callers without a pytest teardown between their state changes."""
+    import unittest
+    from gateway import engine_egress
+    from tests.test_w4_audio_failure_parity import test_failure_and_publication_match_fd30cbfca
+
+    previous = engine_egress._live
+    tracking = {name: getattr(previous, name) for name in previous.__slots__}
+    result = unittest.TestResult()
+    RemoteRefusalTests('test_remote_legacy_speech_route_answers_typed_refusal').run(result)
+    assert result.wasSuccessful(), result.errors + result.failures
+    restored = engine_egress._live
+    restored_tracking = {name: getattr(restored, name) for name in restored.__slots__}
+
+    test_failure_and_publication_match_fd30cbfca(tmp_path / 'submit', 'queued', 'submit_unreachable', capsys)
+    test_failure_and_publication_match_fd30cbfca(tmp_path / 'history', 'sync', 'history_unreachable', capsys)
+    # The later sends may legitimately refresh tracking; pin the state at cleanup.
+    assert restored is previous
+    assert restored_tracking == tracking
