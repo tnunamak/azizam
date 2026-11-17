@@ -1,12 +1,46 @@
 """Private, versioned last-known-good choice snapshots; no refresh policy."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
 
 from gateway import private_io
+
+
+def choices_from_node_info(info, input_name):
+    """Extract a complete choice list without changing the supplied definition."""
+    def invalid():
+        return ValueError(f"invalid choices for input {input_name}")
+
+    if not isinstance(info, Mapping) or not isinstance(info.get("input"), Mapping):
+        raise invalid()
+    inputs = info["input"]
+    required = inputs.get("required", {})
+    optional = inputs.get("optional", {})
+    if not isinstance(required, Mapping) or not isinstance(optional, Mapping):
+        raise invalid()
+    if input_name in required:
+        entry = required[input_name]
+    elif input_name in optional:
+        entry = optional[input_name]
+    else:
+        raise invalid()
+    if not isinstance(entry, list) or not entry:
+        raise invalid()
+    if isinstance(entry[0], list):
+        options = entry[0]
+    elif entry[0] == "COMBO" and len(entry) >= 2 and isinstance(entry[1], Mapping):
+        options = entry[1].get("options")
+    else:
+        raise invalid()
+    if (not isinstance(options, list) or not options or
+            not all(isinstance(value, str) and value for value in options) or
+            len(set(options)) != len(options)):
+        raise invalid()
+    return list(options)
 
 
 @dataclass(frozen=True)
