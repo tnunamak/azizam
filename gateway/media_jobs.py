@@ -1544,6 +1544,8 @@ def get(
             data = _with_read_facts(conn, data)
     if not isinstance(data, Mapping):
         return None
+    if audience != "internal" and (data.get("metadata") or {}).get("publication_pending"):
+        return None
     return _filter_for_audience(data, audience)
 
 

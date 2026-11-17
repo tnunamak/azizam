@@ -71,6 +71,10 @@ def observe(tmp_path, old, mode, case, capsys):
                         if kind == 'upstream':
                             raise UpstreamError(503, 'injected history refusal')
                         raise TransportFailure(kind, 'injected history failure')
+                    if case == 'empty_output':
+                        from gateway.engine_protocol.httpx_wire import reply_from
+                        import httpx
+                        return reply_from(httpx.Response(200, json={'p1': {'status': {'status_str': 'success'}, 'outputs': {}}}))
                     if case == 'shutdown':
                         raise asyncio.CancelledError()
                     if case == 'generation_timeout':
@@ -133,7 +137,8 @@ def observe(tmp_path, old, mode, case, capsys):
         receipts = receipt_store.recent(audience='internal', path=receipt_store.DB_PATH)
         receipt = next(row for row in receipts if row['path'] == ('/gateway/v1/media/jobs' if mode == 'queued' else '/v1/audio/generate'))
         visible = media_jobs.get(job_id, path=media_jobs.DB_PATH) if job_id else next(iter(media_jobs.recent(path=media_jobs.DB_PATH)), None)
-        if response is not None and mode == 'sync' and response.status_code >= 400:
+        if (response is not None and mode == 'sync' and response.status_code >= 400
+                and response.headers.get('content-type', '').startswith('application/json')):
             error = response.json().get('error') or {}
         else:
             error = {}
@@ -157,6 +162,10 @@ def observe(tmp_path, old, mode, case, capsys):
         if case.startswith('history_'):
             assert counters['history'] == 1
         if case == 'shutdown' and mode == 'sync':
+            if not old:
+                pending, = media_jobs.unfinished(path=media_jobs.DB_PATH)
+                assert pending['status'] == 'running'
+                assert media_jobs.get(pending['job_id'], audience='client', path=media_jobs.DB_PATH) is None
             proxy._recover_media_jobs()
             assert media_jobs.unfinished(path=media_jobs.DB_PATH) == []
         return summary
@@ -165,7 +174,7 @@ def observe(tmp_path, old, mode, case, capsys):
 @pytest.mark.parametrize('mode', ['sync', 'queued'])
 @pytest.mark.parametrize('case', ['submit_unreachable', 'submit_timeout', 'history_unreachable', 'history_timeout',
                                   'history_upstream', 'generation_timeout', 'shutdown', 'publication_atomic',
-                                  'success', 'delivery_failure'])
+                                  'success', 'delivery_failure', 'empty_output'])
 def test_failure_and_publication_match_fd30cbfca(tmp_path, mode, case, capsys):
     old = observe(tmp_path / 'old', True, mode, case, capsys)
     new = observe(tmp_path / 'new', False, mode, case, capsys)
