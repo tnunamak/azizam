@@ -12,7 +12,7 @@ from gateway.runtime_auth import hash_api_key
 from tests.support.access import store_plan
 from tests.support.app_keys import issue_app_key
 from tests.test_service_apps_create import _create, _people
-from tests.test_signin_who_can_enter import OWNER, csrf_for, gateway  # noqa: F401  (gateway is a fixture)
+from tests.test_signin_who_can_enter import OWNER, csrf_for, gateway, signed_in  # noqa: F401  (gateway is a fixture)
 
 
 def _identity(g, key):
@@ -139,10 +139,14 @@ def test_only_the_owner_can_hand_an_app_over(world):
     assert admin_store.get_app(w.service_id, path=w.g.path)["owner_user_id"] == w.member_id
 
 
-def test_a_handover_needs_a_service_app_and_a_different_person(world):
+def test_a_handover_needs_a_service_app_and_naming_the_same_person_changes_nothing(world):
     w = world
+    key = issue_app_key(w.g.path, w.service_id)
     assert _handover(w.owner, w.personal_id, w.owner_id).status_code == 400
-    assert _handover(w.owner, w.service_id, w.member_id).status_code == 400
+    assert _handover(w.owner, w.service_id, w.member_id).status_code == 200
+    assert admin_store.get_app(w.service_id, path=w.g.path)["owner_user_id"] == w.member_id
+    still = _identity(w.g, key)
+    assert still is not None and not still.denial
 
 
 def test_a_person_who_cannot_answer_for_an_app_is_refused_with_a_409(world):
@@ -150,6 +154,7 @@ def test_a_person_who_cannot_answer_for_an_app_is_refused_with_a_409(world):
     key = issue_app_key(w.g.path, w.service_id)
 
     def person(email):
+        signed_in(w.g, sub=email, email=email)
         helper = w.g.user(email)["id"]
         accounts.change_person(helper, w.owner_id, plan_id=w.chat_only["id"], path=w.g.path)
         return helper
