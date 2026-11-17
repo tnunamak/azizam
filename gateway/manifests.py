@@ -494,6 +494,16 @@ def collect_manifest_errors(
             for key in ("label", "help"):
                 if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
                     errors.add(("inputs", name, key), "value_empty", f"input {name} {key} must be a non-empty string")
+            if "choices_from" in spec:
+                choices = spec["choices_from"]
+                enum = spec.get("enum")
+                if (spec.get("type") != "string" or not isinstance(enum, list) or not enum
+                        or not isinstance(choices, Mapping) or set(choices) != {"node_type", "input"}
+                        or any(not isinstance(choices[key], str) or not choices[key]
+                               for key in ("node_type", "input"))):
+                    errors.add(("inputs", name, "choices_from"), "choices_from_invalid",
+                               f"input {name} choices_from requires type string, a non-empty enum, "
+                               "and exactly node_type and input as non-empty strings")
             if spec.get("type") in ("number", "integer") and "default" in spec:
                 if isinstance(spec["default"], float) and not math.isfinite(spec["default"]):
                     errors.add(("inputs", name, "default"), "number_not_finite", f"input {name} default must be a finite number")

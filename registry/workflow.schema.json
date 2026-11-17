@@ -323,6 +323,15 @@
             "type": "string"
           }
         },
+        "choices_from": {
+          "type": "object",
+          "required": ["node_type", "input"],
+          "additionalProperties": false,
+          "properties": {
+            "node_type": {"type": "string", "minLength": 1},
+            "input": {"type": "string", "minLength": 1}
+          }
+        },
         "min_length": {
           "type": "integer",
           "minimum": 0

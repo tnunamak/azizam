@@ -129,3 +129,84 @@ def test_a_crash_after_a_collected_error_leaves_that_error_and_a_crash_alone_is_
     with pytest.raises(TypeError):
         with ErrorCollector().stop_at_a_crash_after_an_error():
             set([[]])
+
+
+@pytest.fixture
+def choices_manifest(monkeypatch):
+    from gateway import binding_descriptors
+
+    # Only the unrelated adapter registry is synthetic; both contract layers are real.
+    descriptor = binding_descriptors.parse_binding_descriptor(
+        binding="fixture", executor="adapter:fixture",
+        binding_fields={"label": {"kind": "text"}},
+    )
+    monkeypatch.setattr(binding_descriptors, "cached_shipped_binding_descriptors",
+                        lambda: {"fixture": descriptor})
+    return {
+        "schema_version": 2, "id": "fixture.choices", "version": "1",
+        "intent": "fixture.choices", "capability": "fixture",
+        "inputs": {"choice": {"type": "string", "enum": ["fallback"]}},
+        "outputs": {"result": {"media_type": "text/plain"}},
+        "bindings": {"fixture": {}},
+    }
+
+
+@pytest.mark.parametrize("declaration", [
+    None, False, 7, "private-value", [], {},
+    {"node_type": "private-node"},
+    {"input": "private-input"},
+    {"node_type": "private-node", "input": "private-input", "extra": "private-extra"},
+    {"node_type": "", "input": "private-input"},
+    {"node_type": "private-node", "input": ""},
+    {"node_type": 7, "input": "private-input"},
+    {"node_type": "private-node", "input": False},
+    {"node_type": [], "input": "private-input"},
+    {"node_type": "private-node", "input": {}},
+], ids=["null", "bool", "number", "text", "list", "empty", "missing-input", "missing-node",
+        "extra", "empty-node", "empty-input", "numeric-node", "boolean-input", "list-node", "object-input"])
+def test_choices_from_invalid_shape(choices_manifest, declaration):
+    from gateway.manifests import enforce_contract
+
+    choices_manifest["inputs"]["choice"]["choices_from"] = declaration
+    with pytest.raises(ContractErrors) as caught:
+        enforce_contract(choices_manifest)
+    assert listed(caught.value) == [(("inputs", "choice", "choices_from"), "choices_from_invalid")]
+    message = str(caught.value)
+    assert all(key in message for key in ("choices_from", "node_type", "input", "enum"))
+    assert "private-" not in message
+
+
+@pytest.mark.parametrize("spec", [
+    {"type": kind, "enum": ["fallback"]}
+    for kind in ("integer", "number", "boolean", "asset", "object", "array")
+] + [
+    {"type": "string"}, {"type": "string", "enum": []},
+    {"type": "string", "enum": "private-enum"}, {"type": "string", "enum": None},
+], ids=["integer", "number", "boolean", "asset", "object", "array",
+        "missing-enum", "empty-enum", "text-enum", "null-enum"])
+def test_choices_from_requires_string_enum(choices_manifest, spec):
+    from gateway.manifests import enforce_contract
+
+    choices_manifest["inputs"]["choice"] = {
+        **spec, "choices_from": {"node_type": "private-node", "input": "private-input"},
+    }
+    with pytest.raises(ContractErrors) as caught:
+        enforce_contract(choices_manifest)
+    assert listed(caught.value) == [(("inputs", "choice", "choices_from"), "choices_from_invalid")]
+    assert "private-" not in str(caught.value)
+
+
+def test_choices_from_passes_full_contract_and_keeps_fallback(choices_manifest):
+    from copy import deepcopy
+    from gateway.manifests import enforce_contract
+
+    original = deepcopy(choices_manifest)
+    assert enforce_contract(choices_manifest) is None
+    choices_manifest["inputs"]["choice"]["choices_from"] = {"node_type": "FixtureNode", "input": "selection"}
+    declared = deepcopy(choices_manifest)
+    assert enforce_contract(choices_manifest) is None
+    assert choices_manifest == declared
+    assert choices_manifest["inputs"]["choice"]["enum"] == ["fallback"]
+    del choices_manifest["inputs"]["choice"]["choices_from"]
+    assert enforce_contract(choices_manifest) is None
+    assert choices_manifest == original
