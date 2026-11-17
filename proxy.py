@@ -18778,11 +18778,14 @@ async def user_portal_create_app(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    name = body.get("name") if isinstance(body, Mapping) else ""
+    fields = body if isinstance(body, Mapping) else {}
     try:
         payload = create_user_app(
             session,
-            name=str(name or ""),
+            name=str(fields.get("name") or ""),
+            kind=str(fields.get("kind") or "personal"),
+            access_plan=str(fields.get("access_plan") or "person"),
+            owner_user_id=str(fields.get("owner_user_id") or "") or None,
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:

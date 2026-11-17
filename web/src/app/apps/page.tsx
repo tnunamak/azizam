@@ -72,6 +72,9 @@ import {
   type AccessPlan,
   type Credential,
 } from "@/lib/api";
+import { peopleApi } from "@/app/people/people-api";
+import { HandOverDialog } from "./hand-over-dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { productApi } from "@/lib/product-api";
 import type { CatalogRow } from "@/lib/product-api-types";
 import { guideIdForAppName, suggestedModel } from "@/lib/app-guides";
@@ -285,9 +288,15 @@ function AppsContents() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [plan, setPlan] = useState(SAME_AS_PERSON);
+  // An administrator chooses what the new app acts as; nothing is preselected.
+  const [actsAs, setActsAs] = useState<"" | "you" | "service">("");
+  // Owner only: the person a service app answers to. Empty means the owner themself.
+  const [answersTo, setAnswersTo] = useState("");
   // The client picked in the new key's recipe. None until the person picks one, so no client is preselected.
   const [guideApp, setGuideApp] = useState<string | null>(null);
   const [accessApp, setAccessApp] = useState<AccountApp | null>(null);
+  // Owner only: the service app whose "Answers to" is being changed.
+  const [handOverApp, setHandOverApp] = useState<AccountApp | null>(null);
   const [accessPlan, setAccessPlan] = useState(SAME_AS_PERSON);
   const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
   // True only when this dialog created the app, so a key failure on an
@@ -321,6 +330,12 @@ function AppsContents() {
     queryKey: ["access-plans"],
     queryFn: api.accessPlans.list,
     enabled: viewer.admin && (creating || accessApp !== null),
+  });
+  const isOwner = accountData?.user?.role === "owner";
+  const { data: peopleData } = useQuery({
+    queryKey: ["people", "answers-to"],
+    queryFn: peopleApi.people,
+    enabled: isOwner && creating && actsAs === "service",
   });
   // A guide fills in a real model name only when the exact key's access and the
   // current caller-visible catalog agree for that model and capability.
@@ -510,6 +525,8 @@ function AppsContents() {
   function resetDraft() {
     setName("");
     setPlan(SAME_AS_PERSON);
+    setActsAs("");
+    setAnswersTo("");
     setCreatedApp(null);
     setAppIsNew(false);
     setError(null);
@@ -541,7 +558,20 @@ function AppsContents() {
     setBusy(true);
     setError(null);
     try {
-      const app = createdApp ?? (await accountApi.createApp(name.trim()));
+      // One request: the kind, the plan and who answers for it are set before any key exists, so a key never
+      // works with more access than was chosen.
+      const app =
+        createdApp ??
+        (await accountApi.createApp(
+          name.trim(),
+          viewer.admin
+            ? {
+                kind: actsAs === "service" ? "service" : "personal",
+                access_plan: plan,
+                ...(isOwner && actsAs === "service" && answersTo ? { owner_user_id: answersTo } : {}),
+              }
+            : {},
+        ));
       setCreatedApp(app);
       if (!createdApp) {
         setAppIsNew(true);
@@ -557,22 +587,6 @@ function AppsContents() {
             : current,
         );
         void refresh();
-      }
-      // The plan is set before any key exists, so a key never works with
-      // more access than the owner chose.
-      if (
-        viewer.admin &&
-        plan !== SAME_AS_PERSON &&
-        !(app.access_plan && !app.access_plan.same_as_person && app.access_plan.id === plan)
-      ) {
-        await api.apps.setAccessPlan(app.id, plan);
-        const chosen = (plans ?? []).find((item) => item.id === plan);
-        setCreatedApp({
-          ...app,
-          access_plan: chosen
-            ? { id: chosen.id, name: chosen.name, summary: chosen.summary, same_as_person: false }
-            : app.access_plan,
-        });
       }
       const appName = formatAppName(app.name, accountData?.user?.email);
       const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
@@ -988,8 +1002,20 @@ function AppsContents() {
       ) : (
         // Each app is one group: its header, then its keys and (for an owner) its trusted addresses, indented under
         // its name. The groups stack with a gap, so the page reads as a list of apps, not one flat list of rows.
-        <ul aria-label="Apps" className="flex flex-col gap-3">
-          {apps.map((app, index) => {
+        <div className="space-y-8">
+          {[
+            { title: "Your apps", items: apps.filter((app) => app.kind !== "service") },
+            { title: "Service apps", items: apps.filter((app) => app.kind === "service") },
+          ]
+            .filter((section) => section.items.length > 0)
+            .map((section) => (
+          <section key={section.title} aria-labelledby={`apps-${section.title.replace(" ", "-").toLowerCase()}`} className="space-y-3">
+            <h2 id={`apps-${section.title.replace(" ", "-").toLowerCase()}`} className="text-heading">
+              {section.title}
+            </h2>
+        <ul aria-label={section.title} className="flex flex-col gap-3">
+          {section.items.map((app) => {
+            const index = apps.indexOf(app);
             const appName = formatAppName(app.name, accountData?.user?.email);
             const activeIds = new Set(app.credentials.map((key) => key.id));
             // Old keys from a rotation finished later, still active.
@@ -1020,6 +1046,10 @@ function AppsContents() {
                   ? "Needs a new key"
                   : null,
               blockedReason ? "Can't create keys" : null,
+              app.kind === "service" && app.request_history?.manager_name
+                ? `Answers to ${app.request_history.manager_name}`
+                : null,
+              app.kind === "service" ? "No prompt memory" : null,
               `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
               app.access_plan ? (
                 <span key="plan">
@@ -1091,7 +1121,7 @@ function AppsContents() {
                       {meta.map((part, index) => (
                         <Fragment key={index}>
                           {index > 0 ? <Separator /> : null}
-                          {part}
+                          {typeof part === "string" ? <span>{part}</span> : part}
                         </Fragment>
                       ))}
                     </p>
@@ -1201,6 +1231,16 @@ function AppsContents() {
                             Change access plan
                           </DropdownMenuItem>
                         )}
+                        {owner && app.kind === "service" ? (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setHandOverApp(app);
+                            }}
+                          >
+                            Change who it answers to…
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuItem
                           variant="destructive"
                           disabled={busy}
@@ -1251,7 +1291,23 @@ function AppsContents() {
             );
           })}
         </ul>
+          </section>
+            ))}
+        </div>
       )}
+      {handOverApp ? (
+        <HandOverDialog
+          app={{
+            id: handOverApp.id,
+            name: handOverApp.name,
+            currentPersonId: accountData?.user?.id ?? null,
+            sameAsPerson: !handOverApp.access_plan || handOverApp.access_plan.same_as_person,
+            planName: handOverApp.access_plan?.name ?? null,
+          }}
+          onClose={() => setHandOverApp(null)}
+          onDone={() => refresh()}
+        />
+      ) : null}
       {accountData?.authenticated ? (
         <SignInConnections
           empty={
@@ -1300,6 +1356,61 @@ function AppsContents() {
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
+            {viewer.admin && !createdApp ? (
+              <fieldset className="space-y-2">
+                <legend className="text-label">Acts as</legend>
+                <RadioGroup
+                  value={actsAs}
+                  onValueChange={(value) => setActsAs(value as "you" | "service")}
+                  disabled={busy}
+                  aria-label="Acts as"
+                >
+                  <label className="flex items-start gap-3">
+                    <RadioGroupItem value="you" id="acts-as-you" className="mt-1" />
+                    <span>
+                      <span className="block">You</span>
+                      <span className="text-muted-foreground text-meta block">
+                        Uses your plan and stops when you leave.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-3">
+                    <RadioGroupItem value="service" id="acts-as-service" className="mt-1" />
+                    <span>
+                      <span className="block">A service</span>
+                      <span className="text-muted-foreground text-meta block">
+                        A program, device or agent. No person is behind it, and it keeps no prompt memory.
+                      </span>
+                    </span>
+                  </label>
+                </RadioGroup>
+              </fieldset>
+            ) : null}
+            {isOwner && actsAs === "service" && !createdApp ? (
+              <div className="space-y-2">
+                <label htmlFor="app-answers-to" className="text-label">
+                  Answers to
+                </label>
+                <Select value={answersTo || "me"} onValueChange={(value) => setAnswersTo(value === "me" ? "" : value)} disabled={busy}>
+                  <SelectTrigger id="app-answers-to" aria-label="Answers to" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="me">You</SelectItem>
+                    {(peopleData?.people ?? [])
+                      .filter((person) => person.id !== accountData?.user?.id)
+                      .map((person) => (
+                        <SelectItem key={person.id} value={person.id}>
+                          {person.name || person.email || person.id}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-meta">
+                  The person who answers for this app. Its plan never goes beyond theirs.
+                </p>
+              </div>
+            ) : null}
             <fieldset className="space-y-2">
               <legend className="text-label">Access plan</legend>
               {createdApp ? (
@@ -1353,7 +1464,7 @@ function AppsContents() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy || !name.trim()}>
+              <Button type="submit" disabled={busy || !name.trim() || (viewer.admin && !createdApp && !actsAs)}>
                 {busy
                   ? "Creating…"
                   : createdApp

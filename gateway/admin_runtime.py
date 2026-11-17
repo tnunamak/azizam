@@ -322,6 +322,8 @@ class AdminSQLiteStore:
         if record.get("kind") == "service":
             record["request_history"] = {"keep": bool(record.get("history_keep")),
                                          "retention": record.get("history_period")}
+            # What a handover to another person would stop: the owner's confirmation states these counts.
+            record.update(admin_store.app_binding_counts(str(record.get("id")), path=self.path))
         if assignment != PERSON:
             plan_id = assignment
         elif listing is None:
@@ -402,7 +404,9 @@ class AdminSQLiteStore:
         """Create an App with its accountable person and its access plan.
 
         ``access_plan`` is required: a plan id, or ``"person"`` for "Same as
-        its person". The accountable person defaults to the signed-in person,
+        its person". Only an administrator may create a service app or pick a
+        plan other than that; a member's App is personal and follows their own
+        plan. The accountable person defaults to the signed-in person,
         or, for an owner key, to the gateway owner. Only the owner may name
         someone else; an administrator's App always answers to the
         administrator, so its spend stays inside the administrator's own plan.
@@ -426,6 +430,10 @@ class AdminSQLiteStore:
         access_plan = str(data.get("access_plan") or "").strip()
         if not access_plan:
             raise ValueError("access_plan is required: an access plan id or \"person\"")
+        # A service app and a plan other than "Same as its person" are an administrator's choice. A member
+        # creates a personal app that follows their own plan.
+        if (kind != "personal" or access_plan != admin_store.PERSON_ASSIGNMENT) and not actor.is_admin:
+            raise PermissionError("Only an administrator can create a service app or pick its access plan.")
         record = admin_store.create_app(
             name,
             kind=kind,
@@ -453,6 +461,14 @@ class AdminSQLiteStore:
             return None
         if "access_plan" in data or "owner_user_id" in data or "request_history" in data:
             self._require_owner_or_accountable(actor, str(before.get("owner_user_id") or ""))
+        new_person = None
+        if "owner_user_id" in data:
+            # Who answers for a service App is the owner's call alone: it moves the plan that bounds the App.
+            if "owner" not in actor.roles:
+                raise PermissionError("Only the owner can change who an App answers to.")
+            new_person = str(data.get("owner_user_id") or "").strip()
+            if not new_person:
+                raise ValueError("owner_user_id must name a person")
         self._require_actor_not_outranked(
             actor, self._app_holder_roles(before),
             "This App answers to the owner or to someone with more access than you, "
@@ -476,6 +492,18 @@ class AdminSQLiteStore:
                 raise ValueError("request_history needs keep (true or false) and retention (a request history period)")
             history_keep, history_period = setting["keep"], setting["retention"]
 
+        if new_person is not None and before.get("kind") != "service":
+            raise ValueError("only a service app can be handed to another person; a personal app keeps its person")
+        if new_person is not None and new_person != str(before.get("owner_user_id")) and (
+                name is not None or access_plan is not None or history_keep is not None):
+            raise ValueError("hand an app to another person on its own, then change its other settings")
+        if new_person is not None and new_person != str(before.get("owner_user_id")):
+            record = admin_store.reassign_service_app(
+                app_id, new_person, session=actor.browser_session,
+                audit={"action": "app.handover", "actor_kind": actor.actor_kind, "actor_id": actor.audit_actor_id,
+                       "actor_label": actor.actor_label},
+                path=self.path)
+            return self._enrich_app(record) if record is not None else None
         record = admin_store.update_app(
             app_id,
             name=name,
