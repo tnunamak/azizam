@@ -79,6 +79,7 @@ function homePayload(overrides: Record<string, unknown> = {}) {
     status: { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: {} },
     receipts: [],
     recent_chats: [],
+    media_output_kinds: ["image", "video", "audio"],
     ...overrides,
   };
 }

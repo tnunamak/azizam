@@ -201,6 +201,7 @@ export interface HomeProjection {
   status: StatusSummary;
   receipts: Array<HomeReceipt>;
   recent_chats: Array<HomeChat>;
+  media_output_kinds?: Array<string>;
 }
 
 export interface SetupObservation {

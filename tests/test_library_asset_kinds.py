@@ -341,7 +341,7 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     table = asset_types.load_kind_names()
     assert table == asset_types.KIND_NAMES
     assert {"image", "video", "audio", "model", "text", "file"} <= set(table)
-    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent", "items"}
+    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent", "items", "making"}
                for words in table.values())
 
 
@@ -357,6 +357,8 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: null}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, items: Smells}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, items: 3}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, making: 'yes'}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, making: null}}\n",
     "other: 1\n",
 ])
 def test_a_malformed_kind_file_is_refused(tmp_path, text):
@@ -544,3 +546,15 @@ def test_a_stored_picture_is_labelled_removed_by_its_real_bytes(tmp_path):
     plain = tmp_path / "a.zzunknown"
     plain.write_bytes(b"hello")
     assert me_media._metadata_fields(plain)["metadata_handling"] == "unchanged"
+
+
+def test_the_kinds_home_names_while_they_are_made_are_the_ones_the_data_marks(tmp_path):
+    assert asset_types.making_kinds() == ["image", "video", "audio"]
+    path = tmp_path / "asset_kinds.yml"
+    path.write_text("kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, making: true}, "
+                    "hum: {label: Hum, plural: Hum, untitled: Hum, input: hum, making: false}, "
+                    "tick: {label: Tick, plural: Tick, untitled: Tick, input: tick}}\n", encoding="utf-8")
+    table = asset_types.load_kind_names(path)
+    assert [kind for kind, row in table.items() if row.get("making") is True] == ["smell"]
+    # The flag is for Home's tile only: the words the media list sends do not carry it.
+    assert "making" not in asset_types.kind_names("image")

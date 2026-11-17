@@ -434,6 +434,7 @@ export default function HomePage() {
         media: recentMedia?.assets ?? [],
         chats: home.recent_chats ?? [],
         rows: home.capabilities,
+        mediaOutputKinds: home.media_output_kinds ?? [],
       })
     : [];
   const mediaState = mediaFailed ? "error" : mediaPending ? "pending" : "ready";
