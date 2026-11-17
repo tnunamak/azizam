@@ -1,5 +1,7 @@
 # W4 modality execution inventory
 
+Current status: 3D and audio generation are ported. Audio uses declared execution and post-publication delivery; its old polling/storage/completion bodies are deleted. The stopped-attempt sections below are historical evidence. Other modalities remain as inventoried.
+
 Generated from the AST with `python3 scripts/research/modality_paths.py` at the start of the port.
 The script extracts calls and side-effect call names without importing the app. The explicit dispatch seams document
 registry-selected methods that static call resolution cannot prove. These annotations were checked against the named
@@ -203,3 +205,57 @@ nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-delivery-stopped
 Output: `313 passed in 30.90s`. This verifies the safe active route, five old/new synchronous comparisons, the generic
 hook, the 30-second pin, both unchanged 3D suites, the existing queued receipt/result invariants, and the architectural
 guards. It does not claim the candidate's queued receipt invariant is repaired; implementation stopped at that failure.
+
+
+## Audio retry completed: receipt merge and typed refusals
+
+The owner authorized both fixes. Request-receipt finalization now keeps the stored publication-owned
+`metadata.result_bundle`, even when the terminal request object omits it or carries a stale value. Request-owned
+metadata and terminal status still come from finalization. The new focused test first failed with the stored summary
+replaced by `{'bundle': 'stale'}` (`1 failed in 9.04s`), then passed with the fix. The existing
+`test_the_receipt_carries_the_summary_for_the_operator_only` is unchanged and passes.
+
+Result-limit errors already have a typed carrier: `result_bundle.ResultRefused`, including its `code`. The prepared
+path now preserves that exception for the queued executor, which calls the existing `_fail_refused_result` rather
+than treating it as an upstream transport error. No generic classifier was widened and no new generic refusal field
+was needed. Synchronous requests translate that same type to a 502 result_refused response. The added typed-delivery
+case proves the generic hook propagates the exception and its original code while leaving publication succeeded.
+
+The queued executor preserves the old generation-receipt outcome for pre-publication result refusals. A refusal from
+post-publication delivery instead fails the request receipt while leaving the published job succeeded. The job's legacy
+asset-list bookkeeping runs after successful publication and before rewriting client bytes, so a publication refusal
+cannot leave a failed job listing unpublished assets.
+
+Before deletion, the full five-case old/new comparison passed unchanged against the captured wire expectations:
+responses, headers, engine requests and receipts for success, delivery failure, engine failure, the private 30-second
+default and normalization. The existing functions still perform normalization, storage, stripping and provenance.
+At commit 0aa55faa0:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-retry-parity.xml -n 4   tests/test_w4_audio_declared.py tests/test_declared_delivery.py tests/test_declared_operation_job.py   tests/test_w4_mesh_declared.py tests/test_adapter_differential_s7_mesh_rows.py   tests/test_audio_duration_publication.py tests/test_receipt_store_contract.py -o junit_logging=all
+```
+
+Output: `139 passed in 17.11s`. Both audio implementations remain in that commit for review.
+
+The old route's polling/result/delivery body and the queued worker's duplicate artifact storage and bundle completion
+were deleted in ebf2fc9be. The request/policy preparation and queued scheduling/receipt lifecycle wrappers remain;
+they now call the one declared path. The five comparison cases remain as plain wire tests against the same fixture.
+No existing fixture or owner oracle was changed.
+
+Final verification against the committed deletion:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-retry-final.xml -n 4   tests/test_w4_audio_declared.py tests/test_declared_delivery.py tests/test_declared_operation_job.py   tests/test_audio_declared_result_boundary.py tests/test_audio_duration_publication.py tests/test_audio_route_selectors.py   tests/test_w4_mesh_declared.py tests/test_adapter_differential_s7_mesh_rows.py tests/test_result_bundle_audio.py   tests/test_receipt_store.py tests/test_receipt_store_contract.py tests/test_engine_knowledge_boundary.py   tests/test_implicit_marker_ratchet.py tests/test_c2d_openapi_parity.py -o junit_logging=all
+```
+
+Output: `406 passed in 29.77s`. This includes the unchanged queued-audio, 3D and declared-job tests, receipt-store tests,
+the boundary where delivery fails after publication, the duration pin, OpenAPI parity and both architectural guards.
+No third invariant failed. Live external-engine execution remains unverified; all engine HTTP in these tests is controlled.
+
+Expect it to work because the completion transaction remains the only publication owner, while the finalizer preserves
+that owner's linked summary. Existing typed refusals reach the same executor helper as before. Old/new wire comparisons
+and the existing queued receipt/result-limit tests verify those ordering assumptions. Confidence: 95% for the tested paths.
+
+This retry adds two cases: finalizer preservation of a stale linked summary and typed delivery refusal. Combined branch
+budget proposal at original tests/budgets.toml line 678: `pytest = 29862` (+32 over 29830), before reconciling other lanes.
+The budget file, reviewed lists and frozen route graph remain unedited.
