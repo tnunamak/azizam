@@ -146,6 +146,9 @@ class World:
         self.repo = tmp / "repo"
         self.gh_log = tmp / "gh.log"
         self.bin.mkdir()
+        # A quiet host by default: the step limits stay at their base.
+        self.loadavg = tmp / "loadavg"
+        self.loadavg.write_text("0.50 0.40 0.30 1/100 1\n")
         for name, body in STUBS.items():
             (self.bin / name).write_text(f"#!/usr/bin/env bash\n{body}\n")
             (self.bin / name).chmod(0o755)
@@ -177,7 +180,8 @@ class World:
 
     def env(self, **extra: str) -> dict[str, str]:
         return {"HOME": str(self.home), "PATH": f"{self.bin}:/usr/bin:/bin", "LANG": "C.UTF-8",
-                "FAKE_BIN": str(self.bin), "FAKE_GH_LOG": str(self.gh_log), **extra}
+                "FAKE_BIN": str(self.bin), "FAKE_GH_LOG": str(self.gh_log),
+                "AZIZAM_CI_LOADAVG_FILE": str(self.loadavg), **extra}
 
     def args(self, *extra: str) -> list[str]:
         return [str(self.repo / "scripts/ci-local"), "--force", "--browser-workers", "1", "--order-seed", "5", *extra]
@@ -409,6 +413,27 @@ def test_step_limit_is_clamped_to_one_hour(world: World) -> None:
     timeout.chmod(0o755)
     result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="9000")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("load, limit", [("0.50", "100"), ("6.00", "100"), ("9.00", "150"), ("48.00", "800"), ("400.00", "3600")])
+def test_step_limit_scales_with_host_load_and_the_receipt_keeps_the_load(world: World, load: str, limit: str) -> None:
+    # 12 cores: the limit is the base times 2 x load1 / 12 when that is more than 1, at most an hour.
+    world.loadavg.write_text(f"{load} 1.00 1.00 1/100 1\n")
+    (world.bin / "nproc").write_text("#!/usr/bin/env bash\necho 12\n")
+    (world.bin / "nproc").chmod(0o755)
+    timeout = world.bin / "timeout"
+    timeout.write_text("#!/usr/bin/env bash\n"
+                       f"[[ $3 == {limit}s ]] || exit 92\n"
+                       "if [[ $* == *run-hermetic-pytest.sh* ]]; then exit 124; fi\n"
+                       "shift 3; exec \"$@\"\n")
+    timeout.chmod(0o755)
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="100")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"python-hermetic exceeded the {limit}-second step limit (host load {load} at start, {load} at end)" in result.stdout
+    assert "exit 92" not in result.stdout and "\t92\t" not in (world.receipts / "steps.tsv").read_text()
+    assert (world.receipts / "steps/python-hermetic.load").read_text() == f"{load}\t{load}\t{limit}\n"
+    cost = json.loads((world.receipts / "cost.json").read_text())["steps"]["python-hermetic"]
+    assert (cost["load_start"], cost["load_end"], cost["limit_s"]) == (float(load), float(load), float(limit))
 
 
 def _step_with_unrelated_grandchild(world: World) -> Path:
@@ -766,7 +791,7 @@ def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     lines = result.stdout.splitlines()
     header = next(line for line in lines if line.startswith("step "))
-    assert header.split() == ["step", "rc", "wall_s", "cpu_s", "peak_mb"]
+    assert header.split() == ["step", "rc", "wall_s", "cpu_s", "peak_mb", "load_start", "load_end"]
     rows = []
     for line in lines[lines.index(header) + 1:]:
         if line.startswith("critical path"):

@@ -108,8 +108,22 @@ def read_steps(path: Path) -> dict[str, dict]:
         wall = number(fields[3], float) if len(fields) > 3 else number(fields[2], float)
         cpu = number(fields[4], float) if len(fields) > 4 else None
         peak = number(fields[5], int) if len(fields) > 5 else None
-        steps[name] = {"rc": int(rc) if rc.isdigit() else rc, "wall_s": wall, "cpu_s": cpu, "max_rss_kb": peak}
+        steps[name] = {"rc": int(rc) if rc.isdigit() else rc, "wall_s": wall, "cpu_s": cpu, "max_rss_kb": peak,
+                       **read_load(path.parent / "steps" / f"{name}.load")}
     return steps
+
+
+def read_load(path: Path) -> dict:
+    """A step's 1-minute host load at its start and end and its scaled limit (ci-local writes them).
+
+    Load is a confound for every wall time in the table. A skipped step, or a receipt from
+    before these files, has none.
+    """
+    try:
+        start, end, limit = path.read_text().split("\t")
+    except (OSError, ValueError):
+        start = end = limit = ""
+    return {"load_start": number(start, float), "load_end": number(end, float), "limit_s": number(limit, float)}
 
 
 def read_journey(path: Path) -> dict | None:
@@ -179,12 +193,12 @@ def report(receipts: Path, mode: str) -> None:
         cost["journey"] = journey  # written earlier by scripts/ci/journey_clock.py
     (receipts / "cost.json").write_text(json.dumps(cost, indent=2, sort_keys=True) + "\n")
 
-    print(f"{'step':<22} {'rc':>7} {'wall_s':>8} {'cpu_s':>8} {'peak_mb':>9}")
+    print(f"{'step':<22} {'rc':>7} {'wall_s':>8} {'cpu_s':>8} {'peak_mb':>9} {'load_start':>10} {'load_end':>8}")
     slowest_first = sorted(steps.items(), key=lambda item: (-(item[1]["wall_s"] or 0.0), item[0]))
     for name, step in slowest_first:
         peak = None if step["max_rss_kb"] is None else step["max_rss_kb"] / 1024
         print(f"{name:<22} {str(step['rc']):>7} {cell(step['wall_s'], '.2f'):>8} {cell(step['cpu_s'], '.2f'):>8} "
-              f"{cell(peak, '.1f'):>9}")
+              f"{cell(peak, '.1f'):>9} {cell(step['load_start'], '.2f'):>10} {cell(step['load_end'], '.2f'):>8}")
     if chain:
         print(f"critical path {chain_s:.2f} s: {' > '.join(chain)}")
     peak_text = "-" if totals["max_step_rss_kb"] is None else f"{totals['max_step_rss_kb'] / 1024:.1f} MB"

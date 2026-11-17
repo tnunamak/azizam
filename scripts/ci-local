@@ -58,6 +58,13 @@ if ((step_limit_us > 3600000000)); then
   step_limit_s=3600
   step_limit_us=3600000000
 fi
+# Host load is a confound for every step's wall time: other work shares the cores, and above
+# load1 = cores the hermetic runner also halves its pytest workers. So each step's limit is the
+# base limit times 2 x load1 / cores, read when the step starts, if that factor is more than 1;
+# never more than an hour. Each step's receipt keeps its load at start and end and its limit.
+# AZIZAM_CI_LOADAVG_FILE stands in for /proc/loadavg in tests.
+loadavg_file=${AZIZAM_CI_LOADAVG_FILE:-/proc/loadavg}
+step_cores=$(nproc)
 if [[ -n $closes_nightly_red && ! $closes_nightly_red =~ ^[1-9][0-9]*$ ]]; then
   echo "--closes-nightly-red must be an issue number" >&2
   exit 2
@@ -252,19 +259,26 @@ failed=0
 printf 'execution_started\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 step() {
   local name=$1; shift
-  local start=$SECONDS start_us=${EPOCHREALTIME/./} rc=0 elapsed_us
+  local start=$SECONDS start_us=${EPOCHREALTIME/./} rc=0 elapsed_us load_start load_end limit_s limit_us
+  read -r load_start _ < "$loadavg_file"
+  read -r limit_s limit_us < <(awk -v base="$step_limit_s" -v load="$load_start" -v cores="$step_cores" 'BEGIN {
+    factor = 2 * load / cores; if (factor < 1) factor = 1
+    limit = base * factor; if (limit > 3600) limit = 3600
+    printf "%.6g %.0f\n", limit, limit * 1000000 }')
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
-  ( measure_step "$name" "$@" ) > "$receipts/logs/$name.log" 2>&1 &
+  ( measure_step "$name" "$limit_s" "$@" ) > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
   elapsed_us=$(( ${EPOCHREALTIME/./} - start_us ))
+  read -r load_end _ < "$loadavg_file"
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
+  printf '%s\t%s\t%s\n' "$load_start" "$load_end" "$limit_s" > "$receipts/steps/$name.load"
   if ((rc)); then
     failed=1
-    if ((rc == 124 || (rc == 137 && elapsed_us >= step_limit_us))); then
-      echo "   FAILED: $name exceeded the ${step_limit_s}-second step limit: $receipts/logs/$name.log"
+    if ((rc == 124 || (rc == 137 && elapsed_us >= limit_us))); then
+      echo "   FAILED: $name exceeded the ${limit_s}-second step limit (host load $load_start at start, $load_end at end): $receipts/logs/$name.log"
     elif ((rc == 137)); then
       echo "   FAILED: $name was killed by SIGKILL (possibly OOM): $receipts/logs/$name.log"
     else
@@ -277,14 +291,14 @@ step() {
 # status" message out of the step's log. Without GNU time, wait4 measures the step.
 # Both return the step's own exit status.
 measure_step() {
-  local name=$1; shift
+  local name=$1 limit_s=$2; shift 2
   local cost=$receipts/steps/$name.cost
   local group_file=$step_groups/${CI_JOB_PID:-main}.$name deadline_pid rc=0
   if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
-    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
+    timeout --signal=TERM --kill-after=20s "${limit_s}s" \
       "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@" &
   else
-    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
+    timeout --signal=TERM --kill-after=20s "${limit_s}s" \
       python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@" &
   fi
   deadline_pid=$!
@@ -316,7 +330,7 @@ cleanup_step() {
     rm -rf -- "$@"
   fi
 }
-export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups step_limit_s step_limit_us
+export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups step_limit_s loadavg_file step_cores
 export -f step cleanup_step measure_step cost_columns stop_step_group
 start_job() {
   local directory=$1; shift
