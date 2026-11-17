@@ -983,3 +983,42 @@ admin_store.write_service_registry(value, path=path, actor=SimpleNamespace(roles
     asyncio.run(check())
     assert not calls
 
+
+
+@pytest.mark.parametrize('pre_layering', [False, True])
+def test_s6_startup_migrations_preserve_remote_authority(owner, gateway, pre_layering):
+    from gateway import admin_store, service_registry as sr, registry_layers, workflow_schema_migration
+    from gateway.remote_engine import authority_record, factory_from_store
+    from tests.registry_test_helpers import write_legacy_registry_for_test
+    from tests.test_workflow_schema_migration import _owner_record, _v1
+    from tests.support.remote_protocol import add_remote
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True}).status_code == 200
+    current = admin_store.get_service_registry_with_generation(path=gateway.path)
+    if pre_layering:
+        stored = current['value']
+    else:
+        stored = json.loads(admin_store.get_service_registry_json_with_generation(path=gateway.path)['value_json'])
+    stored.setdefault('workflows', {})['review.workflow'] = _owner_record('review.workflow', _v1())
+    write_legacy_registry_for_test(stored, path=gateway.path)
+    steps = (registry_layers.LAYERING_STEP, workflow_schema_migration.STEP, sr.WORKFLOW_RECORD_STEP)
+    with admin_store._conn(gateway.path) as conn:
+        conn.executemany('DELETE FROM schema_migration_steps WHERE name=?', [(name,) for name in steps])
+        conn.commit()
+    before = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['smell-box']
+    factory = factory_from_store()
+    capability = factory.admit('smell-box')
+    boot, problem = gateway.proxy._boot_effective_runtime_config(dict(gateway.proxy.config))
+    assert problem is None, problem
+    after = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['smell-box']
+    assert authority_record(after) == authority_record(before)
+    assert boot['backends']['smell-box']['connection']['remote_dispatch']['enabled'] is True
+    assert all(admin_store.migration_step_recorded(name, path=gateway.path) for name in steps)
+    factory.check(capability, service_id='smell-box', address='https://engine.example')
+    generation = admin_store.service_registry_generation(path=gateway.path)
+    again, problem = gateway.proxy._boot_effective_runtime_config(dict(gateway.proxy.config))
+    assert problem is None and again['backends']['smell-box']['enabled'] is True
+    assert admin_store.service_registry_generation(path=gateway.path) == generation
+

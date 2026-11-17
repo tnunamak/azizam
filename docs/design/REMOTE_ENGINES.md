@@ -564,9 +564,9 @@ loop without making I/O depend on a watcher tick. The external-process test
 commits an owner opt-out through the real registry writer with no parent callback
 or watcher running, then proves both the next read and the next write refuse.
 
-The watcher interval bounds detection only while an operation is sleeping or
-blocked inside a previously authorized I/O; it is not permission for another I/O
-under a stale generation. Bytes already handed to the network cannot be recalled.
+The watcher interval schedules checks while an operation is sleeping or blocked
+inside a previously authorized I/O; actual detection also includes scheduler and
+database latency. It is not permission for another I/O under a stale generation. Bytes already handed to the network cannot be recalled.
 
 ### Re-review: service concurrency and watcher scope
 
@@ -582,3 +582,44 @@ Each tick submits one batch to a worker, using the smallest configured
 read the committed generation before sending or consuming more bytes. A service
 with many jobs therefore has one watcher submission per tick, bounded operation
 slots, and the existing separate connection ceiling.
+
+### Re-review: legacy publication, disable and migration boundaries
+
+The active registry writer publishes conservative remote destination denials
+before committing, covering all four registry transaction callers. Boot and hot
+reload install the egress projection before publishing their runtime snapshot.
+Legacy send hooks also compare the persisted generation (off-loop for async
+clients) so a CLI opt-in is refused on the next send without a reload callback.
+Once marked remote, a destination stays refused for unbound clients in that
+process until restart, including after a failed reload or transaction rollback.
+This prevents a stale concurrent reload from removing a newer denial.
+
+An administrator can disable a remote service without changing other authority
+inputs. Only an owner can re-enable it or change its connection policy. Schema
+loading rejects malformed remote_dispatch shapes before runtime code can treat
+them as local records; runtime guards return a typed protocol refusal.
+
+The actorless layering and workflow migrations and workflow registry writes were
+tested with an enabled remote record present. They preserve its authority inputs,
+so no system actor with extra permissions is needed. Layered and pre-layering
+startup paths both succeed; the second boot leaves the registry generation alone.
+
+The two callers of _is_local_swap_backend are _build_role_catalog_entries (which
+has no callers) and _first_servable_loaded_llm_target. The latter's only
+local_swap_only caller is decide_image_background_removal; current-model paths
+also call it without that flag. Classification treats a refused remote driver
+as non-local; legacy HTTP boundaries return sanitized typed refusals. The speech
+route exercises the latter end to end. Graph adapter/watch, the background
+listener and Realtime tests separately prove refusal before a WebSocket dial.
+
+The direct callers of _first_servable_loaded_llm_target are
+_prepare_litellm_local_llm_request, _current_loaded_llm_target,
+decide_image_background_removal and _model_list_served_declarations. Only the
+background-removal caller supplies local_swap_only=True. This caller inventory
+was checked against Python AST call sites rather than comments or string matches.
+The legacy map also retains each service's former published destinations when it
+becomes remote, so stale legacy connections and WebSocket listeners are refused
+on their old address as well as on the new remote origin.
+
+The eight re-review corrections, full node IDs, commands and observed pass lines
+are recorded in [REMOTE_ENGINES_REREVIEW.md](REMOTE_ENGINES_REREVIEW.md).
