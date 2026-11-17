@@ -794,3 +794,24 @@ def test_s6_public_job_get_strips_remote_binding_for_non_internal_audiences(owne
             visible = media_jobs.get(submitted['id'], audience=audience, path=media_jobs.DB_PATH)
             assert 'metadata' not in visible
             assert 'remote_binding' not in json.dumps(visible)
+
+
+
+@pytest.mark.parametrize('field', ['enabled', 'disabled'])
+def test_s6_admin_can_disable_remote_service_but_only_owner_can_reenable(owner, gateway, field):
+    from tests.support.remote_protocol import add_remote
+    from tests.test_signin_who_can_enter import signed_in
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    path = '/admin/api/operator/services/smell-box'
+    assert client.patch(path, headers=_write_headers(client), json={'enabled': True}).status_code == 200
+    admin, _ = signed_in(gateway, sub='remote-disable-admin', email='admin@example.test', groups=['/Trusted'])
+    disabled = admin.patch(path, headers=_write_headers(admin), json={field: field == 'disabled'})
+    assert disabled.status_code == 200, disabled.text
+    before = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    assert before['services']['smell-box']['enabled'] is False
+    denied = admin.patch(path, headers=_write_headers(admin), json={field: field != 'disabled'})
+    assert denied.status_code == 403, denied.text
+    assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before
+    assert client.patch(path, headers=_write_headers(client), json={'enabled': True}).status_code == 200

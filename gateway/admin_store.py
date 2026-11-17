@@ -4523,7 +4523,21 @@ def write_service_registry_in_transaction(
     for sid in set(old_services) | set(new_services):
         old_record, new_record = old_services.get(sid), new_services.get(sid)
         remote = any('remote_dispatch' in connection_config(record or {}) for record in (old_record, new_record))
-        if remote and authority_record(old_record) != authority_record(new_record):
+        old_authority, new_authority = authority_record(old_record), authority_record(new_record)
+        disable_only = False
+        if (old_record and new_record and old_record.get('enabled', True) is True
+                and new_record.get('enabled', True) is False):
+            # Restore only the enabled bits for comparison. An admin may reduce
+            # availability, never change connection policy in the same write.
+            restored = [dict(level) for level in new_authority]
+            for previous_level, restored_level in zip(old_authority, restored):
+                if restored_level.get('enabled') is False:
+                    if 'enabled' in previous_level:
+                        restored_level['enabled'] = previous_level['enabled']
+                    else:
+                        restored_level.pop('enabled', None)
+            disable_only = restored == old_authority
+        if remote and old_authority != new_authority and not disable_only:
             if actor is None or 'owner' not in actor.roles:
                 raise PermissionError('Only the owner can change remote engine authority.')
     # Every engine write runs here under the writer lock, so a description delete cannot slip between this check and the
