@@ -158,7 +158,7 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     manifest = hooks.facts(chosen)
     reference = body.get("input_reference")
     if manifest is None or manifest.length is None:
-        return refuse(503, "Video workflow facts are not configured", code="workflow_unavailable")
+        return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
     if manifest.chain:
         return chosen, manifest, short_name(chosen), public_model
     if reference:

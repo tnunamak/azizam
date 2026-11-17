@@ -28133,7 +28133,11 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     async def prepare_inputs(self, request, body, chosen):
         caller = request.state.caller
         manifest = workflow_run.plain(chosen.contract)
-        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
+            requested = body.get("model") or _video_default_workflow()
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{requested}' is not available for video generation.", code="model_not_found"))
         block = frontend_video_create._workflow_block(body)
         assets, probe = {}, None
         manifest_facts = self.facts(chosen)
@@ -28245,7 +28249,8 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
 
         chosen = snapshot.get(workflow_id_for_video_key(chain_name))
         if chosen is None:
-            return _json_error(503, "Chain workflow is not registered", code="workflow_unavailable")
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{public_model}' is not available for video generation.", code="model_not_found"))
         name = chain_name
 
         def prepared(engine, spec, submission):

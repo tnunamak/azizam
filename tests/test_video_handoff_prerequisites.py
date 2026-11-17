@@ -335,3 +335,45 @@ def test_chain_post_and_get_keep_the_old_stitched_response(world, extra):
         shared = ("model", "size", "actual_seconds", "azizam_resolved_model", "status", "progress", "error")
         assert {key: after[key] for key in shared} == {key: before[key] for key in shared}
     asyncio.run(drive())
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_missing_config_row_is_not_a_present_row_with_optional_facts_omitted(world, missing):
+    from dataclasses import replace
+    from gateway.workflow_run import plain
+    from tests.support.config_snapshot import publish_section
+    original = proxy.WORKFLOW_SNAPSHOTS.current()
+    workflow_id = "video.generate.ltx-2.5-t2v"
+    chosen = original.get(workflow_id)
+    contract = plain(chosen.contract)
+    del contract["video"]
+    enforce_contract(contract)
+    changed = replace(chosen, contract=contract)
+    class Snapshot:
+        workflows = {**original.workflows, workflow_id: changed}
+        def __getattr__(self, name): return getattr(original, name)
+        def get(self, key): return self.workflows.get(key)
+        def by_intent(self, intent): return tuple(entry for entry in self.workflows.values() if entry.intent == intent)
+    class Provider:
+        def current(self): return Snapshot()
+    world.rig.set(proxy, "WORKFLOW_SNAPSHOTS", Provider())
+    videos = copy.deepcopy(proxy.config["videos"])
+    if missing:
+        del videos["workflows"]["video-ltx-2.5-t2v"]
+    else:
+        cfg = videos["workflows"]["video-ltx-2.5-t2v"]
+        videos["workflows"]["video-ltx-2.5-t2v"] = {key: cfg[key] for key in ("file", "node_roles")}
+    publish_section(world.rig.monkeypatch, "videos", videos)
+    body = {"model": "video-ltx-2.5-t2v", "prompt": "same facts source", "seed": 7}
+    async def drive():
+        old = await proxy.proxy_graph_video_create(json_request(body), access_context(), body_override=body)
+        new = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert new.status_code == old.status_code, (new.text, old.body)
+        if missing:
+            assert new.status_code == 404
+            assert new.json() == json.loads(old.body)
+        else:
+            assert new.status_code == 200
+            await submitted(world, 2)
+            assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
+    asyncio.run(drive())

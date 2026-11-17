@@ -365,7 +365,7 @@ def test_a_reference_without_a_configured_resolver_is_refused() -> None:
 def test_a_manifest_without_video_facts_needs_a_configured_facts_source() -> None:
     plain = video_contract("bare")
     del plain["video"]
-    assert read({"prompt": "x", "model": "bare"}, snap(plain)).status_code == 503
+    assert read({"prompt": "x", "model": "bare"}, snap(plain)).status_code == 404
 
 
 def test_a_model_with_no_long_variant_refuses_shots_by_code_and_a_long_clip_by_its_range() -> None:
