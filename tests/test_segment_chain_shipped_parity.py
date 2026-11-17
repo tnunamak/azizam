@@ -52,3 +52,21 @@ def test_the_shipped_matrix_and_the_record_agree():
 
 if __name__ == "__main__":
     GOLDEN.write_text(json.dumps(_matrix(), indent=1, sort_keys=True) + "\n")
+
+
+@pytest.mark.parametrize("name", sorted(_templates()))
+def test_extension_builder_and_composer_produce_the_same_graph(name):
+    from gateway.video_extend import ChainEngine, ChainSpec, Segment, SourceVideo
+
+    template = _templates()[name]
+    spec = ChainSpec(
+        segments=[Segment("continue the scene", 64, 0)],
+        width=768, height=512, fps=24.0, seed=7,
+        source=SourceVideo(filename="clip.mp4", frames=97, fps=24.0, width=768, height=512, has_audio=True),
+        filename_prefix="video/long",
+    )
+    builder = ChainEngine(template)
+    actual = builder.build(spec)
+    composed = sc.compose(template, spec, context=builder.binding.default_context_frames, negative=builder.default_negative)
+    assert (actual.graph, actual.save_node, actual.units, actual.total_frames) == (
+        composed.graph, composed.save_node, composed.units, composed.total_frames)
