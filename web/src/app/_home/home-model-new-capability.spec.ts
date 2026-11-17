@@ -33,7 +33,7 @@ const running: HomeReceipt = {
   path: "/gateway/v1/media/jobs", accepted_at_ms: 1_800_000_000_000,
 };
 function items(rows: HomeCapability[], receipt = running) {
-  return recentItems({ rows, receipts: [receipt], media: [], chats: [] });
+  return recentItems({ rows, receipts: [receipt], media: [], chats: [], mediaOutputKinds: ["image", "video", "audio"] });
 }
 
 beforeEach(() => { query.home = undefined; });

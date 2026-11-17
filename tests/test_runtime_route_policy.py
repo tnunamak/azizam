@@ -754,9 +754,6 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 ("/v1/audio/speech", {"input": "hello", "voice": "alloy"}, "proxy_tts_request", {"receipt"}),
                 ("/v1/audio/transcriptions", None, "proxy_stt_request", {"operation": "transcriptions"}),
                 ("/v1/audio/translations", None, "proxy_stt_request", {"operation": "translations"}),
-                # A create the wire shape cannot run (a workflow-block name the manifest does not declare) goes back to the old
-                # pipeline, which the row route reaches after it has enforced the route's policy.
-                ("/v1/videos", {"prompt": "waves", "extensions": {"com.azizam.workflow": {"undeclared": 1}}}, "proxy_graph_video_create", {}),
                 ("/v1/audio/generate", {"prompt": "piano"}, "proxy_audio_generate", {"receipt"}),
             ]
             for path, payload, target, keywords in cases:
@@ -779,6 +776,17 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                     else:  # The route's own receipt travels with the request.
                         for name in keywords:
                             self.assertIsNotNone(call.kwargs.get(name), name)
+            # The media profile passes the video route's policy: the create reaches the wire shape, which refuses a
+            # workflow-block name the manifest does not declare with the same 400 the old pipeline gave. No delegate runs.
+            for delegate in delegates.values():
+                delegate.reset_mock()
+            response = self.client.post("/v1/videos", headers=AUTH_HEADERS,
+                                        json={"prompt": "waves", "extensions": {"com.azizam.workflow": {"undeclared": 1}}})
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual((response.json()["error"]["code"], response.json()["error"]["param"]),
+                             ("invalid_workflow_extension", "undeclared"))
+            for delegate in delegates.values():
+                delegate.assert_not_awaited()
 
     def test_service_availability_override_blocks_tts_and_stt_routes(self) -> None:
         media_profile = plan_for("media", caps=('speech', 'transcribe', 'music', 'sfx', 'audio'))

@@ -1125,7 +1125,7 @@ def merge_imported_records(
         service_id = normalize_id(raw.get("id") or raw_id)
         if not service_id:
             continue
-        validate_protocol_dispatch_local_only(raw)
+        validate_protocol_dispatch_configuration(raw)
         validate_record_connections(raw)
         record = normalize_service_record(service_id, raw)
         refuse_unoffered_kinds_in_record(service_id, record, before=out["services"].get(service_id))
@@ -1333,6 +1333,8 @@ def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
         if raw.get(field) is not None and not isinstance(raw[field], Mapping):
             raise ValueError(f"{where}: {field} must be an object")
     config = raw.get("config") if isinstance(raw.get("config"), Mapping) else {}
+    for block in (raw.get('connection'), config.get('connection')):
+        _validate_remote_dispatch_shape(block)
     if config.get("models") is not None and not isinstance(config["models"], (list, Mapping)):
         raise ValueError(f"{where}: models must be a list")
     protocol = config.get("protocol")
@@ -1517,7 +1519,7 @@ def validate_protocol_dispatch_registry(
                     service_id, service, dict(old, enabled=False)):
                 continue
         try:
-            validate_protocol_dispatch_local_only(service)
+            validate_protocol_dispatch_configuration(service)
             validate_record_connections(service)
         except ValueError as exc:
             raise ValueError(f"service {service_id!r}: {exc}") from exc
@@ -1562,6 +1564,15 @@ def _unsafe_address(address: str) -> bool:
     return any(char in address for char in "@\\") or any(char.isspace() or ord(char) < 32 for char in address)
 
 
+def _validate_remote_dispatch_shape(block) -> None:
+    if isinstance(block, Mapping):
+        from gateway.remote_engine import remote_enabled, ProtocolError
+        try:
+            remote_enabled(block)
+        except ProtocolError:
+            raise ValueError('connection.remote_dispatch must be a mapping with a boolean enabled field') from None
+
+
 def validate_record_connections(service: Mapping[str, Any]) -> None:
     """Check every ``connection`` block of a record: the top-level one and the one in its config.
 
@@ -1570,7 +1581,45 @@ def validate_record_connections(service: Mapping[str, Any]) -> None:
     config = service.get("config")
     blocks = [service.get("connection"), config.get("connection") if isinstance(config, Mapping) else None]
     for block in blocks:
+        _validate_remote_dispatch_shape(block)
         native_lane.validate_connection(block)
+
+
+def validate_protocol_dispatch_billing(service: Mapping[str, Any]) -> None:
+    """Keep the nested billing/substrate refusal independent of network locality."""
+    config = service.get('config') if isinstance(service.get('config'), Mapping) else {}
+    connections = [source for source in (service.get('connection'), config.get('connection')) if isinstance(source, Mapping)]
+    if not any(connection.get('dispatch') == 'protocol' for connection in connections):
+        return
+    offerings = service.get('offerings') if isinstance(service.get('offerings'), list) else config.get('offerings')
+    levels = [service, config, *connections, *(row for row in offerings or [] if isinstance(row, Mapping))]
+    if any(_paid_remote_or_substrate(level) for level in levels) or is_litellm_service_record(service.get('id'), service):
+        raise ValueError('protocol dispatch does not enforce paid-provider access or spend limits; use the existing provider route')
+
+
+def validate_protocol_dispatch_configuration(service: Mapping[str, Any]) -> None:
+    from gateway import remote_engine
+    from gateway.engine_contract_view import connection_config
+    if remote_engine.PRODUCTION_READY and 'remote_dispatch' in connection_config(service):
+        try:
+            remote_engine.policy(service, require_enabled=False)
+        except remote_engine.ProtocolError:
+            raise ValueError('The remote engine policy is invalid or refused.') from None
+        return
+    validate_protocol_dispatch_local_only(service)
+
+
+def validate_protocol_dispatch_admission(service: Mapping[str, Any]) -> None:
+    from gateway import remote_engine
+    from gateway.engine_contract_view import connection_config
+    if remote_engine.PRODUCTION_READY:
+        try:
+            if remote_engine.remote_enabled(connection_config(service)):
+                remote_engine.policy(service)
+                return
+        except remote_engine.ProtocolError:
+            raise ValueError('The remote engine policy is invalid or refused.') from None
+    validate_protocol_dispatch_local_only(service)
 
 
 def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
@@ -1591,12 +1640,7 @@ def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
         return
     reason = ("protocol dispatch does not enforce paid-provider access or spend limits; "
               "use the existing provider route")
-    offerings = service.get("offerings") if isinstance(service.get("offerings"), list) else config.get("offerings")
-    levels = [service, config, *connections, *(item for item in offerings or [] if isinstance(item, Mapping))]
-    if any(_paid_remote_or_substrate(level) for level in levels):
-        raise ValueError(reason)
-    if is_litellm_service_record(service.get("id"), service):
-        raise ValueError(reason)
+    validate_protocol_dispatch_billing(service)
     # Import lazily: presentation also imports registry classifiers. Reuse its
     # address classifier with only the actual target, never placement metadata
     # or a second legacy endpoint that could mask a public connection address.
@@ -2291,7 +2335,7 @@ def upsert_service_in_registry(
     that process, so endpoint/protocol fields are derived and locked; only
     name, enabled, and note may be changed.
     """
-    validate_protocol_dispatch_local_only(raw)
+    validate_protocol_dispatch_configuration(raw)
     validate_record_connections(raw)
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)

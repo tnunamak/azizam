@@ -1,0 +1,21 @@
+{
+  "_reference": {
+    "revision": "fd30cbfcaa8e7f079474b4c8e6d221bb5f18a814",
+    "proof_commit": "3cb3bf253",
+    "probe_sha256": "c43eb01c821e302351c67af805659723c31e71bab28a394042771e7ee0de105e",
+    "route": "POST /v1/videos"
+  },
+  "request": {
+    "model": "ltx-2.5-long",
+    "prompt": "x",
+    "seconds": 16,
+    "seed": 7
+  },
+  "status": 502,
+  "body": {
+    "error": {
+      "message": "ComfyUI unavailable at http://comfy.fk.test",
+      "type": "api_error"
+    }
+  }
+}

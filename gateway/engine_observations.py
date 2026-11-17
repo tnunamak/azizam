@@ -57,6 +57,8 @@ class ObservationReader:
         self._client_factory = client_factory
 
     async def read(self, service: Mapping[str, Any], name: str) -> Observation:
+        from gateway.remote_engine import refuse_unbound
+        refuse_unbound(service)
         declared = service.get("observations")
         spec = declared.get(name) if isinstance(declared, Mapping) else None
         if not isinstance(spec, Mapping):

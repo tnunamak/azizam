@@ -32,7 +32,6 @@ from starlette.responses import Response
 from gateway import operation_security, request_history_capture
 from gateway.access_plans import capability_for_intent
 from gateway.frontend_shapes import _wire, build_shape, bundled_rows
-from gateway.frontend_shapes._base import LegacyRoute
 from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
     JOB_NOT_CREATED, FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
@@ -77,11 +76,8 @@ class RowRouteDeps:
     # record_facts(owner, facts): what the shape adjusted, each as (name, value, warning): the receipt keeps the value under
     # ``metadata[name]`` and raises the warning.
     record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
-    # legacy: the handlers a shape may hand a request to (``LegacyRoute.name``), each ``handler(request, caller, body)``, which enforces the route policy and owns its receipt itself ->
-    # the answer. They exist for requests the data path does not serve yet; ``tests/test_legacy_video_ratchet.py`` counts them.
     # openapi: the OpenAPI operation documents of rows, by row id (the request and answer schemas the generic route does not know).
     openapi: Mapping[str, Mapping[str, Any]] = dataclasses.field(default_factory=dict)
-    legacy: Mapping[str, Callable[[Request, Any, Mapping[str, Any]], Awaitable[Response]]] = dataclasses.field(default_factory=dict)
     # record_refusal(owner, caller, refused): the receipt of a request the run core refused keeps the evidence of why the
     # service could not take it (the resource decision), as an admission refusal would have left it.
     record_refusal: Callable[[Any, Any, RunRefused], None] | None = None
@@ -97,11 +93,30 @@ def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
 
 
 def prefers_async(value: str | None) -> bool:
-    """Whether a ``Prefer`` header asks for ``respond-async`` (RFC 7240: comma-separated tokens, optional parameters)."""
-    for preference in (value or "").split(","):
+    """Whether a Prefer header asks for respond-async, ignoring commas inside quoted parameters."""
+    value = value or ""
+    preferences = []
+    start = 0
+    quoted = escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == "," and not quoted:
+            preferences.append(value[start:index])
+            start = index + 1
+    preferences.append(value[start:])
+    for preference in preferences:
         if preference.split(";", 1)[0].split("=", 1)[0].strip().lower() == PREFER_ASYNC:
             return True
     return False
+
+
+def request_prefers_async(headers: Any) -> bool:
+    return any(prefers_async(value) for value in headers.getlist("prefer"))
 
 
 def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None:
@@ -168,12 +183,6 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         if isinstance(caller, Response):
             return caller
         request.state.caller = caller            # the shapes that look a stored source up read it here
-        handoff = await shape.legacy_route(request, row, deps.snapshot()) if deps.core() is not None else None
-        if handoff is not None:
-            # The old handler alone enforces the policy and owns the one receipt and request id: no row receipt exists yet.
-            handler = deps.legacy.get(handoff.name)
-            if handler is not None:
-                return await handler(request, caller, handoff.body)
         request_id = deps.new_request_id()
         if row.receipt_opens == "before_policy":
             # The receipt is open when the policy decides, so a denial leaves a closed receipt behind it.
@@ -202,7 +211,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
             return response
         snapshot = deps.snapshot()
         spool = deps.new_spool()
-        wants_async = prefers_async(request.headers.get("prefer"))
+        wants_async = request_prefers_async(request.headers)
         answered = dataclasses.replace(row, mode="job") if wants_async else row
         return await _serve_open(deps, row, answered, shape, core, request, caller, snapshot, spool, owner,
                                  request_id, wants_async, route_intent(row, canonical), route_backend(row, canonical))
@@ -222,9 +231,6 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
     with deps.scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         record_inputs(deps, owner, request)
-        if isinstance(run_request, LegacyRoute):         # the shape must have said so in ``legacy_route``; never a second owner
-            owner.report(status="failed", reason="legacy_handoff_late")
-            return _wire.error_response(500, "This request is not served", kind="api_error")
         if isinstance(run_request, Response):
             owner.report(status=refusal_status(row, run_request.status_code), reason=f"http_{run_request.status_code}")
             return run_request

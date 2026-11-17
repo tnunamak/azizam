@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 import secrets
+import asyncio
 import time
 from typing import Any, Mapping
 
@@ -81,9 +82,9 @@ def resolve(
     engine_id, service, offering = matches[0]
     if service.get('enabled', True) is False:
         raise ProtocolError('The selected engine is disabled.', code='engine_disabled')
-    from gateway.service_registry import validate_protocol_dispatch_local_only
+    from gateway.service_registry import validate_protocol_dispatch_admission
     try:
-        validate_protocol_dispatch_local_only(service)
+        validate_protocol_dispatch_admission(service)
     except ValueError:
         raise ProtocolError('Protocol dispatch requires a local engine without paid-provider billing.',
                             code='protocol_dispatch_refused') from None
@@ -104,19 +105,47 @@ def resolve(
 
 
 class Runtime:
-    def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None, egress=None):
+    _remote_capability = None
+
+    def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None, egress=None,
+                 remote_factory=None, remote_capability=None):
         self.target = target
         # ``egress`` is called before any request leaves the gateway for the engine (never for a readiness probe).
         self._egress = egress
         connection = connection_config(target.service)
+        remote = connection.get('remote_dispatch') or {}
+        if not isinstance(remote, Mapping):
+            raise ProtocolError('The remote engine policy is invalid.', code='protocol_dispatch_refused')
+        if remote_capability is not None or remote.get('enabled') is True:
+            from gateway.remote_engine import refused, factory_from_store, PRODUCTION_READY
+            if remote_factory is None and remote_capability is None and PRODUCTION_READY:
+                remote_factory = factory_from_store()
+                remote_capability = remote_factory.admit(target.engine_id)
+            if remote_factory is None or remote_capability is None or transport is not None:
+                raise refused()
+            remote_factory.check(remote_capability, service_id=target.engine_id, address=connection.get('address'),
+                                 service=target.service)
+            transport = remote_factory.transport(remote_capability)
+        else:
+            from gateway.service_registry import validate_protocol_dispatch_local_only
+            try:
+                validate_protocol_dispatch_local_only(target.service)
+            except ValueError:
+                raise ProtocolError('Protocol dispatch requires a local engine without paid-provider billing.',
+                                    code='protocol_dispatch_refused') from None
+        self._transport = transport
+        self._remote_capability = remote_capability
         self.connection = connection_from_record({**connection, 'credentials': {}}, lambda ref: None)
+        self.connection = replace(self.connection, remote_capability=remote_capability)
         # ``class: control`` operations go to the record's control address when it declares one (engine_contract_view).
         control = address_for_class(connection, 'control')
         self._control_connection = (self.connection if control == self.connection.address else
                                     connection_from_record({**connection, 'address': control, 'credentials': {}},
                                                            lambda ref: None))
+        if self._control_connection is not self.connection:
+            self._control_connection = replace(self._control_connection, remote_capability=remote_capability)
         self.adapter = AdapterRegistry({target.description.id: target.description}, assets=assets,
-                                       transport=transport).adapter_for(target.description.id)
+                                       transport=transport, remote_capability=remote_capability).adapter_for(target.description.id)
 
     def connection_for(self, op: str, *, operation=None, probe: bool = False, engine_address: bool = False):
         """Resolve only this operation's class; missing probe credentials may be omitted.
@@ -158,6 +187,9 @@ class Runtime:
         return job.poll.interval_s, job.poll.max_wait_s
 
     def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
+        if self._remote_capability is not None and any(str(key).lower() in {
+                'headers', 'authorization', 'proxy-authorization', 'cookie', 'x-api-key'} for key in body):
+            raise ProtocolError('Remote authentication must use the service credential reference.', code='protocol_dispatch_refused')
         return CanonicalRequest(op=op, body={**body, 'model': self.target.upstream},
                                 params={'model': self.target.upstream, 'offering': self.target.offering['id'],
                                         'request_id': 'req_' + secrets.token_hex(12), 'created': int(time.time())})
@@ -166,12 +198,26 @@ class Runtime:
         """Refuse to send when the caller supplied an egress check that fails."""
         if self._egress is not None:
             self._egress()
+        if self._remote_capability is not None:
+            self._transport.check()
 
     async def invoke(self, op: str, body: Mapping[str, Any]):
+        if self._remote_capability is not None:
+            await asyncio.to_thread(self._transport.factory.check, self._remote_capability,
+                                    service_id=self.target.engine_id, address=self.connection.address)
         self.require_egress()
+        if self._remote_capability is not None:
+            async with self._transport.operation():
+                return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
         return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
 
     async def lease(self, *, drain, lock_for, may_switch: bool = True):
+        if self._remote_capability is not None:
+            async with self._transport.operation():
+                return await self._lease(drain=drain, lock_for=lock_for, may_switch=may_switch)
+        return await self._lease(drain=drain, lock_for=lock_for, may_switch=may_switch)
+
+    async def _lease(self, *, drain, lock_for, may_switch: bool = True):
         selection = self.target.offering.get('selection') or {}
         if selection.get('mode', 'request_field') != 'switch':
             return None
@@ -214,7 +260,8 @@ class Runtime:
                         'request': {'method': 'GET', 'path': http['path']},
                         'response': {'framing': 'json', 'select': {'value': selector}}}},
                 }, source='engine observation', budgets=self.target.description.budgets)
-                adapter = AdapterRegistry({'observation': observation}).adapter_for('observation')
+                adapter = AdapterRegistry({'observation': observation}, transport=self._transport,
+                                          remote_capability=self._remote_capability).adapter_for('observation')
                 seconds = max(0.01, min(float(http.get('timeout_s', 2)), 30))
                 connection = self.connection_for('observe', operation=observation.operations['observe'], probe=True,
                                                  engine_address=True)
@@ -235,6 +282,8 @@ class Runtime:
                 value = reply.selected.get('value')
                 return Observation(value is not None, value)
             except ProtocolError:
+                if self._remote_capability is not None:
+                    raise
                 return UNKNOWN
 
         return await SwitchController(drain=drain, invoke=invoke, observe=observe, lock_for=lock_for).select(

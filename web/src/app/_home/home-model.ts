@@ -4,6 +4,7 @@ import {
   requestCapability,
   type CapabilityView,
 } from "@/lib/capability-state";
+import { capabilityTryHelp } from "@/lib/capability-words";
 import { fileFitsTypes } from "@/lib/media-pick";
 import { knownCapabilityLabel } from "@/components/product/readiness";
 import { appPlumbingCapabilities } from "@/lib/terms";
@@ -127,12 +128,13 @@ export function isRecordable(row: HomeCapability | null, modality: string): bool
 }
 
 /**
- * The kinds Try has a tab for. Any other kind is run by Try through a workflow, so Home names the
- * workflow it chose as well as the model (mirrors the tab vocabulary Try reads from the URL).
+ * The kinds Try has a tab for: those whose catalog row carries `try_help` (registry/capability_words.yml), the same
+ * words the tab shows. Any other kind is run by Try through a workflow, so Home names the workflow it chose as well as
+ * the model. `tabKinds` is the catalog's list; a caller with a newer one passes it.
  */
-const KINDS_WITH_TRY_TABS = new Set(["chat", "image", "speech", "transcribe", "decide", "embed", "mesh"]);
-export function tryHasOwnTab(kind: string): boolean {
-  return KINDS_WITH_TRY_TABS.has(kind);
+const CATALOG_TRY_TAB_KINDS: readonly string[] = Object.keys(capabilityTryHelp);
+export function tryHasOwnTab(kind: string, tabKinds: readonly string[] = CATALOG_TRY_TAB_KINDS): boolean {
+  return tabKinds.includes(kind);
 }
 
 /** One kind of file a capability takes, as its declared input modality says. */
@@ -245,19 +247,29 @@ function receiptRow(receipt: HomeReceipt, rows: HomeCapability[]): HomeCapabilit
   return byIntent ?? rows.find((row) => row.capability === requestCapability(receipt.intent, receipt.path));
 }
 
-function inFlightKind(receipt: HomeReceipt, row: HomeCapability | undefined): MakingKind | null {
+function inFlightKind(
+  receipt: HomeReceipt,
+  row: HomeCapability | undefined,
+  mediaOutputKinds: readonly string[],
+): MakingKind | null {
   // Declared outputs speak for the receipt only when the row is the receipt's own intent. A row found by the legacy
   // kind alone (image.analyze for an image.generate receipt) can make something else.
   if (row?.output_modalities?.length && receipt.intent && row.intent === receipt.intent) {
-    return row.output_modalities.find((output) => ["image", "video", "audio"].includes(output)) ?? "item";
+    return row.output_modalities.find((output) => mediaOutputKinds.includes(output)) ?? "item";
   }
-  // Otherwise the established media presentation names the kind.
+  // Otherwise the established media presentation names the kind, held to the same gateway list as declared outputs.
+  const named = presentedKind(receipt);
+  if (named && mediaOutputKinds.includes(named)) return named;
+  return row || named ? "item" : null;
+}
+
+function presentedKind(receipt: HomeReceipt): MakingKind | null {
   const intent = String(receipt.intent ?? "").toLowerCase();
   const path = String(receipt.path ?? "").toLowerCase();
   if (intent.startsWith("image") || path.includes("/images/")) return "image";
   if (intent.startsWith("video") || path.includes("/videos")) return "video";
   if (intent.startsWith("audio") || intent.startsWith("speech") || path.includes("/audio/")) return "audio";
-  return row ? "item" : null;
+  return null;
 }
 
 export type RecentItem =
@@ -283,12 +295,14 @@ export function recentItems(input: {
   media: HomeCreation[];
   chats: HomeChat[];
   rows: HomeCapability[];
+  /** The media kinds the gateway names while they are made (`media_output_kinds` on the Home answer); any other output reads "item". */
+  mediaOutputKinds: readonly string[];
 }): RecentItem[] {
   const making: Extract<RecentItem, { kind: "making" }>[] = [];
   for (const receipt of input.receipts) {
     if (!isInFlight(receipt.status)) continue;
     const row = receiptRow(receipt, input.rows);
-    const kind = inFlightKind(receipt, row);
+    const kind = inFlightKind(receipt, row, input.mediaOutputKinds);
     if (!kind) continue;
     const capability = row?.capability ?? requestCapability(receipt.intent, receipt.path);
     const startedAt = receipt.accepted_at_ms

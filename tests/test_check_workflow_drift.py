@@ -193,3 +193,27 @@ def test_unreadable_ui_without_sibling_is_input_error(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[error] unreadable.json:" in out
     assert "[orphan]" not in out
+
+
+@pytest.mark.parametrize("values,message", [
+    ("not-a-list", "UI node widgets_values must be a list"),
+    ([0, {}, 0], "UI widget values cannot be consumed by the layout"),
+], ids=["scalar", "unconsumed-object"])
+def test_bad_widget_values_continues(tmp_path, monkeypatch, capsys, values, message):
+    ui_path, api_path = write_pair(tmp_path, "a-bad")
+    ui = json.loads(ui_path.read_text())
+    ui["nodes"][0]["inputs"] = [{"name": "seed", "widget": {"name": "seed"}}]
+    ui["nodes"][0]["widgets_values"] = values
+    ui_path.write_text(json.dumps(ui))
+    api = json.loads(api_path.read_text())
+    api["1"]["inputs"] = {"seed": 0}
+    api_path.write_text(json.dumps(api))
+    write_pair(tmp_path, "b-valid")
+    monkeypatch.setattr(drift, "REPO_DIRS", [tmp_path])
+    assert asyncio.run(drift.main(["--no-frontend"])) == 2
+    out = capsys.readouterr().out
+    assert f"[error] a-bad.json: {message}" in out
+    assert "[ok]    b-valid.json" in out
+    assert out.index("[error]") < out.index("[ok]")
+    assert "[ok]    a-bad.json" not in out
+    assert "1 workflow(s) could not be read; 0 workflow(s) drifted" in out

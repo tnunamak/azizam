@@ -1111,7 +1111,7 @@ def _record_envelope(
         conn.execute("RELEASE job_envelope")
 
 
-def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False) -> bool:
+def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False, phase_patch: Mapping[str, int | None] | None = None) -> bool:
     """Write the job row. Returns True when the owner's or the wildcard erasure cutoff covered the job, so its prompt
     derivatives were cleared."""
     job.owner_key_hash = stored_owner_key(job.owner_key_hash, app_id=job.app_id)
@@ -1138,6 +1138,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
         for name in preserved:
             if name in data and (data[name] is not None or (stale_attempt and not new_attempt)):
                 setattr(job, name, data[name])
+    if phase_patch:
+        for name, value in phase_patch.items():
+            setattr(job, name, value)
     cutoff = conn.execute(
         "SELECT MAX(cutoff_at) FROM media_job_prompt_erasure_cutoffs WHERE owner_key IN (?,?)",
         ("*", job.owner_key_hash),
@@ -1530,7 +1533,8 @@ def get(
     include_deleted: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    """Return the stored job filtered for ``audience``, or None. Deleted jobs are hidden unless explicitly included."""
+    """Return the stored job filtered for ``audience``, or None. Pending publication is internal; deleted jobs are hidden
+    unless explicitly included."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     with _conn(path) as conn:
@@ -1543,6 +1547,8 @@ def get(
         if isinstance(data, Mapping):
             data = _with_read_facts(conn, data)
     if not isinstance(data, Mapping):
+        return None
+    if audience != "internal" and (data.get("metadata") or {}).get("publication_pending"):
         return None
     return _filter_for_audience(data, audience)
 
@@ -1570,6 +1576,8 @@ def get_many(
             for job_id, raw in rows:
                 data = _safe_loads(raw)
                 if isinstance(data, Mapping):
+                    if audience != "internal" and (data.get("metadata") or {}).get("publication_pending"):
+                        continue
                     out[job_id] = _filter_for_audience(_with_read_facts(conn, data), audience)
     return out
 
@@ -1596,6 +1604,8 @@ def get_by_request_id(
         if isinstance(data, Mapping):
             data = _with_read_facts(conn, data)
     if not isinstance(data, Mapping):
+        return None
+    if audience != "internal" and (data.get("metadata") or {}).get("publication_pending"):
         return None
     return _filter_for_audience(data, audience)
 
@@ -1626,7 +1636,9 @@ def recent(
     if app_ids is not None or owner_key_hashes is not None:
         if not app_ids and not owner_key_hashes:
             return []
-    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"]
+    # Sync operations use an internal row until their result is published atomically.
+    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)",
+                          "COALESCE(json_extract(job_json, '$.metadata.publication_pending'), 0) = 0"]
     params: list[Any] = []
     if app_ids is not None or owner_key_hashes is not None:
         ownership = []
@@ -1734,6 +1746,8 @@ def update_status(
     error_info: Mapping[str, Any] | None = None,
     add_assets: Iterable[Mapping[str, Any]] | None = None,
     metadata_patch: Mapping[str, Any] | None = None,
+    metadata_remove: Iterable[str] = (),
+    phase_patch: Mapping[str, int | None] | None = None,
     expected_status: str | None = None,
     now: int | None = None,
     before_commit: Callable[[sqlite3.Connection, dict[str, Any]], object] | None = None,
@@ -1815,6 +1829,12 @@ def update_status(
             existing_meta = dict(current.get("metadata") or {})
             existing_meta.update(metadata_patch)
             current["metadata"] = existing_meta
+        for key in metadata_remove:
+            current.get("metadata", {}).pop(key, None)
+        if phase_patch:
+            if set(phase_patch) - set(PHASE_FIELDS):
+                raise ValueError("phase_patch contains unknown phase fields")
+            current.update(phase_patch)
         current["updated_at"] = ts
         # Legacy attempts remain unavailable; do not invent prior phase facts.
         if current.get("attempt_number") is not None:
@@ -1826,7 +1846,7 @@ def update_status(
                 current["finished_at"] = ts
 
         updated = _coerce_to_job(current)
-        _write_job(conn, updated)
+        _write_job(conn, updated, phase_patch=phase_patch)
         if before_commit is not None:
             before_commit(conn, updated.to_dict("internal"))
         conn.commit()
@@ -1872,6 +1892,7 @@ def active_count(*, app_id: str, intents: Iterable[str], path: Path = DB_PATH) -
         return conn.execute(
             "SELECT COUNT(*) FROM media_jobs WHERE status IN (?, ?) "
             "AND json_extract(job_json, '$.app_id') = ? "
+            "AND COALESCE(json_extract(job_json, '$.metadata.publication_pending'), 0) = 0 "
             f"AND intent IN ({','.join('?' for _ in intents)})",
             (STATUS_QUEUED, STATUS_RUNNING, app_id, *intents),
         ).fetchone()[0]

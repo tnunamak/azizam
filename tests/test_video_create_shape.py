@@ -352,26 +352,20 @@ def test_the_facts_hold_no_prompt_no_person_and_only_the_keys_the_design_names()
     assert "private secret sentence" not in json.dumps(run_request.facts, default=str)
     assert set(run_request.facts) <= {"model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate",
                                       "seed", "audio", "metadata_mode", "provenance", "remixed_from_video_id",
-                                      "extended_from_video_id", "source_asset_id", "total_seconds", "warnings"}
+                                      "extended_from_video_id", "source_asset_id", "total_seconds", "warnings", "duration_adjustment_reason", "requested_seconds"}
     assert run_request.facts["provenance"]["kind"] == "video"
     assert "private secret sentence" not in json.dumps(run_request.facts["provenance"], default=str)
 
 
-def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_its_parsed_body() -> None:
-    for body in ({"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]},                   # a storyboard
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 20},                   # past the native length: the long variant
-                 {"prompt": "x", "model": "ltx-2.5-long"},                                 # a chain manifest
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
-        handoff = read(body)
-        assert isinstance(handoff, _base.LegacyRoute), body
-        assert handoff.name == "videos.create" and handoff.body.get("prompt") == body.get("prompt")
+def test_a_reference_without_a_configured_resolver_is_refused() -> None:
+    refused = read({"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"})
+    assert refused.status_code == 400
 
 
-def test_a_manifest_without_a_video_block_is_left_to_the_legacy_handler() -> None:
+def test_a_manifest_without_video_facts_needs_a_configured_facts_source() -> None:
     plain = video_contract("bare")
     del plain["video"]
-    assert isinstance(read({"prompt": "x", "model": "bare"}, snap(plain)), _base.LegacyRoute)
+    assert read({"prompt": "x", "model": "bare"}, snap(plain)).status_code == 404
 
 
 def test_a_model_with_no_long_variant_refuses_shots_by_code_and_a_long_clip_by_its_range() -> None:
@@ -523,16 +517,12 @@ def test_the_facts_wait_for_the_drawn_seed_by_named_refs_that_never_enter_identi
     assert resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={})["provenance"].get("seed") is None
 
 
-# ----------------------------------------- a chain is the old handler's alone: no row policy, no row receipt (review 13)
+# ----------------------------------------- row policy and request receipt
 
 
 def _row_app(calls: dict[str, list], snapshot=SNAP):
     from fastapi import FastAPI
     from gateway import row_routes
-
-    async def legacy(request, caller, body):
-        calls["legacy"].append((caller, dict(body)))
-        return Response("old", status_code=200)
 
     class _Owner:
         def report(self, **_): calls["report"].append(1)
@@ -546,28 +536,10 @@ def _row_app(calls: dict[str, list], snapshot=SNAP):
         core=lambda: object(), snapshot=lambda: snapshot, jobs=lambda: None, new_spool=FakeSpool,
         scope=lambda request, spool: __import__("contextlib").nullcontext(), refused=lambda r: Response("refused", status_code=r.http_status),
         new_request_id=lambda: "req-1", open_receipt=lambda *a: calls["receipt"].append(a) or _Owner(),
-        name_receipt=lambda *a: None, pinned=lambda job_id: None, legacy={_base_legacy(): legacy})
+        name_receipt=lambda *a: None, pinned=lambda job_id: None)
     app = FastAPI()
     row_routes.mount_rows(app, deps, ("videos-create",))
     return app
-
-
-def _base_legacy() -> str:
-    from gateway.frontend_shapes import video_create
-    return video_create.LEGACY_CREATE
-
-
-def test_a_chain_create_reaches_the_old_handler_with_no_row_policy_and_no_row_receipt() -> None:
-    from starlette.testclient import TestClient
-    calls: dict[str, list] = {key: [] for key in ("auth", "policy", "receipt", "report", "legacy")}
-    client = TestClient(_row_app(calls))
-    answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-long"})
-    assert answer.status_code == 200 and answer.text == "old"
-    assert calls["auth"] == ["/v1/videos"]                    # authenticated once, by the row
-    assert calls["policy"] == [] and calls["receipt"] == [] and calls["report"] == []     # the old handler owns both
-    assert [body["prompt"] for _, body in calls["legacy"]] == ["x"]
-    shots = client.post("/openai/v1/videos", json={"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]})
-    assert shots.text == "old" and len(calls["legacy"]) == 2 and calls["receipt"] == []
 
 
 def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_receipt_after_the_policy() -> None:
@@ -581,7 +553,7 @@ def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_rec
 
 def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     """An input the manifest declares is never refused as an extension, even when it fills a role: ``frames`` is the keyframes
-    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is left to the old pipeline, which refuses it."""
+    length role and callers send it today. It wins over ``seconds``; undeclared inputs are refused."""
     key = video_contract("ltx-2.5-keyframes", requires=["extensions"], image=False)
     key["inputs"]["frames"] = {"type": "integer", "minimum": 9, "maximum": 241}
     key["video"]["roles"]["length"] = "frames"
@@ -591,10 +563,9 @@ def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     run_request = read({"model": "ltx-2.5-keyframes", "prompt": "p", "seconds": 5, "extensions": block}, snapshot)
     assert isinstance(run_request, RunRequest), run_request
     assert run_request.inputs["frames"] == 49
-    # A name the manifest does not declare in the workflow block was refused (400 invalid_workflow_extension) by the old
-    # pipeline's manifest check (tests/test_video_keyframes.py pins it): the shape hands it back and does not run it.
+    # Undeclared workflow inputs retain the old manifest refusal.
     undeclared = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"frames": 49, "bogus": 1}}}, snapshot)
-    assert isinstance(undeclared, _base.LegacyRoute) and undeclared.name == "videos.create"
+    assert undeclared.status_code == 400 and error(undeclared)["code"] == "invalid_workflow_extension"
 
 
 def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
@@ -620,7 +591,7 @@ def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
         core=lambda: Core(), snapshot=lambda: SNAP, jobs=lambda: None, new_spool=FakeSpool,
         scope=lambda request, spool: __import__("contextlib").nullcontext(), refused=lambda r: Response("refused", status_code=r.http_status),
         new_request_id=lambda: "req-1", open_receipt=lambda *a: Owner(),
-        name_receipt=lambda *a: calls["named"].append(a), pinned=lambda job_id: None, legacy={},
+        name_receipt=lambda *a: calls["named"].append(a), pinned=lambda job_id: None,
         record_inputs=lambda owner, notes: calls["inputs"].append(notes), record_facts=lambda owner, facts: calls["facts"].append(facts))
     app = FastAPI()
     row_routes.mount_rows(app, deps, ("videos-create",))
@@ -787,23 +758,3 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
             400, "Source video is not completed (status=queued)", "video_not_ready", "video")
     finally:
         shapes.VIDEO_HOOKS = None
-
-
-def test_a_legacy_hand_off_enforces_the_row_routes_policy_before_the_old_pipeline_runs(monkeypatch) -> None:
-    """The create route leaves the registered routes, so the route policy for its path is the row's own data. The hand-off
-    must still ask for it, or a chain create would skip the plan check the row path makes."""
-    import proxy
-    seen: dict[str, Any] = {}
-
-    def deny(caller, path, *, policy=None):
-        seen.update(path=path, policy=policy)
-        return Response(status_code=403)
-
-    async def never(*args, **kwargs):
-        raise AssertionError("the old pipeline ran after a denial")
-
-    monkeypatch.setattr(proxy, "_enforce_runtime_route_policy", deny)
-    monkeypatch.setattr(proxy, "proxy_graph_video_create", never)
-    response = asyncio.run(proxy._legacy_video_create(None, object(), {"prompt": "x"}))
-    assert response.status_code == 403 and seen["path"] == "/v1/videos"
-    assert seen["policy"] and seen["policy"]["intent"] == "video.generate" and seen["policy"]["protocol"] == "openai.video"

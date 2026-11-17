@@ -117,6 +117,9 @@ ENGINE_CONNECTION = register(Obj("EngineConnection", {
     "credentials": Obj("EngineCredentials", {"inference": ENGINE_CREDENTIAL, "control": ENGINE_CREDENTIAL}, extras=HIDDEN),
     "headers": HEADERS,
     "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}, extras=HIDDEN),
+    "remote_dispatch": Obj("RemoteDispatchPolicy", {
+        "version": NUM, "enabled": BOOL, "private_cidrs": JSON, "limits": JSON,
+    }, extras=HIDDEN),
 }, extras=HIDDEN))
 
 OFFERING = Obj("Offering", {

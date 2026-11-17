@@ -28,6 +28,9 @@ from gateway.workflow_runtime_types import (
 )
 
 CHUNK = 1 << 16
+# 128 is the default nesting limit of a widely used JSON library (serde_json),
+# and far beyond any workflow input. The top-level object has depth 1.
+MAX_JSON_DEPTH = 128
 FORM_MAX_FIELDS = 100               # the text parts of one form; a form with more is refused while it is read
 FORM_MAX_FILES = 100                # the file parts the parser takes; a part with no input to fill is then named in a 400
 FORM_PART_BYTES = 1 << 20           # the most one text part may hold, and all the text parts together
@@ -123,6 +126,15 @@ async def json_object(request: Request, *, not_object: str = "The request body m
         return error_response(400, "Invalid JSON body")
     if not isinstance(parsed, dict):
         return error_response(400, not_object)
+    stack = [(parsed, 1)]
+    while stack:
+        container, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            return error_response(400, "Invalid JSON body")
+        children = container.values() if isinstance(container, dict) else container
+        for child in children:
+            if isinstance(child, (dict, list)):
+                stack.append((child, depth + 1))
     return parsed
 
 

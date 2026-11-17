@@ -106,6 +106,7 @@ describe("H2 chooser rows come from the rows, in the person's order", () => {
 });
 
 describe("H6 Recent is the person's own work, makes first", () => {
+  const MEDIA_KINDS = ["image", "video", "audio"];
   const media = [
     { asset_id: "m1", kind: "image", created_at: NOW - 3600, prompt: "Garden" },
     { asset_id: "m2", kind: "video", created_at: NOW - 60, prompt: "Clip", available: false },
@@ -118,19 +119,19 @@ describe("H6 Recent is the person's own work, makes first", () => {
   const rows = [row({ icon_key: "image", typical_seconds: 9 })];
 
   it("puts in-progress makes first, then results newest first, without unavailable media", () => {
-    const items = recentItems({ receipts, media, chats, rows });
+    const items = recentItems({ receipts, media, chats, rows, mediaOutputKinds: MEDIA_KINDS });
     expect(items.map((item) => item.key)).toEqual(["making:j1", "media:m1", "chat:c1"]);
   });
 
   it("shows a make in progress with the time left, and reads Taking longer than usual past the typical time", () => {
-    const [making] = recentItems({ receipts, media, chats, rows });
+    const [making] = recentItems({ receipts, media, chats, rows, mediaOutputKinds: MEDIA_KINDS });
     if (making.kind !== "making") throw new Error("expected a making item");
     expect(makingTimeLeft(making, NOW)).toBe("about 5 s left");
     expect(makingTimeLeft(making, NOW + 60)).toBe("Taking longer than usual");
   });
 
   it("never lists a chat that request history did not keep (no title means no row)", () => {
-    expect(recentItems({ receipts: [], media: [], chats: [], rows })).toEqual([]);
+    expect(recentItems({ receipts: [], media: [], chats: [], rows, mediaOutputKinds: MEDIA_KINDS })).toEqual([]);
   });
 });
 

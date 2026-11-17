@@ -13,7 +13,7 @@ fetched files in engine order; version 2 bundles and terminal replays already be
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from gateway import media_job_intents, media_jobs
@@ -23,7 +23,7 @@ from gateway.engine_contract_view import connection_config
 from gateway.engine_protocol import description, dispatch
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError, UnknownOperation
-from gateway.engine_protocol.types import ResultBundle
+from gateway.engine_protocol.types import AssetsResult, ResultBundle
 
 MODE = "declared_operation"
 
@@ -101,13 +101,35 @@ def model_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [{**row, "azizam_operations": sorted(row["azizam_operations"])} for row in rows.values()]
 
 
-async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *, job_id: str) -> None:
+async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *, job_id: str,
+              deliver: Callable[[ResultBundle], Awaitable[Any]] | None = None) -> Any:
     """Run the job and keep each fetched file as its own asset. ``body`` is the caller's input object; the description's
-    submit map decides which of its fields reach the engine."""
+    submit map decides which of its fields reach the engine.
+
+    An optional ``deliver`` (or the prepared runtime's method of that name) consumes the published bundle and returns
+    the client answer. Publication belongs to core: delivery failures propagate without undoing the succeeded job.
+    A terminal replay that core has already settled performs no second delivery.
+    """
     refs = await protocol_jobs.run(runtime, intent, body, job_id=job_id)
-    if refs is None or isinstance(refs, ResultBundle):
-        # A terminal replay or a committed bundle has no second completion owner.
+    if refs is None:
         return
+    deliver = deliver if deliver is not None else getattr(runtime, "deliver", None)
+    if isinstance(refs, ResultBundle):
+        # Core published this bundle before returning it; delivery has no completion ownership.
+        return await deliver(refs) if deliver is not None else None
+    if getattr(runtime, "_remote_capability", None) is not None:
+        # A remote engine's results commit only while its egress still holds; delivery runs after the fence.
+        async with runtime._transport.fence():
+            runtime.require_egress()
+            _complete(refs, job_id)
+    else:
+        _complete(refs, job_id)
+    if deliver is not None:
+        from gateway.result_bundle import DEFAULT_NAME
+        return await deliver(ResultBundle({DEFAULT_NAME: AssetsResult(tuple(refs))}))
+
+
+def _complete(refs, job_id: str) -> None:
     if not refs:
         raise ProtocolError("The engine returned no result file.", code="malformed_response")
     media_jobs.update_status(

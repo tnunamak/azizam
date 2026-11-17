@@ -31,6 +31,19 @@ unclassified:
   icon: chat
   service_capability: chat
   summary: Use this configured AI capability.
+primary_chat_names: [default, fast, coder, code, chat]
+chat_profile_descriptions:
+  - words: [default, chat]
+    description: Thinks through questions before answering.
+  - words: [fast, quick]
+    description: Answers quickly for everyday prompts.
+  - words: [coder, code]
+    contains: [coder]
+    description: Helps with coding tasks and technical questions.
+  - words: [rp, roleplay]
+    contains: [roleplay]
+    description: Uses a roleplay-tuned chat profile.
+fallback_chat_description: A chat model.
 admin_surface:
   fallback_name: Protocol frontend
   intents_description: "Supports {intents}."

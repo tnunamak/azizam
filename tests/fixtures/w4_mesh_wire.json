@@ -1,0 +1,4615 @@
+{
+  "async_job": {
+    "claims_left": 0,
+    "created": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "386",
+        "content-type": "application/json",
+        "location": "/gateway/v1/media/jobs/ID",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "content_url": "/gateway/v1/media/jobs/ID/content",
+        "created_at": 0,
+        "error": null,
+        "id": "ID",
+        "job_id": "ID",
+        "object": "media.job",
+        "poll_url": "/gateway/v1/media/jobs/ID",
+        "status": "queued",
+        "updated_at": 0,
+        "workflow_id": "mesh.generate.trellis-2"
+      },
+      "location": "/gateway/v1/media/jobs/ID",
+      "retry_after": null,
+      "status": 202
+    },
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "job": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "busy_lease": {
+    "claims_left": 0,
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "first": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "386",
+        "content-type": "application/json",
+        "location": "/gateway/v1/media/jobs/ID",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "content_url": "/gateway/v1/media/jobs/ID/content",
+        "created_at": 0,
+        "error": null,
+        "id": "ID",
+        "job_id": "ID",
+        "object": "media.job",
+        "poll_url": "/gateway/v1/media/jobs/ID",
+        "status": "queued",
+        "updated_at": 0,
+        "workflow_id": "mesh.generate.trellis-2"
+      },
+      "location": "/gateway/v1/media/jobs/ID",
+      "retry_after": null,
+      "status": 202
+    },
+    "first_job": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "resource_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "resource_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:3>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:3>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "second_sync": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "131",
+        "content-type": "application/json",
+        "retry-after": "30",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "resource_unavailable",
+          "message": "The graphics card is busy with other work. Try again soon.",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": "30",
+      "status": 503
+    },
+    "third_async": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "386",
+        "content-type": "application/json",
+        "location": "/gateway/v1/media/jobs/ID",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "content_url": "/gateway/v1/media/jobs/ID/content",
+        "created_at": 0,
+        "error": null,
+        "id": "ID",
+        "job_id": "ID",
+        "object": "media.job",
+        "poll_url": "/gateway/v1/media/jobs/ID",
+        "status": "queued",
+        "updated_at": 0,
+        "workflow_id": "mesh.generate.trellis-2"
+      },
+      "location": "/gateway/v1/media/jobs/ID",
+      "retry_after": null,
+      "status": 202
+    },
+    "third_job": {
+      "cancel_requested": false,
+      "error_category": "capacity",
+      "error_code": "resource_unavailable",
+      "results": {},
+      "retryable": true,
+      "status": "failed"
+    }
+  },
+  "cancel_finished": {
+    "after": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "before": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "cancel": {
+      "refused": "This job has already finished"
+    },
+    "cancel_again": {
+      "refused": "This job has already finished"
+    },
+    "claims_left": 0,
+    "created": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "386",
+        "content-type": "application/json",
+        "location": "/gateway/v1/media/jobs/ID",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "content_url": "/gateway/v1/media/jobs/ID/content",
+        "created_at": 0,
+        "error": null,
+        "id": "ID",
+        "job_id": "ID",
+        "object": "media.job",
+        "poll_url": "/gateway/v1/media/jobs/ID",
+        "status": "queued",
+        "updated_at": 0,
+        "workflow_id": "mesh.generate.trellis-2"
+      },
+      "location": "/gateway/v1/media/jobs/ID",
+      "retry_after": null,
+      "status": 202
+    },
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "cancel_running": {
+    "after": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {},
+      "retryable": null,
+      "status": "canceled"
+    },
+    "cancel": {
+      "cancel_requested": true,
+      "status": "running"
+    },
+    "cancel_again": {
+      "cancel_requested": true,
+      "status": "running"
+    },
+    "claims_left": 0,
+    "created": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "386",
+        "content-type": "application/json",
+        "location": "/gateway/v1/media/jobs/ID",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "content_url": "/gateway/v1/media/jobs/ID/content",
+        "created_at": 0,
+        "error": null,
+        "id": "ID",
+        "job_id": "ID",
+        "object": "media.job",
+        "poll_url": "/gateway/v1/media/jobs/ID",
+        "status": "queued",
+        "updated_at": 0,
+        "workflow_id": "mesh.generate.trellis-2"
+      },
+      "location": "/gateway/v1/media/jobs/ID",
+      "retry_after": null,
+      "status": 202
+    },
+    "during": {
+      "cancel_requested": true,
+      "error_category": null,
+      "error_code": null,
+      "results": {},
+      "retryable": null,
+      "status": "running"
+    },
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "pool_held_after": false,
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "cancelled"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "cancelled",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "cancelled"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "disconnect": {
+    "after": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "claims_left": 0,
+    "created": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "386",
+        "content-type": "application/json",
+        "location": "/gateway/v1/media/jobs/ID",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "content_url": "/gateway/v1/media/jobs/ID/content",
+        "created_at": 0,
+        "error": null,
+        "id": "ID",
+        "job_id": "ID",
+        "object": "media.job",
+        "poll_url": "/gateway/v1/media/jobs/ID",
+        "status": "queued",
+        "updated_at": 0,
+        "workflow_id": "mesh.generate.trellis-2"
+      },
+      "location": "/gateway/v1/media/jobs/ID",
+      "retry_after": null,
+      "status": 202
+    },
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      },
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "cancelled"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "cancelled",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "cancelled"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "sync_walkaway": {
+      "pool_free_after": true,
+      "pool_held_while_gone": true
+    },
+    "while_running": {
+      "job": {
+        "cancel_requested": false,
+        "error_category": null,
+        "error_code": null,
+        "results": {},
+        "retryable": null,
+        "status": "running"
+      },
+      "pool_held": true
+    }
+  },
+  "engine_failure": {
+    "claims_left": 0,
+    "engine_502": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "82",
+        "content-type": "application/json",
+        "x-request-id": "ID",
+        "x-should-retry": "false"
+      },
+      "json": {
+        "error": {
+          "code": "upstream_error",
+          "message": "The job failed.",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 502
+    },
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      },
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      },
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "engine_unreachable": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "88",
+        "content-type": "application/json",
+        "x-request-id": "ID",
+        "x-should-retry": "false"
+      },
+      "json": {
+        "error": {
+          "code": "upstream_unavailable",
+          "message": "The job failed.",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 502
+    },
+    "job_after_502": {
+      "cancel_requested": false,
+      "error_category": "upstream",
+      "error_code": "upstream_error",
+      "results": {},
+      "retryable": false,
+      "status": "failed"
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "upstream_error"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "upstream_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "upstream_error"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:3>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:3>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "health_503": {
+    "answer": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "87",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "service_unavailable",
+          "message": "The job failed.",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 503
+    },
+    "claims_left": 0,
+    "engine_requests": [],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "service_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "observer_refusal": {
+    "answer": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "131",
+        "content-type": "application/json",
+        "retry-after": "30",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "resource_unavailable",
+          "message": "The graphics card is busy with other work. Try again soon.",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": "30",
+      "status": 503
+    },
+    "claims_left": 0,
+    "engine_requests": [],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "resource_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "policy_refusal": {
+    "answer": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "171",
+        "content-type": "application/json"
+      },
+      "json": {
+        "error": {
+          "code": "not_in_access_plan",
+          "details": {
+            "plans": [
+              "plan_test"
+            ],
+            "side": "person"
+          },
+          "message": "3D models isn't in your access plan.",
+          "type": "access_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 403
+    },
+    "claims_left": 0,
+    "engine_requests": [],
+    "receipts": {
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "queued_behind": {
+    "claims_left": 0,
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjENCi0tQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0iaW1hZ2UiOyBmaWxlbmFtZT0iaW5wdXQucG5nIg0KQ29udGVudC1UeXBlOiBpbWFnZS9wbmcNCg0KiVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAC0lEQVR4nGNgQAYAAA4AAamRc7EAAAAASUVORK5CYIINCi0tQk9VTkRBUlktLQ0K",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      },
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjINCi0tQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0iaW1hZ2UiOyBmaWxlbmFtZT0iaW5wdXQucG5nIg0KQ29udGVudC1UeXBlOiBpbWFnZS9wbmcNCg0KiVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAC0lEQVR4nGNgQAYAAA4AAamRc7EAAAAASUVORK5CYIINCi0tQk9VTkRBUlktLQ0K",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "first_job": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "second_job": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {
+        "mesh": {
+          "count": 1,
+          "kind": "assets"
+        }
+      },
+      "retryable": null,
+      "status": "succeeded"
+    },
+    "waiting": {
+      "cancel_requested": false,
+      "error_category": null,
+      "error_code": null,
+      "results": {},
+      "retryable": null,
+      "status": "queued"
+    }
+  },
+  "replay_conflict": {
+    "claims_left": 0,
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "first": {
+      "body": "Z2xURgIAAACQAAAAHAAAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAifX0gWAAAAEJJTgBtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+      "content_type": "model/gltf-binary",
+      "headers": {
+        "content-length": "144",
+        "content-type": "model/gltf-binary",
+        "x-request-id": "ID"
+      },
+      "json": null,
+      "location": null,
+      "retry_after": null,
+      "status": 200
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "idempotency_conflict"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "second": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "138",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "idempotency_conflict",
+          "message": "this Idempotency-Key was used for a different request",
+          "type": "invalid_request_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 409
+    }
+  },
+  "replay_same": {
+    "claims_left": 0,
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "first": {
+      "body": "Z2xURgIAAACQAAAAHAAAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAifX0gWAAAAEJJTgBtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+      "content_type": "model/gltf-binary",
+      "headers": {
+        "content-length": "144",
+        "content-type": "model/gltf-binary",
+        "x-request-id": "ID"
+      },
+      "json": null,
+      "location": null,
+      "retry_after": null,
+      "status": 200
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "second": {
+      "body": "Z2xURgIAAACQAAAAHAAAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAifX0gWAAAAEJJTgBtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+      "content_type": "model/gltf-binary",
+      "headers": {
+        "content-length": "144",
+        "content-type": "model/gltf-binary",
+        "x-request-id": "ID"
+      },
+      "json": null,
+      "location": null,
+      "retry_after": null,
+      "status": 200
+    }
+  },
+  "service_problem": {
+    "absent": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "144",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "binding_unavailable",
+          "message": "workflow mesh.generate.trellis-2 cannot start a run: binding_unavailable",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 503
+    },
+    "claims_left": 0,
+    "disabled": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "144",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "binding_unavailable",
+          "message": "workflow mesh.generate.trellis-2 cannot start a run: binding_unavailable",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 503
+    },
+    "engine_requests": [],
+    "no_pool_policy": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "144",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "binding_unavailable",
+          "message": "workflow mesh.generate.trellis-2 cannot start a run: binding_unavailable",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 503
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "binding_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "binding_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "binding_unavailable"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:3>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:3>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "success_raw": {
+    "answer": {
+      "body": "Z2xURgIAAACQAAAAHAAAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAifX0gWAAAAEJJTgBtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+      "content_type": "model/gltf-binary",
+      "headers": {
+        "content-length": "144",
+        "content-type": "model/gltf-binary",
+        "x-request-id": "ID"
+      },
+      "json": null,
+      "location": null,
+      "retry_after": null,
+      "status": 200
+    },
+    "claims_left": 0,
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "success_sync": {
+    "answer": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "272",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "created": 0,
+        "data": [
+          {
+            "b64_json": "Z2xURgIAAACQAAAAHAAAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAifX0gWAAAAEJJTgBtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+            "media_type": "model/gltf-binary"
+          }
+        ]
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 200
+    },
+    "claims_left": 0,
+    "engine_requests": [
+      {
+        "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAADUlIRFIAAAACAAAAAggCAAAA/dSacwAAAAtJREFUeJxjYEAGAAAOAAGpkXOxAAAAAElFTkSuQmCCDQotLUJPVU5EQVJZLS0NCg==",
+        "content_type": "multipart/form-data; boundary=BOUNDARY",
+        "method": "POST",
+        "url": "http://127.0.0.1:8890/generate"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "succeeded"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "validation_refusal": {
+    "claims_left": 0,
+    "engine_requests": [],
+    "missing_image": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "123",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "missing_input",
+          "message": "Missing required input: image",
+          "param": "image",
+          "type": "invalid_request_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 400
+    },
+    "not_a_picture": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "240",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "invalid_inputs",
+          "message": "the run request is not valid",
+          "problems": [
+            {
+              "code": "media_type",
+              "message": "this media type is not accepted",
+              "path": [
+                "media",
+                "image",
+                0
+              ],
+              "pointer": "/media/image/0"
+            }
+          ],
+          "type": "invalid_request_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 422
+    },
+    "not_multipart": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "134",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "invalid_request_body",
+          "message": "The request body is not valid multipart/form-data",
+          "type": "invalid_request_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 400
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "invalid_inputs"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "terminal_reason": "http_400"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": null,
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "terminal_reason": "http_400"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:3>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": null,
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:3>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "invalid_inputs"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:4>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:4>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "seed_negative": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "225",
+        "content-type": "application/json",
+        "x-request-id": "ID"
+      },
+      "json": {
+        "error": {
+          "code": "invalid_inputs",
+          "message": "the run request is not valid",
+          "problems": [
+            {
+              "code": "value_invalid",
+              "message": "seed must be >= 0",
+              "path": [
+                "inputs",
+                "seed"
+              ],
+              "pointer": "/inputs/seed"
+            }
+          ],
+          "type": "invalid_request_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 422
+    }
+  },
+  "wait_timeout": {
+    "claims_left": 0,
+    "engine_requests": [],
+    "job": {
+      "cancel_requested": false,
+      "error_category": "timeout",
+      "error_code": "upstream_timeout",
+      "results": {},
+      "retryable": false,
+      "status": "failed"
+    },
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations/glb",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "upstream_timeout"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations/glb",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "request_history",
+                "reason": "app_off"
+              }
+            ],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        },
+        {
+          "api_key_name": "Fixture app",
+          "app_id": "app_0000000000000001",
+          "app_profile": "plan_0000000000000001",
+          "created_at": "<time>",
+          "intent": "mesh.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/3d/generations",
+          "protocol": "openai.mesh",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "Fixture app",
+            "app_id": "app_0000000000000001",
+            "app_profile": "plan_0000000000000001",
+            "attempt_number": 1,
+            "backend": null,
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "mesh.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": "sha256:93c75565507f25d7f420e43c4e885cdf30c0bb27e1b17d80b53a387d09bf5f42",
+            "manifest_id": "mesh.generate.trellis-2",
+            "manifest_version": "1",
+            "metadata": {
+              "terminal_reason": "upstream_timeout"
+            },
+            "owner_key_hash": "app:app_0000000000000001",
+            "parent_request_id": null,
+            "path": "/v1/3d/generations",
+            "policy_decision": null,
+            "policy_reasons": [],
+            "policy_sources": [],
+            "protocol": "openai.mesh",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:2>",
+            "requested_model": null,
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": "mesh.generate.trellis-2",
+            "resource_decision": {
+              "facts": [
+                {
+                  "name": "available",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": true
+                },
+                {
+                  "name": "degraded",
+                  "observed_at": "<time>",
+                  "quality": "declared",
+                  "resource_class": "service",
+                  "value": false
+                },
+                {
+                  "name": "disabled_intents",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "disabled_resource_classes",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "reserved_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "required_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "optional_tokens",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": []
+                },
+                {
+                  "name": "requires_gpu",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "policy",
+                  "value": true
+                }
+              ],
+              "outcome": "allowed",
+              "reasons": [
+                {
+                  "code": "resources_available",
+                  "effect": "info",
+                  "observed_at": null,
+                  "quality": "declared",
+                  "resource_class": "resource",
+                  "rule": "resources available"
+                }
+              ],
+              "wait_deadline": "<time>"
+            },
+            "retention": [],
+            "source_kind": "app",
+            "source_label": "Fixture app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "internal",
+            "warnings": []
+          },
+          "request_id": "<req:2>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    },
+    "sync": {
+      "body": null,
+      "content_type": "application/json",
+      "headers": {
+        "content-length": "84",
+        "content-type": "application/json",
+        "x-request-id": "ID",
+        "x-should-retry": "false"
+      },
+      "json": {
+        "error": {
+          "code": "upstream_timeout",
+          "message": "The job failed.",
+          "type": "api_error"
+        }
+      },
+      "location": null,
+      "retry_after": null,
+      "status": 504
+    }
+  }
+}

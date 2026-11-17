@@ -23,10 +23,11 @@ from gateway.service_registry import LEGACY_RESIDENCY_KEY, engine_base_address, 
 _PRESENTATION_WORDS_PATH = Path(__file__).resolve().parents[1] / "registry/presentation_words.yml"
 _PRESENTATION_LIST_KEYS = (
     "provider_suffixes", "engine_prefixes", "engine_tails", "parenthesized_hardware",
-    "hardware_label_suffixes", "bare_titles", "technical_patterns",
+    "hardware_label_suffixes", "bare_titles", "technical_patterns", "primary_chat_names",
 )
 _PRESENTATION_KEYS = (
     "schema_version", *_PRESENTATION_LIST_KEYS, "capability_engine_suffixes", "acronyms", "unclassified", "admin_surface",
+    "chat_profile_descriptions", "fallback_chat_description",
 )
 _UNCLASSIFIED_KEYS = ("capability", "label", "icon", "service_capability", "summary")
 
@@ -75,6 +76,27 @@ def _load_presentation_words(path: Path) -> Mapping[str, Any]:
             if word in seen:
                 fail(f"{key}[{index}]", "duplicate word")
             seen.add(word)
+    key = "chat_profile_descriptions"
+    rows = raw[key]
+    if not isinstance(rows, list) or not rows:
+        fail(key, "expected a non-empty list")
+    descriptions = []
+    for index, row in enumerate(rows):
+        row_key = f"{key}[{index}]"
+        row = mapping(row, row_key)
+        keys(row, ("words", "description", *(("contains",) if "contains" in row else ())), row_key)
+        loaded_row = {"description": string(row["description"], f"{row_key}.description")}
+        for field in ("words", "contains"):
+            value = row.get(field, [])
+            if not isinstance(value, list):
+                fail(f"{row_key}.{field}", "expected a list")
+            loaded_row[field] = tuple(string(word, f"{row_key}.{field}[{i}]")
+                                      for i, word in enumerate(value))
+        if not loaded_row["words"] and not loaded_row["contains"]:
+            fail(row_key, "expected at least one word or substring")
+        descriptions.append(MappingProxyType(loaded_row))
+    loaded[key] = tuple(descriptions)
+    loaded["fallback_chat_description"] = string(raw["fallback_chat_description"], "fallback_chat_description")
     for key in ("capability_engine_suffixes", "acronyms", "unclassified"):
         value = mapping(raw[key], key)
         if key == "unclassified":
@@ -270,7 +292,7 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
 
 
 # Capability labels, icons, aliases and summaries come from capability_words.yml.
-PRIMARY_CHAT_NAMES = frozenset({"default", "fast", "coder", "code", "chat"})
+
 
 
 def service_capability_labels(service: Mapping[str, Any]) -> list[str]:
@@ -412,7 +434,7 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
            "title": title, "recommended_model": str(recommended), "summary": description,
            "use_names": [str(use_name)] if use_name else [],
            "secondary_profile": bool(metadata.get("secondary_profile", (not remote or alias) and kind == "chat" and use_name
-                                     and str(use_name).removeprefix("role:") not in PRIMARY_CHAT_NAMES))}
+                                     and str(use_name).removeprefix("role:") not in PRESENTATION_WORDS["primary_chat_names"]))}
     if use_name:
         out["use_name"] = str(use_name)
     return out
@@ -420,15 +442,10 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
 
 def _chat_profile_description(profile_name: str) -> str:
     normalized = profile_name.strip().casefold().replace("_", "-")
-    if normalized in {"default", "chat"}:
-        return "Thinks through questions before answering."
-    if normalized in {"fast", "quick"}:
-        return "Answers quickly for everyday prompts."
-    if normalized in {"coder", "code"} or "coder" in normalized:
-        return "Helps with coding tasks and technical questions."
-    if normalized in {"rp", "roleplay"} or "roleplay" in normalized:
-        return "Uses a roleplay-tuned chat profile."
-    return "A chat model."
+    for row in PRESENTATION_WORDS["chat_profile_descriptions"]:
+        if normalized in row["words"] or any(word in normalized for word in row["contains"]):
+            return row["description"]
+    return PRESENTATION_WORDS["fallback_chat_description"]
 
 
 def _strip_deployment_notes(value: str) -> str:

@@ -69,7 +69,7 @@ def _job(public, key, engine):
         if job["status"] in {"succeeded", "failed", "cancelled"}:
             break
         time.sleep(0.1)
-    assert job["status"] == "succeeded", job
+    assert job["status"] == "succeeded", json.dumps({'job': job, 'paths': getattr(engine, 'paths', None)}, sort_keys=True)
     assert engine.posts == [{"input": {"vector": VECTOR}}]
     return submitted, job
 
@@ -297,29 +297,12 @@ def test_s3_non_image_results_keep_bytes_type_size_and_kind(
         assert asset["kind"] == expected_kind, asset
 
 
-@pytest.mark.xfail(
-    strict=True, raises=CapabilityGap,
-    reason="c2d2 S6: validate_protocol_dispatch_local_only rejects non-loopback addresses",
-)
-def test_s6_owner_opted_in_remote_engine_serves_a_job(owner, gateway, fake_upstreams):
+def test_s6_owner_opted_in_remote_engine_serves_a_job(owner, gateway, fake_upstreams, monkeypatch):
+    from tests.support.remote_protocol import gateway_case, add_remote
     client, _, owner_id, plan_id = owner
+    engine = gateway_case(gateway, monkeypatch, fake_upstreams)
     assert _install_description(client).status_code == 201
-    engine = SmellEngine()
-    # This documentation address is served in-process, never on the network.
-    fake_upstreams.router.add("192.0.2.10:18301", engine)
-    created = _add_engine(
-        client, capabilities=["smell.infer"],
-        models=[{"id": "smell-1", "public_name": "smell-1"}],
-        values={"address": "http://192.0.2.10:18301", "dispatch": "protocol",
-                "protocol_description": "d0-smell",
-                # Proposed owner opt-in field, not a claim of an existing API.
-                "allow_remote": True},
-    )
-    if created.status_code in {400, 422} and (
-            "protocol dispatch does not enforce paid-provider access or spend limits" in created.text
-            or ("no field with one of the names sent" in created.text and created.json()["error"].get("field") == "values")):
-        # Today the opt-in field does not exist (refused as an unknown field), and without it the address is loopback-only.
-        raise CapabilityGap("explicitly opted-in fake remote engine must be accepted")
+    created = add_remote(client)
     assert created.status_code == 201, created.text
     enabled = client.patch("/admin/api/operator/services/smell-box",
                            headers=_write_headers(client), json={"enabled": True})
@@ -328,11 +311,13 @@ def test_s6_owner_opted_in_remote_engine_serves_a_job(owner, gateway, fake_upstr
     with gateway.client() as public:
         submitted, job = _job(public, key, engine)
         content = public.get(submitted["content_url"], headers=_headers(key))
-        assert content.status_code == 200 and content.content == MOLECULE
+        assert content.status_code == 200 and content.content == b'remote-result'
+    assert engine.connections == [('93.184.216.34', 443)] * 3
+    assert engine.tls == ['engine.example'] * 3
     records = client.get("/admin/api/activity/requests")
     assert records.status_code == 200, records.text
     receipts = [row["receipt"] for row in records.json()["records"]
-                if row["receipt"].get("job_id") == job["id"]]
+                if row["receipt"].get("job_id") == submitted["id"]]
     assert len(receipts) == 1
     assert receipts[0]["status"] == "succeeded"
     assert receipts[0]["backend"] == "smell-box"
@@ -478,3 +463,562 @@ def test_s2_partial_conservative_single_wav_result_is_audio(owner, gateway, fake
         assert asset["media_type"] == "audio/wav", asset
         assert asset["size_bytes"] == len(wav), asset
         assert asset["kind"] == "audio", asset
+
+
+def test_s6_remote_policy_owner_authentication_production_path(owner, gateway, monkeypatch):
+    """Store policy data on a local record; this grants no remote egress."""
+    from tests.test_signin_who_can_enter import signed_in
+    from gateway import remote_engine
+    monkeypatch.setattr(remote_engine, 'PRODUCTION_READY', True)
+
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    state = client.get("/admin/api/operator/service-registry").json()
+    connection = dict(state["service_registry"]["services"]["smell-box"]["config"]["connection"])
+    connection["remote_dispatch"] = {"enabled": True}
+    connection['address'] = 'https://engine.example'
+    path = "/admin/api/operator/services/smell-box"
+    body = {"connection": connection, 'base_url': 'https://engine.example', 'address': 'https://engine.example',
+            'host': 'engine.example', 'port': 443, 'scheme': 'https', 'native_passthrough': False, 'cost_class': 'free-local'}
+    with gateway.client() as anonymous:
+        assert anonymous.patch(path, json=body).status_code in {401, 403}
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        assert public.patch(path, headers=_headers(key), json=body).status_code in {401, 403}
+    admin, _ = signed_in(gateway, sub="remote-policy-admin", email="admin@example.test", groups=["/Trusted"])
+    denied = admin.patch(path, headers=_write_headers(admin), json=body)
+    assert denied.status_code == 403, denied.text
+    assert client.get("/admin/api/operator/service-registry").json() == state
+    accepted = client.patch(path, headers=_write_headers(client), json=body)
+    assert accepted.status_code == 200, accepted.text
+    from gateway import admin_store
+    stored = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]["services"]["smell-box"]
+    assert stored["config"]["connection"]["remote_dispatch"] == {"enabled": True}
+    # Bulk writes must not let an administrator relabel a service's billing class.
+    before_bulk = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    edited = json.loads(json.dumps(before_bulk))
+    edited['services']['smell-box']['config']['provider_type'] = 'local'
+    denied_bulk = admin.put('/admin/api/operator/service-registry', headers=_write_headers(admin), json=edited)
+    assert denied_bulk.status_code == 403, denied_bulk.text
+    assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before_bulk
+
+
+def test_s6_remote_without_owner_opt_in_keeps_existing_refusal(owner, gateway, monkeypatch, fake_upstreams):
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    response = _add_engine(client, values={
+        "address": "https://remote.example.test", "dispatch": "protocol",
+        "protocol_description": "d0-smell"})
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "protocol dispatch does not enforce paid-provider access or spend limits; "
+        "use the existing provider route")
+    state = client.get("/admin/api/operator/service-registry")
+    assert "smell-box" not in state.json()["service_registry"]["services"]
+    # Publish a local-only registry snapshot before starting the public gateway.
+    assert _add_engine(client).status_code == 201
+    from gateway import remote_engine
+    from tests.test_owner_engine_chain_smell import EmptyModelCatalog
+    for host in ('127.0.0.1:7890', '127.0.0.1:4011'):
+        if host not in fake_upstreams.router._routes:
+            fake_upstreams.router.add(host, EmptyModelCatalog())
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        # Keep display timestamps and cached host facts fixed across this comparison.
+        import status_endpoint
+        fixed_time = time.time()
+        monkeypatch.setattr(time, 'time', lambda: fixed_time)
+        monkeypatch.setattr(status_endpoint, '_SNAPSHOT', {})
+        monkeypatch.setattr(status_endpoint, '_SNAPSHOT_CLOSED', True)
+        monkeypatch.setattr(remote_engine, 'PRODUCTION_READY', False)
+        models_before = public.get('/v1/models', headers=_headers(key))
+        schema_before = public.get('/openapi.json')
+        monkeypatch.setattr(remote_engine, 'PRODUCTION_READY', True)
+        models_after = public.get('/v1/models', headers=_headers(key))
+        schema_after = public.get('/openapi.json')
+        assert models_before.status_code == models_after.status_code == 200
+        assert schema_before.status_code == schema_after.status_code == 200
+        assert models_before.content == models_after.content
+        assert schema_before.content == schema_after.content
+
+
+def test_s6_remote_generic_job_lifecycle_and_leases_production_path(owner, gateway, fake_upstreams):
+    """Qualify the local generic runner before giving it any remote authority."""
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    created = _add_engine(client, capabilities=["smell.infer"],
+                          values={"address": "http://127.0.0.1:18303", "dispatch": "protocol", "protocol_description": "d0-smell"},
+                          models=[{"id": "smell-1", "public_name": "smell-1"}])
+    assert created.status_code == 201, created.text
+    configured = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={
+        "protocol": "d0-smell",
+        "residency": {"domain": "scenario-domain", "transition": {"enabled": True, "activation": "pass_through"}},
+        "enabled": True})
+    assert configured.status_code == 200, configured.text
+    proxy = gateway.proxy
+    policy = proxy._transition_policy("smell-box")
+    assert policy.enabled and policy.pass_through
+    seen = []
+
+    class LeasedEngine(SmellEngine):
+        async def __call__(self, scope, receive, send):
+            proxy._require_egress_lease("smell-box")
+            seen.append((scope["method"], scope["path"], proxy._swap_drain.in_flight("smell-box")))
+            await super().__call__(scope, receive, send)
+
+    engine = LeasedEngine()
+    fake_upstreams.router.add("127.0.0.1:18303", engine)
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        # A closed serving gate must terminate the admitted job before any upstream request.
+        submitted, job = _job(public, key, engine)
+        content = public.get(submitted["content_url"], headers=_headers(key))
+        assert content.status_code == 200 and content.content == MOLECULE
+        successful_requests = list(seen)
+        gates = proxy._transition_gates()
+        gates.force("scenario-domain", "closed")
+        denied = public.post("/gateway/v1/media/jobs", headers=_headers(key), json={
+            "intent": "smell.infer", "model": "smell-1", "input": {"vector": VECTOR}})
+        assert denied.status_code == 202, denied.text
+        for _ in range(100):
+            refused = public.get("/gateway/v1/media/jobs/" + denied.json()["id"], headers=_headers(key))
+            assert refused.status_code == 200, refused.text
+            if refused.json()["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.1)
+        assert refused.json()["status"] == "failed", refused.text
+        assert seen == successful_requests
+    assert [(method, path) for method, path, _ in seen] == [
+        ("POST", "/v1/infer"), ("GET", "/v1/infer/smell-1"), ("GET", "/v1/infer/smell-1/molecule")]
+    assert all(count == 1 for _, _, count in seen), seen
+    assert proxy._swap_drain.in_flight("smell-box") == 0
+    records = client.get("/admin/api/activity/requests")
+    assert records.status_code == 200, records.text
+    receipts = [row["receipt"] for row in records.json()["records"] if row["receipt"].get("job_id") == submitted["id"]]
+    assert len(receipts) == 1
+    assert (receipts[0]["status"], receipts[0]["backend"]) == ("succeeded", "smell-box")
+
+
+def test_s6_only_owner_can_enable_remote_dispatch(owner, gateway, monkeypatch):
+    test_s6_remote_policy_owner_authentication_production_path(owner, gateway, monkeypatch)
+
+
+def test_s6_remote_job_observation_poll_asset_security(owner, gateway, fake_upstreams, monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    from tests.support.remote_protocol import gateway_case, add_remote
+    import yaml
+    client, _, owner_id, plan_id = owner
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    raw = yaml.safe_load(SMELL.read_text())
+    raw['auth'] = {'inference': {'kind': 'bearer'}, 'control': {'kind': 'bearer'}}
+    raw['operations']['select'] = {'class': 'control', 'request': {'method': 'POST', 'path': '/select'},
+                                    'response': {'framing': 'json'}}
+    installed = client.put('/admin/api/engine-protocols/d0-smell', content=yaml.safe_dump(raw),
+                           headers={**csrf_for(client), 'Content-Type': 'application/yaml', 'If-None-Match': '*'})
+    assert installed.status_code == 201, installed.text
+    created = add_remote(client, observations=True)
+    assert created.status_code == 201, created.text
+    connection = created.json()['service_registry']['services']['smell-box']['config']['connection']
+    monkeypatch.setenv('REMOTE_JOB_TEST_CREDENTIAL', 'synthetic-service-job')
+    connection['credentials'] = {cls: {'secret_ref': 'os.environ/REMOTE_JOB_TEST_CREDENTIAL',
+                                      'origin': 'https://engine.example', 'header': 'Authorization', 'scheme': 'Bearer'}
+                                  for cls in ('inference', 'control')}
+    enabled = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client),
+                           json={'connection': connection, 'enabled': True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, job = _job(public, key, recorder)
+        content = public.get(submitted['content_url'], headers=_headers(key))
+        assert content.status_code == 200 and content.content == b'remote-result'
+        assert len(recorder.connections) == 4
+        def json_response(payload):
+            encoded = json.dumps(payload).encode()
+            return (b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ' +
+                    str(len(encoded)).encode() + b'\r\n\r\n' + encoded)
+        recorder.responses.extend([
+            json_response({'value': 'smell-1'}), json_response({'job': {'id': 'j'}}),
+            json_response({'state': 'ready'}),
+            b'HTTP/1.1 302 Found\r\nLocation: https://169.254.169.254/\r\nContent-Length: 0\r\n\r\n'])
+        denied_job = public.post('/gateway/v1/media/jobs', headers=_headers(key), json={
+            'intent': 'smell.infer', 'model': 'smell-1', 'input': {'vector': VECTOR}})
+        assert denied_job.status_code == 202, denied_job.text
+        for _ in range(100):
+            denied_status = public.get('/gateway/v1/media/jobs/' + denied_job.json()['id'], headers=_headers(key)).json()
+            if denied_status['status'] in {'succeeded', 'failed', 'canceled'}:
+                break
+            time.sleep(0.01)
+        assert denied_status['status'] == 'failed' and denied_status['assets'] == [], denied_status
+    sent = b''.join(recorder.writes)
+    assert b'synthetic-service-job' in sent
+    assert key.encode() not in sent
+    assert 'synthetic-service-job' not in caplog.text
+    assert len(recorder.connections) == 8  # four requests per job; no redirect target connection
+    assert all(peer == ('93.184.216.34', 443) for peer in recorder.connections)
+    records = client.get('/admin/api/activity/requests').json()['records']
+    receipts = [row['receipt'] for row in records if row['receipt'].get('job_id') == submitted['id']]
+    assert len(receipts) == 1 and receipts[0]['status'] == 'succeeded'
+    from gateway import admin_store, media_jobs
+    internal = media_jobs.get(submitted['id'], audience='internal', path=media_jobs.DB_PATH)
+    assert internal['metadata']['remote_binding']['policy_generation']
+
+
+def test_s6_remote_opt_out_cancels_running_job(owner, gateway, fake_upstreams, monkeypatch):
+    from tests.support.remote_protocol import gateway_case, add_remote
+    client, _, owner_id, plan_id = owner
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    recorder.pending = True
+    assert _install_description(client).status_code == 201
+    created = add_remote(client)
+    assert created.status_code == 201, created.text
+    enabled = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        response = public.post('/gateway/v1/media/jobs', headers=_headers(key), json={
+            'intent': 'smell.infer', 'model': 'smell-1', 'input': {'vector': VECTOR}})
+        assert response.status_code == 202, response.text
+        job_id = response.json()['id']
+        for _ in range(100):
+            if any(b'GET /v1/infer/j ' in chunk for chunk in recorder.writes):
+                break
+            time.sleep(0.01)
+        assert any(b'GET /v1/infer/j ' in chunk for chunk in recorder.writes)
+        connection = created.json()['service_registry']['services']['smell-box']['config']['connection']
+        connection['remote_dispatch']['enabled'] = False
+        revoked = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'connection': connection})
+        assert revoked.status_code == 200, revoked.text
+        count = len(recorder.connections)
+        for _ in range(100):
+            job = public.get('/gateway/v1/media/jobs/' + job_id, headers=_headers(key)).json()
+            if job['status'] in {'succeeded', 'failed', 'canceled'}:
+                break
+            time.sleep(0.01)
+        assert job['status'] == 'canceled', job
+        assert len(recorder.connections) == count and not job['assets']
+        refused = public.post('/gateway/v1/media/jobs', headers=_headers(key), json={
+            'intent': 'smell.infer', 'model': 'smell-1', 'input': {'vector': VECTOR}})
+        assert refused.status_code == 502, refused.text
+        assert len(recorder.connections) == count
+    receipts = [row['receipt'] for row in client.get('/admin/api/activity/requests').json()['records']
+                if row['receipt'].get('job_id') == job_id]
+    assert len(receipts) == 1 and receipts[0]['status'] == 'cancelled'
+
+
+
+def test_s6_unrelated_registry_generation_leaves_running_remote_job(owner, gateway, fake_upstreams, monkeypatch):
+    from tests.support.remote_protocol import gateway_case, add_remote
+    client, _, owner_id, plan_id = owner
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    recorder.pending = True
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client),
+                        json={'enabled': True}).status_code == 200
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted = public.post('/gateway/v1/media/jobs', headers=_headers(key), json={
+            'intent': 'smell.infer', 'model': 'smell-1', 'input': {'vector': VECTOR}})
+        assert submitted.status_code == 202, submitted.text
+        job_id = submitted.json()['id']
+        for _ in range(100):
+            if '/v1/infer/j' in recorder.paths:
+                break
+            time.sleep(.01)
+        assert '/v1/infer/j' in recorder.paths
+        before = client.get('/admin/api/operator/service-registry').json()
+        changed = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client),
+                               json={'description': 'Updated display metadata'})
+        assert changed.status_code == 200, changed.text
+        after = client.get('/admin/api/operator/service-registry').json()
+        assert after != before
+        recorder.pending = False
+        for _ in range(200):
+            job = public.get('/gateway/v1/media/jobs/' + job_id, headers=_headers(key)).json()
+            if job['status'] in {'succeeded', 'failed', 'canceled'}:
+                break
+            time.sleep(.01)
+        assert job['status'] == 'succeeded', job
+        assert job['assets']
+
+
+@pytest.mark.parametrize('writer', ['registry_put', 'config_patch', 'config_import', 'service_patch', 'service_add'])
+def test_s6_non_owner_cannot_write_remote_policy_through_any_api(owner, gateway, writer):
+    from tests.test_signin_who_can_enter import signed_in
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    from tests.support.remote_protocol import add_remote
+    assert add_remote(client).status_code == 201
+    before = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    edited = json.loads(json.dumps(before))
+    connection = edited['services']['smell-box']['config']['connection']
+    connection['remote_dispatch'] = {'enabled': True, 'limits': {'total_s': 2}}
+    admin, _ = signed_in(gateway, sub='remote-writer-admin', email='admin@example.test', groups=['/Trusted'])
+    routes = {
+        'registry_put': ('PUT', '/admin/api/operator/service-registry', edited),
+        'config_patch': ('PATCH', '/admin/api/config/changes', {'items': [{'section': 'registry', 'value': edited}]}),
+        'config_import': ('POST', '/admin/api/config/import', {'document': edited}),
+        'service_patch': ('PATCH', '/admin/api/operator/services/smell-box', {'connection': connection}),
+        'service_add': ('POST', '/admin/api/operator/services', {'name': 'remote-new', 'base_url': 'https://engine.example', 'protocol': 'd0-smell', 'cost_class': 'free-local', 'enabled': False, 'connection': connection}),
+    }
+    method, path, body = routes[writer]
+    response = admin.request(method, path, headers=_write_headers(admin), json=body)
+    assert response.status_code == 403, response.text
+    assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before
+
+
+def test_s6_public_job_get_strips_remote_binding_for_non_internal_audiences(owner, gateway, fake_upstreams, monkeypatch):
+    from gateway import media_jobs
+    from tests.support.remote_protocol import gateway_case, add_remote
+    client, _, owner_id, plan_id = owner
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    enabled = client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, _ = _job(public, key, recorder)
+        response = public.get('/gateway/v1/media/jobs/' + submitted['id'], headers=_headers(key))
+        assert response.status_code == 200, response.text
+        internal = media_jobs.get(submitted['id'], audience='internal', path=media_jobs.DB_PATH)
+        binding = internal['metadata']['remote_binding']
+        assert binding['origin'] == 'https://engine.example:443'
+        assert binding['service_id'] == 'smell-box'
+        assert 'metadata' not in response.json()
+        assert 'remote_binding' not in response.text and 'engine.example' not in response.text
+        assert 'service_id' not in response.json()
+        for audience in ('client', 'admin'):
+            visible = media_jobs.get(submitted['id'], audience=audience, path=media_jobs.DB_PATH)
+            assert 'metadata' not in visible
+            assert 'remote_binding' not in json.dumps(visible)
+
+
+
+@pytest.mark.parametrize('field', ['enabled', 'disabled'])
+def test_s6_admin_can_disable_remote_service_but_only_owner_can_reenable(owner, gateway, field):
+    from tests.support.remote_protocol import add_remote
+    from tests.test_signin_who_can_enter import signed_in
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    path = '/admin/api/operator/services/smell-box'
+    assert client.patch(path, headers=_write_headers(client), json={'enabled': True}).status_code == 200
+    admin, _ = signed_in(gateway, sub='remote-disable-admin', email='admin@example.test', groups=['/Trusted'])
+    disabled = admin.patch(path, headers=_write_headers(admin), json={field: field == 'disabled'})
+    assert disabled.status_code == 200, disabled.text
+    before = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    assert before['services']['smell-box']['enabled'] is False
+    denied = admin.patch(path, headers=_write_headers(admin), json={field: field != 'disabled'})
+    assert denied.status_code == 403, denied.text
+    assert client.get('/admin/api/operator/service-registry').json()['service_registry'] == before
+    assert client.patch(path, headers=_write_headers(client), json={'enabled': True}).status_code == 200
+
+
+@pytest.mark.parametrize('reload_fails', [False, True])
+def test_s6_registry_write_protects_next_legacy_send_before_hot_reload(owner, gateway, monkeypatch, reload_fails):
+    import asyncio
+    from gateway import engine_egress
+    from gateway.engine_protocol.errors import ProtocolError
+    from tests.support.remote_protocol import add_remote, SocketRecorder
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    before = engine_egress._live
+    assert not engine_egress.is_remote_destination('https://engine.example')
+    if reload_fails:
+        def fail():
+            raise RuntimeError('synthetic reload failure')
+        monkeypatch.setattr(gateway.proxy.ADMIN_STORE, 'on_service_registry_changed', fail)
+    registry = client.get('/admin/api/operator/service-registry').json()['service_registry']
+    config = registry['services']['smell-box']['config']
+    config.update({'cost_class': 'free-local', 'native_passthrough': False,
+                   'host': 'engine.example', 'port': 443, 'scheme': 'https',
+                   'address': 'https://engine.example', 'base_url': 'https://engine.example'})
+    config['connection'].update({'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}})
+    response = client.put('/admin/api/operator/service-registry', headers=_write_headers(client), json=registry)
+    assert response.status_code == (500 if reload_fails else 200), response.text
+    if reload_fails:
+        assert response.json()['error']['code'] == 'registry_saved_not_applied'
+    assert engine_egress._live is not before
+    recorder = SocketRecorder(monkeypatch)
+    async def send():
+        async with engine_egress.async_client() as legacy:
+            with pytest.raises(ProtocolError):
+                await legacy.get('https://engine.example/health', extensions=engine_egress.probe())
+    asyncio.run(send())
+    assert not recorder.connections and not recorder.writes
+
+
+@pytest.mark.parametrize('writer', ['plain', 'audit', 'coupled', 'transaction'])
+def test_s6_every_registry_writer_refreshes_legacy_remote_protection(owner, gateway, writer):
+    from types import SimpleNamespace
+    from gateway import admin_store, engine_egress
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    current = admin_store.get_service_registry_with_generation(path=gateway.path)
+    registry = current['value']
+    cfg = registry['services']['smell-box']['config']
+    cfg['connection'].update({'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}})
+    cfg.update({'cost_class': 'free-local', 'native_passthrough': False,
+                'host': 'engine.example', 'port': 443, 'scheme': 'https',
+                'address': 'https://engine.example', 'base_url': 'https://engine.example'})
+    before = engine_egress._live
+    common = {'expected_generation': current['operator_settings_generation'], 'updated_by': 'test-owner',
+              'actor': SimpleNamespace(roles={'owner'})}
+    if writer == 'plain':
+        admin_store.write_service_registry(registry, path=gateway.path, **common)
+    elif writer == 'audit':
+        admin_store.write_service_registry_with_audit(registry, path=gateway.path, audit_action='test',
+            audit_actor_kind='user', audit_actor_id='test-owner', audit_actor_label=None,
+            audit_target_kind='test', audit_target_id='test', **common)
+    elif writer == 'coupled':
+        admin_store.write_service_registry_and_setting_with_audits(registry, path=gateway.path,
+            setting_key='test', setting_value={}, audits=[], **common)
+    else:
+        with admin_store._conn(gateway.path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            admin_store.write_service_registry_in_transaction(conn, registry, now=1, **common)
+            conn.commit()
+    assert engine_egress._live is not before
+    import httpx
+    from gateway.engine_protocol.errors import ProtocolError
+    with pytest.raises(ProtocolError):
+        engine_egress.check_request(httpx.Request('GET', 'https://engine.example/health'))
+
+
+@pytest.mark.parametrize('wire', ['http', 'websocket'])
+def test_s6_cli_opt_in_refuses_next_legacy_send_without_reload(owner, gateway, monkeypatch, wire):
+    import asyncio
+    import subprocess
+    import sys
+    from gateway import engine_egress
+    from gateway.engine_protocol.errors import ProtocolError
+    from tests.support.remote_protocol import SocketRecorder
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert _add_engine(client).status_code == 201
+    assert not engine_egress.is_remote_destination('https://engine.example')
+    old_address = client.get('/admin/api/operator/service-registry').json()['service_registry']['services']['smell-box']['config']['connection']['address']
+    script = """
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from gateway import admin_store
+path = Path(sys.argv[1])
+current = admin_store.get_service_registry_with_generation(path=path)
+value = current['value']
+config = value['services']['smell-box']['config']
+config.update({'cost_class': 'free-local', 'native_passthrough': False, 'host': 'engine.example',
+ 'port': 443, 'scheme': 'https', 'address': 'https://engine.example', 'base_url': 'https://engine.example'})
+config['connection'].update({'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}})
+admin_store.write_service_registry(value, path=path, actor=SimpleNamespace(roles={'owner'}),
+ updated_by='synthetic-cli', expected_generation=current['operator_settings_generation'])
+"""
+    result = subprocess.run([sys.executable, '-c', script, str(gateway.path)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert not engine_egress.is_remote_destination('https://engine.example')
+    recorder = SocketRecorder(monkeypatch)
+    async def check():
+        if wire == 'websocket':
+            from gateway.engine_protocol.node_graph import NodeGraphAdapter
+            from gateway.engine_protocol.types import Connection
+            with pytest.raises(ProtocolError):
+                await anext(NodeGraphAdapter().watch(Connection(address=old_address)))
+        else:
+            async with engine_egress.async_client() as legacy:
+                for address in (old_address, 'https://engine.example'):
+                    with pytest.raises(ProtocolError):
+                        await legacy.get(address + '/health')
+    asyncio.run(check())
+    assert engine_egress.is_remote_destination('https://engine.example')
+    assert not recorder.connections and not recorder.writes
+
+
+
+@pytest.mark.parametrize('io', ['read', 'write'])
+def test_s6_external_process_revoke_stops_next_socket_io_without_watcher(owner, gateway, io):
+    import asyncio
+    import subprocess
+    import sys
+    from gateway.remote_engine import factory_from_store
+    from gateway.remote_engine_budget import GuardedStream
+    from tests.support.remote_protocol import add_remote
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True}).status_code == 200
+    factory = factory_from_store()
+    assert factory.db_path == gateway.path
+    bound = factory.transport(factory.admit('smell-box'))
+    script = """
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from gateway import admin_store
+path = Path(sys.argv[1])
+current = admin_store.get_service_registry_with_generation(path=path)
+value = current['value']
+value['services']['smell-box']['config']['connection']['remote_dispatch']['enabled'] = False
+admin_store.write_service_registry(value, path=path, actor=SimpleNamespace(roles={'owner'}),
+    updated_by='synthetic-cli', expected_generation=current['operator_settings_generation'])
+"""
+    result = subprocess.run([sys.executable, '-c', script, str(gateway.path)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert not bound.revoked and bound.monitor is None  # no shared-memory callback or watcher can help
+    calls = []
+    class Stream:
+        async def read(self, *args, **kwargs):
+            calls.append('read')
+            return b''
+        async def write(self, *args, **kwargs):
+            calls.append('write')
+    async def check():
+        stream = GuardedStream(Stream(), bound)
+        with pytest.raises(asyncio.CancelledError):
+            await (stream.read(1024) if io == 'read' else stream.write(b'synthetic'))
+    asyncio.run(check())
+    assert not calls
+
+
+
+@pytest.mark.parametrize('pre_layering', [False, True])
+def test_s6_startup_migrations_preserve_remote_authority(owner, gateway, pre_layering):
+    from gateway import admin_store, service_registry as sr, registry_layers, workflow_schema_migration
+    from gateway.remote_engine import authority_record, factory_from_store
+    from tests.registry_test_helpers import write_legacy_registry_for_test
+    from tests.test_workflow_schema_migration import _owner_record, _v1
+    from tests.support.remote_protocol import add_remote
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client), json={'enabled': True}).status_code == 200
+    current = admin_store.get_service_registry_with_generation(path=gateway.path)
+    if pre_layering:
+        stored = current['value']
+    else:
+        stored = json.loads(admin_store.get_service_registry_json_with_generation(path=gateway.path)['value_json'])
+    stored.setdefault('workflows', {})['review.workflow'] = _owner_record('review.workflow', _v1())
+    write_legacy_registry_for_test(stored, path=gateway.path)
+    steps = (registry_layers.LAYERING_STEP, workflow_schema_migration.STEP, sr.WORKFLOW_RECORD_STEP)
+    with admin_store._conn(gateway.path) as conn:
+        conn.executemany('DELETE FROM schema_migration_steps WHERE name=?', [(name,) for name in steps])
+        conn.commit()
+    before = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['smell-box']
+    factory = factory_from_store()
+    capability = factory.admit('smell-box')
+    boot, problem = gateway.proxy._boot_effective_runtime_config(dict(gateway.proxy.config))
+    assert problem is None, problem
+    after = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['smell-box']
+    assert authority_record(after) == authority_record(before)
+    assert boot['backends']['smell-box']['connection']['remote_dispatch']['enabled'] is True
+    assert all(admin_store.migration_step_recorded(name, path=gateway.path) for name in steps)
+    factory.check(capability, service_id='smell-box', address='https://engine.example')
+    generation = admin_store.service_registry_generation(path=gateway.path)
+    again, problem = gateway.proxy._boot_effective_runtime_config(dict(gateway.proxy.config))
+    assert problem is None and again['backends']['smell-box']['enabled'] is True
+    assert admin_store.service_registry_generation(path=gateway.path) == generation
+

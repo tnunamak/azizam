@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from anyio.from_thread import start_blocking_portal
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +59,11 @@ class RemixReplaceBase(unittest.TestCase):
         self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
         patch_video_row_files_in_a_temporary_tree(self.stack)       # a plain create is a row job: it keeps its files here
+        self.stack.enter_context(patch.object(proxy, "_workflow_run_semaphore", None))
+        self.stack.enter_context(patch.object(proxy, "IMAGE_MEDIA_JOB_CONCURRENCY", 20))
+        from gateway.engine_protocol.description import Poll
+        from gateway.engine_protocol.node_graph import NodeGraphAdapter
+        self.stack.enter_context(patch.object(NodeGraphAdapter, "poll_for", return_value=Poll(ramp_s=(), interval_s=0.05, max_polls=None)))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
@@ -68,9 +74,11 @@ class RemixReplaceBase(unittest.TestCase):
             "deleted_at": None,
         }
         self.client = TestClient(proxy.app)
+        self.client.portal = self.stack.enter_context(start_blocking_portal())
 
     @property
     def graph(self) -> dict:
+        self.comfy.wait_for_graphs()
         self.assertEqual(len(self.comfy.submitted), 1, "expected one submitted graph")
         return self.comfy.submitted[0]
 
@@ -206,6 +214,7 @@ class CharacterReplaceTests(RemixReplaceBase):
             },
         )
         self.assertEqual(r.status_code, 200, r.text)
+        self.comfy.wait_for_graphs()
         self.assertGreater(len(self.comfy.uploads[1][1]), 2 * 1024 * 1024)
 
     def test_missing_inputs_are_rejected_before_any_upload(self) -> None:

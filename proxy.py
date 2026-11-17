@@ -134,6 +134,7 @@ from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.frontend_shapes import mesh as frontend_mesh_shapes
 from gateway.frontend_shapes import video_create as frontend_video_create
+from gateway.engine_protocol.errors import BudgetExceeded as ProtocolBudgetExceeded
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
     SERVICE_DISABLED, SERVICE_NOT_ADMITTING, SERVICE_REASONS, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
@@ -814,7 +815,7 @@ def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Map
     # The egress map follows the config the gateway boots with (registry overlay, partial and empty fallbacks included),
     # not the bootstrap file: a service held only in the registry is mapped from the first request. It goes live
     # before the snapshot, so no request sees an enabled domain without its map entry.
-    engine_egress.install(_project_egress(snapshot.config.get("backends")))
+    engine_egress.install(_project_egress(snapshot.config.get("backends")), registry_path=ADMIN_DB_PATH, registry_generation=registry_generation)
     CONFIG_HOME.publish(snapshot)
     globals().update(_workflow_alias_tables(snapshot.config))
     return CONFIG_HOME.holder.current().config
@@ -1153,7 +1154,11 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 
     if not backend:
         return False
-    return supports_swap(driver_for_service(backend, config.get("backends")))
+    try:
+        return supports_swap(driver_for_service(backend, config.get("backends")))
+    except ProtocolError:
+        # Classification grants no egress: a remote record is never a local swap.
+        return False
 
 
 # Optional catalog of additional GGUF aliases (parallel to the roles section). Each entry has
@@ -1408,7 +1413,7 @@ def _video_default_workflow() -> str:
 
 
 def _video_workflow_table() -> Mapping[str, Any]:
-    return _videos().get("workflows") or {}
+    return video_grid.workflow_config(runtime().config)
 
 
 def _video_remix_workflow() -> str | None:
@@ -1752,7 +1757,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # The map goes live before the snapshot: between the two, the old config meets the new map, and a destination the
     # new map adds is refused without a lease (fail closed). The other order would let the new config send to an
     # enabled domain that the old map does not know, with no lease check.
-    engine_egress.install(egress)
+    engine_egress.install(egress, registry_path=ADMIN_DB_PATH, registry_generation=registry_generation)
     # Publish the snapshot first: runtime() reads only the holder, so a request that starts from here on binds the new
     # snapshot whole, and `config` and the derived names below follow from it, never ahead of it.
     CONFIG_HOME.publish(snapshot)
@@ -5023,6 +5028,8 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     These hops (speech, rerank, realtime, decisions) hold no serving lease yet,
     so a transition-enabled domain refuses them here (fail closed).
     """
+    from gateway.remote_engine import refuse_unbound
+    refuse_unbound((config.get("backends") or {}).get(service_id) or {})
     refusal = _unleased_path_refusal(service_id)
     if refusal is not None:
         return refusal
@@ -12135,6 +12142,57 @@ async def proxy_graph_video_create(
     ))
 
 
+async def _prepare_video_workflow_inputs(request, body, manifest, cfg, caller, *, holder=None, has_extensions=None):
+    """Validate workflow inputs and probe duration-bearing assets before any upload."""
+    assets, probe, accepted = {}, None, {}
+    block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+             if isinstance(body.get("extensions"), Mapping) else body.get("extensions"))
+    if isinstance(block, Mapping):
+        block = {key: value for key, value in block.items() if key not in provenance.RESERVED_GATEWAY_CONTROLS}
+    if has_extensions is None:
+        has_extensions = bool(cfg.get("requires_extensions") or body.get("inputs") or block)
+    try:
+        if has_extensions:
+            body = merge_workflow_inputs(body)
+            ext = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+            if cfg.get("requires_extensions") and isinstance(ext, Mapping):
+                body["extensions"] = {**body["extensions"], WORKFLOW_EXTENSION_NAMESPACE:
+                    video_inputs.coerce_form_scalars(ext, manifest.get("inputs") or {})}
+            validation, unknown = validate_video_workflow_extensions(body, manifest, backend=DERIVED._GRAPH_BINDING)
+            for name, reason in validation.rejected.items():
+                spec = (manifest.get("inputs") or {}).get(name) or {}
+                if reason == "required input missing" and spec.get("type") == "asset":
+                    message = f"{name} is required for this model"
+                    if name == cfg.get("source_video_input"):
+                        message += ": pass a video id, URL or data URI"
+                    raise _VideoAssetError(message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}")
+            rejected = {**validation.rejected, **unknown}
+            if rejected:
+                name, reason = next(iter(rejected.items()))
+                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+            accepted = validation.accepted
+            if cfg.get("requires_extensions") and cfg.get("source_video_input"):
+                assets, probe = await _resolve_video_workflow_assets(body, manifest, cfg, caller, request=request, holder=holder)
+        if cfg.get("subject_select"):
+            video_subject.validate_selection(frontend_video_create._workflow_block(body))
+    except ExtensionError as exc:
+        return _json_error(400, str(exc), code="invalid_workflow_extension")
+    except _VideoAssetError as exc:
+        return _video_asset_error_response(exc)
+    except video_subject.SubjectError as exc:
+        return _gateway_input_error(str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                                    code="invalid_workflow_extension")
+    return {"body": body, "probe": probe, "assets": assets, "config": cfg, "accepted": accepted}
+
+
+async def _resolve_secondary_video_inputs(request, body, manifest, cfg, caller, *, assets, holder=None):
+    """Resolve picture inputs after duration validation; keep already probed sources."""
+    if not assets and any((manifest.get("inputs", {}).get(key) or {}).get("type") == "asset"
+                          for key in frontend_video_create._workflow_block(body)):
+        assets, _ = await _resolve_video_workflow_assets(body, manifest, cfg, caller, request=request, holder=holder)
+    return assets
+
+
 async def _proxy_graph_video_create(
     request: Request,
     auth_context: AuthContext,
@@ -12341,8 +12399,6 @@ async def _proxy_graph_video_create(
     # Video-conditioned workflows (remix, character replace) take a source video
     # as an extension input. Resolve and probe it now: its frame rate and length
     # decide the frame count below. Upload happens later, after validation.
-    staged_assets: dict[str, tuple[bytes, str, str]] = {}
-    source_probe = None
     video_manifest = None
     _workflow_block = (
         (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
@@ -12357,9 +12413,6 @@ async def _proxy_graph_video_create(
     has_workflow_extensions = (
         bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
     )
-    # An explicit `frames` input, when the manifest declares one, is the
-    # authoritative length: it wins over the length derived from `seconds`.
-    requested_frames: int | None = None
     if has_workflow_extensions:
         try:
             video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
@@ -12379,68 +12432,20 @@ async def _proxy_graph_video_create(
                 status_code=500,
                 media_type="application/json",
             )
-        try:
-            body = merge_workflow_inputs(body)
-            ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-            if workflow_cfg.get("requires_extensions") and isinstance(ext_block, Mapping):
-                body["extensions"] = {
-                    **body["extensions"],
-                    WORKFLOW_EXTENSION_NAMESPACE: video_inputs.coerce_form_scalars(
-                        ext_block, video_manifest.get("inputs") or {}
-                    ),
-                }
-            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest, backend=DERIVED._GRAPH_BINDING)
-            rejected = {**validation.rejected, **unknown_fields}
-            # Preserve the required-picture errors before reporting other invalid inputs.
-            for name, reason in validation.rejected.items():
-                spec = (video_manifest.get("inputs") or {}).get(name) or {}
-                if reason == "required input missing" and spec.get("type") == "asset":
-                    message = f"{name} is required for this model"
-                    if name == workflow_cfg.get("source_video_input"):
-                        message += ": pass a video id, URL or data URI"
-                    raise _VideoAssetError(
-                        message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
-                    )
-            if rejected:
-                name, reason = next(iter(rejected.items()))
-                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
-            if "frames" in ((video_manifest or {}).get("inputs") or {}):
-                supplied_frames = validation.accepted.get("frames")
-                if supplied_frames is not None:
-                    requested_frames = int(supplied_frames)
-            if workflow_cfg.get("requires_extensions") and workflow_cfg.get("source_video_input"):
-                staged_assets, source_probe = await _resolve_video_workflow_assets(
-                    body, video_manifest, workflow_cfg, auth_context, request=request, holder=media_holder,
-                )
-        except ExtensionError as e:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": str(e),
-                    "type": "invalid_request_error",
-                    "code": "invalid_workflow_extension",
-                }}),
-                status_code=400,
-                media_type="application/json",
-            )
-        except _VideoAssetError as e:
-            return _video_asset_error_response(e)
-
-    if workflow_cfg.get("subject_select"):
-        # Character replace: the person selection only edits the graph, so a bad
-        # one is refused here, before any picture or video reaches the engine's
-        # input directory. The rules live in video_subject, and the graph edit
-        # below reads the same point helper once the extensions are bound.
-        try:
-            video_subject.validate_selection(
-                ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
-            )
-        except video_subject.SubjectError as exc:
-            return _gateway_input_error(str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
-                                        code="invalid_workflow_extension")
+    prepared = await _prepare_video_workflow_inputs(
+        request, body, video_manifest, workflow_cfg, auth_context,
+        holder=media_holder, has_extensions=has_workflow_extensions)
+    if isinstance(prepared, Response):
+        return prepared
+    body, staged_assets, source_probe = prepared["body"], prepared["assets"], prepared["probe"]
+    supplied_frames = prepared["accepted"].get("frames")
+    requested_frames = (int(supplied_frames) if supplied_frames is not None
+                        and "frames" in ((video_manifest or {}).get("inputs") or {}) else None)
 
     # Validate / clamp request inputs.
-    max_seconds = float(workflow_cfg.get("max_seconds", 8))
-    min_seconds = float(workflow_cfg.get("min_seconds", 1))
+    configured = video_grid.configured_facts(workflow_cfg, {})
+    max_seconds = float(configured.length.max_seconds)
+    min_seconds = float(configured.length.min_seconds)
     source_fps = source_probe.fps if source_probe is not None else None
     source_seconds = (
         source_probe.frames / source_probe.fps if source_probe is not None else None
@@ -12479,18 +12484,17 @@ async def _proxy_graph_video_create(
             media_type="application/json",
         )
 
-    size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
-    width, height = video_grid.resolve_size(size, video_grid.SizeSpec(
-        default="", max=workflow_cfg.get("max_size", "1280x720"), multiple=int(workflow_cfg.get("size_multiple", 32))))
+    size = size_from_body or configured.size.default
+    width, height = video_grid.resolve_size(size, configured.size)
     # The output keeps the source clip's frame rate for video-conditioned workflows.
-    frame_rate = float(source_fps or workflow_cfg.get("frame_rate", 25))
+    frame_rate = float(source_fps or configured.grid.fps)
     # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5; Wan: 4k+1).
-    length_step = int(workflow_cfg.get("length_step", 8))
+    length_step = configured.grid.step
     length = video_grid.seconds_to_length(
         seconds_val,
         frame_rate,
         step=length_step,
-        offset=int(workflow_cfg.get("length_offset", 1)),
+        offset=configured.grid.offset,
     )
     if source_probe is not None or workflow_cfg.get("max_length"):
         # Never ask for more frames than the source has, or than the model was tested at.
@@ -12498,7 +12502,7 @@ async def _proxy_graph_video_create(
         length = video_inputs.snap_length_down(
             length,
             step=length_step,
-            offset=int(workflow_cfg.get("length_offset", 1)),
+            offset=configured.grid.offset,
             available=min(
                 [v for v in (cap, source_probe.frames if source_probe is not None else None) if v]
                 or [length]
@@ -12517,9 +12521,8 @@ async def _proxy_graph_video_create(
     # Picture assets do not affect duration or dimensions; validate those before fetching.
     if workflow_cfg.get("requires_extensions") and not workflow_cfg.get("source_video_input"):
         try:
-            staged_assets, source_probe = await _resolve_video_workflow_assets(
-                body, video_manifest, workflow_cfg, auth_context, request=request, holder=media_holder,
-            )
+            staged_assets = await _resolve_secondary_video_inputs(
+                request, body, video_manifest, workflow_cfg, auth_context, assets=staged_assets, holder=media_holder)
         except _VideoAssetError as exc:
             return _video_asset_error_response(exc)
 
@@ -13007,6 +13010,7 @@ async def _submit_video_chain(
     source_video_id: str | None = None,
     media_holder: media_inputs.Holder | None = None,
     admission_intent: str,
+    prepare: Any = None,
 ) -> Response:
     """Plan, build and queue a long-video chain (create with shots or long
     seconds, or an extension of `source`). ``admission_intent`` is the intent the calling route admits under."""
@@ -13151,7 +13155,7 @@ async def _submit_video_chain(
     }
     seconds_requested = sum(s for _, s in shots) + source_frames / fps
     reason = engine.stride_reason if abs(total_seconds - seconds_requested) > 0.05 else None
-    return await _submit_video_graph(
+    submission = dict(
         workflow=built.graph,
         auth_context=auth_context,
         workflow_name=workflow_name,
@@ -13172,8 +13176,11 @@ async def _submit_video_chain(
         payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
                        "segments": len(segments), "seconds": _seconds_text(total_seconds)},
         progress_units=built.units,
-        admission_intent=admission_intent,
     )
+
+    if prepare is not None:
+        return prepare(engine, spec, submission)
+    return await _submit_video_graph(**submission, admission_intent=admission_intent)
 
 
 def _seconds_text(value: float) -> str:
@@ -14569,6 +14576,12 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 async def _transition_unavailable_handler(_request: Request, exc: TransitionUnavailable) -> Response:
     """A gate refusal no route caught still answers in the gateway's error shape, with its Retry-After, never FastAPI's ``{"detail"}``."""
     return _transition_unavailable_response(exc)
+
+
+@app.exception_handler(ProtocolError)
+async def _protocol_refusal_handler(_request: Request, exc: ProtocolError) -> Response:
+    """Legacy routes share the declared protocol's sanitized error envelope."""
+    return _protocol_failure(exc)
 
 
 @app.exception_handler(RegistryNotApplied)
@@ -21431,6 +21444,14 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     if (not service or not service.get("port") or not service.get("host")
             or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
+    from gateway.remote_engine import refuse_unbound, refused
+    try:
+        await engine_egress.refresh_remote_destinations_async()
+        refuse_unbound(service)
+        if engine_egress.is_remote_destination(service_registry.engine_base_address(service)):
+            raise refused()
+    except ProtocolError as error:
+        return await _deny_realtime(websocket, _protocol_failure(error))
     admission = _dispatch_admission_response(
         f"{domain_rows.AUDIO_PREFIX}realtime", auth_context=auth_context, resource_class=domain_rows.AUDIO,
         service_id=_REALTIME_SERVICE_ID, service_available=True,
@@ -24373,6 +24394,11 @@ def _recover_media_jobs() -> None:
         result_bundle.startup_scan()
     except Exception as exc:  # noqa: BLE001 - a failed scan must not stop recovery; the next start runs it again
         _MEDIA_JOB_LOG.warning("result startup scan failed: %s", log_scrub.describe_error(exc))
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if (job.get("metadata") or {}).get("publication_pending"):
+            media_jobs.update_status(job["job_id"], media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
+            media_jobs.discard_failed(job["job_id"], path=media_jobs.DB_PATH)
+            receipt_store.close_orphan(str(job.get("request_id") or ""))
     _resume_pending_image_media_jobs()
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
@@ -25276,6 +25302,13 @@ async def _run_audio_media_job(job_id: str) -> None:
                 try:
                     response = await proxy_audio_generate(
                         request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
+                except (result_bundle.ResultRefused, _AudioEmptyResult):
+                    published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+                    # Before this port, result validation followed successful generation's
+                    # receipt. A delivery refusal after publication instead fails that request.
+                    status = 502 if published.get("status") == media_jobs.STATUS_SUCCEEDED else 200
+                    await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=status)
+                    raise
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
@@ -25284,8 +25317,16 @@ async def _run_audio_media_job(job_id: str) -> None:
                 await run_receipt_write(media_ingestion.finish_response, receipt, response)
             finally:
                 _ADMISSION_WORKER.reset(worker_token)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, media_jobs.CancellationPending):
             raise
+        except _AudioEmptyResult:
+            _mark_audio_media_job_failed(job_id, _AudioEmptyResult.message, http_status=200)
+            return
+        except result_bundle.ResultRefused as error:
+            published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+            if published.get("status") != media_jobs.STATUS_SUCCEEDED:
+                _fail_refused_result(job_id, error, 200)
+            return
         except generated_defaults.GeneratedValueUnavailable as exc:
             # The job's stored value is erased or unreadable: it never runs, and nothing draws another.
             _mark_audio_media_job_failed(job_id, _GENERATED_UNAVAILABLE_MESSAGE[exc.erased], http_status=500,
@@ -25311,46 +25352,11 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, http_status=status_code, error_info=error_info)
             return
 
-        content = bytes(getattr(response, "body", b"") or b"")
-        media_type = str(getattr(response, "media_type", None) or "audio/wav")
-        body = payload.get("body") if isinstance(payload, Mapping) else {}
-        response_format = body.get("response_format") if isinstance(body, Mapping) else None
-        artifacts = audio_media_jobs.audio_artifacts_from_result(
-            content,
-            response_format=str(response_format) if response_format else None,
-            media_type=media_type,
-        )
-        # The result limits are checked before the files are saved: a refused result leaves nothing behind.
-        result_limits = result_bundle.limits_from_config(runtime().config)
-        try:
-            result_bundle.check_assets(result_limits, [len(artifact.content) for artifact in artifacts])
-        except result_bundle.ResultRefused as exc:
-            _fail_refused_result(job_id, exc, status_code)
-            return
-        assets = await asyncio.to_thread(audio_media_jobs.store_audio_artifacts,
-            artifacts,
-            store_asset=store_asset_bytes,
-            owner_key_hash=_asset_owner_key(auth_context),
-        )
-        if not assets:
-            _mark_audio_media_job_failed(
-                job_id,
-                "Audio generation succeeded but returned no reusable assets",
-                http_status=status_code,
-            )
-            return
-
-        try:
-            # The job lists its assets as before; its result bundle mirrors that list (CODE_TO_DATA_S2, D4).
-            result_bundle.mirror_assets(
-                job_id, assets, limits=result_limits, name=getattr(response, "selected_result", None) or result_bundle.DEFAULT_NAME,
-                progress=100,
-                metadata_patch={"completed_at": int(time.time()), **_job_metadata_mode_patch()},
-                path=media_jobs.DB_PATH,
-            )
-        except result_bundle.ResultRefused as exc:
-            _fail_refused_result(job_id, exc, status_code)
-            return
+        published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        assets = published.get("assets") or []
+        media_jobs.update_status(
+            job_id, media_jobs.STATUS_SUCCEEDED, progress=100,
+            metadata_patch={"completed_at": int(time.time()), **_job_metadata_mode_patch()}, path=media_jobs.DB_PATH)
         media_jobs.append_event(
             job_id,
             "completed",
@@ -26243,6 +26249,7 @@ _DECLARED_JOB_FIELDS = frozenset({"intent", "model", "input"})
 async def _submit_declared_operation_job(*, request: Request, payload: Mapping[str, Any], intent: str) -> Response | None:
     """A job for an operation an owner's engine description declares; None when no enabled engine declares it."""
     from gateway.engine_protocol import dispatch as protocol_dispatch
+    from gateway.engine_contract_view import connection_config
     from gateway.engine_protocol.media import GatewayAssetStore
     model = payload.get("model")
     try:
@@ -26275,12 +26282,26 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
     if admission is not None:
         return admission
     caller = auth_context.identity
+    remote_options = {}
+    remote_metadata = {}
+    from gateway.remote_engine import remote_enabled
+    if remote_enabled(connection_config(target.service)):
+        from gateway.remote_engine import factory_from_store
+        factory = factory_from_store()
+        try:
+            capability = factory.admit(target.engine_id)
+        except ProtocolError as error:
+            return _protocol_failure(error)
+        remote_options = {'remote_factory': factory, 'remote_capability': capability}
+        remote_metadata = {'remote_binding': {'service_id': capability.service_id, 'origin': capability.exact_origin,
+                           'policy_generation': capability.policy_generation, 'admitted_at': capability.admitted_at,
+                           'admission_id': capability.admission_id}}
     request_id = f"decljob_{uuid.uuid4().hex}"
     job = media_jobs.MediaJob(
         intent=intent, backend=target.engine_id, request_id=request_id, parent_request_id=request_id,
         app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
         api_key_name=caller.name if caller else None, app_profile=plan_ref(caller),
-        metadata={"mode": declared_operation_job.MODE, "model": str(model)})
+        metadata={"mode": declared_operation_job.MODE, "model": str(model), **remote_metadata})
     created = media_jobs.create(job, input_data=dict(body), path=media_jobs.DB_PATH)
     # The receipt is the Activity row: opened here under the job's request id (so a restart closes it with the job),
     # closed by the task that runs the job. It names the work and the engine, never the input or the result.
@@ -26298,7 +26319,7 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
         lease = None
         try:
             runtime = await asyncio.to_thread(
-                protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
+                protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id), **remote_options)
             # The same lifecycle as a synchronous protocol call: check the operation's key before a selection call can
             # change state, then hold the serving lease (the transition domain's, or the offering's selection) for the
             # whole run. The finally releases it on success, failure and cancellation.
@@ -26319,9 +26340,13 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
             receipt_owner.report(status="succeeded", reason="completed")
             await receipt_owner.settle()
         except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
-            canceled = isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
+            logging.getLogger('gateway.engine_protocol').warning('Declared operation job ended: %s', type(exc).__name__)
+            canceled = (isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
+                        or bool(remote_options and isinstance(exc, ProtocolError) and exc.code == 'protocol_dispatch_refused'))
             media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED if canceled else media_jobs.STATUS_FAILED,
-                                     error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH)
+                                     error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH,
+                                     **({'metadata_patch': {'remote_end_reason': 'remote_operation_cancelled'}}
+                                        if canceled and remote_options else {}))
             await receipt_owner.settle(asyncio.CancelledError() if canceled else exc)
             if isinstance(exc, asyncio.CancelledError):
                 raise
@@ -27486,7 +27511,12 @@ class _WorkflowRunPort:
             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
         staged: dict[str, str] = {}
         kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
-        for name, refs in ctx.media.items():
+        options = ((ctx.payload.get("body") or {}).get("options") or {})
+        filenames = options.get("input_filenames") or {}
+        order = options.get("input_order") or []
+        names = [name for name in order if name in ctx.media] + [name for name in ctx.media if name not in order]
+        for name in names:
+            refs = ctx.media[name]
             if name in kept_off_engine:
                 continue
             if len(refs) != 1:
@@ -27495,7 +27525,7 @@ class _WorkflowRunPort:
             data = await self.read_media(ctx, ref)
             suffix = asset_types.suffix_for_media_type(ref.media_type)
             try:
-                staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                staged[name] = await stage(connection(), filename=filenames.get(name, "input" + suffix), data=data,
                                            media_type=ref.wire_media_type or ref.media_type)
             except (TransportFailure, ProtocolUpstreamError) as exc:
                 # An engine that answered 200 without a name for the file is told apart from one that refused it.
@@ -27716,6 +27746,48 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
             interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
 
+    def chain_record(ctx):
+        return ((media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}).get("metadata") or {}).get("chain")
+
+    def submitted(ctx, prompt_id, graph):
+        chain = chain_record(ctx)
+        if not isinstance(chain, Mapping):
+            return
+        _video_chain_units[prompt_id] = copy.deepcopy(chain["units"])
+        _video_workflows[prompt_id] = copy.deepcopy(dict(graph))
+        _video_progress[prompt_id] = {"status": "queued", "percent": 0, "step": 0, "total": 0,
+                                      "phase": "encoding", "updated_at": time.time()}
+
+    def observed(ctx, status, graph):
+        from dataclasses import replace
+        options = (ctx.payload.get("body") or {}).get("options") or {}
+        subject = options.get("subject_plan")
+        if isinstance(subject, Mapping) and status.state.value == "succeeded":
+            block = subject.get("block") or {}
+            roles = subject.get("roles") or {}
+            record = {"subject": {"probe_node": roles.get("probe_node"),
+                                  "explicit": video_subject.explicit_selection(block),
+                                  "subject": str(block.get("source_subject") or "person")}}
+            warnings = _video_job_warnings(record, getattr(status.record, "job", None))
+            if warnings:
+                ctx.record_result_metadata({"azizam_warnings": warnings})
+        chain = chain_record(ctx)
+        if not isinstance(chain, Mapping):
+            return status
+        live = _video_progress_snapshot(status.ref.id) or {}
+        done = video_extend.segment_of_node(chain["units"], str(live.get("unit_node") or ""), progress_only=True)
+        counts = {"segments_total": chain["segments"], "segments_completed": done or 0}
+        if status.state.value == "succeeded":
+            counts["segments_completed"] = chain["segments"]
+        if status.state.value == "failed":
+            error = _chain_failure_error({"chain": chain}, getattr(status.record, "job", None), status.detail or "")
+            counts["segments_completed"] = error.get("segments_completed", counts["segments_completed"])
+            ctx.record_result_metadata({**counts, "chain_error": error})
+            return replace(status, detail=error["message"])
+        ctx.record_progress(int(live.get("percent") or 0))
+        ctx.record_result_metadata(counts)
+        return status
+
     return node_graph_runner.GraphHost(
         engine=_workflow_engine, identity=identity,
         problem=_graph_binding_problem,
@@ -27723,7 +27795,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, ctx.pin.envelope.service_id) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
-        sources=run_sources,
+        sources=run_sources, submitted=submitted, observed=observed,
         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
         wire_id=lambda job_id: _job_wire_id(job_id))
 
@@ -27786,9 +27858,45 @@ _RESULT_STAGES["post_composite_mask"] = _stage_post_composite_mask
 
 
 async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Variant | None:
-    """Which graph a run of a picture workflow submits: the one with the cutout step, or the one without. The caller's
-    ``background`` choice (or the language model's answer when it left the choice open) decides; a request with a mask never
-    asks for a cutout. A workflow whose template has no second graph reports that, and runs the one it has."""
+    """Apply the accepted composition, binding destinations or subject plan.
+
+    Picture workflows without such a plan retain their background decision.
+    """
+    options = (ctx.payload.get("body") or {}).get("options") or {}
+    plan = options.get("chain_plan")
+    if plan is not None:
+        from gateway import segment_chain
+        engine = video_extend.ChainEngine(segment_chain.load(plan["template"]))
+        values = dict(plan["spec"])
+        values["segments"] = [video_extend.Segment(**item) for item in values["segments"]]
+        if values.get("source") is not None:
+            values["source"] = video_extend.SourceVideo(**values["source"])
+        built = engine.build(video_extend.ChainSpec(**values))
+
+        def composed(graph):
+            graph.clear()
+            graph.update(copy.deepcopy(built.graph))
+
+        return node_graph_runner.Variant(composed, {})
+    targets = options.get("input_targets")
+    subject = options.get("subject_plan")
+    numbers = options.get("number_bindings")
+    if targets is not None or subject is not None or numbers is not None:
+        def selected(graph):
+            if targets is not None:
+                template = ctx.pin.graph()
+                for name, accepted in targets.items():
+                    for target in (ctx.pin.binding.get("map") or {}).get(name, ()):
+                        if dict(target) not in accepted:
+                            node, field = target["node"], target["input"]
+                            graph[node]["inputs"][field] = copy.deepcopy(template[node]["inputs"][field])
+            for target in numbers or ():
+                graph[target["node"]]["inputs"][target["input"]] = target["value"]
+            if subject is not None:
+                video_subject.apply_point(graph, subject["block"], subject["width"], subject["height"], subject["roles"])
+                if subject["block"].get("reference_fit", True) not in (False, "false", "False", 0):
+                    video_subject.add_reference_fit(graph, subject["roles"])
+        return node_graph_runner.Variant(selected, {})
     media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
     if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
         return None
@@ -28077,6 +28185,162 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
     controls of the body, and the prompt memory."""
 
+    def run_options(self, chosen, frame_rate=None, prepared=None):
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
+            return {}
+        targets = video_grid.configured_input_targets(cfg, chosen.contract)
+        selected = ({item["input"]: item["targets"] for item in targets.values()}
+                    if video_grid.video_facts(chosen) is None else {})
+        options = {}
+        manifest = self.facts(chosen)
+        rate_input = manifest.roles.get("frame_rate", "frame_rate")
+        if frame_rate is not None and rate_input in chosen.contract["inputs"] and (prepared or {}).get("wire_frame_rate"):
+            destinations = (targets.get("frame_rate") or {}).get("targets", [])
+            selected[rate_input] = destinations
+            # The wire has always written frame rate as a float. Keep the
+            # portable integer input checked, then set its configured wire fields.
+            options["number_bindings"] = [{**dict(target), "value": float(frame_rate)} for target in destinations]
+        if selected:
+            options["input_targets"] = workflow_run.plain(selected)
+        return options
+
+    def reference_input(self, chosen):
+        target = frontend_video_create._reference_input(chosen)
+        if target is not None:
+            return target
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        return (video_grid.configured_input_targets(cfg, chosen.contract).get(domain_rows.IMAGE) or {}).get("input")
+
+    async def prepare_inputs(self, request, body, chosen):
+        caller = request.state.caller
+        manifest = workflow_run.plain(chosen.contract)
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        manifest_facts = self.facts(chosen)
+        extended = video_grid.video_facts(chosen) is None or frontend_video_create.needs_resolution(
+            chosen, body, manifest_facts, frontend_video_create._reference_input(chosen))
+        if not extended:
+            return {"body": body, "probe": None, "assets": {}, "config": cfg or {}}
+        if cfg is None:
+            requested = body.get("model") or _video_default_workflow()
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{requested}' is not available for video generation.", code="model_not_found"))
+        requested = body.get("model") or _video_default_workflow()
+        resolution = resolve_model_for_operation("videos", requested)
+        effective = resolution.effective_model if resolution.is_openai_alias else requested
+        if _resolve_video_workflow(effective)[1] is None:
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{effective}' is not available for video generation.", code="model_not_found"))
+        prepared = await _prepare_video_workflow_inputs(request, body, manifest, cfg, caller)
+        if isinstance(prepared, Response):
+            return prepared
+        return {**prepared, "wire_frame_rate": extended}
+
+    async def resolve_inputs(self, request, prepared, chosen, spool):
+        from gateway.frontend_shapes import _wire
+        body, cfg = prepared["body"], prepared["config"]
+        prepared["preserve_names"] = bool(video_grid.video_facts(chosen) is None or cfg.get("requires_extensions") or
+            (body.get("input_reference") is not None and (frontend_video_create._reference_bytes(body["input_reference"]) is None or
+                                                       frontend_video_create._reference_input(chosen) is None)) or
+            any((chosen.contract.get("inputs", {}).get(key) or {}).get("type") == "asset"
+                for key in frontend_video_create._workflow_block(body)))
+        manifest = workflow_run.plain(chosen.contract)
+        assets = prepared["assets"]
+        caller = request.state.caller
+        try:
+            assets = await _resolve_secondary_video_inputs(request, body, manifest, cfg, caller, assets=assets)
+            reference = body.get("input_reference")
+            if reference is not None:
+                target = self.reference_input(chosen)
+                if target is None:
+                    return _json_error(400, f"Workflow {frontend_video_create.short_name(chosen)} does not support I2V.")
+                data, filename = await _resolve_input_reference(
+                    reference, caller, request=request, accepts=_input_accepts(manifest, target))
+                mime = (request_spool.measured_type(data[:512], None)
+                        if frontend_video_create._reference_bytes(reference) is not None else None) or "image/png"
+                assets = {target: (data, filename, mime), **assets}
+        except _InputReferenceError as exc:
+            return _json_error(400, str(exc))
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
+        return await _wire.stage_uploads(spool, [
+            (name, frontend_video_create._BytesUpload(data, filename, mime))
+            for name, (data, filename, mime) in assets.items()], {name: name for name in assets})
+
+    def facts(self, chosen):
+        found = video_grid.video_facts(chosen)
+        if found is not None:
+            return found
+        from dataclasses import replace
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
+            return None
+        found = video_grid.configured_facts(cfg, chosen.contract)
+        variants = {role: workflow_id_for_video_key(cfg[key]) for role, key in
+                    ((domain_rows.IMAGE, "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
+        requires = {domain_rows.IMAGE} if cfg.get("requires_input_reference") else set()
+        if cfg.get("requires_extensions"):
+            requires.add("extensions")
+        if cfg.get("source_video_input"):
+            requires.add("source")
+        return replace(found, variants=variants, requires=frozenset(requires),
+                       select_subject=bool(cfg.get("subject_select")), chain=bool(cfg.get("builder")))
+
+    async def chain_request(self, request, body, row, chosen, public_model, snapshot):
+        from dataclasses import asdict
+        from gateway.workflow_runtime_types import RunRequest
+        name = frontend_video_create.short_name(chosen)
+        resolution = resolve_model_for_operation("videos", public_model)
+        effective = resolution.effective_model if resolution.is_openai_alias else public_model
+        chain_name, _ = _chain_workflow_for(effective)
+        if chain_name is None:
+            original_name, cfg = _resolve_video_workflow(public_model)
+            return _gateway_input_error(
+                gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                    model=original_name, max_seconds=f"{cfg.get('max_seconds', 8):g}"),
+                param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
+
+        chosen = snapshot.get(workflow_id_for_video_key(chain_name))
+        if chosen is None:
+            return model_compatibility_error(ModelCompatibilityError(
+                f"Model '{public_model}' is not available for video generation.", code="model_not_found"))
+        name = chain_name
+
+        def prepared(engine, spec, submission):
+            size = f"{spec.width}x{spec.height}"
+            seconds = submission["payload_extra"]["seconds"]
+            facts = {"model": public_model, "resolved_model": name, "size": size,
+                     "seconds": seconds, "actual_seconds": round(submission["actual_seconds"], 4),
+                     "length_frames": submission["length"], "frame_rate": spec.fps, "seed": spec.seed,
+                     "total_seconds": submission["payload_extra"]["total_seconds"],
+                     "segments": submission["payload_extra"]["segments"],
+                     "requested_seconds": _seconds_text(submission["seconds_val"]),
+                     "duration_adjustment_reason": submission["duration_adjustment_reason"]}
+            options = {"size": size, "seconds_frames": submission["length"], "frame_rate": spec.fps,
+                       "record_asset_kind": True,
+                       "chain_plan": {"template": engine.document(), "spec": asdict(spec)}}
+            controls = video_controls.parse_video_controls(body)
+            if controls.get(video_controls.AUDIO_CONTROL) is False:
+                options[video_controls.AUDIO_CONTROL] = False
+                facts[video_controls.AUDIO_CONTROL] = False
+            inputs = {"prompt": submission["prompt"], "width": spec.width, "height": spec.height, "seed": spec.seed}
+            if "negative_prompt" in chosen.contract["inputs"]:
+                inputs["negative_prompt"] = spec.negative
+            frontend_video_create._wire.fact("requested_model", public_model)
+            request.state.video_facts = facts
+            request.state.video_prompt = submission["prompt"]
+            return RunRequest(workflow_id=chosen.id, inputs=inputs, options=options, facts=facts,
+                              frontend_id=row.id, retries=row.job_retries, failure_text=row.job_failure_text,
+                              idempotency_key=request.headers.get("Idempotency-Key"),
+                              prompt_retention=self.prompt_retention(request.state.caller, body),
+                              job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True,
+                                                       "chain": {key: value for key, value in submission["record_extra"]["chain"].items()
+                                                                 if key != "shots"}}})
+
+        return await _submit_video_chain(request, request.state.caller, body=body, workflow_name=name,
+                                        requested_model=effective, public_model=public_model,
+                                        admission_intent=domain_rows.VIDEO_GENERATE, prepare=prepared)
+
     def resolve_model(self, name: str) -> Any:
         try:
             resolution = resolve_model_for_operation("videos", name)
@@ -28122,17 +28386,6 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                                            admin_path=ADMIN_STORE.path, created_at=memory.created_at))
 
 
-async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapping[str, Any]) -> Response:
-    """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline on the body
-    already read. It enforces the route policy and opens its one receipt itself, as the removed route did, because the row has
-    opened none. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
-    policy_response = await asyncio.to_thread(
-        lambda: _enforce_runtime_route_policy(caller, "/v1/videos", policy=DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/videos") or _row_route_policy("/v1/videos")))
-    if policy_response is not None:
-        return policy_response
-    return await proxy_graph_video_create(request, caller, body_override=body)
-
-
 frontend_wire_shapes.VIDEO_HOOKS = _DeploymentVideoHooks()
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIVideoCreate.shape_id] = lambda: _video_default_workflow()
 
@@ -28157,7 +28410,6 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     pinned=_pinned_of_job,
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
-    legacy={frontend_video_create.LEGACY_CREATE: _legacy_video_create},
     openapi={_MOUNTED_VIDEO_ROW_IDS[0]: VIDEOS_CREATE_OPENAPI},
     record_refusal=_record_row_refusal,
     job_record=_row_job_record,
@@ -28376,7 +28628,26 @@ async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
     if shape is None:
         return None
     hit = await asyncio.to_thread(_video_ledger(shape).lookup, video_id, auth_context)
-    return hit.view if isinstance(hit, JobHit) else None
+    if not isinstance(hit, JobHit):
+        return None
+    from dataclasses import replace
+    view = hit.view
+    job = media_jobs.get(view.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+    metadata = job.get("metadata") or {}
+    chain = metadata.get("chain")
+    if not isinstance(chain, Mapping):
+        return view
+    live = _video_progress_snapshot(str(metadata.get(node_graph_runner.ENGINE_PROMPT_KEY) or "")) or {}
+    counts = {"segments_total": chain["segments"],
+              "segments_completed": view.result_metadata.get("segments_completed", 0)}
+    if view.status == "succeeded":
+        counts["segments_completed"] = chain["segments"]
+    elif view.status not in ("failed", "canceled"):
+        index = video_extend.segment_of_node(chain["units"], str(live.get("unit_node") or ""), progress_only=True)
+        if index is not None:
+            counts["segments_completed"] = index
+    return replace(view, progress=max(view.progress or 0, int(live.get("percent") or 0)),
+                   result_metadata={**view.result_metadata, **counts})
 
 
 def _names_a_video_job(shape, video_id: str) -> bool:
@@ -28731,16 +29002,263 @@ def _audio_extension_error_response(message: str, *, param: str = "extensions") 
     )
 
 
+class _AudioWireResponse(Exception):
+    def __init__(self, response: Response):
+        self.response = response
+
+
+def _audio_wire_error(message: str, status: int = 502) -> _AudioWireResponse:
+    return _AudioWireResponse(Response(content=json.dumps({"error": {"message": message, "type": "api_error"}}),
+                                       status_code=status, media_type="application/json"))
+
+
+class _AudioEmptyResult(Exception):
+    message = "Audio generation succeeded but returned no reusable assets"
+
+
+def _audio_transport_failure_response(error, adapter):
+    if error.kind == "timeout":
+        return _audio_wire_error(f"{adapter.label} request timeout", 504).response
+    if error.kind == "unreachable":
+        return _audio_wire_error(adapter.unavailable_message(_graph_connection(capability=_AUDIO_GRAPH_CAPABILITY, probe=True))).response
+    return client_errors.client_error(502, "audio_failed", error_type="api_error")
+
+
+@dataclass
+class _PreparedAudioGeneration:
+    """Prepared wire inputs; core owns submit/poll/publication, delivery follows publication."""
+
+    graph: Any
+    graph_adapter: Any
+    workflow: Mapping[str, Any]
+    graph_binding: Mapping[str, Any]
+    manifest: Mapping[str, Any]
+    workflow_cfg: Mapping[str, Any]
+    model: Any
+    workflow_name: str
+    workflow_id: str
+    audio_type: str
+    duration_value: Any
+    seed_val: Any
+    headers: Mapping[str, str]
+    auth_context: Any
+    receipt: RouteReceipt | None
+    store_full: bool
+    interface_version = 2
+    polls: int = 0
+    record_lifecycle = False
+    publication_started: bool = False
+    body: Mapping[str, Any] = dataclasses.field(init=False)
+    job_id: str = dataclasses.field(init=False)
+    content: bytes = dataclasses.field(init=False)
+    content_type: str = dataclasses.field(init=False)
+    suffix: str = dataclasses.field(init=False)
+    selected_name: str = dataclasses.field(init=False)
+    assets: list[dict[str, Any]] = dataclasses.field(init=False)
+
+    @property
+    def adapter(self):
+        return self
+
+    async def run(self, body):
+        self.body = body
+        self.owns_job = not (self.receipt is not None and self.receipt.job_id)
+        if self.receipt is not None and self.receipt.job_id:
+            self.job_id = self.receipt.job_id
+        else:
+            caller = self.auth_context.identity
+            job = media_jobs.MediaJob(
+                request_id=self.receipt.request_id if self.receipt is not None else f"req_{uuid.uuid4().hex}",
+                intent=self.receipt.intent if self.receipt is not None else INTENT_AUDIO_GENERATE,
+                workflow=self.workflow_id, backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+                app_profile=plan_ref(caller), app_id=caller.app_id if caller else None,
+                owner_key_hash=_asset_owner_key(self.auth_context), api_key_name=caller.name if caller else None,
+                status=media_jobs.STATUS_RUNNING, metadata={"mode": "sync_media_route", "publication_pending": True})
+            self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
+        try:
+            return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
+        except asyncio.CancelledError:
+            if self.owns_job:
+                self._fail_unpublished_job()
+            raise
+        except media_jobs.CancellationPending:
+            if self.owns_job:
+                self._fail_unpublished_job()
+            elif self.publication_started and self.receipt is not None:
+                # The old executor finished generation's receipt before attempting publication.
+                from gateway import media_ingestion
+                await run_receipt_write(media_ingestion.finish_receipt, self.receipt, status_code=200)
+            raise
+        except _AudioEmptyResult:
+            if not self.owns_job:
+                raise
+            self._fail_unpublished_job()
+            # Unindexable synchronous audio still has a successful byte response, as before.
+            result_bundle.check_assets(self.result_context().limits, [len(self.content)])
+            return await self.deliver(None)
+        except Exception:
+            self._fail_unpublished_job()
+            raise
+
+    def _fail_unpublished_job(self):
+        current = media_jobs.get(self.job_id, audience="internal", path=media_jobs.DB_PATH)
+        if current and current['status'] not in media_jobs.TERMINAL_STATUSES:
+            media_jobs.update_status(self.job_id, media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
+            if self.owns_job:
+                media_jobs.discard_failed(self.job_id, path=media_jobs.DB_PATH)
+
+    def connection_for(self, op):
+        return self.graph
+
+    def request(self, op, body):
+        return AdapterRequest(op=op, body=body)
+
+    def poll_timing(self, op):
+        return 0, 1200
+
+    def publication_options(self):
+        self.publication_started = True
+        return {"add_assets": self.assets,
+                "metadata_remove": ["publication_pending"] if self.owns_job else [],
+                "phase_patch": {"queued_at": None, "started_at": None} if self.owns_job else {},
+                "metadata_patch": self.delivery_metadata if self.store_full else {}}
+
+    @property
+    def retain_bundle(self):
+        return not self.owns_job
+
+    def result_context(self):
+        return ResultContext(result_bundle.limits_from_config(runtime().config))
+
+    async def start(self, conn, op, request):
+        from gateway.engine_protocol.types import Pending
+        try:
+            response = await conn.submit(
+                _build_graph_submit_payload(self.workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID), headers=self.headers)
+        except TransportFailure as error:
+            raise _AudioWireResponse(_audio_transport_failure_response(error, self.graph_adapter)) from error
+        if response.status != 200:
+            raise _AudioWireResponse(client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=self.graph_adapter.label))
+        prompt_id = response.json().get("prompt_id")
+        if not prompt_id:
+            raise _audio_wire_error("No prompt_id returned")
+        print(f"[proxy] Audio job submitted: workflow={self.workflow_name} id=audio_{prompt_id}", flush=True)
+        return Pending(JobRef(op, prompt_id))
+
+    async def poll(self, conn, ref):
+        from gateway.engine_protocol.types import JobStatus
+        if self.polls >= 600:
+            raise _audio_wire_error("Audio generation timeout", 504)
+        self.polls += 1
+        await asyncio.sleep(2)
+        try:
+            response = await conn.history(ref.id, headers=self.headers)
+        except TransportFailure as error:
+            raise _AudioWireResponse(_audio_transport_failure_response(error, self.graph_adapter)) from error
+        except ProtocolUpstreamError as error:
+            raise _AudioWireResponse(client_errors.client_error(502, "audio_failed", error_type="api_error")) from error
+        if response.status != 200 or ref.id not in response.json():
+            return JobStatus(ref, JobState.pending)
+        job = response.json()[ref.id]
+        status = job.get("status", {}) or {}
+        state = status.get("status_str") or status.get("status") or ""
+        if state == "error":
+            message = f"{self.graph_adapter.label} generation failed"
+            for tag, payload in status.get("messages") or []:
+                if tag == "execution_error" and isinstance(payload, dict):
+                    message = _graph_error_message({"status": {"messages": [[tag, payload]]}}, self.workflow,
+                                                   capability=_AUDIO_GRAPH_CAPABILITY) or message
+                    break
+            raise _audio_wire_error(message)
+        return JobStatus(ref, JobState.succeeded if state == "success" else JobState.pending, record=(job, response))
+
+    async def results(self, conn, ref, status, request, context):
+        from gateway.engine_protocol.types import AssetRef, AssetsResult, ResultBundle
+        job, history = status.record
+        try:
+            picked = self.graph_adapter.collect(job, self.graph_binding, self.manifest.get("outputs") or {},
+                                                limits=context.limits, history_bytes=len(history.raw or b""))
+        except node_graph.SelectionRefused as error:
+            if error.code != "result_missing":
+                raise _AudioWireResponse(_result_refusal_response(error.code, 502)) from error
+            picked = {}
+        self.selected_name, files = next(iter(picked.items()), (None, ()))
+        file = files[0] if files else None
+        if not file or not file.get("filename"):
+            raise _audio_wire_error("No audio output found")
+        params = {"filename": file["filename"], "type": file.get("type", "output")}
+        if file.get("subfolder"):
+            params["subfolder"] = file["subfolder"]
+        try:
+            async with output_selectors.FETCH_GATE.slot(context.limits):
+                response = await conn.view(params, headers=self.headers)
+        except output_selectors.FetchRefused as error:
+            raise _AudioWireResponse(_result_refusal_response(error.code, 504)) from error
+        if response.status != 200:
+            raise _audio_wire_error("No audio output found")
+        self.delivery_metadata = _job_metadata_mode_patch()
+        self.content_type = response.headers.get("content-type", "audio/wav")
+        self.content = response.raw
+        peak = self.workflow_cfg.get("normalize_peak_db")
+        if peak is not None:
+            self.content = await private_tmp.run_worker(_peak_normalize_audio, self.content, self.content_type, float(peak))
+        self.suffix = Path(file["filename"]).suffix or ".wav"
+        if self.store_full:
+            self.content = await self._attach()
+            artifacts = audio_media_jobs.audio_artifacts_from_result(
+                self.content, response_format=self.body.get("response_format"), media_type=self.content_type)
+            result_bundle.check_assets(context.limits, [len(item.content) for item in artifacts])
+            assets = await asyncio.to_thread(audio_media_jobs.store_audio_artifacts, artifacts,
+                                            store_asset=store_asset_bytes, owner_key_hash=_asset_owner_key(self.auth_context))
+        elif self.receipt is not None:
+            from gateway import media_ingestion
+            self.receipt.requested_model = str(self.model)
+            self.receipt.resolved_model = self.workflow_name
+            self.receipt.resolved_workflow = self.workflow_id
+            assets = await asyncio.to_thread(media_ingestion.store_audio_response, self.content, self.content_type,
+                                            self.receipt, store_asset=store_asset_bytes, limits=context.limits)
+        else:
+            raise _AudioEmptyResult()
+        if not assets:
+            raise _AudioEmptyResult()
+        self.assets = assets
+        return ResultBundle({self.selected_name: AssetsResult(tuple(
+            AssetRef(item["asset_id"], item["media_type"], item.get("size_bytes", 0)) for item in assets))})
+
+    async def _attach(self):
+        return await asyncio.to_thread(
+            media_delivery.attach_provenance, self.content, self.suffix,
+            provenance.build_provenance_record(
+                receipt=media_delivery.current().receipt, kind=domain_rows.AUDIO,
+                requested_model=str(self.model), resolved_model=self.workflow_name, workflow_id=self.workflow_id,
+                backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY), seed=self.seed_val,
+                parameters={**media_delivery.current().parameters, "type": self.audio_type, "duration": self.duration_value}))
+
+    async def deliver(self, bundle):
+        if not self.store_full:
+            if media_delivery.current_mode() == provenance.METADATA_NONE:
+                self.content = await asyncio.to_thread(media_delivery.deliver_bytes, self.content, self.suffix, provenance.METADATA_NONE)
+            else:
+                self.content = await self._attach()
+        answer = Response(content=self.content, status_code=200, media_type=self.content_type,
+                          headers={"X-Audio-Model": self.workflow_name, "X-Audio-Type": self.audio_type})
+        answer.selected_result = self.selected_name
+        return answer
+
+    async def cancel(self, conn, ref):
+        # This wire has never interrupted the engine on a client disconnect.
+        return None
+
+
 @_acts_for("identity", _AUDIO_GENERATE_OPERATION)
 async def proxy_audio_generate(
     request: Request, auth_context, *, intents: frontend_mount.ExecutionIntents, store_full: bool = False,
     receipt: RouteReceipt | None = None,
     pinned: pinned_definitions.PinnedDefinitions | None = None, pinned_workflow: str | None = None,
 ):
-    """POST /v1/audio/generate — submit audio generation via ComfyUI.
+    """Prepare the audio wire, then execute and deliver through the declared operation path.
 
-    ``store_full`` is for the media-job executor, which stores the bytes: they
-    keep full metadata and the delivery mode is applied when the asset is served.
+    ``store_full`` keeps full metadata for a queued job; delivery rules apply when its asset is served.
     ``pinned`` is what the job pinned at accept. With it the manifest and the graph come from the pin, never from the
     registry or the workflow file; without it (the synchronous route) they are read live. ``pinned_workflow`` is the
     workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
@@ -28908,151 +29426,38 @@ async def proxy_audio_generate(
             admission = _graph_media_admission(intents.require_admission(), auth_context=auth_context)
             if admission is not None:
                 return admission
-            resp = await graph.submit(
-                _build_graph_submit_payload(workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID),
-                headers=headers,
-            )
-            if resp.status != 200:
-                return client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=adapter.label)
-            prompt_id = resp.json().get("prompt_id")
-            if not prompt_id:
-                return Response(
-                    content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json"
-                )
-
-            audio_id = f"audio_{prompt_id}"
-            print(f"[proxy] Audio job submitted: workflow={workflow_name} id={audio_id}", flush=True)
-
-            # Wait for completion (simple polling)
-            for _ in range(600):  # 10 min max
-                await asyncio.sleep(2)
-                history_resp = await graph.history(prompt_id, headers=headers)
-                if history_resp.status != 200:
-                    continue
-                history = history_resp.json()
-                if prompt_id not in history:
-                    continue
-                job = history[prompt_id]
-                status_obj = job.get("status", {}) or {}
-                status = status_obj.get("status_str") or status_obj.get("status") or ""
-                if status == "success":
-                    # The result is the file the workflow's selector names (CODE_TO_DATA_S2, D5), within the D6 limits.
-                    result_limits = result_bundle.limits_from_config(runtime().config)
-                    try:
-                        picked = adapter.collect(
-                            job, graph_binding, manifest.get("outputs") or {}, limits=result_limits,
-                            history_bytes=len(history_resp.raw or b""))
-                    except node_graph.SelectionRefused as refusal:
-                        if refusal.code == "result_missing":
-                            picked = {}
-                        else:
-                            return _result_refusal_response(refusal.code, 502)
-                    selected_name, selected_files = next(iter(picked.items()), (None, ()))
-                    file_info = selected_files[0] if selected_files else None
-                    if file_info and file_info.get("filename"):
-                        # Fetch the audio file
-                        params = {"filename": file_info["filename"], "type": file_info.get("type", "output")}
-                        if file_info.get("subfolder"):
-                            params["subfolder"] = file_info["subfolder"]
-                        try:
-                            async with output_selectors.FETCH_GATE.slot(result_limits):
-                                audio_resp = await graph.view(params, headers=headers)
-                        except output_selectors.FetchRefused as refusal:
-                            return _result_refusal_response(refusal.code, 504)
-                        if audio_resp.status == 200:
-                            content_type = audio_resp.headers.get("content-type", "audio/wav")
-                            audio_bytes = audio_resp.raw
-                            peak_db = workflow_cfg.get("normalize_peak_db")
-                            if peak_db is not None:
-                                audio_bytes = await private_tmp.run_worker(
-                                    _peak_normalize_audio, audio_bytes, content_type, float(peak_db)
-                                )
-                            audio_suffix = Path(file_info["filename"]).suffix or ".wav"
-                            if receipt is not None and not store_full:
-                                from gateway import media_ingestion
-                                receipt.requested_model = str(model)
-                                receipt.resolved_model = workflow_name
-                                receipt.resolved_workflow = workflow_id
-                                await asyncio.to_thread(media_ingestion.store_audio_response, audio_bytes, content_type, receipt, store_asset=store_asset_bytes)
-                            try:
-                                if not store_full and media_delivery.current_mode() == provenance.METADATA_NONE:
-                                    audio_bytes = await asyncio.to_thread(
-                                        media_delivery.deliver_bytes, audio_bytes, audio_suffix, provenance.METADATA_NONE
-                                    )
-                                else:
-                                    audio_bytes = await asyncio.to_thread(
-                                        media_delivery.attach_provenance,
-                                        audio_bytes,
-                                        audio_suffix,
-                                        provenance.build_provenance_record(
-                                            receipt=media_delivery.current().receipt,
-                                            kind=domain_rows.AUDIO,
-                                            requested_model=str(model),
-                                            resolved_model=workflow_name,
-                                            workflow_id=workflow_id,
-                                            backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
-                                            seed=seed_val,
-                                            parameters={
-                                                **media_delivery.current().parameters,
-                                                "type": audio_type,
-                                                "duration": duration_value,
-                                            },
-                                        ),
-                                    )
-                            except media_metadata.MediaMetadataError as exc:
-                                print(f"[proxy] audio metadata rewrite failed: {log_scrub.describe_error(exc)}", flush=True)
-                                return Response(
-                                    content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
-                                    status_code=502,
-                                    media_type="application/json",
-                                )
-                            delivered = Response(
-                                content=audio_bytes,
-                                status_code=200,
-                                media_type=content_type,
-                                headers={"X-Audio-Model": workflow_name, "X-Audio-Type": audio_type}
-                            )
-                            # The job names its bundle result by the output the selector read.
-                            delivered.selected_result = selected_name
-                            return delivered
-                    return Response(
-                        content=json.dumps({"error": {"message": "No audio output found", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json"
-                    )
-                elif status == "error":
-                    err_msg = f"{adapter.label} generation failed"
-                    for tag, payload in (status_obj.get("messages") or []):
-                        if tag == "execution_error" and isinstance(payload, dict):
-                            err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}}, workflow, capability=_AUDIO_GRAPH_CAPABILITY) or err_msg
-                            break
-                    return Response(
-                        content=json.dumps({"error": {"message": err_msg, "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json"
-                    )
-
-            return Response(
-                content=json.dumps({"error": {"message": "Audio generation timeout", "type": "api_error"}}),
-                status_code=504,
-                media_type="application/json"
-            )
-    except TransportFailure as e:
-        if e.kind == "timeout":
-            return Response(
-                content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
-                status_code=504,
-                media_type="application/json"
-            )
-        if e.kind == "unreachable":
-            return Response(
-                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(capability=_AUDIO_GRAPH_CAPABILITY, probe=True)), "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json"
-            )
+            prepared = _PreparedAudioGeneration(
+                graph=graph, graph_adapter=adapter, workflow=workflow, graph_binding=graph_binding, manifest=manifest,
+                workflow_cfg=workflow_cfg, model=model, workflow_name=workflow_name, workflow_id=workflow_id,
+                audio_type=audio_type, duration_value=duration_value, seed_val=seed_val, headers=headers,
+                auth_context=auth_context, receipt=receipt, store_full=store_full)
+            return await prepared.run(body)
+    except _AudioWireResponse as error:
+        return error.response
+    except media_metadata.MediaMetadataError as error:
+        print(f"[proxy] audio metadata rewrite failed: {log_scrub.describe_error(error)}", flush=True)
+        return Response(content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
+                        status_code=502, media_type="application/json")
+    except media_jobs.CancellationPending:
+        raise
+    except _AudioEmptyResult:
+        if store_full:
+            raise
+        return _audio_wire_error(_AudioEmptyResult.message).response
+    except result_bundle.ResultRefused:
+        if store_full:
+            # Keep the typed result refusal for the job executor; it already owns
+            # the legacy classification and completion-receipt semantics.
+            raise
+        return Response(content=json.dumps({"error": {"message": _RESULT_REFUSED, "type": "api_error",
+                                                       "code": "result_refused"}}),
+                        status_code=502, media_type="application/json")
+    except ProtocolBudgetExceeded as error:
+        if error.budget == "max_wait_s":
+            return _audio_wire_error("Audio generation timeout", 504).response
         return client_errors.client_error(502, "audio_failed", error_type="api_error")
+    except TransportFailure as error:
+        return _audio_transport_failure_response(error, adapter)
     except Exception as e:
         return client_errors.client_error(502, "audio_failed", error_type="api_error")
 

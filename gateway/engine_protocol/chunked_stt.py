@@ -324,6 +324,8 @@ class ChunkedSttAdapter:
         raise UnsupportedByAdapter("The transcription adapter lists no inventory.")
 
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
+        from gateway.remote_engine import refuse_unbound_connection
+        refuse_unbound_connection(conn)
         route = ROUTES.get(op)
         if route is None:
             raise UnknownOperation(f"The transcription adapter has no operation '{op}'.")

@@ -9,10 +9,23 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 
-# Read completely before matching: grep -q must not SIGPIPE git under pipefail.
-# Name-status retains both path columns for renames into or out of web/.
-staged="$(git diff --cached --name-status --diff-filter=ACMRD)"
-if grep -q $'\tweb/' <<< "$staged"; then
+# Complete Git's output before matching and preserve its failure status.
+# NUL framing preserves quoted characters and both rename/copy path columns.
+staged="$(mktemp)"
+trap 'rm -f -- "$staged"' EXIT
+if git diff --cached --name-status -z --diff-filter=ACMRD > "$staged"; then
+  :
+else
+  exit "$?"
+fi
+web_staged=false
+# Status fields (A, M, R100, ...) cannot match web/; examine every path field.
+while IFS= read -r -d '' field; do
+  if [[ "$field" == web/* ]]; then
+    web_staged=true
+  fi
+done < "$staged"
+if [[ "$web_staged" == true ]]; then
   echo "pre-commit: web/** staged — running 'npm run check' in web/"
   (cd "$repo_root/web" && npm run check)
 fi

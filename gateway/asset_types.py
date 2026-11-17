@@ -27,14 +27,17 @@ KIND_WORDS = ("label", "plural", "untitled", "input")
 RECENT_FIELD = "recent"
 # Optional per kind: the lowercase plural noun that counts items in a sentence ("videos"). A kind with no such field counts as its name plus "s".
 ITEMS_FIELD = "items"
+# Optional boolean per kind: whether Home names the kind on a tile while a request that makes it is still running.
+# A kind with no row, or a row without it, is shown as a plain "item" until it is done.
+MAKING_FIELD = "making"
 # A stored file whose kind has no prefix of its own is stored under this one, so no kind row may claim it.
 OTHER_ASSET_PREFIX = "ast"
 
 
 def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
-    """Load kind words, optional unique stored-id prefixes and the optional ``recent`` flag from the bundled data file.
+    """Load kind words, optional unique stored-id prefixes and the optional ``recent`` and ``making`` flags from the bundled data file.
 
-    Words must be non-empty text; a prefix must be 1-8 lowercase ASCII letters; ``recent`` must be a boolean.
+    Words must be non-empty text; a prefix must be 1-8 lowercase ASCII letters; ``recent`` and ``making`` must be booleans.
     Invalid or unknown fields are a fault in what was shipped, so they raise.
     """
     document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -46,17 +49,20 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
     for kind, words in rows.items():
         if not isinstance(kind, str) or not kind or kind != kind.lower() or not isinstance(words, dict):
             raise ValueError(f"{path.name}: kind {kind!r} must be a lower-case name with a mapping of words")
-        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD, ITEMS_FIELD} or not all(
+        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD, ITEMS_FIELD, MAKING_FIELD} or not all(
             isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS
         ):
             raise ValueError(
-                f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix and {RECENT_FIELD}"
+                f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix, {RECENT_FIELD}, {ITEMS_FIELD} and {MAKING_FIELD}"
             )
-        if RECENT_FIELD in words and not isinstance(words[RECENT_FIELD], bool):
-            raise ValueError(f"{path.name}: kind {kind!r} {RECENT_FIELD} must be true or false")
+        for flag in (RECENT_FIELD, MAKING_FIELD):
+            if flag in words and not isinstance(words[flag], bool):
+                raise ValueError(f"{path.name}: kind {kind!r} {flag} must be true or false")
         table[kind] = {word: words[word].strip() for word in KIND_WORDS}
         if RECENT_FIELD in words:
             table[kind][RECENT_FIELD] = words[RECENT_FIELD]
+        if MAKING_FIELD in words:
+            table[kind][MAKING_FIELD] = words[MAKING_FIELD]
         if ITEMS_FIELD in words:
             if not isinstance(words[ITEMS_FIELD], str) or not words[ITEMS_FIELD].strip() or words[ITEMS_FIELD] != words[ITEMS_FIELD].lower():
                 raise ValueError(f"{path.name}: kind {kind!r} {ITEMS_FIELD} must be a lower-case non-empty string")
@@ -131,6 +137,11 @@ def kind_names(kind: str) -> dict[str, Any]:
         word = kind[:1].upper() + kind[1:] if kind else "File"
         row = {"label": word, "plural": word, "untitled": word, "input": word.lower()}
     return {"kind": kind, **{word: row[word] for word in KIND_WORDS}, RECENT_FIELD: row.get(RECENT_FIELD, True)}
+
+
+def making_kinds() -> list[str]:
+    """The kinds Home names on a tile while a request that makes them runs, in the data file's order (``making: true``)."""
+    return [kind for kind, row in KIND_NAMES.items() if row.get(MAKING_FIELD) is True]
 
 
 def items_word(kind: str) -> str:

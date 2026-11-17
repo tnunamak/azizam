@@ -165,14 +165,14 @@ def test_send_timeout_accepts_positive_finite_numbers(value) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    [0, -1, float("nan"), float("inf"), float("-inf"), True, False, "120", 10 ** 1000],
-    ids=["zero", "negative", "nan", "infinity", "negative-infinity", "true", "false", "string", "overflow"],
+    [0, -1, float("nan"), float("inf"), float("-inf"), True, False, "120", "fast", 10 ** 1000],
+    ids=["zero", "negative", "nan", "infinity", "negative-infinity", "true", "false", "string", "nonnumeric-string", "overflow"],
 )
 def test_send_timeout_rejects_invalid_values(value) -> None:
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(multipart_adapter.RunError) as caught:
         multipart_adapter._send_timeout_s({"timeout": value})
-    assert "timeout" in str(caught.value)
-    assert repr(value) in str(caught.value)
+    assert caught.value.code == "service_unavailable"
+    assert caught.value.category == "capacity"
 
 
 def test_unused_file_limit_is_removed() -> None:

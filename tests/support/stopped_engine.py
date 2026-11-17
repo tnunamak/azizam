@@ -56,8 +56,8 @@ class StoppedEngine:
         real = engine_egress.check_request
         self.sends = []
 
-        def spy(request: Any) -> None:
-            real(request)
+        def spy(request: Any, **kwargs: Any) -> None:
+            real(request, **kwargs)
             self.sends.append(str(request.url))
 
         monkeypatch.setattr(engine_egress, "check_request", spy)

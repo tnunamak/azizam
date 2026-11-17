@@ -398,3 +398,23 @@ def test_a_history_row_left_by_a_crashed_commit_is_replaced_by_the_next_real_cha
     assert [r.record_revision for r in rows] == [2, 1]
     assert store.restore("owner.test.demo", 2, if_match=generation(db), actor=ME)
     assert store.snapshot().get("owner.test.demo").contract["display_name"] == "real"
+
+
+def test_workflow_writer_without_remote_actor_preserves_remote_record(parts):
+    from types import SimpleNamespace
+    from gateway import protocol_description_store
+    from tests.support.remote_protocol import case
+    from pathlib import Path
+    store, db, *_ = parts
+    registry, doc, _, _, _, _ = case()
+    text = (Path(__file__).parent/'fixtures/engine_protocol/d0/smell.yml').read_text()
+    protocol_description_store.put(doc.id, text, expect=None, path=db)
+    current = admin_store.get_service_registry_with_generation(path=db)
+    value = current['value']
+    value['services'].update(registry['services'])
+    admin_store.write_service_registry(value, path=db, actor=SimpleNamespace(roles={'owner'}),
+        updated_by='test-owner', expected_generation=current['operator_settings_generation'])
+    before = admin_store.get_service_registry_with_generation(path=db)['value']['services']['remote-box']
+    store.put_workflow(owner_contract(), if_match=None, actor=ME, facts=FACTS)
+    after = admin_store.get_service_registry_with_generation(path=db)['value']['services']['remote-box']
+    assert after == before

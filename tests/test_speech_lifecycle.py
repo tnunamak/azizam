@@ -303,3 +303,48 @@ class BufferedSttStreamValidationTests(SttCase):
         for payload in (123, None, [], "words", {}, {"text": 123}, {"text": None}):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 speech_stream.transcript_json_to_sse(payload)
+
+
+
+class RemoteRefusalTests(RouteCase):
+    def test_remote_legacy_speech_route_answers_typed_refusal(self):
+        import pytest
+        from gateway import engine_egress
+        from tests.support.remote_protocol import SocketRecorder
+        resolution = proxy.resolve_model_for_operation('speech', 'tts-fast')
+        service_id = resolution.alias.service
+        service = self.cfg['backends'][service_id]
+        service['connection'] = {'address': 'https://engine.example', 'remote_dispatch': {'enabled': True}}
+        previous = engine_egress._live
+        # Restore the reference, including its registry reader and version state.
+        self.addCleanup(setattr, engine_egress, '_live', previous)
+        engine_egress.publish(self.cfg['backends'])
+        self.assertFalse(proxy._is_local_swap_backend(service_id))
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            recorder = SocketRecorder(monkeypatch)
+            response = self.client.post('/v1/audio/speech', json={
+                'model': 'tts-fast', 'voice': 'shimmer', 'input': 'synthetic review', 'response_format': 'wav'})
+            self.assertEqual(response.status_code, 502, response.text)
+            self.assertEqual(response.json()['error']['code'], 'protocol_dispatch_refused')
+            self.assertFalse(recorder.connections or recorder.writes)
+
+
+def test_remote_refusal_cleanup_preserves_legacy_audio_failure_order(tmp_path, capsys):
+    """Run all three callers without a pytest teardown between their state changes."""
+    import unittest
+    from gateway import engine_egress
+    from tests.test_w4_audio_failure_parity import test_failure_and_publication_match_fd30cbfca
+
+    previous = engine_egress._live
+    tracking = {name: getattr(previous, name) for name in previous.__slots__}
+    result = unittest.TestResult()
+    RemoteRefusalTests('test_remote_legacy_speech_route_answers_typed_refusal').run(result)
+    assert result.wasSuccessful(), result.errors + result.failures
+    restored = engine_egress._live
+    restored_tracking = {name: getattr(restored, name) for name in restored.__slots__}
+
+    test_failure_and_publication_match_fd30cbfca(tmp_path / 'submit', 'queued', 'submit_unreachable', capsys)
+    test_failure_and_publication_match_fd30cbfca(tmp_path / 'history', 'sync', 'history_unreachable', capsys)
+    # The later sends may legitimately refresh tracking; pin the state at cleanup.
+    assert restored is previous
+    assert restored_tracking == tracking

@@ -18,7 +18,7 @@ Frame arithmetic, with the grid ``frame_step`` and ``frame_offset`` from the bin
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -120,6 +120,15 @@ class ChainEngine:
         # Extension options (extensions.com.azizam.workflow) this engine understands.
         self.option_keys = binding.options
         self.default_negative = binding.negative_default
+
+    def document(self) -> dict[str, Any]:
+        """The accepted template as JSON data, so a queued run never reselects it."""
+        binding = asdict(self.binding)
+        if binding["source_check"] is None:
+            del binding["source_check"]
+        return json.loads(json.dumps({"id": self.template.id, "binding": binding, "template": {
+            "shared": self.template.shared, "source": self.template.source,
+            "variants": self.template.variants, "finish": self.template.finish}}))
 
     def first_segment_frames(self, seconds: float, fps: float) -> int:
         """Frames of a first segment: ``step * a + offset`` nearest to ``seconds``."""

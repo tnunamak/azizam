@@ -23,14 +23,24 @@ GOLDEN = c2d_parity.load_golden("model_metadata")
 ACTUAL = capture_model_metadata()
 
 
+def test_canonical_distinguishes_json_scalar_types():
+    assert c2d_parity.canonical({"x": True}) != c2d_parity.canonical({"x": 1})
+    assert c2d_parity.canonical({"x": 1}) != c2d_parity.canonical({"x": 1.0})
+
+
+def test_jsonable_rejects_colliding_key_text():
+    with pytest.raises(ValueError, match="1"):
+        c2d_parity.jsonable({1: "a", "1": "b"})
+
+
 def test_input_lists_match_golden():
     for key in ("operations", "types", "service_capability_cases", "workflow_ids", "capability_intents", "from_fields_cases"):
-        assert ACTUAL[key] == GOLDEN[key], f"{key}: the set of cases changed (a manifest or table gained or lost an entry)"
+        assert c2d_parity.canonical(ACTUAL[key]) == c2d_parity.canonical(GOLDEN[key]), f"{key}: the set of cases changed (a manifest or table gained or lost an entry)"
 
 
 @pytest.mark.parametrize("operation", GOLDEN["operations"])
 def test_from_operation_matches_golden(operation):
-    assert ACTUAL["from_operation"][operation] == GOLDEN["from_operation"][operation]
+    assert c2d_parity.canonical(ACTUAL["from_operation"][operation]) == c2d_parity.canonical(GOLDEN["from_operation"][operation])
 
 
 @pytest.mark.parametrize("type_", GOLDEN["types"])
@@ -38,31 +48,31 @@ def test_operations_of_matches_golden(type_):
     keys = sorted(key for key in GOLDEN["operations_of"] if key.startswith(f"{type_}|"))
     assert keys, type_
     for key in keys:
-        assert ACTUAL["operations_of"][key] == GOLDEN["operations_of"][key], key
-    assert ACTUAL["operations_of_non_string_type"] == GOLDEN["operations_of_non_string_type"]
+        assert c2d_parity.canonical(ACTUAL["operations_of"][key]) == c2d_parity.canonical(GOLDEN["operations_of"][key]), key
+    assert c2d_parity.canonical(ACTUAL["operations_of_non_string_type"]) == c2d_parity.canonical(GOLDEN["operations_of_non_string_type"])
 
 
 @pytest.mark.parametrize("case", GOLDEN["service_capability_cases"])
 def test_from_service_capabilities_matches_golden(case):
-    assert ACTUAL["from_service_capabilities"][case] == GOLDEN["from_service_capabilities"][case]
+    assert c2d_parity.canonical(ACTUAL["from_service_capabilities"][case]) == c2d_parity.canonical(GOLDEN["from_service_capabilities"][case])
 
 
 def test_from_origin_matches_golden():
-    assert ACTUAL["from_origin"] == GOLDEN["from_origin"]
+    assert c2d_parity.canonical(ACTUAL["from_origin"]) == c2d_parity.canonical(GOLDEN["from_origin"])
 
 
 @pytest.mark.parametrize("workflow_id", GOLDEN["workflow_ids"])
 def test_from_contract_matches_golden(workflow_id):
-    assert ACTUAL["from_contract"][workflow_id] == GOLDEN["from_contract"][workflow_id]
+    assert c2d_parity.canonical(ACTUAL["from_contract"][workflow_id]) == c2d_parity.canonical(GOLDEN["from_contract"][workflow_id])
 
 
 def test_from_contract_non_mapping_matches_golden():
-    assert ACTUAL["from_contract_non_mapping"] == GOLDEN["from_contract_non_mapping"]
+    assert c2d_parity.canonical(ACTUAL["from_contract_non_mapping"]) == c2d_parity.canonical(GOLDEN["from_contract_non_mapping"])
 
 
 def test_capability_tables_match_golden():
-    assert ACTUAL["capability_intent_table"] == GOLDEN["capability_intent_table"]
-    assert ACTUAL["capability_intent_families"] == GOLDEN["capability_intent_families"]
+    assert c2d_parity.canonical(ACTUAL["capability_intent_table"]) == c2d_parity.canonical(GOLDEN["capability_intent_table"])
+    assert c2d_parity.canonical(ACTUAL["capability_intent_families"]) == c2d_parity.canonical(GOLDEN["capability_intent_families"])
 
 
 @pytest.mark.parametrize("intent", GOLDEN["capability_intents"])
@@ -70,17 +80,17 @@ def test_from_capability_matches_golden(intent):
     keys = sorted(key for key in GOLDEN["from_capability"] if key.startswith(f"{intent}|"))
     assert keys, intent
     for key in keys:
-        assert ACTUAL["from_capability"][key] == GOLDEN["from_capability"][key], key
+        assert c2d_parity.canonical(ACTUAL["from_capability"][key]) == c2d_parity.canonical(GOLDEN["from_capability"][key]), key
 
 
 @pytest.mark.parametrize("case", GOLDEN["from_fields_cases"])
 def test_from_fields_matches_golden(case):
-    assert ACTUAL["from_fields"][case] == GOLDEN["from_fields"][case]
+    assert c2d_parity.canonical(ACTUAL["from_fields"][case]) == c2d_parity.canonical(GOLDEN["from_fields"][case])
 
 
 @pytest.mark.parametrize("name", sorted(GOLDEN["combinators"]))
 def test_combinators_match_golden(name):
-    assert ACTUAL["combinators"][name] == GOLDEN["combinators"][name]
+    assert c2d_parity.canonical(ACTUAL["combinators"][name]) == c2d_parity.canonical(GOLDEN["combinators"][name])
 
 
 @pytest.mark.parametrize("section", sorted(GOLDEN["annotate"]))
@@ -89,6 +99,6 @@ def test_annotate_entries_matches_golden(section):
     if isinstance(golden, list):
         assert len(actual) == len(golden)
         for got, want in zip(actual, golden):
-            assert got == want, f"{section}: entry {want.get('id') if isinstance(want, dict) else want}"
+            assert c2d_parity.canonical(got) == c2d_parity.canonical(want), f"{section}: entry {want.get('id') if isinstance(want, dict) else want}"
     else:
-        assert actual == golden
+        assert c2d_parity.canonical(actual) == c2d_parity.canonical(golden)

@@ -1023,6 +1023,7 @@ class AdminSQLiteStore:
                         "gateway_lifecycle", "gateway_lifecycle_base_url", "probe_with_inference_connection",
                         "health_endpoint", "api_key", "api_key_env", "api_key_ref", "api_key_secret_id", "credential_origin",
                         "litellm_provider", "provider_adapter",
+                        "provider_type", "cost_class", "paid_remote", "remote_provider", "locality", "placement",
                     }
                     missing_timeout = object()
                     if (old_config.get("timeout", missing_timeout) != new_config.get("timeout", missing_timeout)
@@ -1152,6 +1153,7 @@ class AdminSQLiteStore:
                                    expected_generation: int) -> dict[str, Any]:
         record = admin_store.write_service_registry_with_audit(
             document,
+            actor=actor,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action="operator.service_registry.update",
@@ -1243,6 +1245,7 @@ class AdminSQLiteStore:
                                     in_transaction: Callable[[sqlite3.Connection], None] | None = None) -> dict[str, Any]:
         record = admin_store.write_service_registry_with_audit(
             document,
+            actor=actor,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action=action,
@@ -1723,6 +1726,7 @@ class AdminSQLiteStore:
         try:
             registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
                 document,
+                actor=actor,
                 expected_generation=expected_generation,
                 updated_by=actor.subject,
                 setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
@@ -1823,6 +1827,7 @@ class AdminSQLiteStore:
 
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
             next_registry,
+            actor=actor,
             expected_generation=expected_generation,
             precheck=refuse_if_a_plan_names_the_package,
             updated_by=actor.subject,
