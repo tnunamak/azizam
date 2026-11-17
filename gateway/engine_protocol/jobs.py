@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
-from gateway import host_memory_admission, media_jobs, result_bundle
+from gateway import media_jobs, result_bundle
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2
 from gateway.engine_protocol.errors import BudgetExceeded, ProtocolError, TransportFailure, UpstreamError, retryable_poll_failure
 from gateway.engine_protocol.types import Completed, JobRef, JobState, JsonResult, Pending, ResultBundle, ResultContext
@@ -227,11 +227,6 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
         validate = getattr(adapter, 'validate', None)
         if validate is not None:
             validate(conn, op, request)
-        admit = getattr(adapter, 'admit', None)
-        if admit is not None:
-            # The host must have room for the models first. A refusal here sent nothing, so it leaves no marker.
-            await admit(conn, op, request, host_memory_admission.Ask(bounded=False, on_wait=lambda state: media_jobs.append_event(
-                job_id, 'attempt', host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)))
         if record_lifecycle:
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                      metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)

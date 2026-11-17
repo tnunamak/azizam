@@ -2069,7 +2069,7 @@ def events(
     return out
 
 
-_CLIENT_EVENT_PAYLOAD_KEYS = frozenset({"progress", "step", "total", "phase", "status", "needed_gb", "available_gb"})
+_CLIENT_EVENT_PAYLOAD_KEYS = frozenset({"progress", "step", "total", "phase", "status"})
 
 
 def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[str, Any]:

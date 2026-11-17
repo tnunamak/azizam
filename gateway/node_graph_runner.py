@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
-from gateway import asset_types, generated_defaults, host_memory_admission, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
+from gateway import asset_types, generated_defaults, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
 from gateway.engine_protocol import graph_round
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
@@ -433,7 +433,6 @@ class NodeGraphRunner:
                 verified_bindings[target] = name
         attribution = MappingProxyType(verified_bindings)
         if resume is None:
-            await self._wait_for_host_memory(ctx, adapter, payload)      # before the marker: a refusal here sent nothing
             media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
                                      path=media_jobs.DB_PATH)
 
@@ -490,18 +489,6 @@ class NodeGraphRunner:
             ctx.record_result_metadata({"filename": result.names[0]})
         name = next(iter(result.files)) if len(result.files) == 1 else None
         return name, files
-
-    async def _wait_for_host_memory(self, ctx: RunContext, adapter: Any, payload: Mapping[str, Any]) -> None:
-        """A job waits for the host's memory as long as it takes (up to the policy's ceiling) and says so to its caller: the
-        job stays ``running`` and its events carry the phase ``waiting_for_memory`` with the GB it needs and the host has."""
-        admit = getattr(adapter, "admit_prompt", None)
-        if admit is None:
-            return
-
-        def report(state: host_memory_admission.WaitState | None) -> None:
-            media_jobs.append_event(ctx.job_id, "attempt", host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)
-
-        await admit(payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of(getattr(ctx.caller, "auth_kind", None)), bounded=False, on_wait=report))
 
     # -- the reviewed stages that read the run's own facts (a host may still supply a stage of the same name) ----------------
 
