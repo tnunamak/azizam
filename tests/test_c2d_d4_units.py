@@ -65,6 +65,12 @@ def test_the_retry_hint_is_none_without_events() -> None:
     (None, False), ("", False), ("respond-async", True), ("RESPOND-ASYNC", True),
     ("wait=10, respond-async", True), ("respond-async; foo=bar", True), ("handling=lenient", False),
     ("respond-asynchronous", False),
+    ("respond-async==oops", False), ('respond-async="unterminated', False),
+    ("respond-async; wait=10", True), ("respond-async, return=minimal", True),
+    ("respond-async==oops, respond-async", True),
+    ("respond-async; wait=", False), ("respond-async; =10", False),
+    ('respond-async="complete"; note="a,b"', True),
+    ("respond-async = ready ; wait = 10", True),
     ("Respond-Async ; wait=10", True), ("return=minimal, respond-async", True),
     ("return=minimal", False), ('foo; note="a, respond-async"', False),
     ('foo; note="a, respond-async; b"', False),
@@ -79,6 +85,8 @@ def test_prefer_respond_async_is_read_as_an_rfc_7240_token(value, expected) -> N
 @pytest.mark.parametrize("raw, expected", [
     ([(b"prefer", b"return=minimal"), (b"prefer", b"respond-async")], True),
     ([(b"prefer", b"return=minimal"), (b"prefer", b"wait=10")], False),
+    ([(b"prefer", b"respond-async"), (b"prefer", b"return=minimal")], True),
+    ([(b"prefer", b"wait=10"), (b"prefer", b"respond-async"), (b"prefer", b"return=minimal")], True),
     ([], False),
 ])
 def test_request_prefer_reads_all_header_values(raw, expected) -> None:
