@@ -41,7 +41,7 @@ from urllib.parse import quote
 
 import httpx
 
-from gateway import log_scrub
+from gateway import host_memory_admission, log_scrub
 
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2, AdapterOrigin
 from gateway.engine_protocol.assets import AssetStore, served_media_type
@@ -419,6 +419,7 @@ class GraphSession:
         refuse_unbound_connection(conn)
         self.conn = conn
         self.client = client
+        self.on_freed: Any = None
 
     def _url(self, path: str) -> str:
         return join_base_path(self.conn.address, path)
@@ -473,7 +474,10 @@ class GraphSession:
         return await self._send(self.client.get, "/system_stats", **supplied(timeout=timeout, extensions=extensions))
 
     async def free(self, body: Mapping[str, Any], *, timeout: Any = UNSET) -> WireReply:
-        return await self._send(self.client.post, "/free", **supplied(json=body, timeout=timeout))
+        reply = await self._send(self.client.post, "/free", **supplied(json=body, timeout=timeout))
+        if reply.status == 200 and self.on_freed is not None:
+            self.on_freed()          # the engine gave its models back: none is resident any more
+        return reply
 
 
 def _headers_of(request: CanonicalRequest) -> Any:
@@ -486,7 +490,9 @@ class NodeGraphAdapter:
 
     def __init__(self, description: ProtocolDescription | None = None, *, assets: AssetStore | None = None,
                  workflow_root: Path | None = None, client_id: str | None = None,
-                 derive_ui: Callable[[Mapping[str, Any]], dict | None] | None = None) -> None:
+                 derive_ui: Callable[[Mapping[str, Any]], dict | None] | None = None,
+                 admission: host_memory_admission.HostMemoryAdmission | None = None) -> None:
+        self._admission = admission
         self.adapter_id = description.adapter_identity if description is not None else ADAPTER_ID
         self.label = (description.label if description is not None else "") or _DEFAULT_LABEL
         # What this adapter was built from (None: it was built without a description, so it cannot run a pinned job).
@@ -509,6 +515,23 @@ class NodeGraphAdapter:
         # The UI-format twin embedded in outputs. None means the outputs carry no embedded graph.
         self._derive_ui = derive_ui or (lambda _graph: None)
 
+    @property
+    def admission(self) -> host_memory_admission.HostMemoryAdmission:
+        """The host-memory admission in front of every prompt this adapter sends (the process's own unless one was given)."""
+        return self._admission or host_memory_admission.shared()
+
+    async def admit_prompt(self, payload: Mapping[str, Any], ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> None:
+        """Wait until the host has room for the models ``payload`` makes the engine load. Raises ``HostMemoryBusy`` when
+        it has not in time. Call it before any submit marker is written: a refusal here sent nothing."""
+        prompt = payload.get("prompt") if isinstance(payload, Mapping) else None
+        await self.admission.admit(prompt if isinstance(prompt, Mapping) else {}, ask)
+
+    async def admit(self, conn: Connection, op: str, request: CanonicalRequest,
+                    ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> None:
+        """``admit_prompt`` for the prompt ``request`` is about to send."""
+        payload = request.body if op == GRAPH_SUBMIT else self._workflow_payload(op, request)
+        await self.admit_prompt(payload if isinstance(payload, Mapping) else {}, ask)
+
     def embed_workflow_with(self, derive_ui: Callable[[Mapping[str, Any]], dict | None]) -> None:
         """Set the source of the UI-format graph the outputs of this adapter embed (the adapter was built without one)."""
         self._derive_ui = derive_ui
@@ -523,11 +546,16 @@ class NodeGraphAdapter:
         if "timeout" not in client_kwargs:
             client_kwargs["timeout"] = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
         async with engine_egress.async_client(**client_kwargs) as client:
-            yield GraphSession(conn, client)
+            yield self._session(conn, client)
 
     def attach(self, conn: Connection, client: Any) -> GraphSession:
         """A session over a client the caller already holds, so its requests go through this adapter."""
-        return GraphSession(conn, client)
+        return self._session(conn, client)
+
+    def _session(self, conn: Connection, client: Any) -> GraphSession:
+        session = GraphSession(conn, client)
+        session.on_freed = lambda: self.admission.forget_all()
+        return session
 
     @asynccontextmanager
     async def _use(self, conn: Connection, session: GraphSession | None) -> AsyncIterator[GraphSession]:

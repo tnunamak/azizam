@@ -1,0 +1,26 @@
+# Release defaults of host-memory admission (docs/design/COMFY_HOST_RAM_RELEASE.md). Read-only data; gateway/host_memory_admission.py reads it once.
+# A prompt that makes the graph engine load model files waits until the host's MemAvailable covers the files it will load
+# plus a margin. Models the gateway already sent to the engine, and has not freed, are resident and cost nothing.
+schema_version: 1
+# GiB that must stay free after the load, for a person's request and for background work (a larger margin).
+margin_gb: 12
+background_margin_gb: 20
+# Seconds a synchronous request waits before the retryable busy answer, and the ceiling of a job's wait.
+wait_s: 300
+job_wait_s: 7200
+# Seconds between looks at MemAvailable, between wait reports to a job, and for which an admitted load stays reserved
+# (the engine takes seconds to stage a model, and a second prompt must not read memory that is already spoken for).
+poll_s: 2
+report_s: 30
+settle_s: 30
+# Seconds a model counts as resident after the gateway sent it.
+resident_ttl_s: 600
+# Seconds the busy answer tells the caller to wait (Retry-After).
+retry_after_s: 30
+# A string in a prompt that ends with one of these names a model file.
+model_extensions: [.safetensors, .gguf, .ckpt, .pt, .pth, .bin, .sft]
+# Directories that hold the model files; empty: none known, so no prompt has a known size and none waits. The engine
+# directory named by AZIZAM_COMFY_DIR (its models folder and the base paths of its extra_model_paths.yaml) adds to this list.
+model_roots: []
+# App ids whose requests yield to every other request (test lanes, batch agents). Empty: every request is equal.
+background_apps: []
