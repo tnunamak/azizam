@@ -189,3 +189,17 @@ Budget proposal: this turn adds two hook cases and five audio comparison cases (
 and the duration/boundary continuation (+5), the branch adds +30: original tests/budgets.toml line 678 would change
 `pytest = 29830` to `pytest = 29860`, before reconciling other lanes. Confidence: 95% in the generic hook and reproduced
 receipt failure; the audio port is not complete.
+
+After restoring the active old audio body, the stopped-state checks ran against commit b803eb504:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-delivery-stopped-final.xml -n 4 \
+  tests/test_w4_audio_declared.py tests/test_declared_delivery.py tests/test_declared_operation_job.py \
+  tests/test_audio_declared_result_boundary.py tests/test_audio_duration_publication.py tests/test_audio_route_selectors.py \
+  tests/test_w4_mesh_declared.py tests/test_adapter_differential_s7_mesh_rows.py tests/test_result_bundle_audio.py \
+  tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py tests/test_c2d_openapi_parity.py
+```
+
+Output: `313 passed in 30.90s`. This verifies the safe active route, five old/new synchronous comparisons, the generic
+hook, the 30-second pin, both unchanged 3D suites, the existing queued receipt/result invariants, and the architectural
+guards. It does not claim the candidate's queued receipt invariant is repaired; implementation stopped at that failure.
