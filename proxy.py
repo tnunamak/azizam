@@ -29107,6 +29107,10 @@ class _PreparedAudioGeneration:
                 "phase_patch": {"queued_at": None, "started_at": None} if self.owns_job else {},
                 "metadata_patch": self.delivery_metadata if self.store_full else {}}
 
+    @property
+    def retain_bundle(self):
+        return not self.owns_job
+
     def result_context(self):
         return ResultContext(result_bundle.limits_from_config(runtime().config))
 

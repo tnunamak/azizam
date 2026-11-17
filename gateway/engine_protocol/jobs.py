@@ -174,7 +174,12 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
 
     patch = {**({'protocol_submitting': False} if clear_marker and getattr(runtime, 'record_lifecycle', True) else {}),
              **publication_metadata, **(metadata or {})} or None
-    result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH, **status_args)
+    if getattr(runtime, 'retain_bundle', True):
+        result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH, **status_args)
+    else:
+        # Some synchronous wire contracts retain the asset projection without a reusable bundle.
+        media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, metadata_patch=patch,
+                                 path=media_jobs.DB_PATH, **status_args)
     return bundle
 
 

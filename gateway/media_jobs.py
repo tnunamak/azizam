@@ -1111,7 +1111,7 @@ def _record_envelope(
         conn.execute("RELEASE job_envelope")
 
 
-def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False) -> bool:
+def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False, phase_patch: Mapping[str, int | None] | None = None) -> bool:
     """Write the job row. Returns True when the owner's or the wildcard erasure cutoff covered the job, so its prompt
     derivatives were cleared."""
     job.owner_key_hash = stored_owner_key(job.owner_key_hash, app_id=job.app_id)
@@ -1138,6 +1138,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
         for name in preserved:
             if name in data and (data[name] is not None or (stale_attempt and not new_attempt)):
                 setattr(job, name, data[name])
+    if phase_patch:
+        for name, value in phase_patch.items():
+            setattr(job, name, value)
     cutoff = conn.execute(
         "SELECT MAX(cutoff_at) FROM media_job_prompt_erasure_cutoffs WHERE owner_key IN (?,?)",
         ("*", job.owner_key_hash),
@@ -1843,7 +1846,7 @@ def update_status(
                 current["finished_at"] = ts
 
         updated = _coerce_to_job(current)
-        _write_job(conn, updated)
+        _write_job(conn, updated, phase_patch=phase_patch)
         if before_commit is not None:
             before_commit(conn, updated.to_dict("internal"))
         conn.commit()
