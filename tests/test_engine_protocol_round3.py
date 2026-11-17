@@ -774,7 +774,7 @@ def test_remote_dns_pinning_reconnect_and_tls_identity(monkeypatch, tmp_path):
     asyncio.run(check())
     # Restore the OS backend before exercising real certificate verification.
     monkeypatch.setattr(httpcore.AnyIOBackend, 'connect_tcp', real_connect)
-    from tests.support.remote_protocol import real_tls_identity
+    from tests.support.fake_upstream.remote_tls import real_tls_identity
     asyncio.run(real_tls_identity(monkeypatch, tmp_path))
 
 

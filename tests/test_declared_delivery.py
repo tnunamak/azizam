@@ -3,6 +3,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from tests.support.fake_upstream import HandlerTransport
 
 from gateway import declared_operation_job, media_jobs, result_bundle
 from gateway.engine_protocol.types import CanonicalRequest, Completed, JsonResult, ResultBundle, ResultContext
@@ -73,7 +74,7 @@ def test_multipart_store_refusal_keeps_its_type_and_code_through_declared_run(tm
                           pin=SimpleNamespace(contract={'outputs': {'shape': {'media_type': 'model/gltf-binary'}}}))
 
     async def go():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(
+        async with httpx.AsyncClient(transport=HandlerTransport(
             lambda request: httpx.Response(200, content=content))) as client:
             prepared = multipart_adapter._MultipartRun(
                 runner, ctx, client, 'http://engine.test/render', 'source',

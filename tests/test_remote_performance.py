@@ -9,6 +9,7 @@ from gateway import admin_store, engine_egress
 from gateway.engine_protocol.errors import ProtocolError
 from tests.support.remote_protocol import case
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401
+from tests.support.fake_upstream import HandlerTransport
 from tests.test_signin_who_can_enter import gateway  # noqa: F401
 from tests.test_owner_engine_chain_smell import owner, smell_engine, _install_description, _write_headers  # noqa: F401
 
@@ -37,7 +38,7 @@ def test_legacy_unchanged_registry_needs_no_worker_and_retains_denials(tmp_path,
         sends.append(request.url)
         return httpx.Response(200, content=b'local result')
     async def run():
-        async with engine_egress.async_client(transport=httpx.MockTransport(send)) as client:
+        async with engine_egress.async_client(transport=HandlerTransport(send)) as client:
             if remote:
                 with pytest.raises(ProtocolError):
                     await client.get('https://engine.example/health')

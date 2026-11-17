@@ -105,6 +105,8 @@ def resolve(
 
 
 class Runtime:
+    _remote_capability = None
+
     def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None, egress=None,
                  remote_factory=None, remote_capability=None):
         self.target = target

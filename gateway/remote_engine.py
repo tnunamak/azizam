@@ -71,7 +71,8 @@ def remote_enabled(connection: Mapping[str, Any]) -> bool:
 
 def refuse_unbound_connection(connection) -> None:
     from gateway.engine_egress import is_remote_destination
-    if connection.remote_capability is not None or connection.remote_enabled or is_remote_destination(connection.address):
+    if (getattr(connection, 'remote_capability', None) is not None
+            or getattr(connection, 'remote_enabled', False) or is_remote_destination(connection.address)):
         raise refused()
 
 
@@ -107,7 +108,8 @@ def authority_record(record):
             'residency', 'protocol_operations', 'control_file_roots', 'native_passthrough',
             'provider_type', 'cost_class', 'paid_remote', 'remote_provider', 'locality',
             'placement', 'execution_substrate', 'kind', 'litellm_provider', 'provider_adapter'}
-    config = record.get('config') or {}
+    config = record.get('config')
+    config = config if isinstance(config, Mapping) else {}
     return [{key: record[key] for key in keys if key in record},
             {key: config[key] for key in keys if key in config}]
 

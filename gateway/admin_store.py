@@ -4532,10 +4532,11 @@ def write_service_registry_in_transaction(
     new_services = after_effective.get('services') or {}
     for sid in set(old_services) | set(new_services):
         old_record, new_record = old_services.get(sid), new_services.get(sid)
-        remote = any('remote_dispatch' in connection_config(record or {}) for record in (old_record, new_record))
+        remote = any('remote_dispatch' in connection_config(record) for record in (old_record, new_record)
+                     if isinstance(record, Mapping))
         old_authority, new_authority = authority_record(old_record), authority_record(new_record)
         disable_only = False
-        if (old_record and new_record and old_record.get('enabled', True) is True
+        if (isinstance(old_record, Mapping) and isinstance(new_record, Mapping) and old_record.get('enabled', True) is True
                 and new_record.get('enabled', True) is False):
             # Restore only the enabled bits for comparison. An admin may reduce
             # availability, never change connection policy in the same write.
