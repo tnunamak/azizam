@@ -309,6 +309,8 @@ nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-
 # 110 passed in 13.27s
 nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-shared.xml -n 4 tests/test_media_jobs.py tests/test_media_jobs_contract.py tests/test_media_jobs_survivors.py tests/test_media_ingestion.py tests/test_result_bundle.py tests/test_result_bundle_release.py tests/test_receipt_store_contract.py tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py tests/test_engine_protocol_executor.py tests/test_engine_protocol_w4_followups.py
 # 467 passed in 22.20s
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-replay.xml -n 4 tests/test_start_outcome_v2.py tests/test_s2_matrix_replay.py
+# 127 passed in 10.19s
 ```
 
 The fixes add 36 cases: 26 audio comparisons, one empty 3D comparison, eight start-refusal parameters and one invalid
