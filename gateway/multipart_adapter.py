@@ -387,6 +387,8 @@ class MultipartRunner:
             inputs=(asset_types.OutputInput(file.data, _source_name(ctx), file.content_type),), takes_text=False)
         try:
             asset_id = await asyncio.to_thread(self._host.store_output, ctx.caller, stored)
+        except result_bundle.ResultRefused:
+            raise
         except Exception:  # noqa: BLE001 - a result that cannot be kept fails the job, as an unsaved result must
             LOG.exception("the result was not stored")
             asset_id = None

@@ -19,7 +19,7 @@ SEAMS = {
     '/v1/images/edits': ('proxy.py:proxy_graph_image_edit_request', 'NodeGraphRunner._rounds', 'Partial: masks, upload/composite and postprocessing', 'test_adapter_differential_s7.py'),
     '/v1/images/variations': ('proxy.py:proxy_graph_image_variations_request', 'NodeGraphRunner._rounds', 'Partial: fixed prompt/denoise and postprocessing', 'test_adapter_differential_s7.py'),
     '/gateway/v1/media/jobs/image-generations': ('proxy.py:_run_image_media_job', 'workflow core / NodeGraphRunner._rounds', 'Partial: persisted request, retry and receipt lifecycle', 'test_adapter_differential_s7.py'),
-    '/v1/audio/generate': ('proxy.py:proxy_audio_generate', 'NodeGraphRunner._rounds / legacy submit-history-view loop', 'Partial: normalize/strip/store and metering', 'test_adapter_differential.py'),
+    '/v1/audio/generate': ('proxy.py:proxy_audio_generate', '_PreparedAudioGeneration.run -> declared_operation_job.run (results -> publication -> deliver)', 'Yes: ported; storage before publication, delivery after publication', 'test_w4_audio_declared.py'),
     '/gateway/v1/media/jobs': ('proxy.py:_dispatch_gateway_media_job_submission', 'modality workers OR declared_operation_job.run', 'Partial: shipped intents explicitly excluded by declared resolve', 'test_adapter_differential_s7.py'),
     '/v1/videos': ('proxy.py:proxy_graph_video_create', 'video create hand-off / NodeGraphRunner', 'Excluded: video create owner', 'test_adapter_differential_s7.py'),
     '/v1/videos/{video_id}/remix': ('proxy.py:proxy_graph_video_remix', 'video source / NodeGraphRunner', 'Partial: source references, video tracking', 'test_adapter_differential_s7.py'),
@@ -28,6 +28,10 @@ SEAMS = {
     '/v1/3d/generations': ('gateway/multipart_adapter.py:MultipartRunner.run', 'exclusive multipart runner', 'Yes: immediate typed bundle; preserve pool lease and Library provenance', 'test_adapter_differential_s7_mesh_rows.py'),
     '/v1/3d/generations/glb': ('gateway/multipart_adapter.py:MultipartRunner.run', 'exclusive multipart runner', 'Yes: same run, raw response shape', 'test_adapter_differential_s7_mesh_rows.py'),
 }
+
+# These routes proved old/new parity before deleting the old implementation;
+# their tests now pin those recorded wire expectations.
+PARITY_ROUTES = frozenset({'/v1/audio/generate', '/v1/3d/generations', '/v1/3d/generations/glb'})
 
 def inventory():
     symbols = {}
@@ -49,7 +53,7 @@ def inventory():
         effects = [c for c in calls if any(word in c.lower() for word in
                    ('receipt', 'store', 'status', 'event', 'lease', 'metadata', 'policy', 'admission', 'meter', 'persist', 'delivery', 'strip', 'normalize'))]
         rows.append({'route': route, 'old_path': old, 'dispatch': dispatch, 'generic_ready': ready,
-                     'existing_wire_test': parity, 'old_new_parity': route.startswith('/v1/3d/'), 'side_effect_calls': effects, 'line': evidence['line']})
+                     'existing_wire_test': parity, 'old_new_parity': route in PARITY_ROUTES, 'side_effect_calls': effects, 'line': evidence['line']})
     return {'routes': rows, 'symbols': symbols}
 
 if __name__ == '__main__':

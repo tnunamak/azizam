@@ -2,7 +2,7 @@
 
 Current status: 3D and audio generation are ported. Audio uses declared execution and post-publication delivery; its old polling/storage/completion bodies are deleted. The stopped-attempt sections below are historical evidence. Other modalities remain as inventoried.
 
-Generated from the AST with `python3 scripts/research/modality_paths.py` at the start of the port.
+Generated from the AST with `python3 scripts/research/modality_paths.py`; completed ports update their execution seams and parity annotations.
 The script extracts calls and side-effect call names without importing the app. The explicit dispatch seams document
 registry-selected methods that static call resolution cannot prove. These annotations were checked against the named
 runner implementations. A frontend shape is a wire parser/renderer, not evidence of generic engine execution.
@@ -16,7 +16,7 @@ runner implementations. A frontend shape is a wire parser/renderer, not evidence
 | `/v1/images/edits` | `proxy.py:proxy_graph_image_edit_request`; NodeGraphRunner._rounds | Partial: masks, upload/composite and postprocessing | No; existing wire oracle: test_adapter_differential_s7.py |
 | `/v1/images/variations` | `proxy.py:proxy_graph_image_variations_request`; NodeGraphRunner._rounds | Partial: fixed prompt/denoise and postprocessing | No; existing wire oracle: test_adapter_differential_s7.py |
 | `/gateway/v1/media/jobs/image-generations` | `proxy.py:_run_image_media_job`; workflow core / NodeGraphRunner._rounds | Partial: persisted request, retry and receipt lifecycle | No; existing wire oracle: test_adapter_differential_s7.py |
-| `/v1/audio/generate` | `proxy.py:proxy_audio_generate`; NodeGraphRunner._rounds / legacy submit-history-view loop | Partial: normalize/strip/store and metering | No; existing wire oracle: test_adapter_differential.py |
+| `/v1/audio/generate` | `proxy.py:proxy_audio_generate`; _PreparedAudioGeneration.run -> declared_operation_job.run (results -> publication -> deliver) | Yes: ported; storage before publication, delivery after publication | Yes: test_w4_audio_declared.py (transition commits) |
 | `/gateway/v1/media/jobs` | `proxy.py:_dispatch_gateway_media_job_submission`; modality workers OR declared_operation_job.run | Partial: shipped intents explicitly excluded by declared resolve | No; existing wire oracle: test_adapter_differential_s7.py |
 | `/v1/videos` | `proxy.py:proxy_graph_video_create`; video create hand-off / NodeGraphRunner | Excluded: video create owner | No; existing wire oracle: test_adapter_differential_s7.py |
 | `/v1/videos/{video_id}/remix` | `proxy.py:proxy_graph_video_remix`; video source / NodeGraphRunner | Partial: source references, video tracking | No; existing wire oracle: test_adapter_differential_s7.py |
@@ -259,3 +259,15 @@ and the existing queued receipt/result-limit tests verify those ordering assumpt
 This retry adds two cases: finalizer preservation of a stale linked summary and typed delivery refusal. Combined branch
 budget proposal at original tests/budgets.toml line 678: `pytest = 29862` (+32 over 29830), before reconciling other lanes.
 The budget file, reviewed lists and frozen route graph remain unedited.
+
+
+## Review follow-ups
+
+Multipart storage preserves a typed `ResultRefused` through the declared runner instead of converting it to an internal
+`result_not_kept` error. The adapter-level regression runs the multipart HTTP exchange, injects the exact refusal in
+`store_output`, and checks exception identity/code and absence of a published bundle.
+
+The generated audio inventory row now names the declared execution/result/delivery path and its parity test. A test
+compares that generated row with the documented row and checks that the prepared run actually calls the declared runner.
+These two tests add +2 cases: the combined branch budget proposal is `pytest = 29864` (+34 over 29830), before reconciling
+other lanes. The owner budget file remains unchanged.
