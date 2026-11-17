@@ -1,5 +1,12 @@
 schema_version: 1
 packs:
+  - id: ollama-unsupported-params
+    source: >-
+      Ollama /v1/chat/completions rejects these OpenAI params with 400/422.
+      Source: ENGINE_QUIRK_FINDINGS.md §2.2 + r/LocalLLaMA audit.
+    specs:
+      - kind: drop-params
+        drop: [n, logprobs, top_logprobs, logit_bias, tool_choice, user]
   - id: llamacpp-cache-prompt
     source: >-
       llama-server enables KV-cache reuse when cache_prompt=true is sent.

@@ -281,3 +281,96 @@ def test_disk_hotspot_heading_does_not_assume_directory_containment() -> None:
     assert headings == ["Partitions", "Hot-spot directories (Directory sizes may overlap)"]
     assert "comfy_output_root" not in html
     assert "comfy_output_video" not in html
+
+
+def test_configured_device_budget_bytes_match_legacy_capture(monkeypatch):
+    # Static capture of the previous table serialization; no renderer builds the oracle.
+    monkeypatch.setattr(firehose_render, "_GRAPH_WORDS", {
+        **firehose_render._GRAPH_WORDS, "label": "Graph", "gpu_budget_key": "graph_gb",
+    })
+    budgets = {
+        "gpu0": dict(total_gb=1, desktop_gb=2, tts_gb=3, graph_gb=4, headroom_gb=5),
+        "gpu1": dict(total_gb=6, llm_gb=7, headroom_gb=8),
+        "images": dict(max_batch_size=9, vram_reserve_bytes=10, signed_url_ttl=11, cache_dir="/cache"),
+    }
+    expected = (
+        '<table class="kv">'
+        '<tr><th>GPU0 total GB</th><td>1</td></tr>'
+        '<tr><th>GPU0 desktop GB</th><td>2</td></tr>'
+        '<tr><th>GPU0 TTS GB</th><td>3</td></tr>'
+        '<tr><th>GPU0 Graph GB</th><td>4</td></tr>'
+        '<tr><th>GPU0 headroom GB</th><td>5</td></tr>'
+        '<tr><th>GPU1 total GB</th><td>6</td></tr>'
+        '<tr><th>GPU1 LLM GB</th><td>7</td></tr>'
+        '<tr><th>GPU1 headroom GB</th><td>8</td></tr>'
+        '<tr><th>Image max_batch_size</th><td>9</td></tr>'
+        '<tr><th>Image VRAM reserve</th><td>10 B</td></tr>'
+        '<tr><th>Image signed_url_ttl (s)</th><td>11</td></tr>'
+        '<tr><th>Image cache dir</th><td>/cache</td></tr></table>'
+    )
+    assert firehose_render._render_budgets(budgets) == expected
+    assert expected in render_html({**_payload(), "budgets": budgets})
+
+
+def test_configured_runtime_bytes_match_legacy_capture(monkeypatch):
+    monkeypatch.setattr(firehose_render, "_GRAPH_WORDS", {
+        **firehose_render._GRAPH_WORDS, "label": "Graph", "short_label": "G", "version_key": "version",
+    })
+    payload = dict(version="v1", python_version="3", pytorch_version="4",
+                   ram_total_bytes=5, ram_free_bytes=6, argv="args",
+                   device=dict(name="card", vram_total=7, vram_free=8,
+                               torch_vram_total=9, torch_vram_free=10))
+    expected = (
+        '<table class="kv">'
+        '<tr><th>Graph version</th><td>v1</td></tr>'
+        '<tr><th>Python</th><td>3</td></tr>'
+        '<tr><th>PyTorch</th><td>4</td></tr>'
+        '<tr><th>RAM total</th><td>5 B</td></tr>'
+        '<tr><th>RAM free</th><td>6 B</td></tr>'
+        '<tr><th>argv</th><td>args</td></tr>'
+        '<tr><th>device[0] name</th><td>card</td></tr>'
+        '<tr><th>device[0] vram_total</th><td>7 B</td></tr>'
+        '<tr><th>device[0] vram_free (G view)</th><td>8 B</td></tr>'
+        '<tr><th>device[0] torch_vram_total</th><td>9 B</td></tr>'
+        '<tr><th>device[0] torch_vram_free</th><td>10 B</td></tr></table>'
+    )
+    assert firehose_render._render_graph_view(payload) == expected
+    assert expected in render_html({**_payload(), firehose_render._GRAPH_WORDS["view_key"]: payload})
+
+
+def test_device_display_config_controls_order_roles_and_escaping(tmp_path, monkeypatch):
+    import yaml
+    observation = firehose_render.gpu_observation
+    config = observation.load_registry()
+    config["devices"][0].update(label="<card>", order=5)
+    config["devices"][1]["order"] = 0
+    config["devices"][0]["roles"] = [{"label": "custom", "key": "custom_gb"}]
+    path = tmp_path / "observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    display = observation.display_config(path)
+    assert [row["index"] for row in display["devices"]] == [1, 0]
+    monkeypatch.setattr(observation, "display_config", lambda: display)
+    rendered = firehose_render._render_budgets({"gpu0": {"custom_gb": 12}})
+    assert "&lt;card&gt; custom GB</th><td>12" in rendered
+    assert rendered.index(display["devices"][0]["label"]) < rendered.index("&lt;card&gt;")
+
+
+@pytest.mark.parametrize("defect", ["index", "order", "roles", "template", "runtime"])
+def test_device_display_config_rejects_invalid_rows(tmp_path, defect):
+    import yaml
+    observation = firehose_render.gpu_observation
+    config = observation.load_registry()
+    if defect == "index":
+        config["devices"][1]["index"] = config["devices"][0]["index"]
+    elif defect == "order":
+        config["devices"][1]["order"] = True
+    elif defect == "roles":
+        config["devices"][0]["roles"] = []
+    elif defect == "template":
+        config["devices"][0]["roles"][0]["label"] = "{unknown}"
+    else:
+        config["runtime_display"]["device_index"] = 999
+    path = tmp_path / "observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="observation_"):
+        observation.display_config(path)

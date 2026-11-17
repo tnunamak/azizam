@@ -1,0 +1,12 @@
+# Record fields that hold local model-file paths. The names are data; gateway/model_files.py reads them once.
+# Each list is in lookup order.
+schema_version: 1
+# Gateway-host path fields. model_path: local weight-file engines; path: any local-file engine;
+# azizam_model_path: a gateway-managed engine's weight override; mmproj: a multimodal engine's projector file.
+host: [model_path, path, azizam_model_path, mmproj]
+# Activation fields of host-managed engines: a weight file or an externally managed id, and a projector file.
+managed: [activation_model, activation_mmproj]
+# Explicit dependency lists any local-file engine may declare.
+required: [required_model_files, required_files]
+# Path keys inside a nested file record.
+nested: [path, file, model_path]

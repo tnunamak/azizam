@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Optional
 import metrics_store
 import status_endpoint  # reuse existing probes
 from gateway.metrics_writer import close_writer, get_writer, start_writer
+from gateway import gpu_observation
 
 
 # When the disk holding metrics.db falls below this we pause writes and warn.
@@ -172,7 +173,7 @@ def _gpu_index_by_drm_id() -> dict[int, int]:
 
     Checked on this host: GPU ID 0x00000100 is the card at 01:00.0 (index 0).
     """
-    rc, out, _ = status_endpoint._run(["nvidia-smi", "--query-gpu=index,pci.bus_id", "--format=csv,noheader"])
+    rc, out, _ = status_endpoint._run([gpu_observation.executable(), "--query-gpu=index,pci.bus_id", "--format=csv,noheader"])
     ids: dict[int, int] = {}
     for line in out.splitlines() if rc == 0 else []:
         idx, _, bus_id = (p.strip() for p in line.partition(","))

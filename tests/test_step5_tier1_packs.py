@@ -47,6 +47,36 @@ def _req(name: str, body: dict[str, Any]) -> dict[str, Any]:
 class TestOllamaUnsupportedParams:
     NAME = "ollama-unsupported-params"
 
+    @pytest.fixture(autouse=True, params=["global", "data-only"])
+    def registry_source(self, request, monkeypatch):
+        if request.param == "data-only":
+            registry = TransformRegistry()
+            load_transform_packs(TRANSFORM_PACKS_FILE, registry)
+            # Reuse every existing request case against data alone, not a
+            # singleton that could conceal a leftover Python registration.
+            monkeypatch.setitem(globals(), "REGISTRY", registry)
+            monkeypatch.setitem(
+                globals(), "_req",
+                lambda name, body: run_request_pipeline(
+                    [name], copy.deepcopy(body), registry=registry,
+                ),
+            )
+
+    def test_data_row_has_exact_drop_order(self) -> None:
+        data = yaml.safe_load(TRANSFORM_PACKS_FILE.read_text(encoding="utf-8"))
+        rows = [row for row in data["packs"] if row["id"] == self.NAME]
+        assert len(rows) == 1
+        assert rows[0]["specs"] == [{
+            "kind": "drop-params",
+            "drop": ["n", "logprobs", "top_logprobs", "logit_bias", "tool_choice", "user"],
+        }]
+        assert rows[0]["source"].strip()
+        expected = TransformRegistry()
+        expected.register(self.NAME, rows[0]["specs"])
+        assert [(type(p), vars(p)) for p in REGISTRY.resolve(self.NAME)] == [
+            (type(p), vars(p)) for p in expected.resolve(self.NAME)
+        ]
+
     def test_registered(self) -> None:
         primitives = REGISTRY.resolve(self.NAME)
         assert len(primitives) == 1
@@ -398,7 +428,10 @@ def test_pack_file_refusals_are_atomic_and_located(tmp_path, spec, field):
 def test_shipped_pack_file_still_loads_both_packs():
     target = TransformRegistry()
     load_transform_packs(TRANSFORM_PACKS_FILE, target)
-    assert set(target.names()) == {"llamacpp-cache-prompt", "mistral-penalty-clamp"}
+    assert set(target.names()) == {
+        "llamacpp-cache-prompt", "mistral-penalty-clamp",
+        TestOllamaUnsupportedParams.NAME,
+    }
     assert len(target.resolve("llamacpp-cache-prompt")) == 1
     assert len(target.resolve("mistral-penalty-clamp")) == 2
     assert run_request_pipeline(["llamacpp-cache-prompt"], {}, registry=target) == {"cache_prompt": True}
