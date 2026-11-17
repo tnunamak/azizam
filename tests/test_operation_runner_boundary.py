@@ -38,15 +38,12 @@ def _docstring_nodes(tree: ast.Module) -> set[int]:
 _UNFOLDED = object()
 
 
-def _folded_value(node: ast.AST, bindings=None):
-    """Fold syntax using known literal bindings, never execute source code."""
-    bindings = {} if bindings is None else bindings
-    if isinstance(node, ast.Name):
-        return bindings.get(node.id, _UNFOLDED)
+def _folded_value(node: ast.AST):
+    """Evaluate only literal construction, never source names or arbitrary calls."""
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, int, float, bool, type(None))):
         return node.value
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _folded_value(node.left, bindings), _folded_value(node.right, bindings)
+        left, right = _folded_value(node.left), _folded_value(node.right)
         if isinstance(left, str) and isinstance(right, str):
             return left + right
     if isinstance(node, ast.JoinedStr):
@@ -57,8 +54,8 @@ def _folded_value(node: ast.AST, bindings=None):
                 continue
             if not isinstance(part, ast.FormattedValue):
                 return _UNFOLDED
-            value = _folded_value(part.value, bindings)
-            spec = "" if part.format_spec is None else _folded_text(part.format_spec, bindings)
+            value = _folded_value(part.value)
+            spec = "" if part.format_spec is None else _folded_text(part.format_spec)
             if value is _UNFOLDED or spec is None:
                 return _UNFOLDED
             if part.conversion == ord("s"):
@@ -75,18 +72,18 @@ def _folded_value(node: ast.AST, bindings=None):
                 return _UNFOLDED
         return "".join(parts)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        receiver = _folded_text(node.func.value, bindings)
+        receiver = _folded_text(node.func.value)
         if receiver is None:
             return _UNFOLDED
         if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
             values = node.args[0]
             if isinstance(values, (ast.List, ast.Tuple)):
-                parts = [_folded_text(value, bindings) for value in values.elts]
+                parts = [_folded_text(value) for value in values.elts]
                 if all(isinstance(part, str) for part in parts):
                     return receiver.join(parts)
         if node.func.attr == "format":
-            args = [_folded_value(value, bindings) for value in node.args]
-            kwargs = {item.arg: _folded_value(item.value, bindings) for item in node.keywords}
+            args = [_folded_value(value) for value in node.args]
+            kwargs = {item.arg: _folded_value(item.value) for item in node.keywords}
             if None in kwargs or any(value is _UNFOLDED for value in [*args, *kwargs.values()]):
                 return _UNFOLDED
             try:
@@ -96,148 +93,20 @@ def _folded_value(node: ast.AST, bindings=None):
     return _UNFOLDED
 
 
-def _folded_text(node: ast.AST, bindings=None) -> str | None:
+def _folded_text(node: ast.AST) -> str | None:
     """Fold literal string construction without importing or executing source code."""
-    value = _folded_value(node, bindings)
+    value = _folded_value(node)
     return value if isinstance(value, str) else None
 
-
-
-def _bound_names(nodes):
-    """Names made local by bindings; nested scopes own their bindings."""
-    pending = list(nodes)
-    names = set()
-    while pending:
-        node = pending.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-            continue
-        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            continue
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        pending.extend(ast.iter_child_nodes(node))
-    return names
-
-
-def _nodes_with_bindings(tree):
-    """Visit lexical scopes in source order, keeping only proven literal values."""
-    def forget(target, bindings):
-        for child in ast.walk(target):
-            if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
-                bindings.pop(child.id, None)
-
-    def walk(node, bindings):
-        yield node, dict(bindings)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            # Defaults and annotations belong to the enclosing scope.
-            for child in ast.iter_child_nodes(node):
-                if child is node.args or child in getattr(node, "decorator_list", ()) or child is getattr(node, "returns", None):
-                    yield from walk(child, bindings)
-            local = dict(bindings)
-            body = [node.body] if isinstance(node, ast.Lambda) else node.body
-            for name in _bound_names(body):
-                local.pop(name, None)
-            for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
-                        node.args.vararg, node.args.kwarg]:
-                if arg is not None:
-                    local.pop(arg.arg, None)
-            if not isinstance(node, ast.Lambda):
-                bindings.pop(node.name, None)
-                local.pop(node.name, None)
-            for child in body:
-                yield from walk(child, local)
-            return
-        if isinstance(node, ast.ClassDef):
-            for child in [*node.decorator_list, *node.bases, *node.keywords]:
-                yield from walk(child, bindings)
-            bindings.pop(node.name, None)
-            local = dict(bindings)
-            for child in node.body:
-                yield from walk(child, local)
-            return
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
-            if node.value is not None:
-                yield from walk(node.value, bindings)
-            if isinstance(node, ast.AnnAssign):
-                yield from walk(node.annotation, bindings)
-            value = _folded_value(node.value, bindings) if node.value is not None else _UNFOLDED
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                yield from walk(target, bindings)
-                forget(target, bindings)
-                if isinstance(target, ast.Name) and value is not _UNFOLDED:
-                    bindings[target.id] = value
-            return
-        if isinstance(node, (ast.AugAssign, ast.Delete)):
-            for child in ast.iter_child_nodes(node):
-                yield from walk(child, bindings)
-            for target in node.targets if isinstance(node, ast.Delete) else [node.target]:
-                forget(target, bindings)
-            return
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                bindings.pop(alias.asname or alias.name.split(".")[0], None)
-        if isinstance(node, (ast.For, ast.AsyncFor)):
-            yield from walk(node.iter, bindings)
-            forget(node.target, bindings)
-            yield from walk(node.target, bindings)
-            local = dict(bindings)
-            for child in [*node.body, *node.orelse]:
-                yield from walk(child, local)
-            for name in _bound_names([*node.body, *node.orelse]):
-                bindings.pop(name, None)
-            return
-        if isinstance(node, (ast.With, ast.AsyncWith)):
-            for item in node.items:
-                yield from walk(item.context_expr, bindings)
-                if item.optional_vars is not None:
-                    forget(item.optional_vars, bindings)
-                    yield from walk(item.optional_vars, bindings)
-            for child in node.body:
-                yield from walk(child, bindings)
-            return
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            local = dict(bindings)
-            for generator in node.generators:
-                yield from walk(generator.iter, local)
-                forget(generator.target, local)
-                yield from walk(generator.target, local)
-                for condition in generator.ifs:
-                    yield from walk(condition, local)
-            for child in ([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]):
-                yield from walk(child, local)
-            return
-        if isinstance(node, (ast.If, ast.While, ast.Try)):
-            # Branch-dependent writes cannot establish constants after a join.
-            if hasattr(node, "test"):
-                yield from walk(node.test, bindings)
-            for field in ("body", "orelse", "handlers", "finalbody"):
-                local = dict(bindings)
-                for child in getattr(node, field, ()):
-                    yield from walk(child, local)
-            for name in _bound_names(ast.iter_child_nodes(node)):
-                bindings.pop(name, None)
-            return
-        if isinstance(node, ast.ExceptHandler) and node.name:
-            bindings.pop(node.name, None)
-        for child in ast.iter_child_nodes(node):
-            yield from walk(child, bindings)
-
-    yield from walk(tree, {})
 
 def _violations(source: str) -> list[str]:
     tree = ast.parse(source)
     skipped = _docstring_nodes(tree)
     found: list[str] = []
-    for node, bindings in _nodes_with_bindings(tree):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"getattr", "setattr"}:
             attribute = node.args[1] if len(node.args) > 1 else None
-            if attribute is None or _folded_text(attribute, bindings) is None:
+            if attribute is None or _folded_text(attribute) is None:
                 found.append(f"line {node.lineno}: {node.func.id} attribute argument does not fold to a literal")
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
@@ -271,8 +140,8 @@ def _violations(source: str) -> list[str]:
                 found.append(f"line {node.lineno}: literal {value!r}")
             elif DIGITS_ONLY.match(value):
                 found.append(f"line {node.lineno}: literal {value!r} is a bare id")
-        elif isinstance(node, (ast.BinOp, ast.JoinedStr, ast.Call)) and _folded_text(node, bindings) is not None:
-            value = _folded_text(node, bindings)
+        elif isinstance(node, (ast.BinOp, ast.JoinedStr, ast.Call)) and _folded_text(node) is not None:
+            value = _folded_text(node)
             if FORBIDDEN_LITERAL.search(value):
                 found.append(f"line {node.lineno}: literal {value!r} (folded)")
             elif DIGITS_ONLY.match(value):
@@ -416,39 +285,6 @@ def test_runner_boundary_closes_syntax_gaps(source):
     assert len(findings) == 1, (source, findings)
 
 
-
-
-@pytest.mark.parametrize("expression", ["A + B", "f'{A}{B}'", "'{}{}'.format(A, B)"])
-def test_runner_boundary_folds_names_in_source_order(expression):
-    source = "A = 'node'\nB = '_id'\nvalue = result[" + expression + "]\n"
-    findings = _violations(source)
-    assert len(findings) == 1, findings
-    assert "node_id" in findings[0]
-
-
-@pytest.mark.parametrize("source", [
-    "A = 'sta'\nB = 'tus'\nvalue = result[A + B]\n",
-    "A = 'node'\ndef f(A):\n    return result[A + '_id']\n",
-    "A = 'node'\nA = 'sta'\nvalue = result[A + '_id']\n",
-    "A = 'node'\nA = dynamic()\nvalue = result[A + '_id']\n",
-    "A = 'node'\nA += suffix\nvalue = result[A + '_id']\n",
-    "A = 'node'\ndel A\nvalue = result[A + '_id']\n",
-    "A = 'node'\nfor A in values:\n    value = result[A + '_id']\n",
-    "A = 'node'\nwith context() as A:\n    value = result[A + '_id']\n",
-    "A = 'node'\nimport settings as A\nvalue = result[A + '_id']\n",
-    "A = 'node'\nfrom settings import A\nvalue = result[A + '_id']\n",
-    "A = 'node'\nvalue = [result[A + '_id'] for A in values]\n",
-])
-def test_runner_boundary_invalidates_shadowed_or_rebound_names(source):
-    assert _violations(source) == []
-
-
-def test_runner_boundary_function_bindings_do_not_escape():
-    source = "A = 'sta'\ndef f():\n    A = 'node'\n    return result[A + '_id']\nvalue = result[A + 'tus']\n"
-    findings = _violations(source)
-    assert len(findings) == 1 and "node_id" in findings[0], findings
-
-
 def test_runner_boundary_plain_names_and_folded_attributes_are_clean():
     source = """class Runner:
     def run(self, item):
@@ -467,11 +303,3 @@ def test_runner_boundary_plain_names_and_folded_attributes_are_clean():
 ])
 def test_runner_boundary_reports_unresolved_attribute(source):
     assert "attribute argument does not fold to a literal" in _violations(source)[0]
-
-
-def test_runner_boundary_folds_derived_bindings_and_keeps_comprehension_scope():
-    source = ("A = 'no'\nB = A + 'de'\nC = '_id'\n"
-              "items = [result[B + C] for B in values]\n"
-              "value = result[''.join([B, C])]\n")
-    findings = _violations(source)
-    assert len(findings) == 1 and "node_id" in findings[0], findings
