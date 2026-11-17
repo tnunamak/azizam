@@ -29438,7 +29438,7 @@ async def proxy_audio_generate(
     except TransportFailure as error:
         return _audio_transport_failure_response(error, adapter)
     except Exception as e:
-        return client_errors.client_error(502, "audio_failed", error_type="api_error")
+        raise
 
 
 @_acts_for("identity", _AUDIO_GENERATE_OPERATION)
