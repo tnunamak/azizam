@@ -293,3 +293,44 @@ def test_remote_private_cidr_never_authorizes_gateway_host_ports(monkeypatch, po
         await runtime.invoke('state', {})
         assert recorder.connections == [(peer, port)]
     asyncio.run(check())
+
+
+@pytest.mark.parametrize('caller', ['adapter', 'listener'])
+def test_remote_graph_websocket_guard_precedes_actual_dial(monkeypatch, caller):
+    import proxy
+    from gateway import engine_egress, remote_engine
+    from gateway.engine_protocol.node_graph import NodeGraphAdapter
+    from gateway.engine_protocol.types import Connection
+    import websockets.asyncio.client
+    registry, _, _, _, _, _ = case()
+    monkeypatch.setattr(engine_egress, '_live', engine_egress.project(registry['services']))
+    # Legacy listeners construct an unmarked Connection from the published address.
+    connection = Connection(address='https://engine.example')
+    adapter = NodeGraphAdapter()
+    recorder, dials = SocketRecorder(monkeypatch), []
+    def dial(*args, **kwargs):
+        dials.append(True)
+        raise AssertionError('remote websocket dial')
+    monkeypatch.setattr(websockets.asyncio.client, 'connect', dial)
+    async def check():
+        if caller == 'adapter':
+            with pytest.raises(ProtocolError):
+                await anext(adapter.watch(connection))
+        else:
+            monkeypatch.setattr(proxy, '_graph_adapter', lambda *_: adapter)
+            monkeypatch.setattr(proxy, '_graph_connection', lambda **_: connection)
+            stop, checked = asyncio.Event(), asyncio.Event()
+            original = remote_engine.refuse_unbound_connection
+            def guard(conn):
+                try:
+                    original(conn)
+                finally:
+                    checked.set()
+            monkeypatch.setattr(remote_engine, 'refuse_unbound_connection', guard)
+            task = asyncio.create_task(proxy._graph_ws_listener(stop))
+            async with asyncio.timeout(1):
+                await checked.wait()
+                stop.set()
+                await task
+    asyncio.run(check())
+    assert not dials and not recorder.connections and not recorder.writes
