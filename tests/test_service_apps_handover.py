@@ -45,7 +45,7 @@ def _live_bindings(w):
 
 
 def _address(w):
-    admin_store.add_trusted_address(w.service_id, "10.1.2.3", created_by=w.member_id, max_entries=10, path=w.g.path)
+    admin_store.add_trusted_address(w.service_id, "203.0.113.7", created_by=w.member_id, max_entries=10, path=w.g.path)
 
 
 def test_after_a_handover_old_keys_stop_and_a_key_the_new_person_makes_runs_under_their_plan(world):
