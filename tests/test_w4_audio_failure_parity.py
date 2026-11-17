@@ -184,7 +184,7 @@ def observe(tmp_path, old, mode, case, capsys):
             assert counters['history'] == 600
         if case in ('empty', 'unsupported_type', 'opus_without_ogg') and mode == 'sync':
             summary['wire'] = rig.calls[-1]['response']
-        if case == 'cancel_during_route':
+        if case in ('cancel_during_route', 'poll_limit_600'):
             summary['receipt_http_status'] = receipt['metadata']['status_code']
         if case == 'publication_atomic':
             assert all(count > 0 for status, count in publication), publication
@@ -250,7 +250,8 @@ def test_600_poll_timeout_matches_the_frozen_handler(tmp_path, mode, capsys):
     if mode == 'sync':
         assert old['status'] == 504 and old['message'] == 'Audio generation timeout'
     else:
-        assert old['job_status'] == 'failed' and old['job_error'] == 'Audio generation timeout'
+        assert old['receipt_http_status'] == 504 and old['job_status'] == 'failed'
+        assert old['job_error'] == 'The backend did not finish this job in time.'
 
 
 @pytest.mark.parametrize('case', ['unsupported_type', 'opus_without_ogg'])

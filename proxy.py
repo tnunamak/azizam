@@ -25282,7 +25282,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 try:
                     response = await proxy_audio_generate(
                         request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
-                except (result_bundle.ResultRefused, media_jobs.CancellationPending, _AudioEmptyResult):
+                except (result_bundle.ResultRefused, _AudioEmptyResult):
                     published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
                     # Before this port, result validation followed successful generation's
                     # receipt. A delivery refusal after publication instead fails that request.
@@ -28761,6 +28761,7 @@ class _PreparedAudioGeneration:
     store_full: bool
     interface_version = 2
     polls: int = 0
+    publication_started: bool = False
     body: Mapping[str, Any] = dataclasses.field(init=False)
     job_id: str = dataclasses.field(init=False)
     content: bytes = dataclasses.field(init=False)
@@ -28790,15 +28791,35 @@ class _PreparedAudioGeneration:
             self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
         try:
             return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
+        except asyncio.CancelledError:
+            if self.owns_job:
+                self._fail_unpublished_job()
+            raise
         except media_jobs.CancellationPending:
+            if self.owns_job:
+                self._fail_unpublished_job()
+            elif self.publication_started and self.receipt is not None:
+                # The old executor finished generation's receipt before attempting publication.
+                from gateway import media_ingestion
+                await run_receipt_write(media_ingestion.finish_receipt, self.receipt, status_code=200)
             raise
+        except _AudioEmptyResult:
+            if not self.owns_job:
+                raise
+            self._fail_unpublished_job()
+            # Unindexable synchronous audio still has a successful byte response, as before.
+            result_bundle.check_assets(self.result_context().limits, [len(self.content)])
+            return await self.deliver(None)
         except Exception:
-            current = media_jobs.get(self.job_id, audience="internal", path=media_jobs.DB_PATH)
-            if current and current['status'] not in media_jobs.TERMINAL_STATUSES:
-                media_jobs.update_status(self.job_id, media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
-                if self.owns_job:
-                    media_jobs.discard_failed(self.job_id, path=media_jobs.DB_PATH)
+            self._fail_unpublished_job()
             raise
+
+    def _fail_unpublished_job(self):
+        current = media_jobs.get(self.job_id, audience="internal", path=media_jobs.DB_PATH)
+        if current and current['status'] not in media_jobs.TERMINAL_STATUSES:
+            media_jobs.update_status(self.job_id, media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
+            if self.owns_job:
+                media_jobs.discard_failed(self.job_id, path=media_jobs.DB_PATH)
 
     def connection_for(self, op):
         return self.graph
@@ -28810,6 +28831,7 @@ class _PreparedAudioGeneration:
         return 0, 1200
 
     def publication_options(self):
+        self.publication_started = True
         return {"add_assets": self.assets,
                 "metadata_patch": {"publication_pending": False} if self.owns_job else {}}
 

@@ -253,7 +253,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             rig.set(proxy, 'store_asset_bytes', record_store)
             response = await rig.call('POST', '/gateway/v1/media/jobs', json_body={
                 'intent': 'sfx.generate', 'request': {'model': 'tangoflux', 'prompt': 'a door creaks',
-                                                     'type': 'sfx', 'response_format': 'wav'}})
+                                                     'type': 'sfx', 'response_format': 'native'}})
             self.assertEqual(response.status_code, 202)
             job_id = response.json()['job_id']
             self.assertEqual(stored_bytes, [])
