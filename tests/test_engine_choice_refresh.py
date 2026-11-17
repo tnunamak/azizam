@@ -66,3 +66,19 @@ def test_is_due(tmp_path):
     assert is_due(store, 'svc', 'node', 'pick', now=100 + 24 * 3600)
     assert is_due(store, 'svc', 'node', 'pick', now=150, max_age=50)
     assert not is_due(store, 'svc', 'node', 'pick', now=149, max_age=50)
+
+
+def test_fetch_fresh_raises_instead_of_falling_back(monkeypatch):
+    from gateway.engine_protocol import node_info
+
+    class Boom:
+        def __enter__(self):
+            raise OSError('down')
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(node_info.engine_egress, 'client', lambda **kw: Boom())
+    monkeypatch.setitem(node_info._CACHE, ('h', 'node'), {'cached': True})
+    with pytest.raises(OSError):
+        node_info.fetch_fresh('h', 'node')
