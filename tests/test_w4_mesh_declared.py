@@ -8,7 +8,7 @@ from collections import Counter
 import pytest
 import proxy
 
-from gateway import request_history_capture, admin_store, declared_operation_job, multipart_adapter, receipt_store
+from gateway import request_history_slot, request_history_capture, admin_store, declared_operation_job, multipart_adapter, receipt_store
 from tests.support.adapter_differential import Normalizer, dump_sqlite
 from tests.support.adapter_differential_rig import reset_store
 from tests import test_adapter_differential_s7_mesh_rows as mesh
@@ -36,14 +36,12 @@ def test_mesh_old_and_declared_wire(tmp_path, name):
                 try:
                     return original_finish(capture, receipt_id, slot)
                 finally:
-                    captured.setdefault(receipt_id, threading.Event()).set()
-                    print('W4-CAPTURE', receipt_id)
+                    captured.setdefault(id(slot), threading.Event()).set()
             patch.setattr(request_history_capture._Capture, 'finish', finish)
             original_close = proxy._WORKFLOW_RUN_PORT.close_receipt
             async def close(request_id, status, reason):
-                print('W4-CLOSE', request_id, list(captured))
                 if request_id in proxy._RUN_RECEIPT_OWNERS:
-                    event = captured.setdefault(request_id, threading.Event())
+                    event = captured.setdefault(id(request_history_slot.current()), threading.Event())
                     assert await asyncio.to_thread(event.wait, 5), 'capture did not finish'
                 await original_close(request_id, status, reason)
             patch.setattr(proxy._WORKFLOW_RUN_PORT, 'close_receipt', close)
