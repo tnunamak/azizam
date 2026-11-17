@@ -74,6 +74,9 @@ class RemoteNetworkTransport:
                                   address in ipaddress.ip_network(cidr) for cidr in cap.address_exceptions)
             if not address.is_global and not private_allowed:
                 raise refused()
+            # CIDR consent is not permission to call the gateway or other host services.
+            if await asyncio.to_thread(engine_check.is_this_computer, address):
+                raise refused()
             approved.append(str(address))
         destination = engine_check.Destination('ok', '', host.lower(), port, tuple(approved[:1]))
         wire = engine_check.checked_transport(destination)

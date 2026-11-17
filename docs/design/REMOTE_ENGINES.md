@@ -55,7 +55,8 @@ Validate every returned address, not merely a hostname string or its first answe
 
 Default-deny all non-global destinations: loopback, unspecified, link-local,
 private/ULA, shared-address space, multicast and reserved/special-use ranges.
-Normalize IPv4-mapped IPv6 before classification; explicitly reject metadata
+Normalize embedded IPv4 (mapped, translated, compatible and NAT64) before
+classification; explicitly reject metadata
 destinations even where a platform uses an address outside link-local space.
 The owner may list exact private/ULA CIDRs per service for a LAN engine.
 IPv4 exceptions must have prefix length >=24 (/24 or narrower); IPv6 exceptions
@@ -63,6 +64,15 @@ must have prefix length >=64 (/64 or narrower). Registration rejects broader
 CIDRs, including /0; dispatch repeats this validation on the effective policy.
 Do not allow a broad exception to authorize loopback, link-local or metadata:
 those remain forbidden on the remote path. Existing local behavior is separate.
+
+A permitted private CIDR can contain the gateway host's own LAN, VPN or bridge
+address; policy validation cannot infer which machine owns every address in it.
+At connection time, the remote connector refuses every address identified as
+this computer by `engine_check.is_this_computer`, regardless of port or private
+CIDR consent. This includes the gateway's own ports and any other listener on
+that host, including custom ports. Same-host engines must use the local path.
+A CIDR exception authorizes other hosts in that range, not host-local services.
+The check uses the normalized resolved address and precedes the socket dial.
 
 **Redirect decision: never follow.** A 3xx ends the operation with a bounded error.
 This is easier to prove than per-hop validation and prevents credential forwarding.
@@ -187,7 +197,8 @@ running work, queued polls and observations; close active sockets and mark the j
 cancelled with a bounded reason. Do not finish remote work under revoked authority.
 Check generation before and after each I/O and cancel active work on revocation.
 A generation change stops the next read or write; bytes already handed to the
-network cannot be recalled. No database writer lock is held across network I/O. No cleanup/cancel request to the
+network cannot be recalled. No database writer lock is held across network I/O.
+No cleanup/cancel request to the
 remote service is exempt. A policy change requires fresh admission, not silent
 rebinding of an old job. Persist the binding with queued work; reload must recheck.
 
@@ -223,7 +234,8 @@ Implement these top-level functions; run `python -m pytest <full node IDs>`.
    | Assets | Record exact file + function | Rtest_remote_factory_assets |
 
    These six rows cover the generic protocol path only. Every other engine
-   client must refuse remote-enabled records before credential lookup or I/O:
+   client must refuse remote-enabled records before sending. The control, probe
+   and marked-adapter entry points refuse before credential lookup or clients:
 
    | Additional engine path | Enforcement | Regression |
    | --- | --- | --- |
@@ -238,7 +250,8 @@ Implement these top-level functions; run `python -m pytest <full node IDs>`.
    capabilities: only the generic HTTP executor accepts the bound transport.
    Connection conversion retains the remote-enabled marker for direct adapter
    callers. Destination checks also cover connections constructed without the
-   service marker, including graph event subscriptions. A default HTTP client has no remote authority. A destination shared
+   service marker, including graph event subscriptions. A default HTTP client
+   has no remote authority. A destination shared
    with a remote record is conservatively denied to an unbound caller as well.
    This inventory supersedes any claim that the six generic factory tests alone
    cover every engine egress path.
@@ -368,7 +381,7 @@ address is dialed. The original hostname supplies TLS SNI, certificate checking
 and Host. A new request/retry resolves again. Raw TCP is closed on revocation;
 revocation does not authorize a TLS shutdown or backend cleanup request.
 
-Registry mutations revoke existing in-process authority before commit, through
+Authority-changing registry mutations revoke existing in-process authority before commit, through
 `admin_store.write_service_registry_in_transaction`, including caller-owned
 transactions. A rollback conservatively requires fresh admission too. Network
 fences check authority without holding SQLite transactions during connect, TLS
@@ -376,7 +389,8 @@ or writes; an in-progress I/O is cancelled and the next I/O must recheck. A
 service-specific digest of connection, billing, enabled state and declared
 operations/selection pins queued work. Display metadata and unrelated registry
 revisions do not revoke it. Policies and hashes are cached per registry generation;
-authoritative reads and validation run in workers rather than the event loop. The normal
+authoritative reads and validation run in workers rather than the event loop.
+The normal
 restart behavior fails interrupted declared jobs rather than rebinding them.
 
 ### Stage 1 — capability binding
@@ -531,3 +545,10 @@ The unchanged frozen route graph also passed with
 The S6 harness enables candidate admission only when production readiness is
 false. With this release's readiness true, the journey runs without a readiness
 override. The independent reviewer and owner release gate remain outstanding.
+
+### Independent security review corrections
+
+The owner rejected e1b49bb73 for merge. The ten corrections and their exact
+regression node IDs and test commands are recorded in
+[REMOTE_ENGINES_REVIEW.md](REMOTE_ENGINES_REVIEW.md). The next owner review and
+release gate remain required.

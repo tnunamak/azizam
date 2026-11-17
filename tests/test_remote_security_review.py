@@ -266,3 +266,30 @@ def test_remote_chunked_responses_are_explicitly_unsupported(monkeypatch, traile
         assert error.value.code == 'protocol_dispatch_refused'
         assert recorder.closed
     asyncio.run(check())
+
+
+
+@pytest.mark.parametrize('port', [443, 5000, 15000, 17777])
+def test_remote_private_cidr_never_authorizes_gateway_host_ports(monkeypatch, port):
+    import ipaddress
+    from gateway import engine_check
+    from gateway.engine_protocol import dispatch
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        private_range = '10.0.0.0/24'
+        peer = str(ipaddress.ip_network(private_range).network_address + 1)
+        registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch, answers=[peer])
+        connection = registry['services']['remote-box']['config']['connection']
+        connection['address'] = f'https://engine.example:{port}'
+        connection['remote_dispatch']['private_cidrs'] = [private_range]
+        cap = factory.admit('remote-box')  # the valid CIDR can contain an address of this host
+        runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=cap)
+        monkeypatch.setattr(engine_check, 'is_this_computer', lambda address: True)
+        with pytest.raises(ProtocolError):
+            await runtime.invoke('state', {})
+        assert not recorder.connections and not recorder.writes
+        # The same exception still permits another host, on the same port.
+        monkeypatch.setattr(engine_check, 'is_this_computer', lambda address: False)
+        await runtime.invoke('state', {})
+        assert recorder.connections == [(peer, port)]
+    asyncio.run(check())
