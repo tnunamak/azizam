@@ -46,7 +46,7 @@ export function IconButton({
     <button
       type={type ?? "button"}
       className={cn(
-        "rounded-md focus-visible:ring-offset-background inline-flex shrink-0 items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 max-sm:min-h-11 max-sm:min-w-11",
+        "rounded-md focus-visible:ring-offset-background inline-flex shrink-0 items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 aria-disabled:opacity-50 max-sm:min-h-11 max-sm:min-w-11",
         VARIANT_CLASSES[variant],
         SIZE_CLASSES[size],
         compactTouchTargetClass,

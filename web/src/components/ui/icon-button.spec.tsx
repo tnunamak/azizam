@@ -27,10 +27,10 @@ describe("IconButton loading", () => {
     expect(button.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     expect(button.classList.contains("disabled:pointer-events-none")).toBe(true);
     expect(button.classList.contains("disabled:opacity-50")).toBe(true);
-    expect(button.classList.contains("aria-disabled:pointer-events-none")).toBe(true);
+    expect(button.classList.contains("aria-disabled:pointer-events-none")).toBe(false);
     expect(button.classList.contains("aria-disabled:opacity-50")).toBe(true);
 
-    // Direct dispatch exercises the handler even when pointer-events blocks a mouse.
+    // Direct dispatch exercises the loading handler independently of browser hit testing.
     fireEvent.click(button);
     await user.keyboard("{Enter}");
     expect(onClick).not.toHaveBeenCalled();
@@ -42,6 +42,33 @@ describe("IconButton loading", () => {
     await user.click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+
+  it.each(["ghost", "secondary", "danger"] as const)(
+    "keeps loading %s pointer hits on the button rather than its clickable parent",
+    async (variant) => {
+      const user = userEvent.setup();
+      const onClick = vi.fn();
+      const onParentClick = vi.fn();
+      render(
+        <div onClick={onParentClick}>
+          <IconButton aria-label="Refresh" variant={variant} loading onClick={onClick}>R</IconButton>
+        </div>,
+      );
+      const button = screen.getByRole("button", { name: "Refresh" });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(button.classList.contains("aria-disabled:opacity-50")).toBe(true);
+      // Native :disabled is inactive here. No other built-in token may redirect a pointer hit.
+      expect(Array.from(button.classList).filter((token) =>
+        token.endsWith("pointer-events-none") && token !== "disabled:pointer-events-none",
+      )).toEqual([]);
+      // jsdom verifies dispatch isolation; the class oracle above verifies its hit-target precondition.
+      await user.click(button);
+      expect(onClick).not.toHaveBeenCalled();
+      expect(onParentClick).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["direct click", "Enter", "Space"] as const)(
     "blocks button and ancestor clicks while loading via %s",
