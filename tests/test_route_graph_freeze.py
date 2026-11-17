@@ -287,7 +287,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-13: the hot-reload description names no constants (it listed the backend host constants,
         # one of them named for the graph engine); nothing else moved (tests/fixtures/headless_openapi.json shows the
         # same one-line change). Before it the digest was edc09ca0a021187cca165df63dc2f61656dddf52d7eb02ff9e20f2f2a0d5e7ff.
-        assert route_graph.openapi_digest(proxy.app) == "ae4713d9972d8d4bfa57dc6b5ecf5a105d8d87941921b83db272c40cff60154c"
+        # Re-captured 2026-11-17 for the video clip length: capabilities advertise ``seconds`` (bounded by the manifest's
+        # video.length) and no longer the frame-count ``length``, which the route does not take. Only the video workflows'
+        # input schemas, route inputs, field maps and examples moved (tests/fixtures/headless_openapi.json shows the same).
+        # Before it the digest was ae4713d9972d8d4bfa57dc6b5ecf5a105d8d87941921b83db272c40cff60154c.
+        assert route_graph.openapi_digest(proxy.app) == "f49f734f7c0bd271fc41a6ebc4919e4a2d4802ebab1198c0f0875ebe2b8cec9c"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -349,4 +353,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-12 for the same tags copy split; the full document changes only that input description.
     # Re-captured 2026-11-13: the hot-reload description names no constants; nothing else moved. Before it the frozen
     # digest was 7d81428411342e23f215edb6dbb07fe321c3122f79198a349161fb47ae643ab0.
+    # Re-captured 2026-11-17 for the video clip length (see the note above): the full document's digest moved with the same
+    # change and nothing else. Before it the frozen digest was de79b7f36407bd2a242757953251d9e31b3ddb9f3411eb3f2d33954d70e9638b.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

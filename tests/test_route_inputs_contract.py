@@ -38,12 +38,23 @@ def test_the_mux_advertises_exactly_its_two_inputs() -> None:
     assert set(effective_schema(entry)["properties"]) == {"source_video", "source_audio"}
 
 
+def entry_video_length(entry: dict) -> dict:
+    """The clip-length bounds the workflow's own manifest declares."""
+    record = next(r for r in proxy.GATEWAY_WORKFLOW_REGISTRY.records() if r.id == entry["id"])
+    return record.contract["video"]["length"]
+
+
 def test_text_to_video_keeps_seconds_and_size_on_the_videos_route() -> None:
     (entry,) = [e for e in ENTRIES if e["id"] == "video.generate.ltx-2.5-t2v"]
     route = _chosen_route(entry)
     assert _path(route) == "/v1/videos"
-    # The manifest lists width, height and length as inputs, so the route does not advertise its own `size` and `seconds`
-    # beside them; the route's mapping still sends them as the wire's `size` and `seconds`.
-    advertised = set(effective_schema(entry)["properties"])
-    assert {"width", "height", "length"} <= advertised and advertised <= set(route["fields"])
-    assert {route["fields"][name]["field"] for name in ("width", "height", "length")} == {"size", "seconds"}
+    # The manifest lists width and height as inputs, so the route does not advertise its own `size` beside them; they
+    # travel as the wire's `size`. The manifest's `length` counts frames, which the route does not take: it is not
+    # advertised, and the route's own `seconds` (bounded by the manifest's video.length) is.
+    schema = effective_schema(entry)["properties"]
+    advertised = set(schema)
+    assert {"width", "height", "seconds"} <= advertised and "length" not in advertised and "size" not in advertised
+    assert {route["fields"][name]["field"] for name in ("width", "height")} == {"size"}
+    assert route["fields"]["length"] == {"in": "none"}
+    assert schema["seconds"]["minimum"] == entry_video_length(entry)["min_seconds"]
+    assert schema["seconds"]["maximum"] == entry_video_length(entry)["max_seconds"]

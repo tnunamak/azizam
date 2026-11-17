@@ -3278,13 +3278,6 @@
             "minimum": 256,
             "type": "integer"
           },
-          "length": {
-            "default": 81,
-            "description": "Number of frames in the video.",
-            "maximum": 81,
-            "minimum": 5,
-            "type": "integer"
-          },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
             "type": "string"
@@ -3397,14 +3390,6 @@
             "maximum": 1,
             "minimum": 0,
             "type": "number"
-          },
-          "length": {
-            "description": "Frame count on the 8N+1 grid.",
-            "maximum": 241,
-            "minimum": 9,
-            "type": "integer",
-            "x-azizam-offset": 1,
-            "x-azizam-step": 8
           },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
@@ -3653,14 +3638,6 @@
             "minimum": 64,
             "type": "integer"
           },
-          "length": {
-            "description": "Frame count on the 8N+1 grid.",
-            "maximum": 241,
-            "minimum": 9,
-            "type": "integer",
-            "x-azizam-offset": 1,
-            "x-azizam-step": 8
-          },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
             "type": "string"
@@ -3702,14 +3679,6 @@
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
             "x-azizam-asset": true
-          },
-          "length": {
-            "description": "Frame count on the 17N+5 grid.",
-            "maximum": 362,
-            "minimum": 22,
-            "type": "integer",
-            "x-azizam-offset": 5,
-            "x-azizam-step": 17
           },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
@@ -3913,14 +3882,6 @@
             "maximum": 768,
             "minimum": 64,
             "type": "integer"
-          },
-          "length": {
-            "description": "Frame count on the 17N+5 grid.",
-            "maximum": 362,
-            "minimum": 22,
-            "type": "integer",
-            "x-azizam-offset": 5,
-            "x-azizam-step": 17
           },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
@@ -42151,8 +42112,7 @@
               "in": "body"
             },
             "length": {
-              "field": "seconds",
-              "in": "body"
+              "in": "none"
             },
             "prompt": {
               "field": "prompt",
@@ -42310,7 +42270,17 @@
           "name": "video"
         }
       ],
-      "route_inputs": [],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "maximum": 4,
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        }
+      ],
       "short_id": "scail-2-replace",
       "status": "current",
       "superseded_by": null,
@@ -42437,8 +42407,7 @@
               "in": "body"
             },
             "length": {
-              "field": "seconds",
-              "in": "body"
+              "in": "none"
             },
             "negative_prompt": {
               "field": "negative_prompt",
@@ -42507,7 +42476,17 @@
           "name": "video"
         }
       ],
-      "route_inputs": [],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        }
+      ],
       "short_id": "ltx-2.5-i2v",
       "status": "current",
       "superseded_by": null,
@@ -42632,6 +42611,7 @@
           "description": "Clip length in seconds.",
           "field": "seconds",
           "in": "body",
+          "maximum": 10,
           "minimum": 1,
           "name": "seconds",
           "type": "number"
@@ -42773,6 +42753,7 @@
           "description": "Clip length in seconds.",
           "field": "seconds",
           "in": "body",
+          "maximum": 10,
           "minimum": 1,
           "name": "seconds",
           "type": "number"
@@ -42877,6 +42858,7 @@
           "description": "Clip length in seconds.",
           "field": "seconds",
           "in": "body",
+          "maximum": 40,
           "minimum": 1,
           "name": "seconds",
           "type": "number"
@@ -42917,8 +42899,7 @@
               "in": "body"
             },
             "length": {
-              "field": "seconds",
-              "in": "body"
+              "in": "none"
             },
             "negative_prompt": {
               "field": "negative_prompt",
@@ -42987,7 +42968,17 @@
           "name": "video"
         }
       ],
-      "route_inputs": [],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        }
+      ],
       "short_id": "ltx-2.5-t2v",
       "status": "current",
       "superseded_by": null,
@@ -43024,8 +43015,7 @@
               "in": "body"
             },
             "length": {
-              "field": "seconds",
-              "in": "body"
+              "in": "none"
             },
             "prompt": {
               "field": "prompt",
@@ -43094,7 +43084,17 @@
           "name": "video"
         }
       ],
-      "route_inputs": [],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "maximum": 10,
+          "minimum": 2,
+          "name": "seconds",
+          "type": "number"
+        }
+      ],
       "short_id": "minimax-h3-i2v",
       "status": "current",
       "superseded_by": null,
@@ -43207,7 +43207,8 @@
           "description": "Clip length in seconds.",
           "field": "seconds",
           "in": "body",
-          "minimum": 1,
+          "maximum": 10,
+          "minimum": 2,
           "name": "seconds",
           "type": "number"
         }
@@ -43332,7 +43333,8 @@
           "description": "Clip length in seconds.",
           "field": "seconds",
           "in": "body",
-          "minimum": 1,
+          "maximum": 10,
+          "minimum": 2,
           "name": "seconds",
           "type": "number"
         }
@@ -43430,7 +43432,8 @@
           "description": "Clip length in seconds.",
           "field": "seconds",
           "in": "body",
-          "minimum": 1,
+          "maximum": 40,
+          "minimum": 2,
           "name": "seconds",
           "type": "number"
         }
@@ -43469,8 +43472,7 @@
               "in": "body"
             },
             "length": {
-              "field": "seconds",
-              "in": "body"
+              "in": "none"
             },
             "prompt": {
               "field": "prompt",
@@ -43539,7 +43541,17 @@
           "name": "video"
         }
       ],
-      "route_inputs": [],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "maximum": 10,
+          "minimum": 2,
+          "name": "seconds",
+          "type": "number"
+        }
+      ],
       "short_id": "minimax-h3-t2v",
       "status": "current",
       "superseded_by": null,
