@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from ipaddress import ip_address
 from pathlib import Path
+from string import Formatter
 import re
 from types import MappingProxyType
 from typing import Any
@@ -25,7 +26,7 @@ _PRESENTATION_LIST_KEYS = (
     "hardware_label_suffixes", "bare_titles", "technical_patterns",
 )
 _PRESENTATION_KEYS = (
-    "schema_version", *_PRESENTATION_LIST_KEYS, "capability_engine_suffixes", "acronyms", "unclassified",
+    "schema_version", *_PRESENTATION_LIST_KEYS, "capability_engine_suffixes", "acronyms", "unclassified", "admin_surface",
 )
 _UNCLASSIFIED_KEYS = ("capability", "label", "icon", "service_capability", "summary")
 
@@ -85,6 +86,25 @@ def _load_presentation_words(path: Path) -> Mapping[str, Any]:
         loaded[key] = MappingProxyType(dict(value))
     if loaded["unclassified"]["service_capability"] not in CAPABILITY_ICON_KEYS:
         fail("unclassified.service_capability", "unknown capability")
+    key = "admin_surface"
+    value = mapping(raw[key], key)
+    fields = ("fallback_name", "intents_description", "protocol_description",
+              "default_protocol", "empty_description")
+    keys(value, fields, key)
+    for name in fields:
+        string(value[name], f"{key}.{name}")
+    for name, placeholder in (("intents_description", "intents"),
+                              ("protocol_description", "protocol")):
+        try:
+            parts = list(Formatter().parse(value[name]))
+        except ValueError:
+            fail(f"{key}.{name}", "invalid format template")
+        supplied = [field for _, field, _, _ in parts if field is not None]
+        if not supplied or any(field != placeholder for field in supplied):
+            fail(f"{key}.{name}", f"expected {{{placeholder}}} placeholder only")
+        if any(spec or conversion for _, field, spec, conversion in parts if field is not None):
+            fail(f"{key}.{name}", "format specifications and conversions are not supported")
+    loaded[key] = MappingProxyType(dict(value))
     patterns = []
     for index, pattern in enumerate(loaded["technical_patterns"]):
         try:

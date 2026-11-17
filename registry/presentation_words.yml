@@ -31,3 +31,9 @@ unclassified:
   icon: chat
   service_capability: chat
   summary: Use this configured AI capability.
+admin_surface:
+  fallback_name: Protocol frontend
+  intents_description: "Supports {intents}."
+  protocol_description: "{protocol} protocol frontend."
+  default_protocol: protocol
+  empty_description: Protocol frontend.
