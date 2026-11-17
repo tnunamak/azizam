@@ -11411,7 +11411,7 @@
     },
     "video.edit.scail-2-replace": {
       "examples": {
-        "bytes": 5215,
+        "bytes": 5222,
         "full": {
           "example_request": {
             "body": {
@@ -11429,29 +11429,29 @@
               },
               "model": "video-scail-2-replace",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 81,
+              "seconds": 1.0,
               "seed": 0,
               "size": "832x448"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seconds\":81,\"seed\":0,\"size\":\"832x448\",\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"832x448\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seconds\": 81,\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seconds': 81, 'seed': 0, 'size': '832x448', 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '832x448', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seconds\":81,\"seed\":0,\"size\":\"832x448\",\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seconds\": 81,\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seconds': 81, 'seed': 0, 'size': '832x448', 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"832x448\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '832x448', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "ab247e4cb54368ff298aca87384bfa79c84609d5cf0de5a3ab2e5717e0e0c6d2"
+        "sha256": "a717264e7d168b094b6d048aae49e6c544c7270f71d45531c0bdca17d4cc601a"
       },
       "row": {
-        "bytes": 17660,
+        "bytes": 18142,
         "full": {
           "aliases": [],
           "availability": {
@@ -11535,23 +11535,23 @@
               },
               "model": "video-scail-2-replace",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 81,
+              "seconds": 1.0,
               "seed": 0,
               "size": "832x448"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seconds\":81,\"seed\":0,\"size\":\"832x448\",\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"832x448\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seconds\": 81,\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seconds': 81, 'seed': 0, 'size': '832x448', 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '832x448', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seconds\":81,\"seed\":0,\"size\":\"832x448\",\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seconds\": 81,\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seconds': 81, 'seed': 0, 'size': '832x448', 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-scail-2-replace\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"832x448\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"reference_image\":\"data:image/png;base64,...\",\"source_video\":\"data:image/png;base64,...\",\"source_subject\":\"person\",\"reference_subject\":\"person\",\"subject_index\":\"0\",\"reference_fit\":true,\"source_point_x\":0.0,\"source_point_y\":0.0}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-scail-2-replace\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"832x448\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"reference_image\": \"data:image/png;base64,...\",\n      \"source_video\": \"data:image/png;base64,...\",\n      \"source_subject\": \"person\",\n      \"reference_subject\": \"person\",\n      \"subject_index\": \"0\",\n      \"reference_fit\": true,\n      \"source_point_x\": 0.0,\n      \"source_point_y\": 0.0\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-scail-2-replace', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '832x448', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'reference_image': 'data:image/png;base64,...', 'source_video': 'data:image/png;base64,...', 'source_subject': 'person', 'reference_subject': 'person', 'subject_index': '0', 'reference_fit': True, 'source_point_x': 0.0, 'source_point_y': 0.0}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.edit.scail-2-replace",
           "inputs": [
@@ -11706,17 +11706,17 @@
               "type": "integer"
             },
             {
-              "accepted": true,
-              "applies": "Request body",
+              "accepted": false,
+              "applies": "Managed by gateway",
               "default": 81,
               "description": "Number of frames in the video.",
               "help": "Number of frames in the video.",
-              "ignored": false,
+              "ignored": true,
               "label": "Frame count",
               "maximum": 81,
               "minimum": 5,
               "name": "length",
-              "request_field": "seconds",
+              "request_field": null,
               "required": false,
               "type": "integer"
             },
@@ -11732,6 +11732,18 @@
               "request_field": "seed",
               "required": false,
               "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Clip length in seconds.",
+              "ignored": false,
+              "maximum": 4,
+              "minimum": 1,
+              "name": "seconds",
+              "request_field": "seconds",
+              "required": false,
+              "type": "number"
             }
           ],
           "intent": "video.edit",
@@ -11759,8 +11771,7 @@
                     "in": "body"
                   },
                   "length": {
-                    "field": "seconds",
-                    "in": "body"
+                    "in": "none"
                   },
                   "prompt": {
                     "field": "prompt",
@@ -11903,7 +11914,17 @@
             "inputs_schema": {
               "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
             },
-            "route_inputs": []
+            "route_inputs": [
+              {
+                "description": "Clip length in seconds.",
+                "field": "seconds",
+                "in": "body",
+                "maximum": 4,
+                "minimum": 1,
+                "name": "seconds",
+                "type": "number"
+              }
+            ]
           },
           "outputs": [
             {
@@ -11921,7 +11942,7 @@
           "try_url": "/try/?workflow=video.edit.scail-2-replace",
           "typical_seconds": 231
         },
-        "sha256": "b924b574a575040a722c61309c24586f124f540df909353c20b8370bf50a5c34"
+        "sha256": "bbb7788bc176aae9aff62dd15e1712193b68ef592fe44d47891bd169312cf39e"
       }
     },
     "video.edit.video-mux": {
@@ -11967,7 +11988,7 @@
     },
     "video.generate.ltx-2.5-i2v": {
       "examples": {
-        "bytes": 3587,
+        "bytes": 3601,
         "full": {
           "example_request": {
             "body": {
@@ -11976,29 +11997,29 @@
               "model": "video-ltx-2.5-i2v",
               "negative_prompt": "value",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 9,
+              "seconds": 1.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"seconds\":9,\"size\":\"64x64\"}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"size\":\"64x64\",\"seconds\":1.0}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"seconds\":9,\"size\":\"64x64\"}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"size\":\"64x64\",\"seconds\":1.0}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "36f4e39cf52adc8dcb7304081383b6642bebd14987e7fbfc3c8d9c7666973e73"
+        "sha256": "74ff1afc49b99a9edac1453415d7f90787b788329358914cd9971b084e3bfe8a"
       },
       "row": {
-        "bytes": 11795,
+        "bytes": 12286,
         "full": {
           "aliases": [],
           "availability": {
@@ -12072,23 +12093,23 @@
               "model": "video-ltx-2.5-i2v",
               "negative_prompt": "value",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 9,
+              "seconds": 1.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"seconds\":9,\"size\":\"64x64\"}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"size\":\"64x64\",\"seconds\":1.0}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"seconds\":9,\"size\":\"64x64\"}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"image_strength\":0.7,\"size\":\"64x64\",\"seconds\":1.0}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"image_strength\": 0.7,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'image_strength': 0.7, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.ltx-2.5-i2v",
           "inputs": [
@@ -12202,18 +12223,30 @@
               "type": "integer"
             },
             {
-              "accepted": true,
-              "applies": "Request body",
+              "accepted": false,
+              "applies": "Managed by gateway",
               "description": "Frame count on the 8N+1 grid.",
               "help": "Frame count on the 8N+1 grid.",
-              "ignored": false,
+              "ignored": true,
               "label": "Length in frames",
               "maximum": 241,
               "minimum": 9,
               "name": "length",
-              "request_field": "seconds",
+              "request_field": null,
               "required": false,
               "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Clip length in seconds.",
+              "ignored": false,
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "request_field": "seconds",
+              "required": false,
+              "type": "number"
             }
           ],
           "intent": "video.generate",
@@ -12253,8 +12286,7 @@
                     "in": "body"
                   },
                   "length": {
-                    "field": "seconds",
-                    "in": "body"
+                    "in": "none"
                   },
                   "negative_prompt": {
                     "field": "negative_prompt",
@@ -12305,7 +12337,17 @@
             "inputs_schema": {
               "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
             },
-            "route_inputs": []
+            "route_inputs": [
+              {
+                "description": "Clip length in seconds.",
+                "field": "seconds",
+                "in": "body",
+                "maximum": 10,
+                "minimum": 1,
+                "name": "seconds",
+                "type": "number"
+              }
+            ]
           },
           "outputs": [
             {
@@ -12323,7 +12365,7 @@
           "try_url": "/try/?workflow=video.generate.ltx-2.5-i2v",
           "typical_seconds": 56
         },
-        "sha256": "2c07bd7eaacebce6ad78cabe4e4db267c6a49cd8573312affd9fdcc8f76ab83d"
+        "sha256": "e3645d4bfc96c3d3530f1086a795a70a3af2635a3bec4bbfdacdf4ea1dab02a6"
       }
     },
     "video.generate.ltx-2.5-keyframes": {
@@ -12367,7 +12409,7 @@
         "sha256": "d5e0f585e06ef0ebbaeccb5986f8f2ae53fdb4673f77ef52e6b48b3c10fcdfd6"
       },
       "row": {
-        "bytes": 15594,
+        "bytes": 15638,
         "full": {
           "aliases": [],
           "availability": {
@@ -12641,6 +12683,7 @@
               "applies": "Route option",
               "description": "Clip length in seconds.",
               "ignored": false,
+              "maximum": 10,
               "minimum": 1,
               "name": "seconds",
               "request_field": "seconds",
@@ -12754,6 +12797,7 @@
                 "description": "Clip length in seconds.",
                 "field": "seconds",
                 "in": "body",
+                "maximum": 10,
                 "minimum": 1,
                 "name": "seconds",
                 "type": "number"
@@ -12776,7 +12820,7 @@
           "try_url": "/try/?workflow=video.generate.ltx-2.5-keyframes",
           "typical_seconds": 40
         },
-        "sha256": "552eb7f6edaf0a1d90868a1586d62e7c395d4c31dc911013adfd00e06bcba3fd"
+        "sha256": "48b8b4d37543f734049c4255ae751e204e8579a45fd1fe7a3985138dfa63dc8f"
       }
     },
     "video.generate.ltx-2.5-keyframes-mid": {
@@ -12823,7 +12867,7 @@
         "sha256": "54a97e6a897002753a9005bc9aaa0c43a69961b70faddc7100297b644d407059"
       },
       "row": {
-        "bytes": 18315,
+        "bytes": 18359,
         "full": {
           "aliases": [],
           "availability": {
@@ -13143,6 +13187,7 @@
               "applies": "Route option",
               "description": "Clip length in seconds.",
               "ignored": false,
+              "maximum": 10,
               "minimum": 1,
               "name": "seconds",
               "request_field": "seconds",
@@ -13268,6 +13313,7 @@
                 "description": "Clip length in seconds.",
                 "field": "seconds",
                 "in": "body",
+                "maximum": 10,
                 "minimum": 1,
                 "name": "seconds",
                 "type": "number"
@@ -13290,7 +13336,7 @@
           "try_url": "/try/?workflow=video.generate.ltx-2.5-keyframes-mid",
           "typical_seconds": 45
         },
-        "sha256": "19353a702f1e9585576bb57de567a498443ad3544cddc66b00daedc5e1d9db21"
+        "sha256": "b83578be6bc27a330dd269fb259a4aea91ec25db4ee8803676c811bd8eb81e37"
       }
     },
     "video.generate.ltx-2.5-long": {
@@ -13324,7 +13370,7 @@
         "sha256": "35ce40f04b9b9036bdafb2d01fde278f9d096ec307de3191abdc56d6f054f3bc"
       },
       "row": {
-        "bytes": 9579,
+        "bytes": 9623,
         "full": {
           "aliases": [
             "video-long"
@@ -13487,6 +13533,7 @@
               "applies": "Route option",
               "description": "Clip length in seconds.",
               "ignored": false,
+              "maximum": 40,
               "minimum": 1,
               "name": "seconds",
               "request_field": "seconds",
@@ -13573,6 +13620,7 @@
                 "description": "Clip length in seconds.",
                 "field": "seconds",
                 "in": "body",
+                "maximum": 40,
                 "minimum": 1,
                 "name": "seconds",
                 "type": "number"
@@ -13595,41 +13643,41 @@
           "try_url": "/try/?workflow=video.generate.ltx-2.5-long",
           "typical_seconds": null
         },
-        "sha256": "2a8d8d945af6b62a9cfbba346fa272c8a3a535cbc041a64deeee84946808f2da"
+        "sha256": "a60f9166edb2b7f3e8b10036e54a49cdb7a953f26ab461757968e41026f88eba"
       }
     },
     "video.generate.ltx-2.5-t2v": {
       "examples": {
-        "bytes": 3050,
+        "bytes": 3064,
         "full": {
           "example_request": {
             "body": {
               "model": "video-ltx-2.5-t2v",
               "negative_prompt": "value",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 9,
+              "seconds": 1.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"seconds\":9,\"size\":\"64x64\"}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"seconds\":9,\"size\":\"64x64\"}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "87961a6c524169e213d9c8d970368c0ca09a2160b14cda88e45a8855996b9f9a"
+        "sha256": "75e06073aa2f584e641d19a205252adf28751f20c1d7b063546493d840da3826"
       },
       "row": {
-        "bytes": 10046,
+        "bytes": 10537,
         "full": {
           "aliases": [
             "video-default"
@@ -13702,23 +13750,23 @@
               "model": "video-ltx-2.5-t2v",
               "negative_prompt": "value",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 9,
+              "seconds": 1.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"seconds\":9,\"size\":\"64x64\"}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"seconds\":9,\"size\":\"64x64\"}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"seconds\": 9,\n  \"size\": \"64x64\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'seconds': 9, 'size': '64x64'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.ltx-2.5-t2v",
           "inputs": [
@@ -13803,18 +13851,30 @@
               "type": "integer"
             },
             {
-              "accepted": true,
-              "applies": "Request body",
+              "accepted": false,
+              "applies": "Managed by gateway",
               "description": "Frame count on the 8N+1 grid.",
               "help": "Frame count on the 8N+1 grid.",
-              "ignored": false,
+              "ignored": true,
               "label": "Length in frames",
               "maximum": 241,
               "minimum": 9,
               "name": "length",
-              "request_field": "seconds",
+              "request_field": null,
               "required": false,
               "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Clip length in seconds.",
+              "ignored": false,
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "request_field": "seconds",
+              "required": false,
+              "type": "number"
             }
           ],
           "intent": "video.generate",
@@ -13846,8 +13906,7 @@
                     "in": "body"
                   },
                   "length": {
-                    "field": "seconds",
-                    "in": "body"
+                    "in": "none"
                   },
                   "negative_prompt": {
                     "field": "negative_prompt",
@@ -13898,7 +13957,17 @@
             "inputs_schema": {
               "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_t2v"
             },
-            "route_inputs": []
+            "route_inputs": [
+              {
+                "description": "Clip length in seconds.",
+                "field": "seconds",
+                "in": "body",
+                "maximum": 10,
+                "minimum": 1,
+                "name": "seconds",
+                "type": "number"
+              }
+            ]
           },
           "outputs": [
             {
@@ -13916,12 +13985,12 @@
           "try_url": "/try/?workflow=video.generate.ltx-2.5-t2v",
           "typical_seconds": 49
         },
-        "sha256": "806289cc545e0ea9bf1013695bee4eec823eb8d4bb9a151ccff0eccaaa0ca869"
+        "sha256": "f5eea3d91cd0a7a4338526a2ff58b3f032b0ad26090126f178cc5878c1d824a9"
       }
     },
     "video.generate.minimax-h3-i2v": {
       "examples": {
-        "bytes": 3701,
+        "bytes": 3708,
         "full": {
           "example_request": {
             "body": {
@@ -13933,29 +14002,29 @@
               "input_reference": "data:image/png;base64,...",
               "model": "video-minimax-h3-i2v",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 22,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "68c583082655ccb66a4ce9bdb4b676a306fedb83334a4be04c19462a583357a9"
+        "sha256": "332cd6121fcdeaa7660fcc4b50e3e2cc49441039d8002143e94679637565780c"
       },
       "row": {
-        "bytes": 11275,
+        "bytes": 11759,
         "full": {
           "aliases": [],
           "availability": {
@@ -14032,23 +14101,23 @@
               "input_reference": "data:image/png;base64,...",
               "model": "video-minimax-h3-i2v",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 22,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.minimax-h3-i2v",
           "inputs": [
@@ -14135,16 +14204,16 @@
               "type": "integer"
             },
             {
-              "accepted": true,
-              "applies": "Request body",
+              "accepted": false,
+              "applies": "Managed by gateway",
               "description": "Frame count on the 17N+5 grid.",
               "help": "Frame count on the 17N+5 grid.",
-              "ignored": false,
+              "ignored": true,
               "label": "Length in frames",
               "maximum": 362,
               "minimum": 22,
               "name": "length",
-              "request_field": "seconds",
+              "request_field": null,
               "required": false,
               "type": "integer"
             },
@@ -14162,6 +14231,18 @@
               "request_field": null,
               "required": false,
               "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Clip length in seconds.",
+              "ignored": false,
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "request_field": "seconds",
+              "required": false,
+              "type": "number"
             }
           ],
           "intent": "video.generate",
@@ -14197,8 +14278,7 @@
                     "in": "body"
                   },
                   "length": {
-                    "field": "seconds",
-                    "in": "body"
+                    "in": "none"
                   },
                   "prompt": {
                     "field": "prompt",
@@ -14249,7 +14329,17 @@
             "inputs_schema": {
               "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
             },
-            "route_inputs": []
+            "route_inputs": [
+              {
+                "description": "Clip length in seconds.",
+                "field": "seconds",
+                "in": "body",
+                "maximum": 10,
+                "minimum": 2,
+                "name": "seconds",
+                "type": "number"
+              }
+            ]
           },
           "outputs": [
             {
@@ -14267,7 +14357,7 @@
           "try_url": "/try/?workflow=video.generate.minimax-h3-i2v",
           "typical_seconds": 135
         },
-        "sha256": "0982447cc90fae7b59bbc7436898547939853d0857aae8993eb2c2efa9ac81af"
+        "sha256": "b86e748b2bc4dd6577a47895220eee096051fd4eee2773f84336615089544126"
       }
     },
     "video.generate.minimax-h3-keyframes": {
@@ -14286,29 +14376,29 @@
               "input_reference": "data:image/png;base64,...",
               "model": "video-minimax-h3-keyframes",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 1.0,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "f5da5b9f553a50b702ae0c8b69f7394a0d37bd180f5bf2ca099611106aaf31e3"
+        "sha256": "fa5fa137510b2332460f740b1e3aa45c37c84905ba32f94701451cb68a918d6f"
       },
       "row": {
-        "bytes": 13035,
+        "bytes": 13079,
         "full": {
           "aliases": [],
           "availability": {
@@ -14387,23 +14477,23 @@
               "input_reference": "data:image/png;base64,...",
               "model": "video-minimax-h3-keyframes",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 1.0,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"frames\":22}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.minimax-h3-keyframes",
           "inputs": [
@@ -14537,7 +14627,8 @@
               "applies": "Route option",
               "description": "Clip length in seconds.",
               "ignored": false,
-              "minimum": 1,
+              "maximum": 10,
+              "minimum": 2,
               "name": "seconds",
               "request_field": "seconds",
               "required": false,
@@ -14638,7 +14729,8 @@
                 "description": "Clip length in seconds.",
                 "field": "seconds",
                 "in": "body",
-                "minimum": 1,
+                "maximum": 10,
+                "minimum": 2,
                 "name": "seconds",
                 "type": "number"
               }
@@ -14660,7 +14752,7 @@
           "try_url": "/try/?workflow=video.generate.minimax-h3-keyframes",
           "typical_seconds": 120
         },
-        "sha256": "2e6517ff0ec4967944465d6cb47903395ab378c00929c0d4d1369f953679ae41"
+        "sha256": "b192ce9bb666790158c0f05e43b6c111dc25beb73faca454bb3dc7671688fe2c"
       }
     },
     "video.generate.minimax-h3-keyframes-mid": {
@@ -14681,29 +14773,29 @@
               "input_reference": "data:image/png;base64,...",
               "model": "video-minimax-h3-keyframes-mid",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 1.0,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "edac21b130b2a4a55513da4da72b23f646b27e8c3a735d29c15074385de8c168"
+        "sha256": "cb13d7ccf785efbc82332f0d1a40fc50ad2bc11558f7c47fc2415b0f8d320f88"
       },
       "row": {
-        "bytes": 14994,
+        "bytes": 15038,
         "full": {
           "aliases": [],
           "availability": {
@@ -14784,23 +14876,23 @@
               "input_reference": "data:image/png;base64,...",
               "model": "video-minimax-h3-keyframes-mid",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 1.0,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":1.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 1.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 1.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-keyframes-mid\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"input_reference\":\"data:image/png;base64,...\",\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"last_frame\":\"data:image/png;base64,...\",\"middle_frame\":\"data:image/png;base64,...\",\"mid_frame_index\":1,\"frames\":22}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-keyframes-mid\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"input_reference\": \"data:image/png;base64,...\",\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"last_frame\": \"data:image/png;base64,...\",\n      \"middle_frame\": \"data:image/png;base64,...\",\n      \"mid_frame_index\": 1,\n      \"frames\": 22\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-keyframes-mid', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'input_reference': 'data:image/png;base64,...', 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8, 'last_frame': 'data:image/png;base64,...', 'middle_frame': 'data:image/png;base64,...', 'mid_frame_index': 1, 'frames': 22}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.minimax-h3-keyframes-mid",
           "inputs": [
@@ -14962,7 +15054,8 @@
               "applies": "Route option",
               "description": "Clip length in seconds.",
               "ignored": false,
-              "minimum": 1,
+              "maximum": 10,
+              "minimum": 2,
               "name": "seconds",
               "request_field": "seconds",
               "required": false,
@@ -15071,7 +15164,8 @@
                 "description": "Clip length in seconds.",
                 "field": "seconds",
                 "in": "body",
-                "minimum": 1,
+                "maximum": 10,
+                "minimum": 2,
                 "name": "seconds",
                 "type": "number"
               }
@@ -15093,7 +15187,7 @@
           "try_url": "/try/?workflow=video.generate.minimax-h3-keyframes-mid",
           "typical_seconds": 120
         },
-        "sha256": "c850e51cf013fe6d54d2dd10b9277500104131379d61c5bb69b080bab4e5adfd"
+        "sha256": "df161f86165d5273ddcc53e4b206cc273ae247bb6bccdd01e98f201c504222d6"
       }
     },
     "video.generate.minimax-h3-long": {
@@ -15104,29 +15198,29 @@
             "body": {
               "model": "video-minimax-h3-long",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 1.0,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "cef52a10bbd1ab092db38572a2eb69d83959ec78cf675f57ef599301d09a076e"
+        "sha256": "8d6df8ba2880686083410a555629faa38f6f0e08a776c8a789c5896f3c171951"
       },
       "row": {
-        "bytes": 8820,
+        "bytes": 8864,
         "full": {
           "aliases": [],
           "availability": {
@@ -15196,23 +15290,23 @@
             "body": {
               "model": "video-minimax-h3-long",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 1.0,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":1.0}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 1.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 1.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-long\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-long\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-long', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.minimax-h3-long",
           "inputs": [
@@ -15274,7 +15368,8 @@
               "applies": "Route option",
               "description": "Clip length in seconds.",
               "ignored": false,
-              "minimum": 1,
+              "maximum": 40,
+              "minimum": 2,
               "name": "seconds",
               "request_field": "seconds",
               "required": false,
@@ -15356,7 +15451,8 @@
                 "description": "Clip length in seconds.",
                 "field": "seconds",
                 "in": "body",
-                "minimum": 1,
+                "maximum": 40,
+                "minimum": 2,
                 "name": "seconds",
                 "type": "number"
               }
@@ -15378,12 +15474,12 @@
           "try_url": "/try/?workflow=video.generate.minimax-h3-long",
           "typical_seconds": null
         },
-        "sha256": "5d3192252d74c39c63671d9a841f5d10d298ea94b4866eaeb702bd02d5caa3de"
+        "sha256": "fd1f914a48762bc57b7817756299a945a073fafc31b9fd9e3f2eaac3ffa4a3ea"
       }
     },
     "video.generate.minimax-h3-t2v": {
       "examples": {
-        "bytes": 3341,
+        "bytes": 3348,
         "full": {
           "example_request": {
             "body": {
@@ -15394,29 +15490,29 @@
               },
               "model": "video-minimax-h3-t2v",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 22,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "5b0e6656cba887210a1459031622b283925ce72bdde836f7c8c13d8c0499ac75"
+        "sha256": "4098056ef899df77052052cadfa2c50bc6a7985a56630764f9d6c7495fb28893"
       },
       "row": {
-        "bytes": 10296,
+        "bytes": 10780,
         "full": {
           "aliases": [],
           "availability": {
@@ -15491,23 +15587,23 @@
               },
               "model": "video-minimax-h3-t2v",
               "prompt": "A small teal fish mark on a clean white card.",
-              "seconds": 22,
+              "seconds": 2.0,
               "seed": 0,
               "size": "64x64"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/videos",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"seconds\":22,\"size\":\"64x64\",\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"seconds\": 22,\n  \"size\": \"64x64\",\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'seconds': 22, 'size': '64x64', 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-minimax-h3-t2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"seed\":0,\"size\":\"64x64\",\"seconds\":2.0,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-minimax-h3-t2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"seed\": 0,\n  \"size\": \"64x64\",\n  \"seconds\": 2.0,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-minimax-h3-t2v', 'prompt': 'A small teal fish mark on a clean white card.', 'seed': 0, 'size': '64x64', 'seconds': 2.0, 'extensions': {'com.azizam.workflow': {'steps': 8}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "video.generate.minimax-h3-t2v",
           "inputs": [
@@ -15580,16 +15676,16 @@
               "type": "integer"
             },
             {
-              "accepted": true,
-              "applies": "Request body",
+              "accepted": false,
+              "applies": "Managed by gateway",
               "description": "Frame count on the 17N+5 grid.",
               "help": "Frame count on the 17N+5 grid.",
-              "ignored": false,
+              "ignored": true,
               "label": "Length in frames",
               "maximum": 362,
               "minimum": 22,
               "name": "length",
-              "request_field": "seconds",
+              "request_field": null,
               "required": false,
               "type": "integer"
             },
@@ -15607,6 +15703,18 @@
               "request_field": null,
               "required": false,
               "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Clip length in seconds.",
+              "ignored": false,
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "request_field": "seconds",
+              "required": false,
+              "type": "number"
             }
           ],
           "intent": "video.generate",
@@ -15638,8 +15746,7 @@
                     "in": "body"
                   },
                   "length": {
-                    "field": "seconds",
-                    "in": "body"
+                    "in": "none"
                   },
                   "prompt": {
                     "field": "prompt",
@@ -15690,7 +15797,17 @@
             "inputs_schema": {
               "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_t2v"
             },
-            "route_inputs": []
+            "route_inputs": [
+              {
+                "description": "Clip length in seconds.",
+                "field": "seconds",
+                "in": "body",
+                "maximum": 10,
+                "minimum": 2,
+                "name": "seconds",
+                "type": "number"
+              }
+            ]
           },
           "outputs": [
             {
@@ -15708,7 +15825,7 @@
           "try_url": "/try/?workflow=video.generate.minimax-h3-t2v",
           "typical_seconds": 122
         },
-        "sha256": "0cc99e113ceab0591da0460fc072c150e54ca84bf539c180d0aaa947a361360a"
+        "sha256": "0e1e8a516e477250ad88ebc4abdc3b068916d15972e307db85904cb491e2705c"
       }
     }
   }

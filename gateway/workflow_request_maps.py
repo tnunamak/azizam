@@ -655,8 +655,8 @@ class _ExecutionReader:
         self.words(value["unless_all_inputs"], label + ".unless_all_inputs")
         field = self.obj(value["value"], label + ".value",
                          {"name", "type", "description", "in", "field"},
-                         {"minimum", "maximum", "label"})
-        for key in ("name", "type", "description", "in", "field", "label"):
+                         {"minimum", "maximum", "label", "minimum_from", "maximum_from"})
+        for key in ("name", "type", "description", "in", "field", "label", "minimum_from", "maximum_from"):
             if key in field:
                 self.text(field[key], label + ".value." + key)
         if field["type"] not in ("string", "integer", "number", "boolean"):

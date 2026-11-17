@@ -27,6 +27,7 @@ from scripts.check_workflow_drift import name_diff, ui_inputs_by_name  # noqa: E
 
 FIXTURES = ROOT / "tests" / "fixtures" / "workflow_drift"
 NAMES = ["krea2-turbo", "qwen-image-2.1-edit", "video-wan-2.2-ti2v-5b-q8"]
+API_NODE_TYPE = "class_type"
 
 
 def load(name: str) -> tuple[dict, dict]:
@@ -98,9 +99,41 @@ def test_node_missing_from_ui_twin_is_drift():
     assert any("node 7 in API JSON" in d for d in name_diff(ui, api))
 
 
+@pytest.mark.parametrize(
+    "values",
+    [[0, "randomize", 8], [0, 8], [8]],
+    ids=["linked-control-slot", "linked-value-slot", "linked-slot-omitted"],
+)
+def test_linked_seed_layout_preserves_steps_drift(values):
+    ui = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "TransformA",
+                "inputs": [
+                    {"name": "seed", "widget": {"name": "seed"}, "link": 1},
+                    {"name": "steps", "widget": {"name": "steps"}},
+                ],
+                "widgets_values": values,
+            },
+            {"id": 9, "type": "SourceA", "inputs": [], "widgets_values": []},
+        ],
+        "links": [[1, 9, 0, 1, 0, "INT"]],
+    }
+    api = {
+        "1": {API_NODE_TYPE: "TransformA", "inputs": {"seed": ["9", 0], "steps": 8}},
+        "9": {API_NODE_TYPE: "SourceA", "inputs": {}},
+    }
+
+    assert ui_inputs_by_name(ui)["1"] == {"seed": ["9", 0], "steps": 8}
+    assert name_diff(ui, api) == []
+    api["1"]["inputs"]["steps"] = 999
+    assert name_diff(ui, api) == ["  ~ 1.inputs.steps: api 999 != ui 8"]
+
+
 def write_pair(tmp_path, name="pair", api_type="TransformA", ui_type="TransformA"):
     ui = {"nodes": [{"id": 1, "type": ui_type, "inputs": [], "widgets_values": []}], "links": []}
-    api = {"1": {"class_type": api_type, "inputs": {}}}
+    api = {"1": {API_NODE_TYPE: api_type, "inputs": {}}}
     ui_path = tmp_path / f"{name}.ui.json"
     api_path = tmp_path / f"{name}.json"
     ui_path.write_text(json.dumps(ui))
@@ -198,7 +231,10 @@ def test_unreadable_ui_without_sibling_is_input_error(tmp_path, capsys):
 @pytest.mark.parametrize("values,message", [
     ("not-a-list", "UI node widgets_values must be a list"),
     ([0, {}, 0], "UI widget values cannot be consumed by the layout"),
-], ids=["scalar", "unconsumed-object"])
+    ([0, {}], "UI widget values cannot be consumed by the layout"),
+    ([0, []], "UI widget values cannot be consumed by the layout"),
+    ([0, "not-a-control"], "UI widget values cannot be consumed by the layout"),
+], ids=["scalar", "unconsumed-object", "control-object", "control-list", "control-string"])
 def test_bad_widget_values_continues(tmp_path, monkeypatch, capsys, values, message):
     ui_path, api_path = write_pair(tmp_path, "a-bad")
     ui = json.loads(ui_path.read_text())
@@ -217,3 +253,21 @@ def test_bad_widget_values_continues(tmp_path, monkeypatch, capsys, values, mess
     assert out.index("[error]") < out.index("[ok]")
     assert "[ok]    a-bad.json" not in out
     assert "1 workflow(s) could not be read; 0 workflow(s) drifted" in out
+
+
+def test_valid_fixed_control_reports_ok(tmp_path, monkeypatch, capsys):
+    ui_path, api_path = write_pair(tmp_path, "valid-control")
+    ui = json.loads(ui_path.read_text())
+    ui["nodes"][0]["inputs"] = [{"name": "seed", "widget": {"name": "seed"}}]
+    ui["nodes"][0]["widgets_values"] = [0, "fixed"]
+    ui_path.write_text(json.dumps(ui))
+    api = json.loads(api_path.read_text())
+    api["1"]["inputs"] = {"seed": 0}
+    api_path.write_text(json.dumps(api))
+    monkeypatch.setattr(drift, "REPO_DIRS", [tmp_path])
+    assert asyncio.run(drift.main(["--no-frontend"])) == 0
+    out = capsys.readouterr().out
+    assert "[ok]    valid-control.json" in out
+    assert "[error]" not in out
+    assert "[drift]" not in out
+    assert "no drift" in out

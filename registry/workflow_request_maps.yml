@@ -139,8 +139,11 @@ maps:
       in: extension
 
   # Every video intent (POST /v1/videos; sync video.edit is the run route above):
-  # the prompt, size, seconds and input reference at the top level, the
-  # route-managed video inputs unset, the rest as extension keys.
+  # the prompt, size and input reference at the top level, the route-managed
+  # video inputs unset, the rest as extension keys. The manifest's `length`
+  # input counts frames on the model's grid; the route takes the clip length
+  # in `seconds` (the `duration` route input below) and finds the frames
+  # itself, so `length` is not settable here.
   - select:
       intent_prefix: video.
     inputs:
@@ -165,8 +168,7 @@ maps:
         field: size
         combine: [width, height]
       length:
-        in: body
-        field: seconds
+        in: none
       image:
         in: body
         field: input_reference
@@ -198,11 +200,14 @@ execution:
         in: body
         field: n
     duration:
-      unless_all_inputs: [length]
+      unless_all_inputs: []
       value:
         name: seconds
         type: number
         minimum: 1
+        # A video manifest's own bounds, when it declares them.
+        minimum_from: video.length.min_seconds
+        maximum_from: video.length.max_seconds
         description: Clip length in seconds.
         in: body
         field: seconds

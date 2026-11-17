@@ -82,8 +82,12 @@ def test_generation_refuses_out_of_range_n(n) -> None:
         "message": "n must be between 1 and 10", "type": "invalid_request_error", "code": None, "param": "n"})
 
 
-def test_generation_accepts_integer_string_n() -> None:
-    run = run_request("images-generations", json_request({"prompt": "p", "n": "2"}),
+@pytest.mark.parametrize(
+    "n", [1, 10, "1", "10", "2"],
+    ids=["int-1", "int-10", "str-1", "str-10", "str-2"],
+)
+def test_generation_accepts_n_at_both_ends(n) -> None:
+    run = run_request("images-generations", json_request({"prompt": "p", "n": n}),
                       snapshot("flux2-klein", "qwen-image-2.1-edit"))
     assert not isinstance(run, Response)
 

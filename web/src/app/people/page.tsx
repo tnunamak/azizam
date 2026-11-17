@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Users, Mail, ShieldCheck } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { api, adminFetch, ApiError, type AccessPlan, type AccessPlanChoice } from "@/lib/api";
+import { api, adminFetch, ApiError, type AccessPlan, type AccessPlanChoice, type App } from "@/lib/api";
+import { HandOverDialog } from "@/app/apps/hand-over-dialog";
 import { useViewer } from "@/components/shell/session";
 import { formatPersonName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -194,6 +195,8 @@ export default function PeoplePage() {
     confirmLabel: string;
     name?: string;
     description: string;
+    /** The person whose service apps this confirmation lists, because it stops them. */
+    stopsAppsOf?: string;
     run: () => Promise<unknown>;
   } | null>(null);
   const [link, setLink] = useState<{
@@ -333,6 +336,7 @@ export default function PeoplePage() {
                       (person.disabled
                         ? "This person can sign in again. Previously revoked keys stay revoked; create new keys for their apps."
                         : "This person cannot sign in. Access to their apps is suspended and their keys are permanently revoked. Their saved words and chats stay."),
+                    stopsAppsOf: person.disabled ? undefined : person.id,
                     run: () =>
                       peopleApi.change(person.id, {
                         disabled: !person.disabled,
@@ -356,6 +360,7 @@ export default function PeoplePage() {
                     name: formatPersonName(person.name, "person"),
                     description:
                       "This permanently removes the account and its saved words and chats, and revokes access to its apps and keys.",
+                    stopsAppsOf: person.id,
                     run: () => peopleApi.remove(person.id),
                   })
                 }
@@ -1198,6 +1203,7 @@ function Confirmation({
   confirmLabel,
   name,
   description,
+  stopsAppsOf,
   run,
   close,
   saved,
@@ -1207,12 +1213,25 @@ function Confirmation({
   confirmLabel: string;
   name?: string;
   description: string;
+  stopsAppsOf?: string;
   run: () => Promise<unknown>;
   restoreFocus: (event: Event) => void;
   close: () => void;
   saved: () => Promise<void>;
 }) {
   const [typed, setTyped] = useState("");
+  const [moving, setMoving] = useState<App | null>(null);
+  // Only the owner can change who a service app answers to; others see the list but not the button.
+  const viewerIsOwner = useViewer().role === "owner";
+  // The service apps this person answers for stop with them. Each can be handed to someone else first.
+  const { data: allApps, refetch: refetchApps } = useQuery({
+    queryKey: ["admin", "apps"],
+    queryFn: api.apps.list,
+    enabled: !!stopsAppsOf,
+  });
+  const stopping = (allApps ?? []).filter(
+    (app) => app.kind === "service" && app.owner_user_id === stopsAppsOf && !app.disabled_at,
+  );
   const mutation = useMutation({
     mutationFn: run,
     onSuccess: async () => {
@@ -1230,6 +1249,49 @@ function Confirmation({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {stopping.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-label">These service apps will stop</p>
+            <ul aria-label="Service apps that will stop" className="space-y-2">
+              {stopping.map((app) => (
+                <li key={app.id} className="flex items-center justify-between gap-3">
+                  <span>
+                    {app.name}
+                    <span className="text-muted-foreground text-meta block">
+                      {app.same_as_person ? "Same as its person" : (app.access_plan_name ?? "Its own plan")}
+                    </span>
+                  </span>
+                  {viewerIsOwner ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      disabled={mutation.isPending}
+                      onClick={() => setMoving(app)}
+                    >
+                      Move to another person first
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {moving && (
+          <HandOverDialog
+            app={{
+              id: moving.id,
+              name: moving.name,
+              currentPersonId: moving.owner_user_id,
+              sameAsPerson: moving.same_as_person,
+              planName: moving.access_plan_name,
+            }}
+            onClose={() => setMoving(null)}
+            onDone={async () => {
+              await refetchApps();
+            }}
+          />
+        )}
         {name && (
           <div className="space-y-2">
             <Label htmlFor="confirm-name">Type {name} to confirm</Label>
