@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import json
 
 import pytest
@@ -108,3 +109,175 @@ def test_failed_extraction_without_write_keeps_snapshot(tmp_path):
     snapshot = ChoiceStore(store.path).read("service", "node", "selection")
     assert snapshot.choices == ["saved", "ordered"]
     assert snapshot.fetched_at == 10
+
+
+def _write_one(path, key):
+    ChoiceStore(path).write('s', 'node', key, ['a'], fetched_at=1)
+
+
+def test_threads_writing_different_keys_keep_both(tmp_path, monkeypatch):
+    import threading
+    import time
+    from gateway.engine_protocol import choice_store
+
+    path = tmp_path / 'choices.json'
+    real_load = ChoiceStore._load
+
+    def slow_load(self):
+        entries = real_load(self)
+        time.sleep(0.05)
+        return entries
+
+    monkeypatch.setattr(ChoiceStore, '_load', slow_load)
+    keys = [f'k{i}' for i in range(6)]
+    threads = [threading.Thread(target=_write_one, args=(path, key)) for key in keys]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    monkeypatch.setattr(ChoiceStore, '_load', real_load)
+    store = ChoiceStore(path)
+    assert all(store.read('s', 'node', key) for key in keys)
+    lock = path.with_name(path.name + '.lock')
+    assert lock.exists() and (lock.stat().st_mode & 0o777) == 0o600
+    assert choice_store is not None
+
+
+def test_newest_fetch_wins(tmp_path):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    assert store.write('s', 'node', 'k', ['new'], fetched_at=200) is True
+    assert store.write('s', 'node', 'k', ['old'], fetched_at=100) is False
+    snapshot = store.read('s', 'node', 'k')
+    assert (snapshot.choices, snapshot.fetched_at) == (['new'], 200)
+
+
+def test_equal_fetched_at_replaces(tmp_path):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    assert store.write('s', 'node', 'k', ['first'], fetched_at=200) is True
+    assert store.write('s', 'node', 'k', ['second'], fetched_at=200) is True
+    assert store.read('s', 'node', 'k').choices == ['second']
+
+
+def test_older_write_leaves_other_keys_alone(tmp_path):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    store.write('s', 'node', 'k', ['new'], fetched_at=200)
+    store.write('s', 'node', 'other', ['o'], fetched_at=50)
+    assert store.write('s', 'node', 'k', ['old'], fetched_at=100) is False
+    assert store.write('s', 'node', 'fresh', ['f'], fetched_at=10) is True
+    assert store.read('s', 'node', 'other').choices == ['o']
+    assert store.read('s', 'node', 'fresh').choices == ['f']
+    assert store.read('s', 'node', 'k').choices == ['new']
+
+
+def test_success_clears_only_failures_not_newer_than_snapshot(tmp_path):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    store.record_failure('s', 'node', 'k', 'boom', at=200)
+    assert store.write_clearing_failure('s', 'node', 'k', ['a'], fetched_at=200) is True
+    assert store.read_failure('s', 'node', 'k') is None
+    store.record_failure('s', 'node', 'k', 'boom', at=300)
+    assert store.write_clearing_failure('s', 'node', 'k', ['b'], fetched_at=250) is True
+    assert store.read_failure('s', 'node', 'k')['at'] == 300
+
+
+def test_superseded_write_keeps_failure(tmp_path):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    store.write('s', 'node', 'k', ['new'], fetched_at=200)
+    store.record_failure('s', 'node', 'k', 'boom', at=250)
+    assert store.write_clearing_failure('s', 'node', 'k', ['old'], fetched_at=100) is False
+    assert store.read_failure('s', 'node', 'k')['at'] == 250
+    assert store.read('s', 'node', 'k').choices == ['new']
+
+
+def test_failure_older_than_snapshot_is_not_recorded(tmp_path):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    store.write('s', 'node', 'k', ['a'], fetched_at=200)
+    assert store.record_failure('s', 'node', 'k', 'boom', at=100) is False
+    assert store.read_failure('s', 'node', 'k') is None
+    assert store.record_failure('s', 'node', 'k', 'boom', at=200) is True
+    assert store.read_failure('s', 'node', 'k')['at'] == 200
+
+
+def test_failure_recorded_between_snapshot_and_clear_survives(tmp_path):
+    """S stores at 200; F records at 201 right after S's first lock release; F must survive."""
+    import threading
+
+    class Hooked(ChoiceStore):
+        def __init__(self, path):
+            super().__init__(path)
+            self.main = threading.get_ident()
+            self.first_release = threading.Event()
+            self.failure_done = threading.Event()
+
+        @contextmanager
+        def _locked(self):
+            with super()._locked():
+                yield
+            if threading.get_ident() == self.main and not self.first_release.is_set():
+                self.first_release.set()
+                assert self.failure_done.wait(10)
+
+    store = Hooked(tmp_path / 'choices.json')
+
+    def failer():
+        assert store.first_release.wait(10)
+        store.record_failure('s', 'node', 'k', 'boom', at=201)
+        store.failure_done.set()
+
+    thread = threading.Thread(target=failer)
+    thread.start()
+    store.write_clearing_failure('s', 'node', 'k', ['a'], fetched_at=200)
+    thread.join(10)
+    assert store.read_failure('s', 'node', 'k')['at'] == 201
+
+
+def _child(path, key, barrier, rounds, no_lock):
+    import time
+    from gateway.engine_protocol import choice_store
+
+    real_load = ChoiceStore._load
+
+    def slow_load(self):
+        entries = real_load(self)
+        time.sleep(0.02)
+        return entries
+
+    ChoiceStore._load = slow_load
+    if no_lock:
+        choice_store.fcntl.flock = lambda *args: None
+    store = ChoiceStore(path)
+    for round_ in range(rounds):
+        barrier.wait(30)  # rendezvous outside the lock so every round overlaps
+        store.write('s', 'node', key, [f'r{round_}'], fetched_at=round_)
+
+
+def _run_children(path, *, no_lock, rounds=10, count=4):
+    import multiprocessing
+
+    ctx = multiprocessing.get_context('spawn')
+    barrier = ctx.Barrier(count)
+    procs = [ctx.Process(target=_child, args=(path, f'p{i}', barrier, rounds, no_lock))
+             for i in range(count)]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(60)
+    for proc in procs:
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(5)
+    assert [proc.exitcode for proc in procs] == [0] * count
+    store = ChoiceStore(path)
+    return {f'p{i}': store.read('s', 'node', f'p{i}') for i in range(count)}
+
+
+def _lost_keys(final, rounds=10):
+    return [key for key, snap in final.items() if snap is None or snap.choices != [f'r{rounds - 1}']]
+
+
+def test_processes_writing_different_keys_keep_all(tmp_path):
+    assert _lost_keys(_run_children(tmp_path / 'choices.json', no_lock=False)) == []
+
+
+def test_processes_without_the_lock_lose_keys(tmp_path):
+    """Negative control: the same run with flock stubbed out must lose a write."""
+    assert _lost_keys(_run_children(tmp_path / 'choices.json', no_lock=True))
