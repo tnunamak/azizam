@@ -29089,6 +29089,12 @@ class _PreparedAudioGeneration:
     store_full: bool
     interface_version = 2
     polls: int = 0
+    body: Mapping[str, Any] = dataclasses.field(init=False)
+    job_id: str = dataclasses.field(init=False)
+    content: bytes = dataclasses.field(init=False)
+    content_type: str = dataclasses.field(init=False)
+    suffix: str = dataclasses.field(init=False)
+    selected_name: str = dataclasses.field(init=False)
 
     @property
     def adapter(self):
@@ -29096,6 +29102,7 @@ class _PreparedAudioGeneration:
 
     async def run(self, body):
         self.body = body
+        owns_job = not (self.receipt is not None and self.receipt.job_id)
         if self.receipt is not None and self.receipt.job_id:
             self.job_id = self.receipt.job_id
         else:
@@ -29114,6 +29121,8 @@ class _PreparedAudioGeneration:
             current = media_jobs.get(self.job_id, audience="internal", path=media_jobs.DB_PATH)
             if current and current['status'] not in media_jobs.TERMINAL_STATUSES:
                 media_jobs.update_status(self.job_id, media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
+                if owns_job:
+                    media_jobs.discard_failed(self.job_id, path=media_jobs.DB_PATH)
             raise
 
     def connection_for(self, op):
