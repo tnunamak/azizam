@@ -57,7 +57,7 @@ export function IconButton({
       aria-disabled={loading || props["aria-disabled"]}
       aria-busy={loading ? true : props["aria-busy"]}
       onClick={(event) => {
-        if (loading) {
+        if (loading || props["aria-disabled"] === true || props["aria-disabled"] === "true") {
           event.preventDefault();
           event.stopPropagation();
           return;

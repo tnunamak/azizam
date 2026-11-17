@@ -149,3 +149,72 @@ describe("IconButton loading", () => {
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 });
+
+describe.each([
+  { value: true, label: "boolean true" },
+  { value: "true", label: "string true" },
+] as const)("IconButton caller aria-disabled $label", ({ value }) => {
+  it.each(["pointer click", "Enter", "Space"] as const)(
+    "blocks activation, bubbling and submission via %s without loading",
+    async (activation) => {
+      const user = userEvent.setup();
+      const onClick = vi.fn();
+      const onParentClick = vi.fn();
+      const onClickCapture = vi.fn();
+      const onSubmit = vi.fn((event) => event.preventDefault());
+      render(
+        <div onClick={onParentClick} onClickCapture={onClickCapture}>
+          <form onSubmit={onSubmit}>
+            <IconButton aria-label="Save" type="submit" aria-disabled={value} onClick={onClick}>S</IconButton>
+          </form>
+        </div>,
+      );
+      const button = screen.getByRole("button", { name: "Save" });
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(button.hasAttribute("aria-busy")).toBe(false);
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      await user.tab();
+      expect(document.activeElement).toBe(button);
+
+      if (activation === "pointer click") {
+        await user.click(button);
+      } else {
+        await user.keyboard(activation === "Enter" ? "{Enter}" : " ");
+      }
+
+      // Capture verifies a real click reached the guard for every activation.
+      expect(onClickCapture).toHaveBeenCalledTimes(1);
+      expect(onClickCapture.mock.calls[0][0].target).toBe(button);
+      expect(onClickCapture.mock.calls[0][0].nativeEvent.defaultPrevented).toBe(true);
+      expect(onClick).not.toHaveBeenCalled();
+      expect(onParentClick).not.toHaveBeenCalled();
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(button);
+    },
+  );
+});
+
+describe.each([
+  { value: false, label: "boolean false" },
+  { value: "false", label: "string false" },
+] as const)("IconButton caller aria-disabled $label", ({ value }) => {
+  it("allows clicks, bubbling and submission without loading", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    const onParentClick = vi.fn();
+    const onSubmit = vi.fn((event) => event.preventDefault());
+    render(
+      <div onClick={onParentClick}>
+        <form onSubmit={onSubmit}>
+          <IconButton aria-label="Save" type="submit" aria-disabled={value} onClick={onClick}>S</IconButton>
+        </form>
+      </div>,
+    );
+    const button = screen.getByRole("button", { name: "Save" });
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    await user.click(button);
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onParentClick).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
