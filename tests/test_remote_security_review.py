@@ -250,3 +250,19 @@ def test_remote_embedded_ipv4_addresses_checked_before_dial(monkeypatch, answer)
             await runtime.invoke('state', {})
         assert not recorder.connections and not recorder.writes
     asyncio.run(check())
+
+
+@pytest.mark.parametrize('trailers', [False, True])
+def test_remote_chunked_responses_are_explicitly_unsupported(monkeypatch, trailers):
+    from tests.support.remote_protocol import socket_case
+    async def check():
+        _, _, _, runtime, recorder, _ = socket_case(monkeypatch)
+        body = b'{"value":"remote-model"}'
+        ending = b'0\r\nX-Result: synthetic-trailer\r\n\r\n' if trailers else b'0\r\n\r\n'
+        recorder.responses.append(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n' +
+                                  format(len(body), 'x').encode() + b'\r\n' + body + b'\r\n' + ending)
+        with pytest.raises(ProtocolError) as error:
+            await runtime.invoke('state', {})
+        assert error.value.code == 'protocol_dispatch_refused'
+        assert recorder.closed
+    asyncio.run(check())

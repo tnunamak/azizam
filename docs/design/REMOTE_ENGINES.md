@@ -345,6 +345,23 @@ origin. An unavailable probe credential may still be omitted; a non-probe
 operation requiring it fails before send. Credentials use only the existing
 service-reference resolver. None are persisted in capability/job metadata.
 
+Chunked transfer remains unsupported in this release. The socket guard caps
+all wire bytes and the first header block, but does not parse chunk extensions
+and trailers to apply the separate header byte/field ceilings. Accepting chunked
+bodies without that parser would leave trailer limits unproved. Refusal is
+intentional until those limits have socket-boundary tests; both a valid chunked
+JSON response and a response with trailers are regression-tested as refusals.
+
+This excludes every engine endpoint that requires HTTP/1.1 chunked transfer:
+streaming SSE/NDJSON endpoints, unknown-length generated audio/video or file
+responses, and even buffered JSON health, inventory, submit or poll responses
+when their server chooses chunking. Such an engine is eligible only when every
+required endpoint supplies identity content with Content-Length (or bounded
+connection-close framing). Engine brands alone cannot determine eligibility:
+the operator's server and proxy configuration determine framing. A compatible
+buffered submit/poll API can qualify while that same engine's streaming endpoint
+cannot. No claim of general remote streaming support is made.
+
 Each connection is freshly resolved and pinned; no idle pool is reused between
 requests. The complete answer set must be permitted, and only the selected first
 address is dialed. The original hostname supplies TLS SNI, certificate checking
