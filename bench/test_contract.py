@@ -78,5 +78,79 @@ with tempfile.TemporaryDirectory() as folder:
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
+class MissingMetricComparisonTests(unittest.TestCase):
+    @staticmethod
+    def _report():
+        from .compare import METADATA_KEYS, PROVENANCE_REQUIRED
+        metadata = dict.fromkeys(METADATA_KEYS, "fixture")
+        metadata.update(profile=False, mix_hashes={"first": "hash-first"},
+                        concurrency=1, reps=1, warmup=0)
+        provenance = dict.fromkeys(PROVENANCE_REQUIRED, "fixture")
+        provenance["network_namespace"] = False
+        return {
+            "schema_version": 1,
+            "correctness": {"passed": True, "score": 1},
+            "metadata": metadata,
+            "provenance": provenance,
+            "metrics": [{"mix": "first", "case": "case", "concurrency": 1,
+                         "metric": "latency", "unit": "ms", "statistic": "mean",
+                         "samples": [1.0, 1.0]}],
+        }
+
+    def _assert_rejected(self, bad, message):
+        from contextlib import redirect_stderr, redirect_stdout
+        from .compare import compare_documents, main
+        valid = self._report()
+        # Each constituent run must fail, even if another run has usable rows.
+        for baseline, new in ((bad, bad), (valid, bad), (bad, valid),
+                              ({"runs": [valid, bad]}, valid)):
+            with self.subTest(baseline=baseline, new=new):
+                with self.assertRaisesRegex(ValueError, message):
+                    compare_documents(baseline, new, bootstrap=1)
+        with tempfile.TemporaryDirectory() as folder:
+            baseline = Path(folder) / "baseline.json"
+            new = Path(folder) / "new.json"
+            baseline.write_text(json.dumps(bad), encoding="utf-8")
+            new.write_text(json.dumps(bad), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                status = main([str(baseline), str(new)])
+            self.assertEqual(status, 1)
+            self.assertRegex(stderr.getvalue(), message)
+            self.assertEqual(stdout.getvalue(), "")
+
+    def test_empty_metrics_are_rejected(self):
+        report = self._report()
+        report["metrics"] = []
+        self._assert_rejected(report, "metrics must be a nonempty list")
+
+    def test_advertised_mix_without_metrics_is_rejected(self):
+        report = self._report()
+        report["metadata"]["mix_hashes"]["second"] = "hash-second"
+        self._assert_rejected(report, "mixes without metric rows: second")
+
+    def test_metric_mix_absent_from_metadata_is_rejected(self):
+        report = self._report()
+        report["metrics"].append({**report["metrics"][0], "mix": "unlisted"})
+        self._assert_rejected(report, "metric mix 'unlisted' is absent from metadata")
+
+    def test_valid_multi_mix_preserves_comparison(self):
+        from .compare import compare_documents
+        first = self._report()
+        second = self._report()
+        second["metadata"]["mix_hashes"] = {"second": "hash-second"}
+        second["metrics"][0]["mix"] = "second"
+        second["metrics"][0]["samples"] = [2.0, 2.0]
+        combined = self._report()
+        combined["metadata"]["mix_hashes"].update(second["metadata"]["mix_hashes"])
+        combined["metrics"] += second["metrics"]
+        expected = (compare_documents(first, first, bootstrap=1)
+                    + compare_documents(second, second, bootstrap=1))
+        self.assertEqual(compare_documents(combined, combined, bootstrap=1), expected)
+        self.assertEqual(compare_documents({"runs": [first, second]},
+                                           {"runs": [first, second]}, bootstrap=1),
+                         expected)
+
+
 if __name__ == "__main__":
     unittest.main()
