@@ -41,7 +41,7 @@ export function toDate(ts: TimestampInput): Date | null {
   if (ts === null || ts === undefined || ts === "") return null;
   if (ts instanceof Date) return Number.isNaN(ts.getTime()) ? null : ts;
   if (typeof ts === "number") {
-    if (!Number.isFinite(ts)) return null;
+    if (!Number.isFinite(ts) || ts < EPOCH_SECONDS_MIN) return null;
     return new Date(ts <= EPOCH_SECONDS_MAX ? ts * 1000 : ts);
   }
   const parsed = new Date(ts);
