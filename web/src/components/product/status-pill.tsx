@@ -63,7 +63,7 @@ function normalizeStatus(status: AvailabilityStatus): keyof typeof states {
   if (normalized === "standby-stopped") return "standby_stopped";
   if (normalized === "not-measured" || normalized === "not measured yet")
     return "not_measured";
-  if (normalized in states) return normalized as keyof typeof states;
+  if (Object.hasOwn(states, normalized)) return normalized as keyof typeof states;
   return "unknown";
 }
 
