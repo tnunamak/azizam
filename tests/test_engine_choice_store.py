@@ -108,3 +108,51 @@ def test_failed_extraction_without_write_keeps_snapshot(tmp_path):
     snapshot = ChoiceStore(store.path).read("service", "node", "selection")
     assert snapshot.choices == ["saved", "ordered"]
     assert snapshot.fetched_at == 10
+
+
+def _write_one(path, key):
+    ChoiceStore(path).write('s', 'node', key, ['a'], fetched_at=1)
+
+
+def test_threads_writing_different_keys_keep_both(tmp_path, monkeypatch):
+    import threading
+    import time
+    from gateway.engine_protocol import choice_store
+
+    path = tmp_path / 'choices.json'
+    real_load = ChoiceStore._load
+
+    def slow_load(self):
+        entries = real_load(self)
+        time.sleep(0.05)
+        return entries
+
+    monkeypatch.setattr(ChoiceStore, '_load', slow_load)
+    keys = [f'k{i}' for i in range(6)]
+    threads = [threading.Thread(target=_write_one, args=(path, key)) for key in keys]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    monkeypatch.setattr(ChoiceStore, '_load', real_load)
+    store = ChoiceStore(path)
+    assert all(store.read('s', 'node', key) for key in keys)
+    lock = path.with_name(path.name + '.lock')
+    assert lock.exists() and (lock.stat().st_mode & 0o777) == 0o600
+    assert choice_store is not None
+
+
+def test_processes_writing_different_keys_keep_both(tmp_path):
+    import multiprocessing
+
+    path = tmp_path / 'choices.json'
+    keys = [f'p{i}' for i in range(6)]
+    ctx = multiprocessing.get_context('spawn')
+    procs = [ctx.Process(target=_write_one, args=(path, key)) for key in keys]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(60)
+        assert proc.exitcode == 0
+    store = ChoiceStore(path)
+    assert all(store.read('s', 'node', key) for key in keys)
