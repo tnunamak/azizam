@@ -1,11 +1,15 @@
 import { expect, test } from "./fixtures/isolation";
 import type { Page } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // Service apps (docs: designs/service-apps.md). An administrator makes a service app in one request; a member never
 // sees the choice; the owner can hand a service app to someone else from the People confirmations.
-const SHOTS = "/home/tnunamak/.tmp/svcapps-shots";
+const SHOTS = process.env.SERVICE_APPS_SHOTS_DIR ?? path.join(os.tmpdir(), "service-apps-shots");
 // Capture after dialog and menu fades end, so the picture shows the settled page.
 async function shot(page: Page, name: string) {
+  mkdirSync(SHOTS, { recursive: true });
   await page.waitForFunction(() => document.getAnimations().length === 0);
   await page.screenshot({ path: `${SHOTS}/${name}.png` });
 }
