@@ -118,11 +118,10 @@ test("the remove confirmation lists a member's service apps and moves one to ano
   await expect(page.getByRole("option", { name: /Leaving member/ })).toHaveCount(0);
   await page.getByRole("option").first().click();
   await expect(move).toContainText("will run under");
-  // Plain words on what a move stops: its keys and trusted addresses, and who makes the new key.
-  await expect(move.getByTestId("handover-stops")).toContainText(
-    `${service}'s 0 keys and 0 trusted addresses stop now.`,
-  );
-  await expect(move.getByTestId("handover-stops")).toContainText("makes a new key on Apps & keys.");
+  // The first choice is the owner, who is also the viewer: "You" and "your plan". With no keys and no addresses
+  // nothing is said about stopping.
+  await expect(move).toContainText(`${service} will run under your plan: Local only.`);
+  await expect(move.getByTestId("handover-stops")).toHaveText("You make a new key on Apps & keys.");
   await shot(page, "handover-confirmation");
   await move.getByRole("button", { name: "Move app" }).click();
   await expect(move).toHaveCount(0);

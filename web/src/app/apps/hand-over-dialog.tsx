@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useViewer } from "@/components/shell/session";
 import { api } from "@/lib/api";
 
 /** The service app a handover is about, with the plan it has today. */
@@ -58,6 +59,9 @@ export function HandOverDialog({
     (person) => !person.disabled && person.id !== app.currentPersonId,
   );
   const chosen = choices.find((person) => person.id === personId);
+  const viewerId = useViewer().id;
+  const isViewer = !!chosen && !!viewerId && chosen.id === viewerId;
+  // The person's display name, or their email only when they have no name; "you" when it is the viewer.
   const chosenName = chosen ? (chosen.name || chosen.email || "this person") : "";
   const mutation = useMutation({
     mutationFn: () => api.apps.handOver(app.id, personId),
@@ -66,19 +70,32 @@ export function HandOverDialog({
       onClose();
     },
   });
+  const possessive = isViewer ? "your" : `${chosenName}'s`;
   const preview = !chosen
     ? null
     : !chosen.plan_name
-      ? `${chosenName} has no access plan, so ${app.name} would stop working until they get one.`
+      ? `${isViewer ? "You have" : `${chosenName} has`} no access plan, so ${app.name} would stop working until ${isViewer ? "you get" : "they get"} one.`
       : app.sameAsPerson
-        ? `${app.name} will run under ${chosenName}'s plan: ${chosen.plan_name}.`
-        : `${app.name} keeps its plan, ${app.planName ?? "its own plan"}, but never gets more than ${chosenName}'s plan: ${chosen.plan_name}.`;
-  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-  const stops = counts
-    ? `${app.name}'s ${count(counts.live_keys ?? 0, "key", "keys")} and ${count(
-        counts.trusted_addresses ?? 0, "trusted address", "trusted addresses")} stop now. ${
-        chosen ? chosenName : "The new person"} makes a new key on Apps & keys.`
-    : `${app.name}'s keys and trusted addresses stop now. The new person makes a new key on Apps & keys.`;
+        ? `${app.name} will run under ${possessive} plan: ${chosen.plan_name}.`
+        : `${app.name} keeps its plan, ${app.planName ?? "its own plan"}, but never gets more than ${possessive} plan: ${chosen.plan_name}.`;
+  // Say only what applies: the keys that stop and the trusted addresses that go. Nothing to stop, nothing said.
+  const keys = counts?.live_keys ?? 0;
+  const addresses = counts?.trusted_addresses ?? 0;
+  const keysPart = keys === 1 ? "Its key stops now" : `Its ${keys} keys stop now`;
+  const addressesPart = addresses === 1 ? "its trusted address is removed" : `its ${addresses} trusted addresses are removed`;
+  const stopsSentence = !counts
+    ? "Its keys and trusted addresses stop now."
+    : keys && addresses
+      ? `${keysPart} and ${addressesPart}.`
+      : keys
+        ? `${keysPart}.`
+        : addresses
+          ? `${addressesPart[0].toUpperCase()}${addressesPart.slice(1)}.`
+          : "";
+  const makesKey = isViewer
+    ? "You make a new key on Apps & keys."
+    : `${chosen ? chosenName : "The new person"} makes a new key on Apps & keys.`;
+  const stops = [stopsSentence, makesKey].filter(Boolean).join(" ");
   return (
     <Dialog open onOpenChange={(open) => !open && !mutation.isPending && onClose()}>
       <DialogContent>

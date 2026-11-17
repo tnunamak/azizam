@@ -5,7 +5,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import PeoplePage from "./page";
 
-const owner: Viewer = { authenticated: true, name: "Avery", email: null, role: "owner", admin: true };
+const owner: Viewer = { authenticated: true, id: "avery", name: "Avery", email: null, role: "owner", admin: true };
 const people = [
   { id: "avery", name: "Avery", email: "avery@example.test", plan_id: "all", plan_name: "Everything", disabled: false,
     last_active: null, requests_this_month: null, protected: true, role: "owner" },
@@ -134,7 +134,7 @@ it("moves a service app to another person after showing the plan it will have, t
   expect(move.getByText(/Kim has no access plan/)).toBeVisible();
   // The confirmation says plainly what stops now and who makes the new key.
   expect(
-    await move.findByText("Door camera's 2 keys and 1 trusted address stop now. Kim makes a new key on Apps & keys."),
+    await move.findByText("Its 2 keys stop now and its trusted address is removed. Kim makes a new key on Apps & keys."),
   ).toBeVisible();
   await user.click(move.getByRole("button", { name: "Move app" }));
   await waitFor(() =>
@@ -142,4 +142,40 @@ it("moves a service app to another person after showing the plan it will have, t
   );
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Who does Door camera answer to?" })).toBeNull());
   await waitFor(() => expect(screen.queryByRole("list", { name: "Service apps that will stop" })).toBeNull());
+});
+
+async function pickInMove(counts: Record<string, unknown>, person: string) {
+  serve([app({ id: "door", name: "Door camera", ...counts })]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Remove person");
+  const removal = within(await screen.findByRole("dialog", { name: "Remove person?" }));
+  await user.click(await removal.findByRole("button", { name: "Move to another person first" }));
+  const move = within(await screen.findByRole("dialog", { name: "Who does Door camera answer to?" }));
+  await user.click(move.getByRole("combobox", { name: "Answers to" }));
+  await user.click(await screen.findByRole("option", { name: person }));
+  return move;
+}
+
+it("says nothing about stopping when the app has no keys and no trusted addresses", async () => {
+  const move = await pickInMove({ live_keys: 0, trusted_addresses: 0 }, "Kim");
+  expect(await move.findByTestId("handover-stops")).toHaveTextContent(/^Kim makes a new key on Apps & keys\.$/);
+});
+
+it("uses the singular for one key and the plural for several trusted addresses, and says only what applies", async () => {
+  const one = await pickInMove({ live_keys: 1, trusted_addresses: 0 }, "Kim");
+  expect(await one.findByTestId("handover-stops")).toHaveTextContent(/^Its key stops now\. Kim makes a new key/);
+  cleanup();
+  const many = await pickInMove({ live_keys: 0, trusted_addresses: 2 }, "Kim");
+  expect(await many.findByTestId("handover-stops")).toHaveTextContent(
+    /^Its 2 trusted addresses are removed\. Kim makes a new key/,
+  );
+});
+
+it("writes 'You' and 'your plan' when the person picked is the viewer", async () => {
+  const move = await pickInMove({ live_keys: 2, trusted_addresses: 0 }, "Avery");
+  expect(await move.findByTestId("handover-stops")).toHaveTextContent(
+    "Its 2 keys stop now. You make a new key on Apps & keys.",
+  );
+  expect(move.getByText("Door camera will run under your plan: Everything.")).toBeVisible();
 });
