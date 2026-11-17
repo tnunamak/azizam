@@ -137,3 +137,54 @@ def test_valid_reference_variant_matches_old_submission_without_a_handoff(world)
         assert world.engine.prompts["p1"] == world.engine.prompts["p2"]
 
     asyncio.run(drive())
+
+
+def test_missing_video_section_reads_the_same_configured_facts_as_the_old_handler(world):
+    from dataclasses import replace
+    from tests.support.config_snapshot import publish_section
+
+    original = proxy.WORKFLOW_SNAPSHOTS.current()
+    workflow_id = "video.generate.ltx-2.5-t2v"
+    chosen = original.get(workflow_id)
+    contract = {key: value for key, value in chosen.contract.items() if key != "video"}
+    from gateway.workflow_run import plain
+    enforce_contract(plain(contract))
+    changed = replace(chosen, contract=contract)
+
+    class Snapshot:
+        workflows = {**original.workflows, workflow_id: changed}
+
+        def __getattr__(self, name):
+            return getattr(original, name)
+
+        def get(self, key):
+            return changed if key == workflow_id else original.get(key)
+
+        def by_intent(self, intent):
+            return tuple(self.get(entry.id) for entry in original.by_intent(intent))
+
+    class Provider:
+        def current(self):
+            return Snapshot()
+
+    world.rig.set(proxy, "WORKFLOW_SNAPSHOTS", Provider())
+    world.rig.set(proxy, "_WORKFLOW_JOB_SPOOL", None)
+    videos = copy.deepcopy(proxy.config["videos"])
+    videos["workflows"]["video-ltx-2.5-t2v"].update(default_size="640x384", frame_rate=12)
+    publish_section(world.rig.monkeypatch, "videos", videos)
+    body = {"model": "ltx-2.5-t2v", "prompt": "same configured facts", "seed": 7}
+
+    async def drive():
+        old = await proxy.proxy_graph_video_create(
+            json_request(body), access_context(everything(media_metadata="none", receipt_detail="full")), body_override=body)
+        assert old.status_code == 200, old.body
+        response = await world.rig.call("POST", "/v1/videos", json_body=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"].startswith("video_mj_")
+        await submitted(world, 2)
+        left, right = (world.engine.prompts[key]["prompt"] for key in ("p1", "p2"))
+        assert left == right, {key: (left.get(key), right.get(key)) for key in left.keys() | right.keys() if left.get(key) != right.get(key)}
+        assert response.json()["size"] == "640x384"
+        assert world.engine.prompts["p2"]["prompt"]["23"]["inputs"]["value"] == 12
+
+    asyncio.run(drive())

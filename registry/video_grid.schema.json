@@ -6,7 +6,8 @@
   "additionalProperties": false,
   "required": [
     "stride_reasons",
-    "grid_defaults"
+    "grid_defaults",
+    "workflow_fact_source"
   ],
   "properties": {
     "stride_reasons": {
@@ -63,6 +64,30 @@
           }
         }
       }
+    },
+    "workflow_fact_source": {
+      "type": "object",
+      "required": [
+        "section",
+        "table",
+        "facts",
+        "roles"
+      ],
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "object"
+        },
+        "roles": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$defs": {

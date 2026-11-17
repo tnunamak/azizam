@@ -242,3 +242,36 @@ def resolve_size(requested: str | None, size: SizeSpec) -> tuple[int, int]:
     width, height = min(width, largest[0]), min(height, largest[1])
     multiple = max(1, int(size.multiple))
     return max(MINIMUM_SIDE, (width // multiple) * multiple), max(MINIMUM_SIDE, (height // multiple) * multiple)
+
+
+def workflow_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The configuration table declared as the source of legacy workflow facts."""
+    source = _DOCUMENT["workflow_fact_source"]
+    return (config.get(source["section"]) or {}).get(source["table"]) or {}
+
+
+def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> VideoManifest:
+    """Project the same configuration values and node-role bindings both create paths use."""
+    source = _DOCUMENT["workflow_fact_source"]
+    raw = {group: {name: config.get(rule["key"], rule["default"]) for name, rule in fields.items()}
+           for group, fields in source["facts"].items()}
+    roles = {role: item["input"] for role, item in configured_input_targets(config, contract).items()}
+    raw["roles"] = roles
+    return video_facts({"capability": "video", "video": raw})
+
+
+def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:
+    """The precise binding destinations named by the configuration's node roles."""
+    meta = config.get("node_roles") or {}
+    roles = {}
+    for role, rule in _DOCUMENT["workflow_fact_source"]["roles"].items():
+        nodes = next((meta[key] for key in rule["keys"] if meta.get(key)), [])
+        if isinstance(nodes, (list, tuple)) and "index" in rule:
+            nodes = nodes[rule["index"]:rule["index"] + 1]
+        nodes = nodes if isinstance(nodes, (list, tuple)) else [nodes]
+        for binding in (contract.get("bindings") or {}).values():
+            for name, targets in (binding.get("map") or {}).items():
+                if any(target.get("node") in nodes and target.get("input") in rule["fields"] for target in targets):
+                    roles[role] = {"input": name, "targets": [target for target in targets
+                        if target.get("node") in nodes and target.get("input") in rule["fields"]]}
+    return roles

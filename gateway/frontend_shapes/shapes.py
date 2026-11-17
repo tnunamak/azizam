@@ -558,6 +558,13 @@ class VideoHooks:
     """What a deployment adds to a video create: the model name it serves, the delivery rules it applies to the body and the
     prompt it remembers. The defaults do nothing; the main module installs a subclass in ``VIDEO_HOOKS`` at start."""
 
+    def run_options(self, chosen):
+        return {}
+
+    def facts(self, chosen):
+        from gateway import video_grid
+        return video_grid.video_facts(chosen)
+
     async def chain_request(self, request, body, row, chosen, public_model):
         """Prepare a declared chain run using the deployment's pinned planning data."""
         return _wire.error_response(503, "Chain planning is not configured")

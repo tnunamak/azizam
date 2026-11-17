@@ -13,6 +13,7 @@ from gateway import video_grid
 def document():
     return {
         "stride_reasons": {"default": "generic_stride", "by_step": {4: "selected_stride"}},
+        "workflow_fact_source": {"section": "videos", "table": "workflows", "facts": {}, "roles": {}},
         "grid_defaults": {
             "length_step": 4, "length_offset": 0, "minimum_side": 32,
             "size_when_unparsed": [512, 512],

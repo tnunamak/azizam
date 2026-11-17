@@ -365,10 +365,10 @@ def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_
         assert handoff.name == "videos.create" and handoff.body.get("prompt") == body.get("prompt")
 
 
-def test_a_manifest_without_a_video_block_is_left_to_the_legacy_handler() -> None:
+def test_a_manifest_without_video_facts_needs_a_configured_facts_source() -> None:
     plain = video_contract("bare")
     del plain["video"]
-    assert isinstance(read({"prompt": "x", "model": "bare"}, snap(plain)), _base.LegacyRoute)
+    assert read({"prompt": "x", "model": "bare"}, snap(plain)).status_code == 503
 
 
 def test_a_model_with_no_long_variant_refuses_shots_by_code_and_a_long_clip_by_its_range() -> None:

@@ -1408,7 +1408,7 @@ def _video_default_workflow() -> str:
 
 
 def _video_workflow_table() -> Mapping[str, Any]:
-    return _videos().get("workflows") or {}
+    return video_grid.workflow_config(runtime().config)
 
 
 def _video_remix_workflow() -> str | None:
@@ -12439,8 +12439,9 @@ async def _proxy_graph_video_create(
                                         code="invalid_workflow_extension")
 
     # Validate / clamp request inputs.
-    max_seconds = float(workflow_cfg.get("max_seconds", 8))
-    min_seconds = float(workflow_cfg.get("min_seconds", 1))
+    configured = video_grid.configured_facts(workflow_cfg, {})
+    max_seconds = float(configured.length.max_seconds)
+    min_seconds = float(configured.length.min_seconds)
     source_fps = source_probe.fps if source_probe is not None else None
     source_seconds = (
         source_probe.frames / source_probe.fps if source_probe is not None else None
@@ -12479,18 +12480,17 @@ async def _proxy_graph_video_create(
             media_type="application/json",
         )
 
-    size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
-    width, height = video_grid.resolve_size(size, video_grid.SizeSpec(
-        default="", max=workflow_cfg.get("max_size", "1280x720"), multiple=int(workflow_cfg.get("size_multiple", 32))))
+    size = size_from_body or configured.size.default
+    width, height = video_grid.resolve_size(size, configured.size)
     # The output keeps the source clip's frame rate for video-conditioned workflows.
-    frame_rate = float(source_fps or workflow_cfg.get("frame_rate", 25))
+    frame_rate = float(source_fps or configured.grid.fps)
     # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5; Wan: 4k+1).
-    length_step = int(workflow_cfg.get("length_step", 8))
+    length_step = configured.grid.step
     length = video_grid.seconds_to_length(
         seconds_val,
         frame_rate,
         step=length_step,
-        offset=int(workflow_cfg.get("length_offset", 1)),
+        offset=configured.grid.offset,
     )
     if source_probe is not None or workflow_cfg.get("max_length"):
         # Never ask for more frames than the source has, or than the model was tested at.
@@ -12498,7 +12498,7 @@ async def _proxy_graph_video_create(
         length = video_inputs.snap_length_down(
             length,
             step=length_step,
-            offset=int(workflow_cfg.get("length_offset", 1)),
+            offset=configured.grid.offset,
             available=min(
                 [v for v in (cap, source_probe.frames if source_probe is not None else None) if v]
                 or [length]
@@ -27810,6 +27810,16 @@ async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Vari
             graph.update(copy.deepcopy(built.graph))
 
         return node_graph_runner.Variant(composed, {})
+    targets = options.get("input_targets")
+    if targets is not None:
+        def configured(graph):
+            template = ctx.pin.graph()
+            for name, accepted in targets.items():
+                for target in (ctx.pin.binding.get("map") or {}).get(name, ()):
+                    if dict(target) not in accepted:
+                        node, field = target["node"], target["input"]
+                        graph[node]["inputs"][field] = copy.deepcopy(template[node]["inputs"][field])
+        return node_graph_runner.Variant(configured, {})
     media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
     if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
         return None
@@ -28097,6 +28107,32 @@ def _row_route_policy(path: str) -> dict[str, Any] | None:
 class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
     controls of the body, and the prompt memory."""
+
+    def run_options(self, chosen):
+        if video_grid.video_facts(chosen) is not None:
+            return {}
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen)) or {}
+        targets = video_grid.configured_input_targets(cfg, chosen.contract)
+        return {"input_targets": workflow_run.plain({item["input"]: item["targets"] for item in targets.values()})}
+
+    def facts(self, chosen):
+        found = video_grid.video_facts(chosen)
+        if found is not None:
+            return found
+        from dataclasses import replace
+        cfg = _video_workflow_table().get(frontend_video_create.short_name(chosen))
+        if cfg is None:
+            return None
+        found = video_grid.configured_facts(cfg, chosen.contract)
+        variants = {role: workflow_id_for_video_key(cfg[key]) for role, key in
+                    (("image", "i2v_workflow"), ("long", "chain_workflow")) if cfg.get(key)}
+        requires = {"image"} if cfg.get("requires_input_reference") else set()
+        if cfg.get("requires_extensions"):
+            requires.add("extensions")
+        if cfg.get("source_video_input"):
+            requires.add("source")
+        return replace(found, variants=variants, requires=frozenset(requires),
+                       select_subject=bool(cfg.get("subject_select")), chain=bool(cfg.get("builder")))
 
     async def chain_request(self, request, body, row, chosen, public_model):
         from dataclasses import asdict

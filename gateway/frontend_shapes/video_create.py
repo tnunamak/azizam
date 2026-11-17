@@ -157,10 +157,10 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                                                                    param="model", code="model_not_found"))
     if isinstance(chosen, Response):
         return chosen
-    manifest = video_grid.video_facts(chosen)
+    manifest = hooks.facts(chosen)
     reference = body.get("input_reference")
     if manifest is None or manifest.length is None:
-        return LegacyRoute(LEGACY_CREATE, body)
+        return refuse(503, "Video workflow facts are not configured", code="workflow_unavailable")
     if manifest.chain:
         return chosen, manifest, short_name(chosen), public_model
     if reference:
@@ -188,7 +188,7 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     if shots or (_beyond(seconds, limit) and manifest.variants.get("long")):
         if manifest.variants.get("long"):
             chosen = snapshot.get(manifest.variants["long"])
-            manifest = video_grid.video_facts(chosen)
+            manifest = hooks.facts(chosen)
             return chosen, manifest, short_name(chosen), public_model
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
                       param="shots", code="long_video_not_supported")
@@ -364,7 +364,7 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         facts[video_controls.AUDIO_CONTROL] = False
     if context is not None and context.requested_mode:
         facts["metadata_mode"] = context.requested_mode
-    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate}
+    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate, **hooks.run_options(chosen)}
     if audio_off:
         options[video_controls.AUDIO_CONTROL] = False
     request.state.video_facts = facts

@@ -9,3 +9,27 @@ stride_reasons:
   default: frame_count_stride
   by_step:
     8: ltx_latent_8np1_stride
+
+# Both create paths read these fields from the same current configuration rows.
+workflow_fact_source:
+  section: videos
+  table: workflows
+  facts:
+    size:
+      default: {key: default_size, default: 1280x720}
+      max: {key: max_size, default: 1280x720}
+      multiple: {key: size_multiple, default: 32}
+    length:
+      min_seconds: {key: min_seconds, default: 1}
+      max_seconds: {key: max_seconds, default: 8}
+    grid:
+      fps: {key: frame_rate, default: 25}
+      step: {key: length_step, default: 8}
+      offset: {key: length_offset, default: 1}
+  roles:
+    width: {keys: [width_node, size_node], index: 0, fields: [width, value]}
+    height: {keys: [height_node, size_node], index: 1, fields: [height, value]}
+    length: {keys: [length_nodes, length_node], fields: [length, value, frames_number]}
+    frame_rate: {keys: [frame_rate_nodes, frame_rate_node], fields: [frame_rate, value]}
+    image: {keys: [image_node], fields: [image]}
+    image_strength: {keys: [image_strength_node], fields: [value]}
