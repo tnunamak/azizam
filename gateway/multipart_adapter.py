@@ -131,13 +131,13 @@ def _send_timeout_s(config: Mapping[str, Any]) -> float:
     if value is None:
         return _DEFAULT_TIMEOUT_S
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}")
+        raise RunError(SERVICE_UNAVAILABLE, "capacity")
     try:
         timeout = float(value)
     except OverflowError as error:
-        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}") from error
+        raise RunError(SERVICE_UNAVAILABLE, "capacity") from error
     if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}")
+        raise RunError(SERVICE_UNAVAILABLE, "capacity")
     return timeout
 
 

@@ -134,6 +134,7 @@ from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.frontend_shapes import mesh as frontend_mesh_shapes
 from gateway.frontend_shapes import video_create as frontend_video_create
+from gateway.engine_protocol.errors import BudgetExceeded as ProtocolBudgetExceeded
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
     SERVICE_DISABLED, SERVICE_NOT_ADMITTING, SERVICE_REASONS, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
@@ -24373,6 +24374,11 @@ def _recover_media_jobs() -> None:
         result_bundle.startup_scan()
     except Exception as exc:  # noqa: BLE001 - a failed scan must not stop recovery; the next start runs it again
         _MEDIA_JOB_LOG.warning("result startup scan failed: %s", log_scrub.describe_error(exc))
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if (job.get("metadata") or {}).get("publication_pending"):
+            media_jobs.update_status(job["job_id"], media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
+            media_jobs.discard_failed(job["job_id"], path=media_jobs.DB_PATH)
+            receipt_store.close_orphan(str(job.get("request_id") or ""))
     _resume_pending_image_media_jobs()
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
@@ -25276,7 +25282,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 try:
                     response = await proxy_audio_generate(
                         request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
-                except result_bundle.ResultRefused:
+                except (result_bundle.ResultRefused, media_jobs.CancellationPending, _AudioEmptyResult):
                     published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
                     # Before this port, result validation followed successful generation's
                     # receipt. A delivery refusal after publication instead fails that request.
@@ -25291,8 +25297,11 @@ async def _run_audio_media_job(job_id: str) -> None:
                 await run_receipt_write(media_ingestion.finish_response, receipt, response)
             finally:
                 _ADMISSION_WORKER.reset(worker_token)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, media_jobs.CancellationPending):
             raise
+        except _AudioEmptyResult:
+            _mark_audio_media_job_failed(job_id, _AudioEmptyResult.message, http_status=200)
+            return
         except result_bundle.ResultRefused as error:
             published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
             if published.get("status") != media_jobs.STATUS_SUCCEEDED:
@@ -28718,6 +28727,18 @@ def _audio_wire_error(message: str, status: int = 502) -> _AudioWireResponse:
                                        status_code=status, media_type="application/json"))
 
 
+class _AudioEmptyResult(Exception):
+    message = "Audio generation succeeded but returned no reusable assets"
+
+
+def _audio_transport_failure_response(error, adapter):
+    if error.kind == "timeout":
+        return _audio_wire_error(f"{adapter.label} request timeout", 504).response
+    if error.kind == "unreachable":
+        return _audio_wire_error(adapter.unavailable_message(_graph_connection(capability=_AUDIO_GRAPH_CAPABILITY, probe=True))).response
+    return client_errors.client_error(502, "audio_failed", error_type="api_error")
+
+
 @dataclass
 class _PreparedAudioGeneration:
     """Prepared wire inputs; core owns submit/poll/publication, delivery follows publication."""
@@ -28754,7 +28775,7 @@ class _PreparedAudioGeneration:
 
     async def run(self, body):
         self.body = body
-        owns_job = not (self.receipt is not None and self.receipt.job_id)
+        self.owns_job = not (self.receipt is not None and self.receipt.job_id)
         if self.receipt is not None and self.receipt.job_id:
             self.job_id = self.receipt.job_id
         else:
@@ -28765,15 +28786,17 @@ class _PreparedAudioGeneration:
                 workflow=self.workflow_id, backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
                 app_profile=plan_ref(caller), app_id=caller.app_id if caller else None,
                 owner_key_hash=_asset_owner_key(self.auth_context), api_key_name=caller.name if caller else None,
-                metadata={"mode": "sync_media_route"})
+                metadata={"mode": "sync_media_route", "publication_pending": True})
             self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
         try:
             return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
-        except BaseException:
+        except media_jobs.CancellationPending:
+            raise
+        except Exception:
             current = media_jobs.get(self.job_id, audience="internal", path=media_jobs.DB_PATH)
             if current and current['status'] not in media_jobs.TERMINAL_STATUSES:
                 media_jobs.update_status(self.job_id, media_jobs.STATUS_FAILED, path=media_jobs.DB_PATH)
-                if owns_job:
+                if self.owns_job:
                     media_jobs.discard_failed(self.job_id, path=media_jobs.DB_PATH)
             raise
 
@@ -28786,18 +28809,26 @@ class _PreparedAudioGeneration:
     def poll_timing(self, op):
         return 0, 1200
 
+    def publication_options(self):
+        return {"add_assets": self.assets,
+                "metadata_patch": {"publication_pending": False} if self.owns_job else {}}
+
     def result_context(self):
         return ResultContext(result_bundle.limits_from_config(runtime().config))
 
     async def start(self, conn, op, request):
         from gateway.engine_protocol.types import Pending
-        response = await conn.submit(
-            _build_graph_submit_payload(self.workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID), headers=self.headers)
+        try:
+            response = await conn.submit(
+                _build_graph_submit_payload(self.workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID), headers=self.headers)
+        except TransportFailure as error:
+            raise _AudioWireResponse(_audio_transport_failure_response(error, self.graph_adapter)) from error
         if response.status != 200:
             raise _AudioWireResponse(client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=self.graph_adapter.label))
         prompt_id = response.json().get("prompt_id")
         if not prompt_id:
             raise _audio_wire_error("No prompt_id returned")
+        print(f"[proxy] Audio job submitted: workflow={self.workflow_name} id=audio_{prompt_id}", flush=True)
         return Pending(JobRef(op, prompt_id))
 
     async def poll(self, conn, ref):
@@ -28806,7 +28837,12 @@ class _PreparedAudioGeneration:
             raise _audio_wire_error("Audio generation timeout", 504)
         self.polls += 1
         await asyncio.sleep(2)
-        response = await conn.history(ref.id, headers=self.headers)
+        try:
+            response = await conn.history(ref.id, headers=self.headers)
+        except TransportFailure as error:
+            raise _AudioWireResponse(_audio_transport_failure_response(error, self.graph_adapter)) from error
+        except ProtocolUpstreamError as error:
+            raise _AudioWireResponse(client_errors.client_error(502, "audio_failed", error_type="api_error")) from error
         if response.status != 200 or ref.id not in response.json():
             return JobStatus(ref, JobState.pending)
         job = response.json()[ref.id]
@@ -28865,11 +28901,14 @@ class _PreparedAudioGeneration:
             self.receipt.resolved_model = self.workflow_name
             self.receipt.resolved_workflow = self.workflow_id
             assets = await asyncio.to_thread(media_ingestion.store_audio_response, self.content, self.content_type,
-                                            self.receipt, store_asset=store_asset_bytes)
+                                            self.receipt, store_asset=store_asset_bytes, limits=context.limits)
         else:
+            result_bundle.check_assets(context.limits, [len(self.content)])
             asset_id = await asyncio.to_thread(store_asset_bytes, self.content, kind=domain_rows.AUDIO,
                                               suffix=self.suffix, owner_key_hash=_asset_owner_key(self.auth_context))
             assets = [{"asset_id": asset_id, "media_type": self.content_type, "size_bytes": len(self.content)}]
+        if not assets:
+            raise _AudioEmptyResult()
         self.assets = assets
         return ResultBundle({self.selected_name: AssetsResult(tuple(
             AssetRef(item["asset_id"], item["media_type"], item.get("size_bytes", 0)) for item in assets))})
@@ -28884,7 +28923,6 @@ class _PreparedAudioGeneration:
                 parameters={**media_delivery.current().parameters, "type": self.audio_type, "duration": self.duration_value}))
 
     async def deliver(self, bundle):
-        media_jobs.update_status(self.job_id, media_jobs.STATUS_SUCCEEDED, add_assets=self.assets, path=media_jobs.DB_PATH)
         if not self.store_full:
             if media_delivery.current_mode() == provenance.METADATA_NONE:
                 self.content = await asyncio.to_thread(media_delivery.deliver_bytes, self.content, self.suffix, provenance.METADATA_NONE)
@@ -29085,8 +29123,15 @@ async def proxy_audio_generate(
     except _AudioWireResponse as error:
         return error.response
     except media_metadata.MediaMetadataError as error:
+        print(f"[proxy] audio metadata rewrite failed: {log_scrub.describe_error(error)}", flush=True)
         return Response(content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
                         status_code=502, media_type="application/json")
+    except media_jobs.CancellationPending:
+        raise
+    except _AudioEmptyResult:
+        if store_full:
+            raise
+        return _audio_wire_error(_AudioEmptyResult.message).response
     except result_bundle.ResultRefused:
         if store_full:
             # Keep the typed result refusal for the job executor; it already owns
@@ -29095,20 +29140,12 @@ async def proxy_audio_generate(
         return Response(content=json.dumps({"error": {"message": _RESULT_REFUSED, "type": "api_error",
                                                        "code": "result_refused"}}),
                         status_code=502, media_type="application/json")
-    except TransportFailure as e:
-        if e.kind == "timeout":
-            return Response(
-                content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
-                status_code=504,
-                media_type="application/json"
-            )
-        if e.kind == "unreachable":
-            return Response(
-                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(capability=_AUDIO_GRAPH_CAPABILITY, probe=True)), "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json"
-            )
+    except ProtocolBudgetExceeded as error:
+        if error.budget == "max_wait_s":
+            return _audio_wire_error("Audio generation timeout", 504).response
         return client_errors.client_error(502, "audio_failed", error_type="api_error")
+    except TransportFailure as error:
+        return _audio_transport_failure_response(error, adapter)
     except Exception as e:
         return client_errors.client_error(502, "audio_failed", error_type="api_error")
 

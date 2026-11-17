@@ -295,6 +295,7 @@ def store_audio_response(
     receipt: RouteReceipt,
     *,
     store_asset: Callable[..., str],
+    limits: Any = None,
 ) -> list[dict[str, Any]]:
     """Store and index a buffered audio response for a synchronous route."""
     if not content:
@@ -311,6 +312,9 @@ def store_audio_response(
         normalized_media_type = "audio/wav"
     provenance_record = _audio_provenance_record(receipt, normalized_media_type)
     stored = media_delivery.attach_provenance(stored, suffix, provenance_record)
+    if limits is not None:
+        from gateway import result_bundle
+        result_bundle.check_assets(limits, [len(stored)])
     asset_id = store_asset(
         stored,
         kind=asset_types.ASSET_PREFIX_BY_TOP_TYPE[_AUDIO_KIND],

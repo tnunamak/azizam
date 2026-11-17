@@ -86,3 +86,31 @@ def test_multipart_store_refusal_keeps_its_type_and_code_through_declared_run(tm
     assert caught.value.code == 'asset_too_large'
     assert stored == [content]
     assert result_bundle.bundle_summary(job.job_id, path=path) is None
+
+
+@pytest.mark.parametrize('code', [
+    'submission_unknown', 'service_unavailable', 'resource_unavailable',
+    'input_unavailable', 'result_not_kept', 'upstream_timeout',
+    'upstream_unavailable', 'upstream_error',
+])
+def test_start_refusal_keeps_code_and_client_message(tmp_path, monkeypatch, code):
+    from gateway.multipart_adapter import RunError
+
+    path = tmp_path / 'jobs.db'
+    media_jobs.init_db(path)
+    monkeypatch.setattr(media_jobs, 'DB_PATH', path)
+    job = media_jobs.create(media_jobs.MediaJob(intent='specimen.render'), path=path)
+    refusal = RunError(code, 'upstream', client_message='The service cannot run this request.')
+
+    async def start(conn, op, request):
+        raise refusal
+
+    runtime = SimpleNamespace(adapter=SimpleNamespace(interface_version=2, start=start),
+                              connection_for=lambda op: None, poll_timing=lambda op: (0, 1),
+                              request=lambda op, body: CanonicalRequest(op=op, body=body))
+    with pytest.raises(RunError) as caught:
+        asyncio.run(declared_operation_job.run(runtime, 'specimen.render', {}, job_id=job.job_id))
+    assert caught.value is refusal
+    assert caught.value.code == code
+    assert caught.value.client_message == 'The service cannot run this request.'
+    assert result_bundle.bundle_summary(job.job_id, path=path) is None

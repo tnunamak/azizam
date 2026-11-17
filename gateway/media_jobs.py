@@ -1570,6 +1570,8 @@ def get_many(
             for job_id, raw in rows:
                 data = _safe_loads(raw)
                 if isinstance(data, Mapping):
+                    if audience != "internal" and (data.get("metadata") or {}).get("publication_pending"):
+                        continue
                     out[job_id] = _filter_for_audience(_with_read_facts(conn, data), audience)
     return out
 
@@ -1596,6 +1598,8 @@ def get_by_request_id(
         if isinstance(data, Mapping):
             data = _with_read_facts(conn, data)
     if not isinstance(data, Mapping):
+        return None
+    if audience != "internal" and (data.get("metadata") or {}).get("publication_pending"):
         return None
     return _filter_for_audience(data, audience)
 
@@ -1626,7 +1630,8 @@ def recent(
     if app_ids is not None or owner_key_hashes is not None:
         if not app_ids and not owner_key_hashes:
             return []
-    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"]
+    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)",
+                          "COALESCE(json_extract(job_json, '$.metadata.publication_pending'), 0) = 0"]
     params: list[Any] = []
     if app_ids is not None or owner_key_hashes is not None:
         ownership = []
@@ -1872,6 +1877,7 @@ def active_count(*, app_id: str, intents: Iterable[str], path: Path = DB_PATH) -
         return conn.execute(
             "SELECT COUNT(*) FROM media_jobs WHERE status IN (?, ?) "
             "AND json_extract(job_json, '$.app_id') = ? "
+            "AND COALESCE(json_extract(job_json, '$.metadata.publication_pending'), 0) = 0 "
             f"AND intent IN ({','.join('?' for _ in intents)})",
             (STATUS_QUEUED, STATUS_RUNNING, app_id, *intents),
         ).fetchone()[0]

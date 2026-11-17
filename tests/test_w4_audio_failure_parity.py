@@ -28,12 +28,7 @@ def old_handlers():
 
 def observe(tmp_path, old, mode, case, capsys):
     with GatewayRig('audio-failure-parity', tmp_path) as rig:
-        base._audio_comfy(rig)
-        if old:
-            handler, worker = old_handlers()
-            rig.set(proxy, 'proxy_audio_generate', handler)
-        else:
-            worker = proxy._run_audio_media_job
+        base._audio_comfy(rig, strict=False)
         rig.set(proxy, '_schedule_audio_media_job', lambda job_id: rig.scheduled.append(job_id) or True)
         counters = {'submit': 0, 'history': 0, 'stored': 0}
         during = []
@@ -107,6 +102,12 @@ def observe(tmp_path, old, mode, case, capsys):
                 rig.set(media_ingestion, 'store_audio_response', lambda *args, **kwargs: [])
             else:
                 rig.set(proxy.audio_media_jobs, 'audio_artifacts_from_result', lambda *args, **kwargs: [])
+
+        if old:
+            handler, worker = old_handlers()
+            rig.set(proxy, "proxy_audio_generate", handler)
+        else:
+            worker = proxy._run_audio_media_job
 
         async def drive():
             nonlocal job_id
