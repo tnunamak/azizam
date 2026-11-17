@@ -171,7 +171,8 @@
                   "$ref": "#/$defs/factRule",
                   "properties": {
                     "default": {
-                      "type": "integer"
+                      "type": "integer",
+                      "minimum": 1
                     }
                   }
                 },

@@ -49,6 +49,9 @@ def _checked_fact_rules(document: Mapping[str, Any]) -> Mapping[str, Any]:
             for key in ("key", "default"):
                 if key not in rule:
                     raise ValueError(f"{path}.{key}: missing field")
+    step = facts["grid"]["step"]["default"]
+    if type(step) is not int or step <= 0:
+        raise ValueError("workflow_fact_source.facts.grid.step.default must be a positive integer")
     for name, rule in (source.get("roles") or {}).items():
         for key in ("keys", "fields"):
             if not isinstance(rule.get(key), list) or not rule[key]:

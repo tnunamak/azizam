@@ -182,3 +182,18 @@ def test_fact_groups_and_keys_fail_at_load_even_without_schema_validation(tmp_pa
     monkeypatch.setattr(video_grid, "_DOCUMENT", data)
     with pytest.raises(ValueError, match=path_name):
         video_grid.configured_facts({}, {})
+
+
+def test_zero_workflow_step_default_is_rejected_at_load(tmp_path, monkeypatch):
+    data = document()
+    data["workflow_fact_source"]["facts"]["grid"]["step"]["default"] = 0
+    path = tmp_path / "zero-workflow-step.yml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match="step"):
+        video_grid.load_stride_reasons(path)
+    monkeypatch.setattr(video_grid.jsonschema.Draft202012Validator, "validate", lambda *_: None)
+    with pytest.raises(ValueError, match="workflow_fact_source.facts.grid.step.default"):
+        video_grid.load_stride_reasons(path)
+    monkeypatch.setattr(video_grid, "_DOCUMENT", data)
+    with pytest.raises(ValueError, match="workflow_fact_source.facts.grid.step.default"):
+        video_grid.configured_facts({}, {})
