@@ -25276,6 +25276,13 @@ async def _run_audio_media_job(job_id: str) -> None:
                 try:
                     response = await proxy_audio_generate(
                         request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
+                except result_bundle.ResultRefused:
+                    published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+                    # Before this port, result validation followed successful generation's
+                    # receipt. A delivery refusal after publication instead fails that request.
+                    status = 502 if published.get("status") == media_jobs.STATUS_SUCCEEDED else 200
+                    await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=status)
+                    raise
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
@@ -25286,6 +25293,11 @@ async def _run_audio_media_job(job_id: str) -> None:
                 _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
             raise
+        except result_bundle.ResultRefused as error:
+            published = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+            if published.get("status") != media_jobs.STATUS_SUCCEEDED:
+                _fail_refused_result(job_id, error, 200)
+            return
         except generated_defaults.GeneratedValueUnavailable as exc:
             # The job's stored value is erased or unreadable: it never runs, and nothing draws another.
             _mark_audio_media_job_failed(job_id, _GENERATED_UNAVAILABLE_MESSAGE[exc.erased], http_status=500,
@@ -29218,7 +29230,7 @@ class _PreparedAudioGeneration:
             asset_id = await asyncio.to_thread(store_asset_bytes, self.content, kind=domain_rows.AUDIO,
                                               suffix=self.suffix, owner_key_hash=_asset_owner_key(self.auth_context))
             assets = [{"asset_id": asset_id, "media_type": self.content_type, "size_bytes": len(self.content)}]
-        media_jobs.update_status(self.job_id, media_jobs.STATUS_RUNNING, add_assets=assets, path=media_jobs.DB_PATH)
+        self.assets = assets
         return ResultBundle({self.selected_name: AssetsResult(tuple(
             AssetRef(item["asset_id"], item["media_type"], item.get("size_bytes", 0)) for item in assets))})
 
@@ -29232,6 +29244,7 @@ class _PreparedAudioGeneration:
                 parameters={**media_delivery.current().parameters, "type": self.audio_type, "duration": self.duration_value}))
 
     async def deliver(self, bundle):
+        media_jobs.update_status(self.job_id, media_jobs.STATUS_SUCCEEDED, add_assets=self.assets, path=media_jobs.DB_PATH)
         if not self.store_full:
             if media_delivery.current_mode() == provenance.METADATA_NONE:
                 self.content = await asyncio.to_thread(media_delivery.deliver_bytes, self.content, self.suffix, provenance.METADATA_NONE)
@@ -29434,6 +29447,14 @@ async def proxy_audio_generate_declared(
         return error.response
     except media_metadata.MediaMetadataError as error:
         return Response(content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
+                        status_code=502, media_type="application/json")
+    except result_bundle.ResultRefused:
+        if store_full:
+            # Keep the typed result refusal for the job executor; it already owns
+            # the legacy classification and completion-receipt semantics.
+            raise
+        return Response(content=json.dumps({"error": {"message": _RESULT_REFUSED, "type": "api_error",
+                                                       "code": "result_refused"}}),
                         status_code=502, media_type="application/json")
     except TransportFailure as e:
         if e.kind == "timeout":

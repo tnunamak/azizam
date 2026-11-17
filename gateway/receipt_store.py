@@ -436,6 +436,12 @@ def finalize(
             merged.update(dict.fromkeys((*PHASE_FIELDS, "attempt_number")))
         if merged.get("attempt_number") is not None and merged.get("finished_at_ms") is None:
             merged["finished_at_ms"] = data["updated_at_ms"]
+        linked_metadata = accepted.get("metadata")
+        if isinstance(linked_metadata, Mapping) and "result_bundle" in linked_metadata:
+            # Publication owns this field. A request's in-memory receipt can predate
+            # the link, so terminalizing it must not erase or replace the stored summary.
+            merged["metadata"] = {**(merged.get("metadata") or {}),
+                                  "result_bundle": linked_metadata["result_bundle"]}
         cost = accepted.get("cost")
         if isinstance(cost, Mapping) and cost.get("reconciliation_status") == "settled":
             # A reconciled cost recorded before the terminal write outranks the caller's estimate.
