@@ -8586,7 +8586,7 @@ async def _graph_run_round(
         admit = getattr(adapter, "admit_prompt", None)
         if admit is not None:
             await admit(submit_payload, host_memory_admission.Ask(
-                app_id=getattr(getattr(getattr(request, "state", None), "caller", None), "app_id", None)))
+                auth_kind=getattr(getattr(getattr(request, "state", None), "caller", None), "auth_kind", None)))
     except host_memory_admission.HostMemoryBusy:
         await _finalize_probe()
         return host_memory_admission.busy_response(), []

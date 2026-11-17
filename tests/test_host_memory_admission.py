@@ -259,7 +259,7 @@ def test_a_job_that_waits_longer_than_a_request_may_is_not_refused_but_a_request
         run(other.admit(graph("big.safetensors"), hma.Ask(bounded=True)))
 
 
-def test_a_test_key_request_waits_behind_a_person_and_uses_the_larger_margin(tmp_path):
+def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(tmp_path):
     weights(tmp_path, "a.safetensors", 10_000)
     weights(tmp_path, "b.safetensors", 10_000)
     clock = Clock()
@@ -270,18 +270,18 @@ def test_a_test_key_request_waits_behind_a_person_and_uses_the_larger_margin(tmp
         clock.now += seconds
         await asyncio.sleep(0)
 
-    made = hma.HostMemoryAdmission(policy(tmp_path, background_apps=("app_bg",), settle_s=3.0), read_available=host,
+    made = hma.HostMemoryAdmission(policy(tmp_path, background_auth_kinds=("service_key",), settle_s=3.0), read_available=host,
                                    sleep=sleep, clock=clock)
     order = []
 
     async def ask(label, model, app_id):
-        await made.admit(graph(model), hma.Ask(app_id=app_id, bounded=False))
+        await made.admit(graph(model), hma.Ask(auth_kind=app_id, bounded=False))
         order.append((label, clock.now))
 
     async def go():
-        background = asyncio.ensure_future(ask("background", "b.safetensors", "app_bg"))   # asked first
+        background = asyncio.ensure_future(ask("background", "b.safetensors", "service_key"))   # asked first
         await asyncio.sleep(0)
-        person = asyncio.ensure_future(ask("person", "a.safetensors", "app_person"))
+        person = asyncio.ensure_future(ask("person", "a.safetensors", "app_key"))
         await asyncio.gather(background, person)
 
     run(go())

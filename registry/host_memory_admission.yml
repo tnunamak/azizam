@@ -22,8 +22,9 @@ model_extensions: [.safetensors, .gguf, .ckpt, .pt, .pth, .bin, .sft]
 # Directories that hold the model files; empty: none known, so no prompt has a known size and none waits. The engine
 # directory named by the environment variable below (its models folder and the base paths of its extra-paths file) adds to this list.
 model_roots: []
-# App ids whose requests yield to every other request (test lanes, batch agents). Empty: every request is equal.
-background_apps: []
+# Credential kinds (RuntimeIdentity.auth_kind) whose requests yield to every other request and use the larger margin. A
+# service App's key has no person behind it; a session, a personal App key and an MCP grant do. Empty: every request is equal.
+background_auth_kinds: [service_key]
 # The environment variable that names the engine's directory, the folder under it that holds models, and the engine's own
 # file of further model directories (a mapping whose sections may name a base_path).
 engine_dir_env: AZIZAM_COMFY_DIR

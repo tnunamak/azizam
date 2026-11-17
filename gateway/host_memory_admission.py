@@ -10,7 +10,7 @@ found counts for nothing; a prompt with no sized model is admitted without a loo
 gateway sent it within ``resident_ttl_s`` and the engine's models were not freed since; residency the gateway cannot show is
 treated as not resident.
 
-A person's request is admitted before background work (``background_apps``, which also uses the larger margin); within a
+A request with a person behind it is admitted before service-key work (``background_auth_kinds``, which also uses the larger margin); within a
 class the order is first come, first served. A synchronous request waits ``wait_s`` and then gets the retryable busy answer.
 A job waits up to ``job_wait_s`` and reports its wait to the caller through ``Ask.on_wait``.
 """
@@ -36,10 +36,9 @@ BUSY_CODE = "resource_unavailable"
 WAITING_PHASE = "waiting_for_memory"
 _DECLARATION = Path(__file__).resolve().parents[1] / "registry" / "host_memory_admission.yml"
 _KEYS = {"schema_version", "margin_gb", "background_margin_gb", "wait_s", "job_wait_s", "poll_s", "report_s", "settle_s",
-         "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "background_apps", "engine_dir_env",
+         "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "background_auth_kinds", "engine_dir_env",
          "engine_models_folder", "engine_extra_paths_file"}
-ENV_MARGIN, ENV_WAIT, ENV_ROOTS, ENV_BACKGROUND = ("AZIZAM_HOST_MEMORY_MARGIN_GB", "AZIZAM_HOST_MEMORY_WAIT_S",
-                                                   "AZIZAM_HOST_MEMORY_MODEL_ROOTS", "AZIZAM_HOST_MEMORY_BACKGROUND_APPS")
+ENV_MARGIN, ENV_WAIT, ENV_ROOTS = ("AZIZAM_HOST_MEMORY_MARGIN_GB", "AZIZAM_HOST_MEMORY_WAIT_S", "AZIZAM_HOST_MEMORY_MODEL_ROOTS")
 
 
 @dataclass(frozen=True)
@@ -55,10 +54,10 @@ class HostMemoryPolicy:
     retry_after_s: int = 30
     model_extensions: tuple[str, ...] = (".safetensors",)
     model_roots: tuple[str, ...] = ()
-    background_apps: tuple[str, ...] = ()
+    background_auth_kinds: tuple[str, ...] = ()
 
-    def is_background(self, app_id: str | None) -> bool:
-        return bool(app_id) and app_id in self.background_apps
+    def is_background(self, auth_kind: str | None) -> bool:
+        return bool(auth_kind) and auth_kind in self.background_auth_kinds
 
 
 def _engine_roots(directory: str, models_folder: str, extra_file: str) -> list[str]:
@@ -87,14 +86,13 @@ def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
     if engine_dir:
         roots += [r for r in _engine_roots(engine_dir, str(document["engine_models_folder"]),
                                            str(document["engine_extra_paths_file"])) if r not in roots]
-    background = [a.strip() for a in (env.get(ENV_BACKGROUND) or "").split(",") if a.strip()] or list(document["background_apps"])
     return HostMemoryPolicy(
         margin_bytes=int(margin_gb * GIB), background_margin_bytes=int(float(document["background_margin_gb"]) * GIB),
         wait_s=float(env.get(ENV_WAIT) or document["wait_s"]), job_wait_s=float(document["job_wait_s"]),
         poll_s=float(document["poll_s"]), report_s=float(document["report_s"]), settle_s=float(document["settle_s"]),
         resident_ttl_s=float(document["resident_ttl_s"]), retry_after_s=int(document["retry_after_s"]),
         model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots),
-        background_apps=tuple(background))
+        background_auth_kinds=tuple(str(k) for k in document["background_auth_kinds"]))
 
 
 def read_mem_available() -> int | None:
@@ -141,7 +139,7 @@ def wait_event(state: WaitState | None) -> dict[str, Any]:
 class Ask:
     """Who asks and how long it may wait. ``bounded``: a synchronous request, which gets the busy answer at ``wait_s``."""
 
-    app_id: str | None = None
+    auth_kind: str | None = None
     bounded: bool = True
     on_wait: Callable[[WaitState | None], Any] | None = None
 
@@ -227,7 +225,7 @@ class HostMemoryAdmission:
         if staged == 0:
             self._loaded.update(dict.fromkeys(names, now))
             return
-        background = policy.is_background(ask.app_id)
+        background = policy.is_background(ask.auth_kind)
         margin = policy.background_margin_bytes if background else policy.margin_bytes
         limit = policy.wait_s if ask.bounded else policy.job_wait_s
         waiter = _Waiter(background, next(self._ticket))
