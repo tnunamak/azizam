@@ -37,6 +37,7 @@ from gateway import decision_engine
 
 DEFAULT_REQUEST_TIMEOUT_S = 15.0
 MIN_UPSTREAM_TIMEOUT_S = 0.001
+MAX_REQUEST_BYTES = 1024 * 1024
 
 
 class DecisionThreadingHTTPServer(ThreadingHTTPServer):
@@ -363,6 +364,7 @@ class Handler(BaseHTTPRequestHandler):
     llama_process: subprocess.Popen[Any] | None = None
     request_lock = threading.Lock()
     admission = threading.BoundedSemaphore(5)
+    max_request_body_bytes = MAX_REQUEST_BYTES
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
@@ -409,14 +411,45 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         try:
-            length = int(self.headers.get("content-length") or "0")
+            raw_lengths = self.headers.get_all("content-length") or []
+            limit = self.max_request_body_bytes
             try:
-                body = json.loads(self.rfile.read(length) or b"{}")
+                if self.headers.get("transfer-encoding") is not None:
+                    raise ValueError("transfer-encoding framing is not accepted")
+                values = [part.strip() for field in raw_lengths for part in field.split(",")]
+                if not values:
+                    values = ["0"]
+                normalized = []
+                for value in values:
+                    if not value.isascii() or not value.isdecimal():
+                        raise ValueError("invalid content length")
+                    normalized.append(value.lstrip("0") or "0")
+                value = normalized[0]
+                if any(other != value for other in normalized[1:]):
+                    raise ValueError("conflicting content lengths")
+                # Compare the digit count before int(), including headers beyond
+                # Python's integer-conversion limit.
+                length = limit + 1 if len(value) > len(str(limit)) else int(value)
+            except ValueError:
+                # Unread framing must never become a subsequent request.
+                self.close_connection = True
+                self._json(400, decision_engine.error_body(
+                    "Content-Length must be a non-negative integer.", code="invalid_request",
+                ))
+                return
+            if length > limit:
+                self._json(413, decision_engine.error_body(
+                    "Request body is too large.", code="request_too_large",
+                ))
+                return
+            started = time.perf_counter()
+            deadline = _request_deadline(self.headers.get("x-decision-deadline-ms"))
+            try:
+                body = json.loads(self._read_request_body(deadline, length) or b"{}")
             except json.JSONDecodeError:
                 raise decision_engine.DecisionInputError("Request body must be valid JSON.", code="invalid_json")
             req = decision_engine.parse_request(body)
-            started = time.perf_counter()
-            deadline = _request_deadline(self.headers.get("x-decision-deadline-ms"))
+            _raise_if_stopped(deadline, None)
             if not _acquire_until(self.request_lock, deadline, self._client_disconnected):
                 raise DecisionDeadlineExceeded("decision deadline exceeded")
             try:
@@ -452,6 +485,32 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, decision_engine.error_body(str(exc), code="decision_engine_error", kind="server_error"))
         finally:
             self.admission.release()
+
+    def _read_request_body(self, deadline: float, length: int) -> bytes:
+        """Read exactly ``length`` validated body bytes before ``deadline``."""
+        # Unread or timed-out framing must never become a subsequent request.
+        self.close_connection = True
+        chunks = []
+        remaining_bytes = length
+        previous_timeout = self.connection.gettimeout()
+        try:
+            while remaining_bytes:
+                _raise_if_stopped(deadline, None)
+                self.connection.settimeout(max(MIN_UPSTREAM_TIMEOUT_S, deadline - time.monotonic()))
+                try:
+                    # read1 performs at most one raw read: trickle traffic cannot
+                    # restart a full buffered-read timeout indefinitely.
+                    chunk = self.rfile.read1(min(65536, remaining_bytes))
+                except TimeoutError as exc:
+                    raise DecisionDeadlineExceeded("decision deadline exceeded") from exc
+                if not chunk:
+                    raise DecisionCancelled("client disconnected")
+                chunks.append(chunk)
+                remaining_bytes -= len(chunk)
+            _raise_if_stopped(deadline, None)
+            return b"".join(chunks)
+        finally:
+            self.connection.settimeout(previous_timeout)
 
     def _client_disconnected(self) -> bool:
         return _socket_disconnected(self.connection)

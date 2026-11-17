@@ -131,7 +131,8 @@ export function newCard(kind: PrimitiveKind): AdjustmentCard {
 
 /** Keep the stored phase key as it was; add one only when it is not the default. */
 function withPhase(out: Stored, phase: Phase, orig: Stored): Stored {
-  if ("phase" in orig || phase !== "request") out.phase = phase;
+  if (phase !== phaseOf(orig)) out.phase = phase;
+  else if ("phase" in orig) out.phase = orig.phase;
   return out;
 }
 
@@ -140,7 +141,10 @@ function typedValue(row: PairRow, parse: boolean): unknown {
   if (row.orig !== undefined && valueText(row.orig) === row.b) return row.orig;
   if (!parse) return row.b;
   const text = row.b.trim();
-  if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const number = Number(text);
+    return Number.isFinite(number) ? number : row.b;
+  }
   if (text === "true") return true;
   if (text === "false") return false;
   return row.b;
@@ -153,10 +157,12 @@ function numberText(text: string, stored: unknown): number | undefined {
 }
 
 function mapFrom(rows: PairRow[], parse: boolean): Stored {
-  const out: Stored = {};
   // A loaded row keeps its key even when it is empty; a new empty row is left out.
-  for (const row of rows) if (row.a.trim() || row.orig !== undefined) out[row.a] = typedValue(row, parse);
-  return out;
+  return Object.fromEntries(
+    rows
+      .filter((row) => row.a.trim() || row.orig !== undefined)
+      .map((row) => [row.a, typedValue(row, parse)]),
+  );
 }
 
 const NUMBER = /^-?\d+(\.\d+)?$/;
@@ -164,8 +170,11 @@ const NUMBER = /^-?\d+(\.\d+)?$/;
 /** What stops the adjustment from saving, in plain words; null when it can save. */
 export function cardProblem(card: AdjustmentCard): string | null {
   if (card.kind === "clamp") {
-    if ([card.min, card.max].some((x) => x.trim() !== "" && !NUMBER.test(x.trim()))) return "Type the minimum and the maximum as numbers, for example 0 and 1.";
+    if ([card.min, card.max].some((x) => x.trim() !== "" && (!NUMBER.test(x.trim()) || !Number.isFinite(Number(x))))) return "Type the minimum and the maximum as numbers, for example 0 and 1.";
     if (card.min.trim() === "" && card.max.trim() === "") return "Type a minimum, a maximum, or both.";
+    if (card.min.trim() !== "" && card.max.trim() !== "" && Number(card.min) > Number(card.max)) {
+      return "The minimum must not be more than the maximum.";
+    }
   }
   return null;
 }

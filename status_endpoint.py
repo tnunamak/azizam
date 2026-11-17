@@ -42,6 +42,7 @@ import httpx
 import yaml
 
 from gateway import engine_egress, engine_record_defaults, lifecycle_drivers, service_priority, service_registry, status_words
+from gateway import gpu_observation
 from gateway import http_tls
 from gateway.engine_protocol import reviewed as reviewed_adapters
 from gateway.resource_awareness import ResourceObserver, age_resource_view
@@ -830,48 +831,7 @@ def _gpus_raw() -> Optional[list[dict]]:
     includes kernel/driver overhead and display surfaces, not just compute
     apps), so attribution can compute unattributed = total − sum(apps).
     """
-    rc, out, _err = _run([
-        "nvidia-smi",
-        "--query-gpu="
-        "index,uuid,name,memory.used,memory.total,utilization.gpu,"
-        "temperature.gpu,power.draw,power.limit,power.default_limit,power.max_limit,"
-        "clocks.gr,clocks.mem,fan.speed,clocks_throttle_reasons.active,"
-        "pcie.link.gen.current,pcie.link.gen.max,"
-        "pcie.link.width.current,pcie.link.width.max",
-        "--format=csv,noheader,nounits",
-    ])
-    if rc != 0 or not out.strip():
-        return None
-    gpus: list[dict] = []
-    for line in out.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 19:
-            continue
-        try:
-            gpus.append({
-                "index": int(parts[0]),
-                "uuid": parts[1],
-                "name": parts[2],
-                "memory_used_mb": int(parts[3]),
-                "memory_total_mb": int(parts[4]),
-                "instantaneous_util_pct": _safe_int(parts[5]),
-                "temp_c": _safe_int(parts[6]),
-                "power_draw_w": _safe_float(parts[7]),
-                "power_limit_w": _safe_float(parts[8]),
-                "power_default_limit_w": _safe_float(parts[9]),
-                "power_max_limit_w": _safe_float(parts[10]),
-                "clocks_gr_mhz": _safe_int(parts[11]),
-                "clocks_mem_mhz": _safe_int(parts[12]),
-                "fan_speed_pct": _safe_int(parts[13]),
-                "throttle_reasons_hex": parts[14],
-                "pcie_link_gen": _safe_int(parts[15]),
-                "pcie_link_gen_max": _safe_int(parts[16]),
-                "pcie_link_width": _safe_int(parts[17]),
-                "pcie_link_width_max": _safe_int(parts[18]),
-            })
-        except ValueError:
-            continue
-    return gpus or None
+    return gpu_observation.observe(_run)
 
 
 def _safe_int(s: str) -> Optional[int]:
@@ -901,46 +861,22 @@ def _graph_record(config: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
 
 
 async def _graph_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:
-    async def _get(client, url):
-        try:
-            r = await client.get(url, extensions=engine_egress.probe())
-            return r.json() if r.status_code == 200 else None
-        except Exception:
-            return None
+    from gateway.engine_protocol.adapter import observe
+    from gateway.engine_protocol.types import Connection
 
     graph = _graph_record(config)
     origin = _configured_engine_base(graph)
-    if not origin:  # the record names no address: the graph engine is not configured
+    if not origin:
         return None, None
     try:
+        adapter = reviewed_adapters.adapter_for_backend(graph, _GRAPH_CAPABILITY)
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
-            queue, stats = await asyncio.gather(
-                _get(client, service_registry.join_base_path(origin, "/queue")),
-                _get(client, service_registry.join_base_path(origin, "/system_stats")),
-            )
-        if isinstance(queue, dict):
-            running = queue.get("queue_running") or []
-            pending = queue.get("queue_pending") or []
-            running_ids = []
-            for q in running:
-                if isinstance(q, list) and len(q) >= 2:
-                    running_ids.append(q[1])
-            pending_ids = []
-            for q in pending:
-                if isinstance(q, list) and len(q) >= 2:
-                    pending_ids.append(q[1])
-            queue_summary = {
-                "running": len(running),
-                "pending": len(pending),
-                "running_ids": running_ids,
-                "pending_ids": pending_ids,
-            }
-        else:
-            queue_summary = None
-        return queue_summary, stats if isinstance(stats, dict) else None
+            observation = await observe(adapter, Connection(address=origin), client=client)
+        if observation is None:
+            return None, None
+        return observation["queue"], observation
     except Exception:
         return None, None
-
 
 async def _gpu_workloads(
     gpus: Optional[list[dict]],
@@ -949,11 +885,13 @@ async def _gpu_workloads(
 ) -> Optional[list[dict]]:
     if gpus is None:
         return None
+    devices = {row["index"]: row for row in gpu_observation.status_devices(_GRAPH_WORDS)}
     out: list[dict] = []
     for g in gpus:
         idx = g.get("index")
-        workload: dict[str, Any] = {"label": "idle", "detail": None}
-        if idx == 0:
+        device = devices.get(idx, {})
+        workload: dict[str, Any] = {"label": "unknown", "detail": "device role not configured"}
+        if device.get("workload") == "queue":
             if graph_queue is None:
                 workload = {"label": "unknown", "detail": _GRAPH_WORDS["label"].lower() + " queue unavailable"}
             else:
@@ -973,22 +911,24 @@ async def _gpu_workloads(
                         "running": running,
                         "pending": pending,
                     }
-        elif idx == 1:
+        elif device.get("workload") == "slots":
+            workload_label = next(role["label"] for role in device["roles"]
+                                  if role["key"] == device["workload_role"])
             if slots is not None:
                 active = [s for s in slots if isinstance(s, dict) and s.get("is_processing")]
                 total = len(slots)
                 workload = {
                     "label": "processing" if active else "loaded",
-                    "detail": f"LLM: {len(active)} active / {total} slots",
+                    "detail": f"{workload_label}: {len(active)} active / {total} slots",
                     "active_slots": len(active),
                     "total_slots": total,
                 }
             else:
                 used_mb = int(g.get("memory_used_mb") or 0)
                 if used_mb > 5 * 1024:
-                    workload = {"label": "loaded", "detail": "LLM: model resident (slots endpoint unavailable)"}
+                    workload = {"label": "loaded", "detail": f"{workload_label}: model resident (slots endpoint unavailable)"}
                 else:
-                    workload = {"label": "idle", "detail": "LLM: no model resident"}
+                    workload = {"label": "idle", "detail": f"{workload_label}: no model resident"}
         out.append({**g, "active_workload": workload})
     return out
 
@@ -1326,6 +1266,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
     """
     if not gpus:
         return {"per_gpu": [], "errors": ["gpus unavailable"]}
+    buckets = gpu_observation.attribution_buckets()
     compute_diagnostics: dict = {}
     apps = _get_compute_apps(diagnostics=compute_diagnostics)
     pid_to_service: dict[int, str] = {}
@@ -1362,18 +1303,18 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         if idx is None:
             continue
         pid = app["pid"]
-        svc = pid_to_service.get(pid, "desktop")
+        svc = pid_to_service.get(pid, buckets["unowned"])
         per_gpu_svc[idx][svc] += app["used_mb"]
 
         if (
-            svc != "desktop"
+            svc != buckets["unowned"]
             and pid in pid_primary_gpu
             and pid_primary_gpu[pid] != idx
         ):
             spillover_flags[idx][svc] = True
             spillover_primary[idx][svc] = pid_primary_gpu[pid]
 
-        if svc == "desktop":
+        if svc == buckets["unowned"]:
             desktop_top[idx].append({
                 "pid": pid,
                 "used_mb": app["used_mb"],
@@ -1386,13 +1327,14 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
     # A backend names its budget line with `vram_budget_key` (a gpu_budget.sh
     # variable, e.g. GPU1_LLM) in its own config; the generic buckets are fixed.
     backends = (config or {}).get("backends") or {}
+    devices = {row["index"]: row for row in gpu_observation.status_devices(_GRAPH_WORDS)}
     generic_budget_keys = {
-        (0, "desktop"): "GPU0_DESKTOP", (0, "__headroom"): "GPU0_HEADROOM",
-        (1, "__headroom"): "GPU1_HEADROOM",
+        (row["index"], role["bucket"]): role["source"]
+        for row in devices.values() for role in row["roles"] if role.get("bucket")
     }
 
     def budget_for(idx: int, svc: str) -> Optional[int]:
-        if not budget:
+        if not budget or idx not in devices:
             return None
         cfg = backends.get(svc)
         key = cfg.get("vram_budget_key") if isinstance(cfg, Mapping) else generic_budget_keys.get((idx, svc))
@@ -1432,7 +1374,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
             if is_spillover:
                 row["spillover_from_gpu"] = spillover_primary.get(idx, {}).get(svc)
                 row["note"] = "tensor-split spillover"
-            if svc == "desktop":
+            if svc == buckets["unowned"]:
                 tops = sorted(desktop_top.get(idx, []), key=lambda x: -x["used_mb"])[:5]
                 row["top_contributors"] = tops
             services.append(row)
@@ -1441,7 +1383,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         # Synthesized rows.
         unattributed_mb = max(0, total_used_mb - accounted_mb)
         services.append({
-            "service": "__unattributed",
+            "service": buckets["unattributed"],
             "used_mb": unattributed_mb,
             "used_gb": round(unattributed_mb / 1024.0, 2),
             "budget_gb": None,
@@ -1452,7 +1394,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         })
 
         headroom_mb = max(0, total_mb - total_used_mb)
-        headroom_budget_gb = budget_for(idx, "__headroom")
+        headroom_budget_gb = budget_for(idx, buckets["headroom"])
         headroom_pct = (
             ((headroom_mb / 1024.0) / float(headroom_budget_gb) * 100.0)
             if (headroom_budget_gb and headroom_budget_gb > 0) else None
@@ -1463,7 +1405,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
             and (headroom_mb / 1024.0) < float(headroom_budget_gb) - 0.5
         )
         services.append({
-            "service": "__headroom",
+            "service": buckets["headroom"],
             "used_mb": headroom_mb,
             "used_gb": round(headroom_mb / 1024.0, 2),
             "budget_gb": headroom_budget_gb,
@@ -1476,10 +1418,10 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
 
         total_budget_gb = None
         if budget:
-            scope = budget.get("gpu0" if idx == 0 else "gpu1") or {}
+            scope = budget.get(devices[idx]["budget_key"]) or {} if idx in devices else {}
             total_budget_gb = scope.get("total_gb")
         services.append({
-            "service": "__total",
+            "service": buckets["total"],
             "used_mb": total_used_mb,
             "used_gb": round(total_used_mb / 1024.0, 2),
             "budget_gb": total_budget_gb,
@@ -1491,6 +1433,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
 
         out_gpus.append({
             "index": idx,
+            **({"role": "unknown"} if idx not in devices else {}),
             "uuid": g.get("uuid"),
             "memory_used_mb": total_used_mb,
             "memory_total_mb": total_mb,
@@ -1526,10 +1469,8 @@ def _read_gpu_budget() -> Optional[dict]:
         _BUDGET_CACHE["ts"] = now
         return None
 
-    keys_of_interest = {
-        "GPU_TOTAL_GB", "GPU0_DESKTOP", "GPU0_TTS", _GRAPH_WORDS["gpu_budget_var"], "GPU0_HEADROOM",
-        "GPU1_LLM", "GPU1_HEADROOM",
-    }
+    devices = gpu_observation.status_devices(_GRAPH_WORDS)
+    keys_of_interest = {role["source"] for row in devices for role in row["roles"]}
     found: dict[str, int] = {}
     pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=\s*(\d+)")
     for line in text.splitlines():
@@ -1552,20 +1493,9 @@ def _read_gpu_budget() -> Optional[dict]:
         _BUDGET_CACHE["ts"] = now
         return None
 
-    total = found.get("GPU_TOTAL_GB")
-    gpu0 = {
-        "total_gb": total,
-        "desktop_gb": found.get("GPU0_DESKTOP"),
-        "tts_gb": found.get("GPU0_TTS"),
-        _GRAPH_WORDS["gpu_budget_key"]: found.get(_GRAPH_WORDS["gpu_budget_var"]),
-        "headroom_gb": found.get("GPU0_HEADROOM"),
-    }
-    gpu1 = {
-        "total_gb": total,
-        "llm_gb": found.get("GPU1_LLM"),
-        "headroom_gb": found.get("GPU1_HEADROOM"),
-    }
-    result = {"gpu0": gpu0, "gpu1": gpu1, "raw": found}
+    result = {row["budget_key"]: {role["key"]: found.get(role["source"])
+                                  for role in row["roles"]} for row in devices}
+    result["raw"] = found
     _BUDGET_CACHE["data"] = result
     _BUDGET_CACHE["ts"] = now
     return result
@@ -1677,7 +1607,7 @@ def _read_vram_estimates() -> Optional[dict]:
             "unavailable_reason": (
                 None if any_trusted else (
                     "No trusted VRAM marginal measurements yet. The in-run "
-                    f"probe samples {_GRAPH_WORDS['label']}'s per-process VRAM on GPU0 via "
+                    f"probe samples {_GRAPH_WORDS['label']}'s per-process VRAM on {gpu_observation.sampling_device_label()} via "
                     "nvidia-smi during inference; entries appear here after "
                     "the next image generation completes. Untrusted rows "
                     "(if any) are legacy v1/v2 values or probe-fallback "
@@ -4048,16 +3978,16 @@ async def build_status_payload(config: dict) -> dict:
     recent_videos = first["recent_videos"] or []
     recent_images = first["recent_images"] or []
 
+    devices = gpu_observation.status_devices(_GRAPH_WORDS)
     budgets = {
-        "gpu0": None,
-        "gpu1": None,
+        **{row["budget_key"]: None for row in devices},
         "images": first["images_budget"] or {},
         "vram_estimates": first["vram_estimates"],
     }
     gpu_budget = first["gpu_budget"]
     if gpu_budget:
-        budgets["gpu0"] = gpu_budget.get("gpu0")
-        budgets["gpu1"] = gpu_budget.get("gpu1")
+        for row in devices:
+            budgets[row["budget_key"]] = gpu_budget.get(row["budget_key"])
         budgets["raw"] = gpu_budget.get("raw")
     image_cache = first["image_cache"]
     auth_keys = first["auth_keys"] or []
@@ -4089,21 +4019,12 @@ async def build_status_payload(config: dict) -> dict:
     swap_state = loop_section("swap_state", lambda: _swap_state(proxy_module) if proxy_module else {})
     graph_ws_state = loop_section(_GRAPH_WORDS["ws_state_key"], lambda: _graph_ws_state(proxy_module) if proxy_module else {})
 
-    # ComfyUI system_stats — VRAM headroom from comfy's perspective.
+    # The adapter owns engine fields; the public view keeps first-device compatibility.
     graph_view: Optional[dict] = None
-    if graph_stats:
+    if graph_stats and graph_stats["raw_stats"]:
         try:
-            devices = graph_stats.get("devices") or []
-            sysd = graph_stats.get("system") or {}
-            graph_view = {
-                _GRAPH_WORDS["version_key"]: sysd.get(_GRAPH_WORDS["version_key"]),
-                "python_version": sysd.get("python_version"),
-                "pytorch_version": sysd.get("pytorch_version"),
-                "ram_total_bytes": sysd.get("ram_total"),
-                "ram_free_bytes": sysd.get("ram_free"),
-                "argv": sysd.get("argv"),
-                "device": devices[0] if devices else None,
-            }
+            devices = graph_stats["devices"] or []
+            graph_view = {**graph_stats["stats_runtime"], "device": devices[0] if devices else None}
         except Exception as e:
             errors[_GRAPH_WORDS["stats_error_key"]] = _safe_err(e)
 

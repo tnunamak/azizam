@@ -1,3 +1,9 @@
+function formatCost(amount: unknown): string | undefined {
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return undefined;
+  if (amount > 0 && amount < 0.000001) return "<$0.000001";
+  return `$${amount.toFixed(amount < 0.01 && amount > 0 ? 6 : 2)}`;
+}
+
 export function costFrom(
   payload: unknown,
   response?: Response,
@@ -15,7 +21,7 @@ export function costFrom(
     if (Number.isFinite(amount) && amount >= 0 && !(amount === 0 && locality === "Local" && positivePayload)) {
       if (amount === 0 && locality === "Local")
         return "Local · no charge";
-      return `$${amount.toFixed(amount < 0.01 && amount > 0 ? 6 : 2)}`;
+      return formatCost(amount);
     }
   }
   if (locality === "Local" && !positivePayload) return "Local · no charge";
@@ -23,9 +29,9 @@ export function costFrom(
   if (typeof cost === "object" && cost !== null) {
     const amount = (cost as { amount_usd?: unknown }).amount_usd;
     if (typeof amount === "number")
-      return amount === 0 ? "$0.00" : `$${amount}`;
+      return formatCost(amount);
   }
-  if (typeof cost === "number") return cost === 0 ? "$0.00" : `$${cost}`;
+  if (typeof cost === "number") return formatCost(cost);
   if (typeof cost === "string" && cost.trim()) return cost;
   return undefined;
 }

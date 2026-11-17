@@ -105,11 +105,14 @@ class InlineTtsAdapter:
         client = engine_egress.async_client(timeout=timeout)
         upstream: httpx.Response | None = None
         handed_over = False
+        reply: Reply | None = None
+        primary_error = False
         try:
             upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
             if not 200 <= upstream.status_code < 300:
                 content = await upstream.aread()
-                return Reply(upstream.status_code, _lower(upstream.headers), raw=content)
+                reply = Reply(upstream.status_code, _lower(upstream.headers), raw=content)
+                return reply
             raw_chunks = upstream.aiter_raw()
             response, owner = upstream, client
 
@@ -121,18 +124,43 @@ class InlineTtsAdapter:
                     raise TransportFailure("aborted", f"The connection to the engine broke ({type(error).__name__}).") from error
 
             async def close() -> None:
-                await response.aclose()
-                await owner.aclose()
+                try:
+                    await response.aclose()
+                finally:
+                    await owner.aclose()
 
             handed_over = True
             return StreamReply(upstream.status_code, _lower(upstream.headers), chunks(), close)
         except Exception as error:  # noqa: BLE001 - every failure surfaces typed, with the original text
+            primary_error = True
             raise _failure(error) from error
+        except BaseException:
+            primary_error = True
+            raise
         finally:
             if not handed_over:
-                if upstream is not None:
-                    await upstream.aclose()
-                await client.aclose()
+                control_error: BaseException | None = None
+                try:
+                    try:
+                        if upstream is not None:
+                            await upstream.aclose()
+                    except BaseException as error:
+                        if isinstance(error, Exception):
+                            raise
+                        control_error = error
+                    finally:
+                        try:
+                            await client.aclose()
+                        except Exception:
+                            if control_error is None:
+                                raise
+                    if control_error is not None:
+                        raise control_error
+                except Exception:
+                    # Ordinary cleanup errors must not replace a reply or failure.
+                    # Cancellation, interrupt and exit must always propagate.
+                    if not primary_error and reply is None:
+                        raise
 
     async def submit(self, conn: Connection, op: str, request: CanonicalRequest) -> JobRef:
         raise UnsupportedByAdapter("Speech is answered in one request; it has no job.")

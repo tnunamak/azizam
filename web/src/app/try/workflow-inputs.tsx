@@ -199,6 +199,12 @@ export function workflowInputProblems(
       !(typeof value === "string" && isPlausibleMediaReference(value))
     ) {
       problems[input.name] = missingMessage(input, output);
+    } else {
+      try {
+        validateWorkflowInputValue(input, value, mapping);
+      } catch (error) {
+        problems[input.name] = error instanceof Error ? error.message : String(error);
+      }
     }
   }
   return problems;
@@ -647,6 +653,9 @@ function validateWorkflowInputValue(
     if (type === "integer" && !Number.isInteger(value)) {
       throw new Error(`${named(input)} must be a whole number.`);
     }
+    if (type === "integer" && !Number.isSafeInteger(value)) {
+      throw new Error(`${named(input)} is too large to send exactly.`);
+    }
     if (input.minimum !== undefined && value < input.minimum) {
       throw new Error(`${named(input)} must be at least ${input.minimum}.`);
     }
@@ -711,7 +720,11 @@ export function readWorkflowInputValue(
   }
   if (isUnsupportedCombinedInput(input, inputs, mapping)) return undefined;
   if (target.combine?.length || hasSharedRequestField(inputs, input, mapping)) {
-    return readCombinedPart(root[target.field], input.name);
+    return readCombinedPart(
+      root[target.field],
+      input.name,
+      target.combine ?? sharedParts(inputs, input, mapping),
+    );
   }
   return root[target.field];
 }
@@ -1036,11 +1049,12 @@ function defaultFor(inputs: WorkflowInput[], name: string) {
   return inputs.find((input) => input.name === name)?.default;
 }
 
-function readCombinedPart(value: unknown, name: string) {
+function readCombinedPart(value: unknown, name: string, parts: string[]) {
   if (typeof value !== "string") return undefined;
   const { width, height } = parseSize(value);
-  if (name === "width") return Number(width);
-  if (name === "height") return Number(height);
+  const index = parts.indexOf(name);
+  if (index === 0) return Number(width);
+  if (index === 1) return Number(height);
   return value;
 }
 

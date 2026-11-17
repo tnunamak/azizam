@@ -30,8 +30,8 @@ BUNDLED_PATH = _REGISTRY_DIR / "video_grid.yml"
 SCHEMA_PATH = _REGISTRY_DIR / "video_grid.schema.json"
 
 
-def load_stride_reasons(path: Path = BUNDLED_PATH) -> dict[str, Any]:
-    """Read validated wire reasons, preserving integer step keys for callers."""
+def _load_document(path: Path) -> dict[str, Any]:
+    """Read and validate the defaults and wire reasons together."""
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         checked = document
@@ -51,15 +51,34 @@ def load_stride_reasons(path: Path = BUNDLED_PATH) -> dict[str, Any]:
                     }
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator(schema).validate(checked)
+        defaults = document["grid_defaults"]
+        for key in ("length_step", "length_offset", "minimum_side"):
+            if type(defaults[key]) is not int:
+                raise ValueError(f"grid_defaults.{key} must be an exact integer (not bool or float)")
+        if any(type(side) is not int for side in defaults["size_when_unparsed"]):
+            raise ValueError("grid_defaults.size_when_unparsed must contain exact integers (not bools or floats)")
     except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError, jsonschema.ValidationError) as error:
         raise ValueError(f"{path}: invalid video grid registry: {error}") from error
+    return document
+
+
+def _stride_reasons(document: dict[str, Any]) -> dict[str, Any]:
     return {
         "default": document["stride_reasons"]["default"],
         "by_step": dict(document["stride_reasons"]["by_step"]),
     }
 
 
-_STRIDE_REASONS = load_stride_reasons()
+def load_stride_reasons(path: Path = BUNDLED_PATH) -> dict[str, Any]:
+    """Read validated wire reasons, preserving integer step keys for callers."""
+    return _stride_reasons(_load_document(path))
+
+
+_DOCUMENT = _load_document(BUNDLED_PATH)
+_STRIDE_REASONS = _stride_reasons(_DOCUMENT)
+_GRID_DEFAULTS = MappingProxyType(_DOCUMENT["grid_defaults"])
+_LENGTH_STEP = _GRID_DEFAULTS["length_step"]
+_LENGTH_OFFSET = _GRID_DEFAULTS["length_offset"]
 
 
 def stride_reason(step: int) -> str:
@@ -67,8 +86,8 @@ def stride_reason(step: int) -> str:
     return _STRIDE_REASONS["by_step"].get(step, _STRIDE_REASONS["default"])
 
 
-DEFAULT_SIZE_WHEN_UNPARSED = (1024, 1024)
-MINIMUM_SIDE = 64
+DEFAULT_SIZE_WHEN_UNPARSED = tuple(_GRID_DEFAULTS["size_when_unparsed"])
+MINIMUM_SIDE = _GRID_DEFAULTS["minimum_side"]
 
 
 @dataclass(frozen=True)
@@ -90,8 +109,8 @@ class GridSpec:
     """The frame count of a clip is ``step * k + offset``. ``fps`` is the rate when the request sends none."""
 
     fps: float
-    step: int = 8
-    offset: int = 1
+    step: int = _LENGTH_STEP
+    offset: int = _LENGTH_OFFSET
     min_frames: int | None = None
     max_frames: int | None = None
 
@@ -125,7 +144,7 @@ def video_facts(entry: Any) -> VideoManifest | None:
             min_seconds=length["min_seconds"], max_seconds=length["max_seconds"],
             default_seconds=length.get("default_seconds")) if length else None,
         grid=GridSpec(
-            fps=grid["fps"], step=int(grid.get("step", 8)), offset=int(grid.get("offset", 1)),
+            fps=grid["fps"], step=int(grid.get("step", _LENGTH_STEP)), offset=int(grid.get("offset", _LENGTH_OFFSET)),
             min_frames=grid.get("min_frames"), max_frames=grid.get("max_frames")) if grid else None,
         variants=MappingProxyType(dict(raw.get("variants") or {})),
         requires=frozenset(raw.get("requires") or ()),
@@ -182,7 +201,7 @@ def check_video_variants(records: Iterable[Any]) -> None:
             raise ValueError(f"{entry.id}: multiple variants accept the reference: {sorted(item.id for item, _ in eligible)!r}")
 
 
-def seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offset: int = 1) -> int:
+def seconds_to_length(seconds: float, frame_rate: float, *, step: int = _LENGTH_STEP, offset: int = _LENGTH_OFFSET) -> int:
     """The nearest frame count of the form ``step * k + offset`` for ``seconds`` at ``frame_rate``.
 
     Rounds to the nearest k, not down, so 3 s at 24 fps with step 8 and offset 1 gives 73 frames (3.0417 s). Python's
@@ -205,7 +224,7 @@ def frame_count(seconds: float, frame_rate: float | None, grid: GridSpec) -> int
 
 
 def parse_size(text: str) -> tuple[int, int]:
-    """``WxH`` to (width, height). Anything else is read as 1024x1024, as the old reader did."""
+    """``WxH`` to (width, height). Anything else uses the registry fallback size."""
     if not text or "x" not in text:
         return DEFAULT_SIZE_WHEN_UNPARSED
     try:
@@ -217,7 +236,7 @@ def parse_size(text: str) -> tuple[int, int]:
 
 def resolve_size(requested: str | None, size: SizeSpec) -> tuple[int, int]:
     """The size a run uses: the request's (or the default when it sends none), clamped to the largest, then each side
-    floored to the multiple with a floor of 64. A size is adjusted, never refused."""
+    floored to the multiple with the registry minimum-side floor. A size is adjusted, never refused."""
     width, height = parse_size(requested or size.default)
     largest = parse_size(size.max)
     width, height = min(width, largest[0]), min(height, largest[1])

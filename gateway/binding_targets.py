@@ -123,8 +123,8 @@ def _path_problem(template: Mapping[str, Any] | None, parts: list[str]) -> tuple
 
 def _note_write(written: dict[tuple[str, ...], tuple[PathPart, ...]], place: tuple[str, ...], at: tuple[PathPart, ...],
                 errors: ErrorCollector) -> None:
-    """Two targets that write one place keep only the later one; refuse the second."""
-    if place in written:
+    """Equal or nested target places overlap; refuse the later target."""
+    if any(place[:len(prior)] == prior or prior[:len(place)] == place for prior in written):
         errors.add(at, "target_duplicate", "another target writes this node and input")
     else:
         written[place] = at

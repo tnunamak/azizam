@@ -35,7 +35,11 @@ def test_runner_contract_is_structurally_fresh_and_sanitized() -> None:
     assert "provision-hermetic-pytest-env.sh" not in text
 
 
-@pytest.mark.parametrize("case", ["dirty", "untracked", "requirements", "input", "malformed", "missing"])
+@pytest.mark.parametrize("case", [
+    "dirty", "untracked", "requirements", "input", "malformed", "missing",
+    "ignored_lock", "ignored_input", "outside_lock", "symlink_lock",
+    "duplicate_manifest", "duplicate_input",
+])
 def test_source_preflight_specific_failures(tmp_path: Path, case: str) -> None:
     repo = tmp_path / "repo"; repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -48,13 +52,49 @@ def test_source_preflight_specific_failures(tmp_path: Path, case: str) -> None:
     lock.write_text(f"# hermetic-manifest-sha256: {h(req)}\n# hermetic-input-sha256: {h(inp)}\n")
     for name in ("requirements.txt", "input.in", "lock"): subprocess.run(["git", "-C", str(repo), "add", "-f", name], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
-    expected = {"dirty":"dirty tracked tree", "untracked":"untracked input", "requirements":"stale", "input":"stale", "malformed":"stale", "missing":"missing lock or manifest"}[case]
+    passing = subprocess.run([str(PREFLIGHT), str(repo), str(lock), str(req), str(inp)], text=True, capture_output=True)
+    assert passing.returncode == 0, passing.stderr
+    expected = {
+        "dirty": "dirty tracked tree", "untracked": "untracked input",
+        "requirements": "stale requirements hash", "input": "stale input hash",
+        "malformed": "stale requirements hash", "missing": "missing lock or manifest",
+        "ignored_lock": "lock path is not tracked", "ignored_input": "input path is not tracked",
+        "outside_lock": "lock path is outside repository", "symlink_lock": "lock path is a symlink",
+        "duplicate_manifest": "duplicate manifest hash header",
+        "duplicate_input": "duplicate input hash header",
+    }[case]
     if case == "dirty": req.write_text("changed\n")
     elif case == "untracked": (repo / "extra").write_text("x\n")
     elif case == "requirements": req.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", "-f", "requirements.txt"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
     elif case == "input": inp.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", "-f", "input.in"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
     elif case == "malformed": lock.write_text("broken\n"); subprocess.run(["git", "-C", str(repo), "add", "-f", "lock"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
-    else: lock.unlink(); subprocess.run(["git", "-C", str(repo), "add", "-u"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
+    elif case == "missing": lock.unlink(); subprocess.run(["git", "-C", str(repo), "add", "-u"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
+    elif case in ("ignored_lock", "ignored_input"):
+        ignored = lock if case == "ignored_lock" else inp
+        (repo / ".gitignore").write_text(ignored.name + "\n")
+        subprocess.run(["git", "-C", str(repo), "rm", "--cached", ignored.name], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ignore input"], check=True)
+        # Hashes still agree, but the ignored input is no longer pinned in Git.
+        assert f"# hermetic-manifest-sha256: {h(req)}" in lock.read_text()
+        assert f"# hermetic-input-sha256: {h(inp)}" in lock.read_text()
+    elif case in ("outside_lock", "symlink_lock"):
+        outside = tmp_path / "outside-lock"
+        outside.write_bytes(lock.read_bytes())
+        if case == "outside_lock":
+            lock = outside
+        else:
+            lock.unlink()
+            lock.symlink_to(outside)
+            subprocess.run(["git", "-C", str(repo), "add", "-f", "lock"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "symlink lock"], check=True)
+    else:
+        prefix = "# hermetic-manifest-sha256:" if case == "duplicate_manifest" else "# hermetic-input-sha256:"
+        current = h(req) if case == "duplicate_manifest" else h(inp)
+        original = lock.read_text()
+        lock.write_text(original.replace(f"{prefix} {current}", f"{prefix} {'0' * 64}") + f"{prefix} {current}\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-f", "lock"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "duplicate header"], check=True)
     result = subprocess.run([str(PREFLIGHT), str(repo), str(lock), str(req), str(inp)], text=True, capture_output=True)
     assert result.returncode == 2 and expected in result.stderr
 

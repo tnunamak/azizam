@@ -97,7 +97,9 @@ def validate_workflow_graph(workflow: Any) -> list[str]:
         return ["workflow must contain at least one node"]
 
     errors: list[str] = []
+    valid_inputs: dict[Any, Mapping[str, Any]] = {}
     for node_id, node in node_items:
+        previous_errors = len(errors)
         label = _node_label(node_id)
         if not isinstance(node, Mapping):
             errors.append(f"{label} must be a mapping")
@@ -110,6 +112,52 @@ def validate_workflow_graph(workflow: Any) -> list[str]:
         inputs = node.get("inputs")
         if not isinstance(inputs, Mapping):
             errors.append(f"{label}.inputs must be a mapping")
+
+        if len(errors) == previous_errors:
+            valid_inputs[node_id] = inputs
+
+    # Preserve shape-error order; only well-shaped executable nodes participate.
+    edges: dict[Any, list[str]] = {node_id: [] for node_id in valid_inputs}
+    for node_id, inputs in valid_inputs.items():
+        seen_targets: set[str] = set()
+        for name, value in inputs.items():
+            if not (isinstance(value, list) and len(value) == 2
+                    and isinstance(value[0], str) and isinstance(value[1], int)
+                    and not isinstance(value[1], bool) and value[1] >= 0):
+                continue
+            target = value[0]
+            if target not in valid_inputs:
+                errors.append(f"{_node_label(node_id)}.inputs.{name} links to missing node {target!r}")
+            elif target not in seen_targets:
+                seen_targets.add(target)
+                edges[node_id].append(target)
+
+    # An explicit stack avoids recursion limits. Only active ancestors close a
+    # cycle; a completed shared dependency (a diamond) is not a back edge.
+    complete: set[Any] = set()
+    active: dict[Any, int] = {}
+    path: list[Any] = []
+    for start in edges:
+        if start in complete:
+            continue
+        active[start] = 0
+        path.append(start)
+        stack = [(start, iter(edges[start]))]
+        while stack:
+            node_id, targets = stack[-1]
+            target = next(targets, None)
+            if target is None:
+                stack.pop()
+                path.pop()
+                del active[node_id]
+                complete.add(node_id)
+            elif target in active:
+                cycle = path[active[target]:] + [target]
+                errors.append("workflow has a cycle: " + " -> ".join(repr(node) for node in cycle))
+            elif target not in complete:
+                active[target] = len(path)
+                path.append(target)
+                stack.append((target, iter(edges[target])))
 
     return errors
 

@@ -7,32 +7,36 @@ from pathlib import Path
 from typing import Any
 
 from gateway import service_registry
+from gateway.strict_yaml import safe_load_strict
 
 
-# These field names are legacy/configured gateway-host filesystem paths by
-# contract unless the row or service explicitly scopes model files to the
-# backend. They are not engine names.
-GATEWAY_MODEL_FILE_FIELDS = (
-    "model_path",
-    "path",
-    "azizam_model_path",
-    "mmproj",
-)
+FIELD_GROUPS = ("host", "managed", "required", "nested")
 
-# Activation identifiers may be logical backend ids for externally managed
-# services. Treat them as host files only when the row/service says the gateway
-# manages that host process, or when the row opts into gateway file scope.
-ACTIVATION_FILE_FIELDS = (
-    "activation_model",
-    "activation_mmproj",
-)
 
-# Generic explicit companion/dependency declarations. A multimodal projector is
-# just another required local file here; the field name remains data.
-DECLARED_REQUIRED_FILE_FIELDS = (
-    "required_model_files",
-    "required_files",
-)
+def _field_groups() -> dict[str, tuple[str, ...]]:
+    """Read the model-file field names from registry data; fail loudly on a bad file."""
+    declaration = Path(__file__).resolve().parents[1] / "registry" / "model_file_fields.yml"
+    document = safe_load_strict(declaration.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"schema_version", *FIELD_GROUPS}:
+        raise ValueError("model_file_fields.yml: every top-level key must be known")
+    if document["schema_version"] != 1:
+        raise ValueError("model_file_fields.yml: unsupported schema_version")
+    groups = {}
+    for group in FIELD_GROUPS:
+        names = document[group]
+        if (not isinstance(names, list) or not names
+                or any(not isinstance(name, str) or not name.strip() for name in names)
+                or len(set(names)) != len(names)):
+            raise ValueError(f"model_file_fields.yml: {group} must be a list of distinct field names")
+        groups[group] = tuple(names)
+    return groups
+
+
+_FIELD_GROUPS = _field_groups()
+GATEWAY_MODEL_FILE_FIELDS = _FIELD_GROUPS["host"]
+ACTIVATION_FILE_FIELDS = _FIELD_GROUPS["managed"]
+DECLARED_REQUIRED_FILE_FIELDS = _FIELD_GROUPS["required"]
+NESTED_FILE_FIELDS = _FIELD_GROUPS["nested"]
 
 HOST_MANAGED_LIFECYCLE_DRIVERS = frozenset({"systemd", "command"})
 BACKEND_FILE_SCOPES = frozenset({"backend", "remote", "container", "external"})
@@ -142,7 +146,7 @@ def _paths_from_value(value: Any) -> list[Path]:
         return paths
     if isinstance(value, Mapping):
         paths: list[Path] = []
-        for key in ("path", "file", "model_path"):
+        for key in NESTED_FILE_FIELDS:
             paths.extend(_paths_from_value(value.get(key)))
         return paths
     return []

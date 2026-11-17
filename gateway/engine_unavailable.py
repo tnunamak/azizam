@@ -50,7 +50,9 @@ def _proxy_before_engine(error: UpstreamError) -> bool:
     if error.status not in _PROXY_PHRASES:
         return False
     text = _text(error)
-    if text.startswith(("{", "[")):
+    if not text and len(error.body) > _BODY_LOOK:
+        return False   # the inspected whitespace prefix does not prove an empty body
+    if text.startswith(("{", "[", '"')):
         return False   # a JSON body is the engine's own answer, whatever words it uses
     return not text or text.startswith("<") or any(word in text for word in _PROXY_WORDS)
 
@@ -67,7 +69,9 @@ def classify(error: BaseException | None) -> Verdict | None:
                 return Verdict(True, "refused")
             if error.kind == "dns":
                 return Verdict(False, "dns")
-        if isinstance(error, UpstreamError) and _proxy_before_engine(error):
-            return Verdict(True, "proxy")
-        error = error.__cause__ or error.__context__
+        if isinstance(error, UpstreamError):
+            return Verdict(True, "proxy") if _proxy_before_engine(error) else None
+        error = error.__cause__ if error.__cause__ is not None else (
+            None if error.__suppress_context__ else error.__context__
+        )
     return None

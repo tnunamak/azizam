@@ -44,7 +44,8 @@ def _files(paths: list[str]) -> list[Path]:
     found: list[Path] = []
     for raw in paths:
         path = Path(raw)
-        found.extend(sorted([*path.glob("*.yml"), *path.glob("*.yaml")]) if path.is_dir() else [path])
+        found.extend(sorted(entry for entry in [*path.glob("*.yml"), *path.glob("*.yaml")] if entry.is_file())
+                     if path.is_dir() else [path])
     return found
 
 
@@ -89,10 +90,12 @@ def run_convert(file: str, out: str | None) -> int:
     text = yaml.safe_dump(converted, sort_keys=False, allow_unicode=True)
     if out:
         target = Path(out)
-        if target.exists():
+        try:
+            with target.open("x", encoding="utf-8") as output:
+                output.write(text)
+        except FileExistsError:
             print(f"{out} already exists; it is not overwritten", file=sys.stderr)
             return 2
-        target.write_text(text, encoding="utf-8")
     else:
         sys.stdout.write(text)
     for note in notes:

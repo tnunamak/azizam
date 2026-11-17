@@ -163,6 +163,57 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("models", " ".join(payload["system_health_reasons"]).lower())
 
 
+    async def test_graph_observation_preserves_serialized_status_sections(self):
+        """Literal legacy output, including ordering, partial failures and first device."""
+        original = status._graph_queue_and_stats
+        self.isolate_sections()
+        self.patches.enter_context(patch.object(status, "_graph_queue_and_stats", original))
+        self.patches.enter_context(patch.object(status, "_graph_record", return_value={}))
+        self.patches.enter_context(patch.object(status, "_configured_engine_base", return_value="http://fixture.test"))
+        from gateway.engine_protocol.node_graph import NodeGraphAdapter
+        self.patches.enter_context(patch.object(status.reviewed_adapters, "adapter_for_backend", return_value=NodeGraphAdapter()))
+        self.patches.enter_context(patch.object(status, "tls_context", return_value=True))
+        full_queue = {"queue_running": [[0, 7], [1, None]], "queue_pending": [[2, "p"]]}
+        full_stats = {"system": {status._GRAPH_WORDS["version_key"]: "v", "python_version": "p",
+                      "pytorch_version": "t", "ram_total": 9, "ram_free": 4, "argv": ["run"]},
+                      "devices": [{"name": "first"}, {"name": "second"}]}
+        # These literals are the old public projection, not produced by the adapter under test.
+        q = '{"running": 2, "pending": 1, "running_ids": [7, null], "pending_ids": ["p"]}'
+        v = '{"VERSION": "v", "python_version": "p", "pytorch_version": "t", "ram_total_bytes": 9, "ram_free_bytes": 4, "argv": ["run"], "device": {"name": "first"}}'
+        v = v.replace('"VERSION"', json.dumps(status._GRAPH_WORDS["version_key"]))
+        cases = [
+            ("full", full_queue, full_stats, q, v),
+            ("empty", {}, {}, '{"running": 0, "pending": 0, "running_ids": [], "pending_ids": []}', 'null'),
+            ("queue-non200", 503, full_stats, 'null', v),
+            ("stats-non200", full_queue, 503, q, 'null'),
+            ("queue-timeout", TimeoutError(), full_stats, 'null', v),
+            ("stats-timeout", full_queue, TimeoutError(), q, 'null'),
+            ("both-non200", 503, 503, 'null', 'null'),
+            ("both-timeout", TimeoutError(), TimeoutError(), 'null', 'null'),
+        ]
+        for name, queue, stats, expected_queue, expected_view in cases:
+            calls = []
+            class Client:
+                async def __aenter__(self):
+                    return self
+                async def __aexit__(self, *_args):
+                    pass
+                async def get(self, url, **kwargs):
+                    calls.append((url, kwargs))
+                    answer = queue if url.endswith("/queue") else stats
+                    if isinstance(answer, Exception):
+                        raise answer
+                    return SimpleNamespace(status_code=answer if isinstance(answer, int) else 200,
+                                           json=lambda: answer)
+            with self.subTest(name=name), patch.object(status.engine_egress, "async_client", return_value=Client()):
+                payload = await status.build_status_payload({})
+                section = {"queue": payload[status._GRAPH_WORDS["queue_key"]],
+                           "view": payload[status._GRAPH_WORDS["view_key"]]}
+                self.assertEqual(json.dumps(section), '{"queue": ' + expected_queue + ', "view": ' + expected_view + '}')
+                self.assertEqual([url for url, _ in calls], ["http://fixture.test/queue", "http://fixture.test/system_stats"])
+                self.assertTrue(all(kwargs == {"extensions": status.engine_egress.probe()} for _, kwargs in calls))
+
+
 class LifecycleProbeLoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_docker_preflight_does_not_delay_loop(self):
         started = threading.Event()

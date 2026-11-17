@@ -31,6 +31,26 @@ def load(source, name):
     return module
 
 
+def _write_catalog(data):
+    # Derive the sibling catalog from the exact serialized presentation fixture.
+    # Malformed presentation documents must still reach the production validator.
+    try:
+        document = yaml.safe_load(data.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        document = {}
+    if not isinstance(document, dict):
+        document = {}
+    relations = [
+        {"kind": "family", "context": context, "word": word, "family": family, "order": order}
+        for section, context in (("protocol_words", "protocol"), ("route_intents", "route"),
+                                 ("type_capabilities", "type"))
+        for order, (word, family) in enumerate(document.get(section, {}).items())
+    ]
+    data.with_name("operations.yml").write_text(yaml.safe_dump({
+        "schema_version": 1, "operations": [], "relations": relations,
+    }, sort_keys=False), encoding="utf-8")
+
+
 def tree(tmp_path, document):
     source = tmp_path / "gateway" / "capability_ids.py"
     source.parent.mkdir(parents=True, exist_ok=True)
@@ -38,6 +58,7 @@ def tree(tmp_path, document):
     data = tmp_path / "registry" / "capability_words.yml"
     data.parent.mkdir(parents=True, exist_ok=True)
     data.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    _write_catalog(data)
     return source, data
 
 
@@ -154,9 +175,19 @@ def test_invalid_rules_name_file_row_and_reason(tmp_path, section, key, value, r
         data[section] = value
     else:
         data[section][key] = value
-    source, _ = tree(tmp_path, data)
+    if section == "type_capabilities":
+        source, _ = tree(tmp_path, document())
+        module = load(source, "_type_audio_rows")
+        custom = tmp_path / "custom" / "capability_words.yml"
+        custom.parent.mkdir()
+        custom.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    else:
+        source, _ = tree(tmp_path, data)
     with pytest.raises(ValueError) as error:
-        load(source, "_type_audio_rows")
+        if section == "type_capabilities":
+            module.load_capability_classification(custom, catalog=None)
+        else:
+            load(source, "_type_audio_rows")
     message = str(error.value)
     assert "capability_words.yml" in message and "row" in message
     assert section in message and reason in message
@@ -197,6 +228,7 @@ def test_rules_load_once_and_old_loader_shapes_survive(tmp_path, monkeypatch):
     model = consumer(rows, monkeypatch)
     data["type_capabilities"]["language"] = "image"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    _write_catalog(path)
     assert rows.TYPE_CAPABILITIES["language"] == "chat"
     assert rows.load_capability_classification(path)[0]["language"] == "image"
     assert len(rows._load_capability_data(path)) == 4

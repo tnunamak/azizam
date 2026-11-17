@@ -23,6 +23,10 @@ export function Money({
     return <span className="tabular-nums">{`<${new Intl.NumberFormat("en-US", {
       style: "currency", currency, minimumFractionDigits: 4, maximumFractionDigits: 4,
     }).format(0.0001)}`}</span>;
+  if (!precise && amount > 0 && amount < 0.000001)
+    return <span className="tabular-nums">{`<${new Intl.NumberFormat("en-US", {
+      style: "currency", currency, minimumFractionDigits: 6, maximumFractionDigits: 6,
+    }).format(0.000001)}`}</span>;
   return (
     <span className="tabular-nums">
       {new Intl.NumberFormat("en-US", {

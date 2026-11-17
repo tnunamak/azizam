@@ -1,4 +1,4 @@
-"""The media job intents and their modalities, read from ``registry/media_job_intents.yml``.
+"""The media job intents and their modalities, projected from the operation catalog.
 
 One ordered table answers every "which intents, which modality" question: the submit schema and its prose, the
 unsupported-intent error, the audio dispatch set and the resource class of a job. The per-modality handlers stay
@@ -16,10 +16,12 @@ import jsonschema
 import yaml
 
 from gateway.capability_ids import AUDIO_RULE
+from gateway.operation_catalog import load as load_catalog, project_media_job_intents
 
 _ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = _ROOT / "registry" / "media_job_intents.yml"
 SCHEMA_PATH = _ROOT / "registry" / "media_job_intents.schema.json"
+CATALOG_PATH = _ROOT / "registry" / "operations.yml"
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,10 @@ def parse_rows(document: Any) -> tuple[IntentRow, ...]:
     return rows
 
 
-def load_rows(path: Path = DATA_PATH) -> tuple[IntentRow, ...]:
+def load_rows(path: Path | None = None) -> tuple[IntentRow, ...]:
+    """Project default rows from the catalog; explicit paths retain document loading."""
+    if path is None:
+        return parse_rows({"intents": project_media_job_intents(load_catalog(CATALOG_PATH))})
     return parse_rows(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 

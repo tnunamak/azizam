@@ -76,7 +76,7 @@ export function Combobox({
           className="w-[var(--radix-popover-trigger-width)] p-0"
           align="start"
         >
-          <Command>
+          <Command label={`Search ${label.toLowerCase()}`}>
             <CommandInput
               placeholder={`Search ${label.toLowerCase()}…`}
               aria-label={`Search ${label.toLowerCase()}`}
@@ -87,7 +87,8 @@ export function Combobox({
                 {options.map((o) => (
                   <CommandItem
                     key={o.value}
-                    value={o.label}
+                    value={o.value}
+                    keywords={[o.label]}
                     disabled={o.disabled}
                     onSelect={() => {
                       onValueChange(o.value);

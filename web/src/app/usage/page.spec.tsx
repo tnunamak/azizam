@@ -1496,7 +1496,7 @@ test.each([
 
 test("HONEST-3 Money keeps other pages' default formatting", () => {
   const { container } = render(<><Money amount={0.014} /><Money amount={0.0000001} /></>);
-  expect(container.textContent).toBe("$0.01$0.00");
+  expect(container.textContent).toBe("$0.01<$0.000001");
 });
 
 test("Usage reconciles an unexplained daily remainder into Other without changing the total", async () => {

@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from gateway.operation_catalog import Catalog, load as load_catalog, project_capability_words
+
 # Labels, presentation, optional policy protocols and capability spellings are shipped data.
 # Callers share read-only tables loaded once at import, in file order.
 CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "capability_words.yml"
@@ -60,7 +62,7 @@ def load_media_type_modalities(path: Path = CAPABILITY_WORDS_PATH) -> Mapping[st
     return MappingProxyType(dict(rows))
 
 
-def _load_capability_tables(path: Path) -> tuple[
+def _load_capability_tables(path: Path, *, catalog: Catalog | Path | None = None) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int], frozenset[str],
@@ -176,7 +178,13 @@ def _load_capability_tables(path: Path) -> tuple[
             if not isinstance(capability, str) or capability not in labels:
                 raise invalid_row(index, f"hidden_by names unknown capability {capability!r}")
 
-    types = document.get("type_capabilities", {})
+    # Custom documents retain their explicit standalone contract. The shipped
+    # reader and explicit catalog inputs have exactly one classification authority.
+    if catalog is None and path.resolve() == CAPABILITY_WORDS_PATH.resolve():
+        catalog = path.with_name("operations.yml")
+    classification = (document if catalog is None else project_capability_words(
+        catalog if isinstance(catalog, Catalog) else load_catalog(catalog)))
+    types = classification.get("type_capabilities", {})
     if not isinstance(types, dict):
         raise invalid_table("type_capabilities", 0, "must be a mapping")
     for kind, capability in types.items():
@@ -213,7 +221,7 @@ def _load_capability_tables(path: Path) -> tuple[
 
     tables: list[dict[str, str]] = []
     for section in ("protocol_words", "route_intents"):
-        words = document.get(section)
+        words = classification.get(section)
         if not isinstance(words, dict):
             raise invalid(section, "must be a mapping")
         table: dict[str, str] = {}
@@ -237,52 +245,52 @@ def _load_capability_tables(path: Path) -> tuple[
             MappingProxyType(models_explainers), MappingProxyType(try_help), MappingProxyType(request_nouns))
 
 
-def _load_capability_data(path: Path) -> tuple[
+def _load_capability_data(path: Path, *, catalog: Catalog | Path | None = None) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str]
 ]:
     """Preserve the four-map loader shape while validating every row field."""
-    return _load_capability_tables(path)[:4]
+    return _load_capability_tables(path, catalog=catalog)[:4]
 
 
-def load_capability_presentation(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+def load_capability_presentation(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str]
 ]:
     """Read immutable icon, recommended-alias and summary maps from capability rows."""
-    return _load_capability_tables(path)[4:7]
+    return _load_capability_tables(path, catalog=catalog)[4:7]
 
 
-def load_capability_classification(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+def load_capability_classification(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> tuple[
     Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
 ]:
     """Read immutable type, audio and suppression decisions; omitted sections are empty."""
-    return _load_capability_tables(path)[7:10]
+    return _load_capability_tables(path, catalog=catalog)[7:10]
 
 
-def load_capability_display_order(path: Path = CAPABILITY_WORDS_PATH) -> Mapping[str, int]:
+def load_capability_display_order(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> Mapping[str, int]:
     """Read immutable ranks for declared capabilities; omitted ranks use row order."""
-    return _load_capability_tables(path)[10]
+    return _load_capability_tables(path, catalog=catalog)[10]
 
 
-def load_capability_alias_name_hiding(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
+def load_capability_alias_name_hiding(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> frozenset[str]:
     """Capabilities whose alias rows show no title, display name or name the model itself declares."""
-    return _load_capability_tables(path)[11]
+    return _load_capability_tables(path, catalog=catalog)[11]
 
 
-def load_capability_member_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
+def load_capability_member_words(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> tuple[Mapping[str, str], Mapping[str, str]]:
     """Read effective member labels and task names, in capability row order."""
-    return _load_capability_tables(path)[12:14]
+    return _load_capability_tables(path, catalog=catalog)[12:14]
 
 
-def load_capability_screen_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+def load_capability_screen_words(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
 ]:
     """Read optional Models explainers, Try help and request nouns in row order."""
-    return _load_capability_tables(path)[14:17]
+    return _load_capability_tables(path, catalog=catalog)[14:17]
 
 
-def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
+def load_capability_words(path: Path = CAPABILITY_WORDS_PATH, *, catalog: Catalog | Path | None = None) -> tuple[Mapping[str, str], Mapping[str, str]]:
     """Read the word maps after validating their capability rows; preserve the two-map API."""
-    _, _, protocol, intents = _load_capability_data(path)
+    _, _, protocol, intents = _load_capability_data(path, catalog=catalog)
     return protocol, intents
 
 

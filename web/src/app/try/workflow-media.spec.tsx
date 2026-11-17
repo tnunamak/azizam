@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import TryPage from "./page";
+import { mediaFrom } from "./workflow-media";
 
 const mocks = vi.hoisted(() => ({
   params: new URLSearchParams(),
@@ -86,4 +87,25 @@ test.each([
   expect(await screen.findByText(`The ${noun} couldn’t be loaded.`)).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
   expect(screen.getByRole("link", { name: `Download ${noun}` }).getAttribute("href")).toBe("blob:fixture-output");
+});
+
+test.each(["png", "jpeg", "webp", "gif", "avif"])(
+  "accepts a base64 %s data image from workflow output",
+  (type) => {
+    const url = `data:image/${type};base64,eA==`;
+    expect(mediaFrom({ image_url: url })).toEqual([
+      { kind: "image", url, label: "Image", mediaType: undefined },
+    ]);
+  },
+);
+
+test.each([
+  "data:image/svg+xml;base64,PHN2Zy8+",
+  "data:image/bmp;base64,eA==",
+  "data:image/jpg;base64,eA==",
+  "data:image/jpeg;charset=utf-8;base64,eA==",
+  "data:image/png,plain",
+  "//example.test/picture.png",
+])("refuses unsafe or unsupported media URL %s", (url) => {
+  expect(mediaFrom({ image_url: url })).toEqual([]);
 });

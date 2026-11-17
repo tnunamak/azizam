@@ -12,7 +12,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from gateway import service_registry
+from gateway import service_registry, model_presentation
 from gateway.access_plans import ALL, CAPABILITIES, MEDIA_METADATA_LEVELS, RECEIPT_DETAIL_LEVELS
 from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES, PROTOCOL_CAPABILITIES
 
@@ -55,17 +55,22 @@ def load_admin_surfaces_catalog(path: Path) -> list[dict[str, Any]]:
     if not isinstance(records, list):
         return []
     return [
-        _normalize_admin_surface(record)
-        for record in records
+        _normalize_admin_surface(record, row_index=index)
+        for index, record in enumerate(records)
         if isinstance(record, Mapping)
     ]
 
 
-def _normalize_admin_surface(record: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_admin_surface(record: Mapping[str, Any], *, row_index: int) -> dict[str, Any]:
+    for field in ("name", "status"):
+        value = record.get(field)
+        if not isinstance(value, str) or not value.strip():
+            row = record.get("id") or f"records[{row_index}]"
+            raise ValueError(f"Admin surface {row!r}: {field} must be a non-empty string")
     return {
-        "name": str(record.get("name") or "Admin API"),
+        "name": record["name"],
         "route_base": str(record.get("route_base") or ""),
-        "status": str(record.get("status") or "live"),
+        "status": record["status"],
         "profile_gates": _string_list(record.get("profile_gates")),
         "clients": _string_list(record.get("clients")),
         "description": str(record.get("description") or ""),
@@ -75,7 +80,7 @@ def _normalize_admin_surface(record: Mapping[str, Any]) -> dict[str, Any]:
 def _api_surface_from_protocol_frontend(frontend: Mapping[str, Any]) -> dict[str, Any]:
     protocol = str(frontend.get("protocol") or frontend.get("id") or "")
     return {
-        "name": str(frontend.get("name") or protocol or "Protocol frontend"),
+        "name": str(frontend.get("name") or protocol or model_presentation.PRESENTATION_WORDS["admin_surface"]["fallback_name"]),
         "route_base": _surface_route_base(frontend.get("routes")),
         "status": "live" if frontend.get("enabled", True) else "disabled",
         "profile_gates": [protocol] if protocol else [],
@@ -105,10 +110,12 @@ def _surface_description(frontend: Mapping[str, Any]) -> str:
         for intent in frontend.get("intents") or []
         if str(intent).strip()
     ]
+    words = model_presentation.PRESENTATION_WORDS["admin_surface"]
     if intents:
-        return "Supports " + ", ".join(intents) + "."
-    protocol = str(frontend.get("protocol") or "protocol").strip()
-    return f"{protocol.title()} protocol frontend." if protocol else "Protocol frontend."
+        return words["intents_description"].format(intents=", ".join(intents))
+    protocol = str(frontend.get("protocol") or words["default_protocol"]).strip()
+    return (words["protocol_description"].format(protocol=protocol.title())
+            if protocol else words["empty_description"])
 
 
 def _string_list(value: Any) -> list[str]:

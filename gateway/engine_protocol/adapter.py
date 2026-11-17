@@ -99,6 +99,37 @@ class EngineAdapter(Protocol):
     async def fetch_assets(self, conn: Connection, ref: JobRef, status: JobStatus) -> tuple[AssetRef, ...]: ...
 
 
+# Optional extensions are separate protocols so existing runtime interface checks
+# and version-1/version-2 adapters remain compatible.
+class ObservationAdapter(Protocol):
+    async def observe(self, conn: Connection, *, client: Any = None) -> Mapping[str, Any] | None:
+        """Independent queue summary, stats_runtime, devices and raw_stats parts.
+
+        None means unknown per part; raw_stats preserves empty mappings. Queue
+        ids retain wire types. stats_runtime is an ordered public runtime projection.
+        An optional caller-owned client preserves its transport policy.
+        """
+        ...
+
+class WorkflowDescriptionAdapter(Protocol):
+    def describe_workflow(self, binding: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return inputs/outputs modality lists and opaque diagnostics, or unknown."""
+        ...
+
+
+async def observe(adapter: EngineAdapter, conn: Connection, *, client: Any = None) -> Mapping[str, Any] | None:
+    """An absent observation hook means unknown, not an empty or healthy engine."""
+    method = getattr(adapter, "observe", None)
+    if not callable(method):
+        return None
+    return await method(conn, client=client) if client is not None else await method(conn)
+
+def describe_workflow(adapter: EngineAdapter, binding: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """An absent description hook means unknown; never infer capabilities."""
+    method = getattr(adapter, "describe_workflow", None)
+    return method(binding) if callable(method) else None
+
+
 AdapterFactory = Callable[[ProtocolDescription], EngineAdapter]
 
 

@@ -14,8 +14,11 @@ def project(job: Mapping[str, Any], resolver: AssetPathResolver | None) -> dict[
     if resolver is None or not job.get("assets"):
         return view
     assets = []
+    states = set()
     for stored in job["assets"]:
         if not isinstance(stored, Mapping):
+            assets.append({"available": False, "availability": "unavailable"})
+            states.add("unavailable")
             continue
         asset = dict(stored)
         asset_id = asset.get("asset_id") or asset.get("id")
@@ -26,13 +29,20 @@ def project(job: Mapping[str, Any], resolver: AssetPathResolver | None) -> dict[
         except OSError as exc:
             available = False
             state = "missing" if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ENAMETOOLONG} else "unavailable"
-        if not available:
+        states.add(state)
+        if available:
+            asset.pop("availability", None)
+            asset.pop("available", None)
+        else:
             asset.update(available=False, availability=state)
             for field in ("url", "asset_url", "content_url", "download_url", "thumbnail_url", "workflow_download_url"):
                 asset.pop(field, None)
         assets.append(asset)
     view["assets"] = assets
-    states = {asset.get("availability", "available") for asset in assets}
-    if states - {"available"}:
-        view["output_state"] = next(iter(states)) if len(states) == 1 else "partial"
+    if states == {"available"}:
+        view.pop("output_state", None)
+    elif "available" in states:
+        view["output_state"] = "partial"
+    else:
+        view["output_state"] = "missing" if states == {"missing"} else "unavailable"
     return view

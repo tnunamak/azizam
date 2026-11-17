@@ -34,11 +34,12 @@ function startOfDay(date: Date): number {
  * groups (D1.3: a part-filled first group read as a gap).
  */
 export function tileDate(date: Date | null, now: Date): string {
-  if (!date) return "Undated";
+  if (!date || !Number.isFinite(date.getTime())) return "Undated";
   const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
-  if (days <= 0) return "Today";
+  const ahead = date.getTime() - now.getTime();
+  if (days === 0 || (ahead > 0 && ahead < DAY_MS)) return "Today";
   if (days === 1) return "Yesterday";
-  if (days < 7) return date.toLocaleDateString("en-US", { weekday: "long" });
+  if (days > 1 && days < 7) return date.toLocaleDateString("en-US", { weekday: "long" });
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -117,9 +118,11 @@ export function inProgressMedia(
     items.push({
       id: receipt.request_id,
       kind,
-      startedAt: receipt.accepted_at_ms
+      startedAt: typeof receipt.accepted_at_ms === "number" && Number.isFinite(receipt.accepted_at_ms)
         ? receipt.accepted_at_ms / 1000
-        : (receipt._stored_at ?? null),
+        : typeof receipt._stored_at === "number" && Number.isFinite(receipt._stored_at)
+          ? receipt._stored_at
+          : null,
     });
   }
   return items;

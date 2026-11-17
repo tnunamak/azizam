@@ -17,6 +17,7 @@ malformed half is a failure with no section written, never a pass.
 """
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def seconds(path: Path, key: str, label: str) -> float:
         value = json.loads(path.read_text(encoding="utf-8"))[key]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         sys.exit(f"journey-clock: no usable {label} time in {path} ({type(exc).__name__})")
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         sys.exit(f"journey-clock: {label} time in {path} is not a number of seconds")
     return float(value)
 
@@ -40,7 +41,13 @@ def main() -> None:
     args = parser.parse_args()
     bringup = seconds(args.compose, "bringup_s", "Compose bring-up")
     browser = seconds(args.first_run, "elapsed_seconds", "first-run browser")
-    total = round(bringup + browser, 1)
+    total = bringup + browser
+    if not math.isfinite(total):
+        sys.exit(
+            f"journey-clock: sum of Compose bring-up time in {args.compose} "
+            f"and first-run browser time in {args.first_run} is not finite"
+        )
+    total = round(total, 1)
     journey = {
         "compose_bringup_s": bringup,
         "first_run_ui_s": browser,
@@ -57,7 +64,7 @@ def main() -> None:
         if not isinstance(cost, dict):
             sys.exit(f"journey-clock: {args.out} is not a JSON object; refusing to overwrite it")
     cost["journey"] = journey
-    args.out.write_text(json.dumps(cost, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.out.write_text(json.dumps(cost, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
     print(f"first-run journey: Compose {bringup} s + browser {browser} s = {total} s of {args.budget} s")
     if not journey["passed"]:
         sys.exit(f"journey-clock: the first-run journey took {total} s; the bar is under {args.budget} s")

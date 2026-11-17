@@ -10,6 +10,7 @@ afterEach(() => {
 it('includes the final samples when audio length is not divisible by bin count', async () => {
   const close = vi.fn(async () => {});
   const decode = vi.fn(async () => ({
+    numberOfChannels: 1,
     getChannelData: () => new Float32Array([0, 0, 0, 0, 1]),
   }));
   class FakeAudioContext {

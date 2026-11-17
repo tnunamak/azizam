@@ -11,6 +11,7 @@ Fixtures are copies of repo workflows (``tests/fixtures/workflow_drift``):
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import sys
@@ -21,6 +22,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from scripts import check_workflow_drift as drift  # noqa: E402
 from scripts.check_workflow_drift import name_diff, ui_inputs_by_name  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures" / "workflow_drift"
@@ -94,3 +96,100 @@ def test_node_missing_from_ui_twin_is_drift():
     ui, api = load("krea2-turbo")
     ui["nodes"] = [n for n in ui["nodes"] if n["id"] != 7]
     assert any("node 7 in API JSON" in d for d in name_diff(ui, api))
+
+
+def write_pair(tmp_path, name="pair", api_type="TransformA", ui_type="TransformA"):
+    ui = {"nodes": [{"id": 1, "type": ui_type, "inputs": [], "widgets_values": []}], "links": []}
+    api = {"1": {"class_type": api_type, "inputs": {}}}
+    ui_path = tmp_path / f"{name}.ui.json"
+    api_path = tmp_path / f"{name}.json"
+    ui_path.write_text(json.dumps(ui))
+    api_path.write_text(json.dumps(api))
+    return ui_path, api_path
+
+
+def test_node_type_mismatch_is_drift(tmp_path):
+    ui_path, api_path = write_pair(tmp_path, api_type="TransformB")
+    assert name_diff(json.loads(ui_path.read_text()), json.loads(api_path.read_text())) == [
+        "  ~ node 1 type: api TransformB != ui TransformA"
+    ]
+
+
+def test_matching_node_types_are_not_drift(tmp_path):
+    ui_path, api_path = write_pair(tmp_path)
+    assert name_diff(json.loads(ui_path.read_text()), json.loads(api_path.read_text())) == []
+
+
+@pytest.mark.parametrize("explicit", [False, True], ids=["discovery", "explicit"])
+def test_orphan_ui_is_drift(tmp_path, monkeypatch, capsys, explicit):
+    ui_path, api_path = write_pair(tmp_path, "orphan")
+    api_path.unlink()
+    monkeypatch.setattr(drift, "REPO_DIRS", [tmp_path])
+    args = ["--no-frontend"]
+    if explicit:
+        args += ["--paths", str(ui_path)]
+    assert asyncio.run(drift.main(args)) == 1
+    assert "[orphan] orphan.json: no API sibling" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("broken", ["api", "ui"])
+def test_invalid_json_continues_and_errors_win(tmp_path, monkeypatch, capsys, broken):
+    ui_path, api_path = write_pair(tmp_path, "a-bad")
+    (api_path if broken == "api" else ui_path).write_text("{")
+    write_pair(tmp_path, "b-valid")
+    _, orphan_api = write_pair(tmp_path, "c-orphan")
+    orphan_api.unlink()
+    monkeypatch.setattr(drift, "REPO_DIRS", [tmp_path])
+    assert asyncio.run(drift.main(["--no-frontend"])) == 2
+    out = capsys.readouterr().out
+    assert "[error] a-bad.json:" in out
+    assert "[ok]    b-valid.json" in out
+    assert "[orphan] c-orphan.json:" in out
+    assert out.index("[error]") < out.index("[ok]")
+
+
+def test_read_error_continues(tmp_path, monkeypatch, capsys):
+    ui_path, _ = write_pair(tmp_path, "a-unreadable")
+    ui_path.unlink()
+    ui_path.mkdir()
+    write_pair(tmp_path, "b-valid")
+    monkeypatch.setattr(drift, "REPO_DIRS", [tmp_path])
+    assert asyncio.run(drift.main(["--no-frontend"])) == 2
+    out = capsys.readouterr().out
+    assert "[error] a-unreadable.json:" in out
+    assert "[ok]    b-valid.json" in out
+
+
+@pytest.mark.parametrize("broken,value", [
+    ("api", []), ("ui", None), ("ui", {"nodes": {}}),
+    ("ui", {"nodes": [None]}), ("api", {"1": []}),
+    ("ui", {"nodes": [{"id": 1, "inputs": [None]}]}),
+    ("api", {"1": {"inputs": []}}),
+])
+def test_wrong_shape_continues(tmp_path, monkeypatch, capsys, broken, value):
+    ui_path, api_path = write_pair(tmp_path, "a-bad")
+    (api_path if broken == "api" else ui_path).write_text(json.dumps(value))
+    write_pair(tmp_path, "b-valid")
+    monkeypatch.setattr(drift, "REPO_DIRS", [tmp_path])
+    assert asyncio.run(drift.main(["--no-frontend"])) == 2
+    out = capsys.readouterr().out
+    assert "[error] a-bad.json:" in out
+    assert "[ok]    b-valid.json" in out
+    assert out.index("[error]") < out.index("[ok]")
+
+
+def test_nonexistent_explicit_ui_is_input_error(tmp_path, capsys):
+    missing = tmp_path / "missing.ui.json"
+    assert asyncio.run(drift.main(["--paths", str(missing), "--no-frontend"])) == 2
+    out = capsys.readouterr().out
+    assert "[error] missing.json:" in out
+    assert "[orphan]" not in out
+
+
+def test_unreadable_ui_without_sibling_is_input_error(tmp_path, capsys):
+    unreadable = tmp_path / "unreadable.ui.json"
+    unreadable.mkdir()
+    assert asyncio.run(drift.main(["--paths", str(unreadable), "--no-frontend"])) == 2
+    out = capsys.readouterr().out
+    assert "[error] unreadable.json:" in out
+    assert "[orphan]" not in out

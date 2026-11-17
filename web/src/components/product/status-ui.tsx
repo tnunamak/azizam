@@ -69,13 +69,14 @@ export function StateIcon({
   className?: string;
   label?: string;
 }) {
-  const Icon = toneIcon[tone];
+  const resolvedTone = Object.hasOwn(toneIcon, tone) ? tone : "unknown";
+  const Icon = toneIcon[resolvedTone];
   return (
     <Icon
       aria-hidden={label ? undefined : true}
       aria-label={label}
       role={label ? "img" : undefined}
-      className={cn("size-4 shrink-0", toneText[tone], className)}
+      className={cn("size-4 shrink-0", toneText[resolvedTone], className)}
     />
   );
 }
@@ -127,9 +128,10 @@ export function StateBadge({
   word?: string;
   className?: string;
 }) {
-  const { tone, word: stateWord } = STATE_WORDS[state];
+  const resolvedState = Object.hasOwn(STATE_WORDS, state) ? state : "unknown";
+  const { tone, word: stateWord } = STATE_WORDS[resolvedState];
   return (
-    <Badge variant="state" state={state} className={className}>
+    <Badge variant="state" state={resolvedState} className={className}>
       {/* The tone's ink is the badge's ink, so the icon needs no override. */}
       <StateIcon tone={tone} className={stateIconSize.badge} />
       {word ?? stateWord}

@@ -30,7 +30,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from gateway.transition_gate import GateStore
 from gateway.transition_ops import (
-    FINISHED_STATES, BeginResult, Begun, Conflict, EffectResult, GateState, Operation, OperationState, SameOperation,
+    EFFECT_STEPS, FINISHED_STATES, BeginResult, Begun, Conflict, EffectResult, GateState, Operation, OperationState, SameOperation,
     StepIntent, StepName, TransitionKind,
 )
 
@@ -255,6 +255,9 @@ class SqliteOperationStore:
                 raise KeyError(op_id)
             if current.state in FINISHED_STATES:
                 raise StaleOutcome(f"operation {op_id} is already {current.state}")
+            if (state in FINISHED_STATES and current.step_intent is not None
+                    and current.step_outcome is None and current.step in EFFECT_STEPS):
+                raise StaleOutcome(f"operation {op_id} has an unresolved effect at {current.step!r}; resolve it first")
             if state in FINISHED_STATES and current.step_outcome == "unknown":
                 # An unknown outcome is settled by a query or the owner first; it never ends the operation.
                 raise StaleOutcome(f"operation {op_id} has an unknown outcome at {current.step!r}; resolve it first")

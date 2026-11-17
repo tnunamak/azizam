@@ -9,7 +9,7 @@ afterEach(() => {
 
 function stubAudio() {
   class FakeAudioContext {
-    decodeAudioData = vi.fn(async () => ({ getChannelData: () => new Float32Array([0.5, 0.25, 1, 0]) }));
+    decodeAudioData = vi.fn(async () => ({ numberOfChannels: 1, getChannelData: () => new Float32Array([0.5, 0.25, 1, 0]) }));
     close = vi.fn(async () => {});
   }
   vi.stubGlobal('AudioContext', FakeAudioContext);

@@ -59,10 +59,13 @@ class _Progress:
                                  metadata_patch={'protocol_state': moved.value}, path=media_jobs.DB_PATH)
 
 
-async def _follow(adapter, conn, ref, progress: _Progress, wake: asyncio.Event) -> None:
+async def _follow(adapter, conn, ref, progress: _Progress, wake: asyncio.Event,
+                  stopped: asyncio.Event | None = None) -> None:
     """Read the engine's push channel. A terminal event only wakes the poll loop; it is not completion."""
     try:
         async for event in adapter.events(conn, ref):
+            if stopped is not None and stopped.is_set():
+                return
             if event.state is None:
                 continue
             if event.state in TERMINAL:
@@ -82,6 +85,10 @@ async def _pause(wake: asyncio.Event, interval_s: float) -> None:
 
 
 _CLEANUP_UNKNOWN = 'Cleanup is unknown; the upstream may still run.'
+
+
+class _PersistedCancel(Exception):
+    """The job's owner asked to cancel it; the runner leaves its wait loop to stop the upstream."""
 
 
 def _consume_cancel_result(task: asyncio.Future) -> None:
@@ -215,15 +222,15 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
                                  metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
     progress = _Progress(job_id, _saved_state(metadata.get('protocol_state')))
     wake = asyncio.Event()
-    follower = asyncio.ensure_future(_follow(adapter, conn, ref, progress, wake)) if follow_events else None
+    follower_stopped = asyncio.Event()
+    follower = asyncio.ensure_future(_follow(adapter, conn, ref, progress, wake, follower_stopped)) if follow_events else None
     last_error = None
     try:
         async with asyncio.timeout(max_wait_s):
             while True:
                 current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH) or {}
                 if (current.get('metadata') or {}).get('cancel_requested_at'):
-                    await adapter.cancel(conn, ref)
-                    raise media_jobs.CancellationPending()
+                    raise _PersistedCancel()
                 try:
                     status = await adapter.poll(conn, ref)
                 except (TransportFailure, UpstreamError) as exc:
@@ -244,6 +251,10 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
                         # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
                         raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
                 await _pause(wake, interval_s)
+    except _PersistedCancel:
+        # Outside the wait budget's block, so a slow or stubborn upstream stop gets one bounded attempt, not two.
+        cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+        raise media_jobs.CancellationPending('' if cleaned else _CLEANUP_UNKNOWN) from None
     except TimeoutError:
         cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
         detail = 'The upstream job exceeded its wait limit.'
@@ -260,7 +271,17 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
             raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from None
         raise
     finally:
+        follower_stopped.set()
         if follower is not None:
             follower.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await follower
+            try:
+                # wait_for would wait for a resistant iterator to acknowledge
+                # cancellation. wait bounds the join without that acknowledgement.
+                await asyncio.wait({follower}, timeout=max_wait_s)
+            finally:
+                if follower.done():
+                    _consume_cancel_result(follower)
+                else:
+                    # Also observe completion if a second caller cancel interrupts
+                    # this bounded join. Late events are fenced by follower_stopped.
+                    follower.add_done_callback(_consume_cancel_result)

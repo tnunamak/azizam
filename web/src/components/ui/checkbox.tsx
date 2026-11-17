@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/cn";
+import { useFieldContext } from "./field";
 import { CheckIcon, MinusIcon } from "lucide-react";
 import { Checkbox as CheckboxPrimitive } from "radix-ui";
 
@@ -9,6 +10,8 @@ function Checkbox({
   className,
   ...props
 }: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
+  const field = useFieldContext();
+  const invalid = field?.invalid ? true : props["aria-invalid"];
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
@@ -17,6 +20,9 @@ function Checkbox({
         className,
       )}
       {...props}
+      id={props.id ?? field?.id}
+      aria-describedby={props["aria-describedby"] ?? field?.describedBy}
+      aria-invalid={invalid}
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"

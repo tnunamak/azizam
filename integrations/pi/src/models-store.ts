@@ -9,12 +9,13 @@ import { DEFAULT_TIMEOUT_MS } from "./gateway.ts";
 
 /**
  * Pi core holds `models-store.json.lock` through proper-lockfile with stale=30 s and refreshes the lock's mtime every
- * stale/2 = 15 s while held. A Pi that exits between creating the lock directory and registering it leaves an orphan
- * that blocks the next start for the full 30 s. A lock whose mtime is older than one refresh interval plus a grace has
- * missed a refresh, so no live holder owns it; younger locks are never touched.
+ * stale/2 = 15 s while held. A missed refresh does not revoke a delayed live holder's lock: reclaim only after the
+ * full core stale age. A fresh orphan can therefore remain locked, but the operation's existing bounded wait
+ * degrades startup rather than waiting for that full stale age. Younger locks are never touched.
  */
-const CORE_LOCK_UPDATE_MS = 15_000;
-export const ORPHAN_LOCK_STALE_MS = CORE_LOCK_UPDATE_MS + 1_000;
+const CORE_LOCK_STALE_MS = 30_000;
+const CORE_LOCK_UPDATE_MS = CORE_LOCK_STALE_MS / 2;
+export const ORPHAN_LOCK_STALE_MS = CORE_LOCK_UPDATE_MS * 2;
 
 interface LockfileApi {
 	check(file: string, options: { realpath: false; stale: number }): Promise<boolean>;
@@ -65,8 +66,8 @@ export async function createRepairingModelsStore(
 	const lockfile = createRequire(join(getPackageDir(), "package.json"))("proper-lockfile") as LockfileApi;
 	const lockPath = `${path}.lock`;
 	const lockExists = () => { try { return lstatSync(lockPath).isDirectory(); } catch { return false; } };
-	// proper-lockfile's own stale handling removes the orphan: lock() with a shorter stale age rmdirs it and takes
-	// the lock, which we release at once. A lock refreshed within the age answers ELOCKED and is left alone.
+	// proper-lockfile's own stale handling removes the orphan: lock() with the core stale age rmdirs it and takes
+	// the lock, which we release at once. A lock still valid within that age answers ELOCKED and is left alone.
 	const reclaimOrphanedLock = async () => {
 		if (!lockExists()) return;
 		const opts = { realpath: false, stale: orphanStaleMs } as const;

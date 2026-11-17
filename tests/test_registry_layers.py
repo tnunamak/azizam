@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 
+import pytest
+
 from gateway import registry_layers as layers
 
 RELEASE = {
@@ -170,3 +172,68 @@ def test_a_patch_of_a_release_record_repeats_its_identity_keys_and_the_export_an
     assert layers.owner_layer(stored, RELEASE)["records"]["services"]["engine"] == {"name": "My engine", "source": "builtin"}
     assert layers.field_names(stored["services"]["engine"], RELEASE["services"]["engine"]) == ["name", "source"]
     assert layers.layer(layers.from_owner_layer(layers.owner_layer(stored, RELEASE), 2), RELEASE)["services"]["engine"]["name"] == "My engine"
+
+
+@pytest.mark.parametrize("with_base", [False, True])
+def test_tombstone_survives_save_between_release_removal_and_readdition(with_base):
+    first_release = {"services": {"s": {"id": "s", "name": "Shipped"}}}
+    stored = layers.unlayer({"services": {}}, first_release)
+    if not with_base:
+        stored.pop("bases")
+    before = copy.deepcopy(stored)
+    removed_release = {"services": {}}
+
+    saved = layers.unlayer(layers.layer(stored, removed_release), removed_release, previous=stored)
+
+    assert stored == before
+    assert saved["tombstones"] == {"services": ["s"]}
+    if with_base:
+        assert saved["bases"]["services"]["s"] == before["bases"]["services"]["s"]
+    else:
+        assert "s" not in saved.get("bases", {}).get("services", {})
+    returned_release = {"services": {"s": {"id": "s", "name": "Returned"}}}
+    assert "s" not in layers.layer(saved, returned_release)["services"]
+    saved_again = layers.unlayer(layers.layer(saved, returned_release), returned_release, previous=saved)
+    assert saved_again["tombstones"] == {"services": ["s"]}
+    assert "s" not in layers.layer(saved_again, returned_release)["services"]
+
+
+def test_owner_addition_after_release_removal_ends_tombstone():
+    release = {"services": {"s": {"id": "s", "name": "Shipped"}}}
+    previous = layers.unlayer({"services": {}}, release)
+    removed = {"services": {}}
+    effective = layers.layer(previous, removed)
+    mine = {"id": "s", "name": "My record"}
+    effective["services"]["s"] = mine
+
+    saved = layers.unlayer(effective, removed, previous=previous)
+
+    assert saved["tombstones"] == {}
+    assert "s" not in saved.get("bases", {}).get("services", {})
+    assert saved["services"]["s"] == mine
+    assert layers.layer(saved, removed)["services"]["s"] == mine
+    assert layers.sources(saved, removed)["services"]["s"] == {"source": "owner-added"}
+
+
+def test_current_release_tombstone_keeps_digest_until_owner_restores_record():
+    release = {"services": {"s": {"id": "s", "name": "Shipped"}}}
+    previous = layers.unlayer({"services": {}}, release)
+    updated = {"services": {"s": {"id": "s", "name": "Updated"}}}
+
+    saved = layers.unlayer(layers.layer(previous, updated), updated, previous=previous)
+
+    assert saved["tombstones"] == {"services": ["s"]}
+    assert saved["bases"]["services"]["s"] == previous["bases"]["services"]["s"]
+    restored = layers.layer(saved, updated)
+    restored["services"]["s"] = updated["services"]["s"]
+    saved = layers.unlayer(restored, updated, previous=saved)
+    assert saved["tombstones"] == {}
+    assert layers.layer(saved, updated)["services"]["s"] == updated["services"]["s"]
+
+
+def test_owner_layer_rejects_record_and_tombstone_for_same_id():
+    document = {"records": {"services": {"s": {"id": "s"}}}, "tombstones": {"services": ["s"]}}
+    before = copy.deepcopy(document)
+    with pytest.raises(ValueError, match=r"services.*'s'"):
+        layers.from_owner_layer(document, 2)
+    assert document == before

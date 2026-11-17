@@ -39,10 +39,10 @@ def full_run(history: list[dict], *, view: bool = True) -> list[dict]:
     return steps
 
 
-def serve(fakes, exchanges: list[dict], *, timeout: float = 2.0):
+def serve(fakes, exchanges: list[dict], *, timeout: float = 2.0, max_image_bytes: int = 32 * 1024 * 1024):
     fake = fakes.asgi(scenario_from_data({"protocol": "comfyui", "name": "pixal3d-run", "provenance": PROVENANCE,
                                           "exchanges": exchanges}), host="comfy.fk.test")
-    app = svc.create_app(fake.base_url, poll_interval=0.001, timeout=timeout)
+    app = svc.create_app(fake.base_url, poll_interval=0.001, timeout=timeout, max_image_bytes=max_image_bytes)
     return fake, app
 
 
@@ -343,3 +343,153 @@ def test_a_prompt_comfyui_reported_as_errored_is_not_cancelled() -> None:
 
     asyncio.run(scenario())
     assert deletes == []
+
+@pytest.mark.parametrize("history", [
+    {"p1": "bad"}, {"p1": []}, {"p1": None},
+    {"p1": {"status": "bad"}}, {"p1": {"status": []}},
+    {"p1": {"status": None}}, {"p1": {"outputs": "bad"}},
+    {"p1": {"outputs": []}}, {"p1": {"outputs": None}},
+    {"p1": {"outputs": {svc.OUTPUT_NODE: "bad"}}},
+])
+def test_malformed_history_shapes_are_controlled_502(fake_upstreams, history):
+    fake, app = serve(fake_upstreams, full_run([history], view=False) + CLEANUP)
+    response = post(app)
+    assert response.status_code == 502
+    assert isinstance(response.json()["error"], str)
+    assert len(fake.calls("delete")) == 1
+    assert fake.calls("delete")[0].json == {"delete": ["p1"]}
+    assert not [r for r in fake.requests if r.path == "/interrupt"]
+
+
+@pytest.mark.parametrize("release_cleanup", [False, True])
+def test_cancelled_generation_cleans_only_accepted_prompt_before_reraising(release_cleanup):
+    async def scenario():
+        polling, deleting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        requests = []
+
+        async def upstream(request):
+            requests.append((request.method, request.url.path))
+            path = request.url.path
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                polling.set()
+                await asyncio.Event().wait()
+            if path == "/queue" and request.method == "POST":
+                assert json.loads(request.content) == {"delete": ["p1"]}
+                deleting.set()
+                await release.wait()
+            if path == "/interrupt":
+                raise AssertionError("global interrupt is forbidden")
+            return httpx.Response(200, json=IDLE)
+
+        app = svc.create_app(
+            "http://upstream.test", prompt=svc.load_prompt(),
+            client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(upstream)),
+            cleanup_timeout=0.1,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://svc.test") as client:
+            task = asyncio.create_task(client.post("/generate", files={"image": ("in.png", b"image", "image/png")}))
+            try:
+                await asyncio.wait_for(polling.wait(), 1)
+                task.cancel()
+                await asyncio.wait_for(deleting.wait(), 1)
+                # A second cancellation must not close the client underneath cleanup.
+                task.cancel()
+                if release_cleanup:
+                    release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 1)
+                assert requests.count(("POST", "/queue")) == 1
+                assert not any(path == "/interrupt" for _, path in requests)
+                if release_cleanup:
+                    assert requests.count(("GET", "/queue")) == 2
+            finally:
+                release.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_during_failed_wait_cleanup_finishes_delete():
+    async def scenario():
+        deleting, release, deleted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def upstream(request):
+            path = request.url.path
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                return httpx.Response(200, json={"p1": "malformed"})
+            if path == "/queue" and request.method == "POST":
+                assert json.loads(request.content) == {"delete": ["p1"]}
+                deleting.set()
+                await release.wait()
+                deleted.set()
+            if path == "/interrupt":
+                raise AssertionError("global interrupt is forbidden")
+            return httpx.Response(200, json=IDLE)
+
+        app = svc.create_app(
+            "http://upstream.test", prompt=svc.load_prompt(),
+            client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(upstream)),
+            cleanup_timeout=5,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://svc.test") as client:
+            task = asyncio.create_task(client.post("/generate", files={"image": ("in.png", b"image", "image/png")}))
+            try:
+                await asyncio.wait_for(deleting.wait(), 1)
+                task.cancel()
+                # Deliver cancellation while delete is blocked, before release.
+                await asyncio.sleep(0)
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 1)
+                assert deleted.is_set(), "the accepted prompt must be deleted before client teardown"
+                assert task.cancelled()
+            finally:
+                release.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_upload_over_cap_is_413_without_engine_calls(fake_upstreams) -> None:
+    fake, app = serve(fake_upstreams, [], max_image_bytes=8)
+    response = post(app, image=b"123456789")
+    assert response.status_code == 413
+    assert response.json() == {"error": "image exceeds the 8 byte limit"}
+    assert not fake.requests
+
+
+def test_upload_at_cap_keeps_success_response(fake_upstreams) -> None:
+    fake, app = serve(fake_upstreams, full_run([DONE]), max_image_bytes=8)
+    response = post(app, image=b"12345678")
+    assert (response.status_code, response.headers["content-type"], response.content) == (200, "model/gltf-binary", GLB)
+    assert b"12345678" in fake.calls("upload")[0].body
+    assert len(fake.calls("prompt")) == 1
+
+
+def test_image_cap_environment_setting(monkeypatch) -> None:
+    captured = {}
+    sentinel = object()
+
+    def create(base_url, **settings):
+        captured.update(settings)
+        return sentinel
+
+    monkeypatch.setattr(svc, "create_app", create)
+    monkeypatch.delenv("PIXAL3D_MAX_IMAGE_BYTES", raising=False)
+    assert svc._app_from_env() is sentinel
+    assert captured["max_image_bytes"] == svc.DEFAULT_MAX_IMAGE_BYTES == 32 * 1024 * 1024
+    monkeypatch.setenv("PIXAL3D_MAX_IMAGE_BYTES", "8")
+    assert svc._app_from_env() is sentinel
+    assert captured["max_image_bytes"] == 8

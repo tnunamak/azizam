@@ -26237,6 +26237,7 @@ def _unsupported_gateway_media_job_response(intent: str, *, declared: Iterable[s
 
 
 _declared_operation_job_tasks: set[asyncio.Task] = set()
+_DECLARED_JOB_FIELDS = frozenset({"intent", "model", "input"})
 
 
 async def _submit_declared_operation_job(*, request: Request, payload: Mapping[str, Any], intent: str) -> Response | None:
@@ -26257,6 +26258,11 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
     body = payload.get("input")
     if not isinstance(body, Mapping):
         return _json_error(400, "The media job input must be a JSON object.", code="invalid_media_job_input", param="input")
+    unknown = sorted(str(key) for key in payload if key not in _DECLARED_JOB_FIELDS)
+    if unknown:
+        # A field the gateway does not read must not be accepted and dropped: the caller would think it was used.
+        return _json_error(400, f"A declared media job takes intent, model and input; '{unknown[0]}' is not one of them.",
+                           code="unknown_media_job_field", param=unknown[0])
     decision = evaluate_and_apply(auth_context.identity, make_policy_request(
         intent=intent, model=str(model), backend=target.engine_id))
     if decision.denied:

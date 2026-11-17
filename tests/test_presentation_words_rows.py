@@ -36,6 +36,13 @@ SHIPPED = {
         "capability": "other", "label": "AI", "icon": "chat",
         "service_capability": "chat", "summary": "Use this configured AI capability.",
     },
+    "admin_surface": {
+        "fallback_name": "Protocol frontend",
+        "intents_description": "Supports {intents}.",
+        "protocol_description": "{protocol} protocol frontend.",
+        "default_protocol": "protocol",
+        "empty_description": "Protocol frontend.",
+    },
 }
 WORDS_FILE = Path(__file__).resolve().parents[1] / "registry/presentation_words.yml"
 
@@ -146,7 +153,7 @@ def test_shipped_words_equal_the_literal_lists_in_order():
     data = yaml.safe_load(WORDS_FILE.read_text(encoding="utf-8"))
     assert data == SHIPPED
     assert list(data) == list(SHIPPED)
-    for key in ("capability_engine_suffixes", "acronyms", "unclassified"):
+    for key in ("capability_engine_suffixes", "acronyms", "unclassified", "admin_surface"):
         assert list(data[key]) == list(SHIPPED[key])
 
 
@@ -291,7 +298,7 @@ def test_missing_file_names_the_file_and_root(tmp_path):
     assert str(path) in str(exc.value) and "$" in str(exc.value)
 
 
-@pytest.mark.parametrize("key", [None, "acronyms", "capability_engine_suffixes", "unclassified"])
+@pytest.mark.parametrize("key", [None, "acronyms", "capability_engine_suffixes", "unclassified", "admin_surface"])
 def test_maps_are_deeply_read_only(tmp_path, key):
     words = presentation._load_presentation_words(write_words(tmp_path, SHIPPED))
     mapping = words if key is None else words[key]
@@ -311,3 +318,43 @@ def test_compiled_patterns_are_read_only(tmp_path):
     words = presentation._load_presentation_words(write_words(tmp_path, SHIPPED))
     with pytest.raises(AttributeError):
         words["technical_patterns"][0].pattern = "changed"
+
+
+@pytest.mark.parametrize("key", list(SHIPPED["admin_surface"]))
+@pytest.mark.parametrize("bad", [None, "", "   ", False, 1, [], {}])
+def test_admin_surface_words_require_strings(tmp_path, key, bad):
+    data = deepcopy(SHIPPED)
+    data["admin_surface"][key] = bad
+    path = write_words(tmp_path, data)
+    with pytest.raises(ValueError) as exc:
+        presentation._load_presentation_words(path)
+    assert str(path) in str(exc.value)
+    assert f"admin_surface.{key}" in str(exc.value)
+
+
+@pytest.mark.parametrize("key", list(SHIPPED["admin_surface"]))
+def test_admin_surface_words_require_every_key(tmp_path, key):
+    data = deepcopy(SHIPPED)
+    del data["admin_surface"][key]
+    path = write_words(tmp_path, data)
+    with pytest.raises(ValueError) as exc:
+        presentation._load_presentation_words(path)
+    assert f"admin_surface.{key}" in str(exc.value)
+
+
+@pytest.mark.parametrize("key,field", [
+    ("intents_description", "intents"), ("protocol_description", "protocol"),
+])
+@pytest.mark.parametrize("template", [
+    "No placeholder", "{{field}}", "{other}", "{", "{field!r}",
+    "{field:>10}", "{field.name}", "{field[0]}", "{}",
+])
+def test_admin_surface_words_reject_invalid_templates(tmp_path, key, field, template):
+    data = deepcopy(SHIPPED)
+    # Text substitution keeps escaped-brace cases literal for the loader.
+    data["admin_surface"][key] = template.replace("field", field)
+    path = write_words(tmp_path, data)
+    with pytest.raises(ValueError) as exc:
+        presentation._load_presentation_words(path)
+    assert str(path) in str(exc.value)
+    assert f"admin_surface.{key}" in str(exc.value)

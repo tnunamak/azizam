@@ -12,6 +12,10 @@ import yaml
 _GATEWAY_MESSAGES_PATH = Path(__file__).resolve().parents[1] / "registry" / "gateway_messages.yml"
 _MESSAGE_FIELDS = frozenset({
     "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "prompt_namespace_description",
+    "workflow_namespace_description",
+    "chat_namespace_description",
+    "routing_namespace_description",
     "long_video_not_supported", "video_extend_not_supported", "surface_existing_clients", "surface_new_setup",
     "current_loaded_model_description", "current_loaded_fast_model_description",
 })

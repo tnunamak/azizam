@@ -1,0 +1,370 @@
+"""Deterministically project capability words into inert catalog data."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import yaml
+
+
+PROJECTED = (
+    ("protocol_words", "protocol"),
+    ("route_intents", "route"),
+    ("type_capabilities", "type"),
+)
+UNEXPRESSED = (
+    ("schema_version", "Source format version, not an operation fact."),
+    ("modality_words", "Presentation vocabulary for modalities."),
+    ("media_type_modalities", "Media-type presentation classification."),
+    ("capabilities", "Display labels, explainers, order, aliases and policy hints."),
+    ("audio_rule", "Source-specific classification rule, not an operation fact."),
+)
+
+
+UNDECLARED = "undeclared"
+
+
+class _UniqueMediaLoader(yaml.SafeLoader):
+    """Conservative source parsing: duplicate keys are not operation facts."""
+
+
+def _media_mapping(loader, node, deep=False):
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str):
+            raise ValueError("Media mapping keys must be strings")
+        if key in result:
+            raise ValueError("Duplicate media mapping key: " + key)
+        result[key] = loader.construct_object(value_node, deep=deep)
+    return result
+
+
+_UniqueMediaLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _media_mapping
+)
+
+
+def _schema(component: str | None) -> dict[str, str]:
+    # A schema ref names a published OpenAPI component, or says none is declared yet.
+    return {"schema": f"openapi:{component}" if component else UNDECLARED}
+
+
+def media_intent_operations(source: Path) -> tuple[list[dict], list[dict]]:
+    """Project each media job intent into one operation and its relations, in source order."""
+    document = yaml.load(source.read_text(encoding="utf-8"), Loader=_UniqueMediaLoader)
+    if not isinstance(document, dict) or set(document) != {"intents"}:
+        raise ValueError("Every media source top-level key must be classified")
+    rows = document["intents"]
+    if not isinstance(rows, list):
+        raise ValueError("Media intents must be a list")
+    required = {"intent", "modality", "submittable"}
+    optional = {"route", "component", "execution_route"}
+    seen = set()
+    operations = []
+    relations = []
+    for order, row in enumerate(rows):
+        if not isinstance(row, dict) or not required <= set(row) or set(row) - required - optional:
+            raise ValueError("Every media intent field must be classified")
+        if type(row["submittable"]) is not bool:
+            raise ValueError("Media submittability must be an explicit boolean")
+        if any(not isinstance(value, str) or not value.strip()
+               for key, value in row.items() if key != "submittable"):
+            raise ValueError("Media intent fields must be nonempty text")
+        if row["intent"] in seen:
+            raise ValueError("Duplicate media intent")
+        if ("route" in row) != ("component" in row):
+            raise ValueError("A media route and its component come together")
+        seen.add(row["intent"])
+        intent = row["intent"]
+        operations.append({
+            "id": intent,
+            "family": intent.split(".", 1)[0],
+            "request": _schema(row.get("component")),
+            "result": _schema(None),
+            "submittable_as_job": row["submittable"],
+            "modality": row["modality"],
+        })
+        relations.append({"kind": "admission", "operation": intent, "intent": intent, "order": order})
+        if "route" in row:
+            relations.append({
+                "kind": "binding", "operation": intent, "method": "POST", "path": row["route"],
+                "representation": "json", "modes": ["sync", "job"], "order": order,
+            })
+        if "execution_route" in row:
+            relations.append({
+                "kind": "binding", "operation": intent, "method": "POST",
+                "path": row["execution_route"], "representation": "json",
+                "modes": ["execution"], "order": order,
+            })
+    return operations, relations
+
+
+LOCAL_GAP_REASON = "Local routing/default rows lack a closed operation request/result mapping."
+LOCAL_ALIAS_GAP_REASON = "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
+LOCAL_LISTS = ("alias_operations", "workflow_families", "backend_rows", "image_rows")
+LOCAL_DEFAULTS = ("image_defaults", "workflow_defaults")
+
+
+def local_capability_gaps(source: Path) -> list[dict[str, str]]:
+    """Conservatively enumerate gaps without copying payloads or inventing relations."""
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"schema_version", *LOCAL_LISTS, *LOCAL_DEFAULTS}:
+        raise ValueError("Every local source top-level key must be classified")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError("Unsupported local source version")
+    gaps = [{"source": source.name, "key": "schema_version",
+             "reason": "Source format version, not an operation fact."}]
+    for name in LOCAL_LISTS:
+        rows = document[name]
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ValueError("Local rows must be lists of mappings")
+        # Original positions remain explicit, even though payloads are unexpressed.
+        gaps.extend({"source": source.name, "key": f"{name}[{order}]",
+                     "reason": (LOCAL_ALIAS_GAP_REASON
+                                if name == "alias_operations" and row.get("intent") is not None
+                                else LOCAL_GAP_REASON)}
+                    for order, row in enumerate(rows))
+    for name in LOCAL_DEFAULTS:
+        if not isinstance(document[name], dict):
+            raise ValueError("Local defaults must be mappings")
+        gaps.append({"source": source.name, "key": name, "reason": LOCAL_GAP_REASON})
+    return gaps
+
+
+def local_alias_operations(source: Path, protocol_words: dict, existing: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Project only alias identity and literal spellings; keep remaining gaps explicit."""
+    rows = yaml.safe_load(source.read_text(encoding="utf-8"))["alias_operations"]
+    seen = {operation["id"] for operation in existing}
+    operations = []
+    relations = []
+    for row in rows:
+        intent = row.get("intent")
+        if intent is None:
+            continue
+        if intent not in protocol_words:
+            raise ValueError("Missing protocol_words family for alias intent: " + str(intent))
+        if intent not in seen:
+            operation = {
+                "id": intent, "family": protocol_words[intent],
+                "request": _schema(None), "result": _schema(None),
+                "submittable_as_job": False,
+            }
+            if row.get("output_modalities"):
+                operation["modality"] = row["output_modalities"][0]
+            operations.append(operation)
+            seen.add(intent)
+        for word in [row["name"], *row.get("shared_operations", [])]:
+            if word != intent:
+                relations.append({"kind": "spelling", "context": "legacy", "word": word,
+                                  "operation": intent, "order": len(relations)})
+    return operations, relations
+
+
+MODELS_GAP_REASON = "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+
+
+MODELS_WORDS_GAP_REASON = "Words are projected; intent_prefixes and examples are not expressed."
+
+
+def models_catalog_projection(source: Path, existing: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Project unambiguous literal words, never prefixes or example payloads."""
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"schema_version", "row_id_placeholder", "operations"}:
+        raise ValueError("Every models source top-level key must be classified")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError("Unsupported models source version")
+    if not isinstance(document["row_id_placeholder"], str) or not document["row_id_placeholder"]:
+        raise ValueError("Models placeholder must be nonempty text")
+    rows = document["operations"]
+    if not isinstance(rows, list):
+        raise ValueError("Models operations must be a list")
+    gaps = [
+        {"source": source.name, "key": "schema_version", "reason": "Source format version, not an operation fact."},
+        {"source": source.name, "key": "row_id_placeholder", "reason": "Example substitution marker, not an operation fact."},
+    ]
+    seen = set()
+    known = {operation["id"] for operation in existing}
+    spellings = []
+    word_rows = {}
+    for order, row in enumerate(rows):
+        if not isinstance(row, dict) or not {"id", "words", "intent_prefixes"} <= set(row) or set(row) - {"id", "words", "intent_prefixes", "examples"}:
+            raise ValueError("Every models operation field must be classified")
+        identifier = row["id"]
+        if not isinstance(identifier, str) or not identifier or identifier in seen:
+            raise ValueError("Models operation IDs must be unique nonempty text")
+        seen.add(identifier)
+        for key in ("words", "intent_prefixes"):
+            if not isinstance(row[key], list) or any(not isinstance(word, str) or not word for word in row[key]):
+                raise ValueError("Models words and prefixes must be text lists")
+        if "examples" in row and (not isinstance(row["examples"], list) or any(not isinstance(example, dict) for example in row["examples"])):
+            raise ValueError("Models examples must be mappings")
+        intents = {example.get("intent") for example in row.get("examples", [])}
+        intent = next(iter(intents)) if len(intents) == 1 else None
+        # An example alone cannot narrow a selector covering several operations.
+        projected = (
+            isinstance(intent, str)
+            and intent in known
+            and row["intent_prefixes"] == [intent]
+        )
+        if projected:
+            for word in dict.fromkeys([identifier, *row["words"]]):
+                if word == intent:
+                    continue
+                if word in word_rows:
+                    raise ValueError(
+                        f"Duplicate catalog word {word!r} in rows {word_rows[word]!r} and {identifier!r}"
+                    )
+                word_rows[word] = identifier
+                spellings.append({"kind": "spelling", "context": "catalog", "word": word,
+                                  "operation": intent, "order": len(spellings)})
+        gaps.append({"source": source.name, "key": f"operations[{order}]:{identifier}",
+                     "reason": MODELS_WORDS_GAP_REASON if projected else MODELS_GAP_REASON})
+    return gaps, spellings
+
+
+
+def missing_model_operations(source: Path, vocabulary: dict, existing: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Declare exact corroborated identities only; examples never grant execution."""
+    # Reuse the strict shape/selector validation before inspecting any example.
+    models_catalog_projection(source, [])
+    rows = yaml.safe_load(source.read_text(encoding="utf-8"))["operations"]
+    known = {operation["id"]: operation for operation in existing}
+    if len(known) != len(existing):
+        raise ValueError("Duplicate declared operation")
+    operations, gaps = [], []
+    for order, row in enumerate(rows):
+        selectors = row["intent_prefixes"]
+        examples = row.get("examples", [])
+        reason = None
+        if len(selectors) != 1 or selectors[0].endswith(".") or "*" in selectors[0]:
+            reason = "Missing operation identity needs one exact singleton selector."
+        elif not examples or any(example.get("intent") != selectors[0] for example in examples):
+            reason = "Exact selector and every example intent must agree."
+        else:
+            intent = selectors[0]
+            families = {vocabulary.get(name, {}).get(intent)
+                        for name, _context in PROJECTED if intent in vocabulary.get(name, {})}
+            if len(families) != 1 or any(not isinstance(family, str) or not family.strip()
+                                         for family in families):
+                reason = "Missing operation identity needs one corroborated exact family mapping."
+            else:
+                family = next(iter(families))
+                if intent in known:
+                    if known[intent]["family"] != family:
+                        raise ValueError("Conflicting declared operation family: " + intent)
+                else:
+                    operation = {"id": intent, "family": family,
+                                 "request": _schema(None), "result": _schema(None),
+                                 "submittable_as_job": False}
+                    operations.append(operation)
+                    known[intent] = operation
+        if reason:
+            gaps.append({"source": source.name, "key": f"operations[{order}]:{row['id']}",
+                         "reason": reason})
+    return operations, gaps
+
+
+def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
+    """Keep the gap-only helper conservative when no catalog operations are supplied."""
+    return models_catalog_projection(source, [])[0]
+
+
+FRONTEND_GAP_REASON = "Admission, runtime policy and receipt bindings need defined operation targets and closed relation field contracts; they are not spelling equivalences."
+
+
+def protocol_frontend_gaps(source: Path) -> list[dict[str, str]]:
+    """Count unresolved operation bindings without rewriting frontend behavior."""
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"records", "frontends", "input_contract"}:
+        raise ValueError("Every frontend source section must be classified")
+    gaps = []
+    for section, route_key in (("records", "registered_routes"), ("frontends", "routes")):
+        rows = document[section]
+        if not isinstance(rows, list):
+            raise ValueError("Frontend sections must be lists")
+        seen = set()
+        for order, row in enumerate(rows):
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] or row["id"] in seen:
+                raise ValueError("Frontend IDs must be unique nonempty text")
+            seen.add(row["id"])
+            routes = row.get(route_key, [])
+            if not isinstance(routes, list) or any(not isinstance(route, dict) for route in routes):
+                raise ValueError("Frontend operation routes must be mappings")
+            # Position records source precedence without copying executable policy payloads.
+            gaps.append({"source": source.name, "key": f"{section}[{order}]:{row['id']}", "reason": FRONTEND_GAP_REASON})
+    return gaps
+
+
+
+def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None, models_source: Path | None = None, frontends_source: Path | None = None) -> str:
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    expected = {name for name, _ in PROJECTED} | {name for name, _ in UNEXPRESSED}
+    if not isinstance(document, dict) or set(document) != expected:
+        raise ValueError("Every source top-level key must be classified")
+    relations = []
+    for name, context in PROJECTED:
+        words = document[name]
+        if not isinstance(words, dict):
+            raise ValueError("Projected source tables must be mappings")
+        for order, (word, family) in enumerate(words.items()):
+            if not isinstance(word, str) or not isinstance(family, str) or not family.strip():
+                raise ValueError("Projected words and families must be text")
+            relations.append({
+                "kind": "family", "word": word, "family": family,
+                "context": context, "order": order,
+            })
+    catalog = {
+        "schema_version": 1,
+        "operations": [],
+        "relations": relations,
+        "unexpressed": [
+            {"source": source.name, "key": name, "reason": reason}
+            for name, reason in UNEXPRESSED
+        ],
+    }
+    if media_source is not None:
+        operations, media_relations = media_intent_operations(media_source)
+        catalog["operations"].extend(operations)
+        catalog["relations"].extend(media_relations)
+    if local_source is not None:
+        catalog["unexpressed"].extend(local_capability_gaps(local_source))
+        alias_operations, alias_relations = local_alias_operations(
+            local_source, document["protocol_words"], catalog["operations"]
+        )
+        catalog["operations"].extend(alias_operations)
+        catalog["relations"].extend(alias_relations)
+    if models_source is not None:
+        missing_operations, identity_gaps = missing_model_operations(
+            models_source, document, catalog["operations"]
+        )
+        catalog["operations"].extend(missing_operations)
+        model_gaps, model_spellings = models_catalog_projection(models_source, catalog["operations"])
+        reasons = {gap["key"]: gap["reason"] for gap in identity_gaps}
+        catalog["unexpressed"].extend(
+            {**gap, "reason": reasons.get(gap["key"], gap["reason"])} for gap in model_gaps
+        )
+        catalog["relations"].extend(model_spellings)
+    if frontends_source is not None:
+        catalog["unexpressed"].extend(protocol_frontend_gaps(frontends_source))
+    # JSON is a YAML subset, with stable key order and explicit string quoting.
+    return json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
+
+
+def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=root / "registry" / "capability_words.yml")
+    parser.add_argument("--output", type=Path, default=root / "registry" / "operations.yml")
+    parser.add_argument("--media-source", type=Path, default=root / "registry" / "media_job_intents.yml")
+    parser.add_argument("--local-source", type=Path, default=root / "registry" / "local_capability_rows.yml")
+    parser.add_argument("--models-source", type=Path, default=root / "registry" / "models_catalog_operations.yml")
+    parser.add_argument("--frontends-source", type=Path, default=root / "registry" / "protocol_frontends.yml")
+    args = parser.parse_args()
+    args.output.write_bytes(generate(args.source, args.media_source, args.local_source, args.models_source, args.frontends_source).encode("utf-8"))
+
+
+if __name__ == "__main__":
+    main()

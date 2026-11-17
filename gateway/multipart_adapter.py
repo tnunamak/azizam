@@ -58,7 +58,6 @@ from gateway.workflow_run import BINDING_UNAVAILABLE, AdapterIdentity, RunContex
 
 LOG = logging.getLogger("azizam.multipart")
 
-MAX_FILE_BYTES = 25 * MIB
 MAX_ANSWER_BYTES = 512 * MIB
 _HEALTH_TIMEOUT_S = 5.0
 MAX_PROBE_BODY_BYTES = 1 * MIB  # an observer's JSON answer; a health answer's body is never read
@@ -122,6 +121,22 @@ def exclusive_pool_problem(services: Mapping[str, Mapping[str, Any]], service_id
     if spec is None:
         return "exclusive capacity is not enabled", None, service
     return None, spec, service
+
+
+def _send_timeout_s(config: Mapping[str, Any]) -> float:
+    """Validate the configured send deadline; only absence or null uses the default."""
+    value = config.get("timeout")
+    if value is None:
+        return _DEFAULT_TIMEOUT_S
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}")
+    try:
+        timeout = float(value)
+    except OverflowError as error:
+        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}") from error
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"timeout must be a finite number greater than zero: {value!r}")
+    return timeout
 
 
 def config_of(service: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -297,7 +312,7 @@ class MultipartRunner:
             try:
                 answer = await self._lease_and_send(
                     ctx, client, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
-                    fields, float(config.get("timeout") or _DEFAULT_TIMEOUT_S))
+                    fields, _send_timeout_s(config))
             except (PoolCapacityError, PoolObserverError) as error:
                 LOG.info("multipart capacity refused: %s", error)
                 self._tell_retry_after(ctx.job_id, spec)

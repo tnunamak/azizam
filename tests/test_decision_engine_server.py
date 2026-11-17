@@ -175,6 +175,96 @@ class UsageScorer:
         return {0: -0.3, 1: -0.2}
 
 
+def _post_headers_only(base_url: str, content_length: str | None) -> tuple[int, dict]:
+    from http.client import HTTPResponse
+    from urllib.parse import urlparse
+
+    address = urlparse(base_url)
+    with socket.create_connection((address.hostname, address.port), timeout=5) as conn:
+        headers = [
+            "POST /v1/systemone HTTP/1.0",
+            "Host: localhost",
+            "Content-Type: application/json",
+        ]
+        if content_length is not None:
+            headers.append(f"Content-Length: {content_length}")
+        # Do not send a body or close the write side. A response must be based
+        # on the headers, not EOF rescuing an unbounded/blocking body read.
+        conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
+        response = HTTPResponse(conn)
+        try:
+            response.begin()
+            return response.status, json.loads(response.read())
+        finally:
+            response.close()
+
+
+class _ReleasedAdmission(threading.BoundedSemaphore):
+    def __init__(self) -> None:
+        super().__init__(1)
+        self.released = threading.Event()
+
+    def release(self, n=1):
+        super().release(n)
+        self.released.set()
+
+
+@pytest.mark.parametrize(
+    ("length", "status", "code"),
+    [
+        pytest.param("-1", 400, "invalid_request", id="negative"),
+        pytest.param("abc", 400, "invalid_request", id="nonnumeric"),
+        pytest.param(str(1024 * 1024 + 1), 413, "request_too_large", id="oversized"),
+        pytest.param("9" * 5000, 413, "request_too_large", id="oversized-many-digits"),
+    ],
+)
+def test_handler_refuses_invalid_length_before_body_and_releases_slot(length, status, code):
+    scorer = UsageScorer()
+    admission = _ReleasedAdmission()
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        actual, body = _post_headers_only(base_url, length)
+        assert actual == status
+        assert body["error"]["code"] == code
+        assert body["error"]["type"] == "invalid_request_error"
+        assert scorer.total_calls == 0
+        assert admission.released.wait(timeout=5)
+        assert admission.acquire(blocking=False)
+        admission.release()
+        assert _post_json(base_url, "/v1/systemone", _systemone_body())[0] == 200
+    assert scorer.total_calls == 1
+
+
+@pytest.mark.parametrize("length", [None, "0"], ids=["missing", "zero"])
+def test_handler_absent_body_keeps_empty_body_refusal(length):
+    scorer = UsageScorer()
+    admission = _ReleasedAdmission()
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        expected_status, _headers, expected = _post_raw(base_url, "/v1/systemone", b"")
+        assert admission.released.wait(timeout=5)
+        admission.released.clear()
+        status, body = _post_headers_only(base_url, length)
+        assert status == expected_status == 422
+        assert body == expected
+        assert admission.released.wait(timeout=5)
+        assert admission.acquire(blocking=False)
+        admission.release()
+    assert scorer.total_calls == 0
+
+
+@pytest.mark.parametrize("at_limit", [False, True], ids=["normal", "at-limit"])
+def test_handler_accepts_body_within_request_limit(at_limit):
+    assert server.MAX_REQUEST_BYTES == 1024 * 1024
+    scorer = UsageScorer()
+    payload = json.dumps(_systemone_body()).encode("utf-8")
+    if at_limit:
+        payload += b" " * (server.MAX_REQUEST_BYTES - len(payload))
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        status, _headers, body = _post_raw(base_url, "/v1/systemone", payload)
+    assert status == 200
+    assert body["usage"] == {"input_tokens": 11, "output_tokens": 1}
+    assert scorer.total_calls == 1
+
+
 def test_handler_serializes_request_wide_usage_for_concurrent_calls():
     scorer = UsageScorer()
     with _ThreadedServer(_handler_for(scorer)) as base_url:
@@ -1087,3 +1177,248 @@ def test_cancellable_post_rechecks_cancel_after_connect_before_post(monkeypatch)
     assert sent == []
     assert fake_socket.shutdown_called
     assert fake_socket.closed
+
+
+@pytest.mark.parametrize("deadline_header", [None, "500"])
+def test_incomplete_bodies_release_all_admission_slots(monkeypatch, deadline_header):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    monkeypatch.setattr(server, "DEFAULT_REQUEST_TIMEOUT_S", 0.5)
+    class Admission(_CountingSemaphore):
+        def __init__(self):
+            super().__init__(5, target=5)
+            self.released = 0
+            self.all_released = threading.Event()
+
+        def release(self, n=1):
+            super().release(n)
+            with self._count_lock:
+                self._held -= n
+                self.released += n
+                if self.released == 5:
+                    self.all_released.set()
+
+    admission = Admission()
+    scorer = UsageScorer()
+    connections = []
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        parsed = urlparse(base_url)
+        try:
+            for _ in range(5):
+                conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+                connections.append(conn)
+                conn.putrequest("POST", "/v1/systemone")
+                conn.putheader("Content-Length", "100")
+                if deadline_header is not None:
+                    conn.putheader("x-decision-deadline-ms", deadline_header)
+                conn.endheaders()
+            assert admission.at_target.wait(timeout=2)
+            assert admission.all_released.wait(timeout=2)
+            assert scorer.total_calls == 0
+            for conn in connections:
+                response = conn.getresponse()
+                assert response.status == 504
+                assert json.loads(response.read())["error"]["code"] == "deadline_exceeded"
+            status, _, _ = _post_json(base_url, "/v1/systemone", _systemone_body("after"))
+            assert status == 200
+            assert scorer.total_calls == 1
+        finally:
+            for conn in connections:
+                conn.close()
+
+
+def test_trickled_body_cannot_extend_absolute_deadline(monkeypatch):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    received, advance = threading.Event(), threading.Event()
+    now = [100.0]
+    # Replace only this module's clock object, not the shared time module.
+    clock = SimpleNamespace(**vars(time))
+    clock.monotonic = lambda: now[0]
+    monkeypatch.setattr(server, "time", clock)
+    handler = _handler_for(scorer)
+    original = handler._read_request_body
+    chunks = []
+
+    class ObservedReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read1(self, size):
+            chunk = self.stream.read1(size)
+            if chunk:
+                chunks.append(chunk)
+                received.set()
+                assert advance.wait(timeout=3), "test did not advance the clock"
+            return chunk
+
+    def observed_read(self, deadline, length):
+        stream = self.rfile
+        self.rfile = ObservedReader(stream)
+        try:
+            return original(self, deadline, length)
+        finally:
+            self.rfile = stream
+
+    monkeypatch.setattr(handler, "_read_request_body", observed_read)
+    with _ThreadedServer(handler) as base_url:
+        parsed = urlparse(base_url)
+        conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+        try:
+            conn.putrequest("POST", "/v1/systemone")
+            conn.putheader("Content-Length", "1000")
+            conn.putheader("x-decision-deadline-ms", "200")
+            conn.endheaders(b" ")
+            assert received.wait(timeout=3), "handler never returned a body chunk"
+            assert chunks == [b" "]
+            # More traffic is queued before the reader resumes past its deadline.
+            conn.send(b" ")
+            now[0] += 0.201
+            advance.set()
+            response = conn.getresponse()
+            assert response.status == 504
+            assert json.loads(response.read())["error"]["code"] == "deadline_exceeded"
+            assert scorer.total_calls == 0
+        finally:
+            advance.set()
+            conn.close()
+
+
+@pytest.mark.parametrize(("length", "status", "code"), [
+    ("-1", 400, "invalid_request"), ("bad", 400, "invalid_request"),
+    ("17", 413, "request_too_large"), ("1, 2", 400, "invalid_request"),
+])
+def test_invalid_or_oversize_body_length_is_rejected(length, status, code):
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    handler = _handler_for(scorer)
+    handler.max_request_body_bytes = 16
+    with _ThreadedServer(handler) as base_url:
+        parsed = urlparse(base_url)
+        conn = HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+        try:
+            conn.putrequest("POST", "/v1/systemone")
+            conn.putheader("Content-Length", length)
+            conn.endheaders()
+            response = conn.getresponse()
+            assert response.status == status
+            assert json.loads(response.read())["error"]["code"] == code
+            assert scorer.total_calls == 0
+        finally:
+            conn.close()
+
+
+@pytest.mark.parametrize("framing", ["conflicting", "transfer-encoding"])
+def test_ambiguous_body_framing_is_rejected_and_connection_closed(framing):
+    from http.client import HTTPResponse
+    from urllib.parse import urlparse
+
+    scorer = UsageScorer()
+    body = json.dumps(_systemone_body()).encode("utf-8")
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        parsed = urlparse(base_url)
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=3) as conn:
+            headers = [
+                "POST /v1/systemone HTTP/1.1",
+                "Host: localhost",
+                "Connection: keep-alive",
+                f"Content-Length: {len(body)}",
+            ]
+            if framing == "conflicting":
+                headers.append(f"Content-Length: {len(body) + 1}")
+            else:
+                headers.append("Transfer-Encoding: chunked")
+            conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body)
+            response = HTTPResponse(conn)
+            try:
+                response.begin()
+                assert response.status == 400
+                assert json.loads(response.read())["error"]["code"] == "invalid_request"
+                assert conn.recv(1) == b"", "rejected framing must close the same connection"
+                assert scorer.total_calls == 0
+            finally:
+                response.close()
+
+def _post_length_fields(base_url: str, lengths: list[str], payload: bytes = b"") -> tuple[int, dict]:
+    from http.client import HTTPResponse
+    from urllib.parse import urlparse
+
+    address = urlparse(base_url)
+    with socket.create_connection((address.hostname, address.port), timeout=5) as conn:
+        headers = [
+            "POST /v1/systemone HTTP/1.0",
+            "Host: localhost",
+            "Content-Type: application/json",
+            *[f"Content-Length: {value}" for value in lengths],
+        ]
+        # Keep the write side open: neither EOF nor teardown may unblock the read.
+        conn.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + payload)
+        response = HTTPResponse(conn)
+        try:
+            response.begin()
+            return response.status, json.loads(response.read())
+        finally:
+            response.close()
+
+
+@pytest.mark.parametrize("lengths", [
+    pytest.param(["1", "-1"], id="negative-second"),
+    pytest.param(["-1", "1"], id="negative-first"),
+    pytest.param(["1", str(1024 * 1024 + 1)], id="oversized-second"),
+    pytest.param(["1", "2"], id="different-valid"),
+    pytest.param(["1, -1"], id="comma-negative"),
+    pytest.param(["1, 2"], id="comma-conflict"),
+    pytest.param(["1", ""], id="empty-second"),
+    pytest.param(["1,"], id="empty-comma-token"),
+])
+def test_handler_refuses_conflicting_length_fields_before_body_and_releases_slot(lengths):
+    scorer = UsageScorer()
+    admission = _ReleasedAdmission()
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
+        status, body = _post_length_fields(base_url, lengths)
+        assert status == 400
+        assert body["error"]["code"] == "invalid_request"
+        assert body["error"]["message"] == "Content-Length must be a non-negative integer."
+        assert scorer.total_calls == 0
+        assert admission.released.wait(timeout=5)
+        assert admission.acquire(blocking=False)
+        admission.release()
+        assert _post_json(base_url, "/v1/systemone", _systemone_body())[0] == 200
+    assert scorer.total_calls == 1
+
+
+@pytest.mark.parametrize("form", ["separate", "comma", "mixed", "zero-padded"])
+def test_handler_accepts_identical_length_fields(form):
+    scorer = UsageScorer()
+    payload = json.dumps(_systemone_body()).encode("utf-8")
+    length = str(len(payload))
+    fields = {
+        "separate": [length, length],
+        "comma": [f"{length}, {length}"],
+        "mixed": [length, f"{length}, {length}"],
+        "zero-padded": ["00" + length, length],
+    }
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        status, body = _post_length_fields(base_url, fields[form], payload)
+    assert status == 200
+    assert body["usage"] == {"input_tokens": 11, "output_tokens": 1}
+    assert scorer.total_calls == 1
+
+
+def test_handler_identical_two_byte_lengths_preserve_request_validation():
+    scorer = UsageScorer()
+    with _ThreadedServer(_handler_for(scorer)) as base_url:
+        expected_status, _headers, expected = _post_raw(base_url, "/v1/systemone", b"{}")
+        status, body = _post_length_fields(base_url, ["2", "2"], b"{}")
+        assert status == expected_status == 422
+        assert body == expected
+        assert _post_json(base_url, "/v1/systemone", _systemone_body())[0] == 200
+    assert scorer.total_calls == 1

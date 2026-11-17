@@ -8,13 +8,19 @@ the LLM library's response fields (x-litellm, response_cost). See docs/design/EN
 the code to data phase 2 audit.
 
 This test counts those markers per production file (proxy.py, root modules, gateway/**; not tests, not web) and
-compares with tests/implicit_marker_baseline.json. A rise or a new file fails. A fall fails until the baseline is
-lowered, so a removal cannot be given back:
+compares with tests/implicit_marker_baseline.json. Non-adapter per-file rises fail.
+Only files listed in baseline adapter_files may rise, and only if that marker's
+total across all files does not rise. Offsetting falls in such a containment
+transfer are accepted together; ordinary falls require lowering the baseline.
+Baseline file keys must equal files with current markers, and no baseline entry
+may be empty. Missing, orphan and empty entries fail with the file name:
 
     python tests/test_implicit_marker_ratchet.py --lower-baseline
 
-The tool refuses to raise a count. The fix for a rise is to move the knowledge into an adapter or into
-service-record data, never to raise the baseline.
+The tool refuses non-adapter increases and adapter increases that raise a marker
+total. --lower-baseline records permitted transfers as well as reductions, drops
+empty/orphan entries and preserves adapter_files. Containment is explicit data,
+not a hard-coded module exception.
 
 A hit is one marker on one physical line, outside comments and docstrings. A line with two different markers
 counts twice; the same marker twice on a line counts once.
@@ -95,8 +101,43 @@ def current_counts() -> dict[str, dict[str, int]]:
     return out
 
 
-def ratchet_violations(counts: dict[str, dict[str, int]], baseline: dict[str, dict[str, int]]) -> list[str]:
+def _totals(counts: dict[str, dict[str, int]]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for markers in counts.values():
+        for marker, count in markers.items():
+            totals[marker] = totals.get(marker, 0) + count
+    return totals
+
+
+def _allowed_rises(
+    counts: dict[str, dict[str, int]],
+    baseline: dict[str, dict[str, int]],
+    adapter_files: list[str] | tuple[str, ...],
+) -> set[tuple[str, str]]:
+    now_totals, base_totals = _totals(counts), _totals(baseline)
+    return {
+        (rel, marker)
+        for rel in adapter_files
+        for marker, n in counts.get(rel, {}).items()
+        if n > baseline.get(rel, {}).get(marker, 0)
+        and now_totals.get(marker, 0) <= base_totals.get(marker, 0)
+    }
+
+
+def ratchet_violations(
+    counts: dict[str, dict[str, int]],
+    baseline: dict[str, dict[str, int]],
+    adapter_files: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    counts = {rel: markers for rel, markers in counts.items() if markers}
+    allowed = _allowed_rises(counts, baseline, adapter_files)
+    transferred = {marker for _, marker in allowed}
     violations: list[str] = []
+    now_totals, base_totals = _totals(counts), _totals(baseline)
+    for marker in sorted(transferred):
+        n, b = now_totals.get(marker, 0), base_totals.get(marker, 0)
+        if n < b:
+            violations.append(f"total: {marker!r} fell {b} -> {n}; {_LOWER}")
     for rel in sorted(set(counts) | set(baseline)):
         now, base = counts.get(rel, {}), baseline.get(rel)
         if base is None:
@@ -104,22 +145,35 @@ def ratchet_violations(counts: dict[str, dict[str, int]], baseline: dict[str, di
             continue
         for marker in sorted(set(now) | set(base)):
             n, b = now.get(marker, 0), base.get(marker, 0)
-            if n > b:
+            if n > b and (rel, marker) not in allowed:
                 violations.append(f"{rel}: {marker!r} rose {b} -> {n}; move it into an adapter or record data")
-            elif n < b:
+            elif n < b and marker not in transferred:
                 violations.append(f"{rel}: {marker!r} fell {b} -> {n}; {_LOWER}")
+        if not base:
+            violations.append(f"{rel}: empty baseline entry; {_LOWER}")
+        if rel not in counts:
+            violations.append(f"{rel}: orphan baseline entry has no current markers; {_LOWER}")
     return violations
 
 
-def lower_baseline(counts: dict[str, dict[str, int]], baseline: dict[str, dict[str, int]]) -> dict:
-    raised = [f"{rel} {m}" for rel, ms in counts.items() for m, n in ms.items() if n > baseline.get(rel, {}).get(m, 0)]
+def lower_baseline(
+    counts: dict[str, dict[str, int]],
+    baseline: dict[str, dict[str, int]],
+    adapter_files: list[str] | tuple[str, ...] = (),
+) -> dict:
+    counts = {rel: markers for rel, markers in counts.items() if markers}
+    allowed = _allowed_rises(counts, baseline, adapter_files)
+    raised = [
+        f"{rel} {m}" for rel, ms in counts.items() for m, n in ms.items()
+        if n > baseline.get(rel, {}).get(m, 0) and (rel, m) not in allowed
+    ]
     if raised:
         raise SystemExit("refusing to raise the baseline for: " + ", ".join(raised))
-    return {"files": counts}
+    return {"adapter_files": list(adapter_files), "files": counts}
 
 
-def _load_baseline() -> dict[str, dict[str, int]]:
-    return json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))["files"]
+def _load_baseline() -> dict:
+    return json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
 
 
 def _write(doc: dict) -> None:
@@ -131,7 +185,8 @@ def _write(doc: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def test_implicit_markers_only_fall() -> None:
-    violations = ratchet_violations(current_counts(), _load_baseline())
+    doc = _load_baseline()
+    violations = ratchet_violations(current_counts(), doc["files"], doc.get("adapter_files", []))
     assert not violations, "Implicit engine markers changed:\n" + "\n".join(violations)
 
 
@@ -171,7 +226,7 @@ def test_rise_new_file_and_fall_fail() -> None:
 
 def test_lower_tool_refuses_a_raise() -> None:
     base = {"a.py": {"gguf": 2}}
-    assert lower_baseline({"a.py": {"gguf": 1}}, base) == {"files": {"a.py": {"gguf": 1}}}
+    assert lower_baseline({"a.py": {"gguf": 1}}, base) == {"adapter_files": [], "files": {"a.py": {"gguf": 1}}}
     try:
         lower_baseline({"a.py": {"gguf": 3}}, base)
     except SystemExit as exc:
@@ -180,12 +235,83 @@ def test_lower_tool_refuses_a_raise() -> None:
         raise AssertionError("a raise was accepted")
 
 
+
+def test_adapter_rise_with_equal_fall_passes() -> None:
+    base = {"adapter.py": {"class_type": 3}, "core.py": {"class_type": 7}}
+    now = {"adapter.py": {"class_type": 8}, "core.py": {"class_type": 2}}
+    assert ratchet_violations(now, base, ["adapter.py"]) == []
+
+
+def test_adapter_transfer_with_net_fall_requires_lowering() -> None:
+    base = {"adapter_file": {"class_type": 3}, "core_file": {"class_type": 7}}
+    now = {"adapter_file": {"class_type": 8}, "core_file": {"class_type": 1}}
+    adapters = ["adapter_file"]
+    assert ratchet_violations(now, base, adapters) == [
+        f"total: 'class_type' fell 10 -> 9; {_LOWER}"
+    ]
+
+    lowered = lower_baseline(now, base, adapters)
+    assert lowered == {"adapter_files": adapters, "files": now}
+    assert ratchet_violations(now, lowered["files"], lowered["adapter_files"]) == []
+
+    restored = {"adapter_file": {"class_type": 8}, "core_file": {"class_type": 2}}
+    assert ratchet_violations(restored, lowered["files"], lowered["adapter_files"]) == [
+        "core_file: 'class_type' rose 1 -> 2; move it into an adapter or record data"
+    ]
+
+
+def test_adapter_rise_without_fall_fails() -> None:
+    base = {"adapter.py": {"class_type": 3}, "core.py": {"class_type": 7}}
+    now = {"adapter.py": {"class_type": 8}, "core.py": {"class_type": 7}}
+    assert any("adapter.py" in v and "rose" in v for v in ratchet_violations(now, base, ["adapter.py"]))
+
+
+def test_non_adapter_rise_with_fall_fails() -> None:
+    base = {"adapter.py": {"class_type": 7}, "core.py": {"class_type": 3}}
+    now = {"adapter.py": {"class_type": 2}, "core.py": {"class_type": 8}}
+    assert any("core.py" in v and "rose" in v for v in ratchet_violations(now, base, ["adapter.py"]))
+
+
+def test_orphan_empty_baseline_entry_fails() -> None:
+    violations = ratchet_violations({}, {"orphan.py": {}})
+    assert any("orphan.py" in v and "empty" in v for v in violations)
+    assert any("orphan.py" in v and "orphan" in v for v in violations)
+
+
+def test_lower_tool_records_containment_and_preserves_adapter_data() -> None:
+    base = {"adapter.py": {"class_type": 3}, "core.py": {"class_type": 7}, "orphan.py": {}}
+    now = {"adapter.py": {"class_type": 8}, "core.py": {"class_type": 2}}
+    assert lower_baseline(now, base, ["adapter.py"]) == {"adapter_files": ["adapter.py"], "files": now}
+    smaller = {"adapter.py": {"class_type": 8}, "core.py": {"class_type": 1}}
+    assert lower_baseline(smaller, base, ["adapter.py"])["files"] == smaller
+
+
+def test_lower_tool_refuses_adapter_total_rise_and_core_transfer() -> None:
+    base = {"adapter.py": {"class_type": 3}, "core.py": {"class_type": 7}}
+    for now in [
+        {"adapter.py": {"class_type": 8}, "core.py": {"class_type": 3}},
+        {"adapter.py": {"class_type": 2}, "core.py": {"class_type": 8}},
+        {"adapter.py": {"class_type": 2, "model_path": 1}, "core.py": {"class_type": 7}},
+    ]:
+        try:
+            lower_baseline(now, base, ["adapter.py"])
+        except SystemExit as exc:
+            assert "refusing to raise" in str(exc)
+        else:
+            raise AssertionError("a forbidden rise was accepted")
+
+
+def test_empty_current_rows_do_not_count_as_marker_files() -> None:
+    assert any("orphan.py" in v for v in ratchet_violations({"orphan.py": {}}, {"orphan.py": {}}))
+    assert lower_baseline({"orphan.py": {}}, {"orphan.py": {}})["files"] == {}
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["--lower-baseline"]:
-        _write(lower_baseline(current_counts(), _load_baseline()))
+        doc = _load_baseline()
+        _write(lower_baseline(current_counts(), doc["files"], doc.get("adapter_files", [])))
     elif sys.argv[1:] == ["--write-initial-baseline"] and not _BASELINE_PATH.exists():
-        _write({"files": current_counts()})
+        _write({"adapter_files": [], "files": current_counts()})
     else:
         raise SystemExit("usage: --lower-baseline")
-    doc = _load_baseline()
+    doc = _load_baseline()["files"]
     print(f"baseline: {sum(sum(m.values()) for m in doc.values())} hits in {len(doc)} files")

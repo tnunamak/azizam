@@ -168,7 +168,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
         "extensions": [
             {
                 "namespace": PROMPT_MEMORY_NAMESPACE,
-                "description": "Per-request prompt retention choice; this control is removed before backend dispatch.",
+                "description": gateway_messages.GATEWAY_MESSAGES["prompt_namespace_description"],
                 "gateway_controls": [{"name": "mode", "values": ["forget"], "default": "member and household settings"}],
                 "routes": [
                     {"route": row.route, "target": "gateway_prompt_policy", "controls": ["mode"]}
@@ -177,7 +177,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
             },
             {
                 "namespace": WORKFLOW_EXTENSION_NAMESPACE,
-                "description": "Gateway-owned workflow controls for image, video, and audio routes.",
+                "description": gateway_messages.GATEWAY_MESSAGES["workflow_namespace_description"],
                 "gateway_controls": [
                     {
                         "name": "metadata",
@@ -201,7 +201,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
             },
             {
                 "namespace": CHAT_EXTENSION_NAMESPACE,
-                "description": "Gateway-owned chat diagnostics controls.",
+                "description": gateway_messages.GATEWAY_MESSAGES["chat_namespace_description"],
                 "routes": [
                     {
                         "route": row.route,
@@ -213,7 +213,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
             },
             {
                 "namespace": ROUTING_EXTENSION_NAMESPACE,
-                "description": "Gateway-owned routing hints that cannot override app profile policy.",
+                "description": gateway_messages.GATEWAY_MESSAGES["routing_namespace_description"],
                 "routes": [
                     {
                         "route": row.route,

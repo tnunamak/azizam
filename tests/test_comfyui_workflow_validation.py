@@ -28,11 +28,73 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 "class_type": "KSampler",
                 "inputs": {"seed": 123, "model": ["4", 0]},
             },
+            "4": {"class_type": "Source", "inputs": {}},
             "_meta": {"title": "Example workflow"},
             "__ui_workflow__": {"nodes": []},
         }
 
         self.assertEqual(validate_workflow_graph(workflow), [])
+
+    @staticmethod
+    def node(**inputs):
+        return {"class_type": "Synthetic", "inputs": inputs}
+
+    def test_link_to_missing_node_is_rejected(self) -> None:
+        self.assertEqual(validate_workflow_graph({"A": self.node(source=["B", 0])}),
+                         ["node 'A'.inputs.source links to missing node 'B'"])
+
+    def test_metadata_is_not_a_link_target(self) -> None:
+        for target in ("_meta", "__ui_workflow__"):
+            with self.subTest(target=target):
+                self.assertEqual(validate_workflow_graph({
+                    "A": self.node(source=[target, 0]), target: self.node(),
+                }), [f"node 'A'.inputs.source links to missing node {target!r}"])
+
+    def test_two_node_cycle_is_rejected(self) -> None:
+        self.assertEqual(validate_workflow_graph({
+            "A": self.node(source=["B", 0]), "B": self.node(source=["A", 0]),
+        }), ["workflow has a cycle: 'A' -> 'B' -> 'A'"])
+
+    def test_self_link_is_rejected(self) -> None:
+        self.assertEqual(validate_workflow_graph({"A": self.node(source=["A", 0])}),
+                         ["workflow has a cycle: 'A' -> 'A'"])
+
+    def test_diamond_shared_source_is_not_a_cycle(self) -> None:
+        self.assertEqual(validate_workflow_graph({
+            "sink": self.node(left=["left", 0], right=["right", 999999]),
+            "left": self.node(source=["source", 0]),
+            "right": self.node(source=["source", 0]), "source": self.node(),
+        }), [])
+
+    def test_string_and_zero_constant_shape_is_a_link_to_missing_node(self) -> None:
+        self.assertEqual(validate_workflow_graph({"A": self.node(choice=["euler", 0])}),
+                         ["node 'A'.inputs.choice links to missing node 'euler'"])
+
+    def test_non_link_constants_are_unchecked(self) -> None:
+        for value in (["absent", True], ["absent", False], ["absent", -1],
+                      ["absent", 1.0], ["absent", "0"], ["absent", None],
+                      ["absent"], ["absent", 0, 1], [1, 0], ("absent", 0)):
+            with self.subTest(value=value):
+                self.assertEqual(validate_workflow_graph({"A": self.node(value=value)}), [])
+
+    def test_shape_errors_precede_link_errors_and_bad_nodes_are_not_walked(self) -> None:
+        self.assertEqual(validate_workflow_graph({
+            "A": self.node(source=["absent", 0]), "bad": {"inputs": {"x": ["missing", 0]}},
+            "other": "not a node",
+        }), ["node 'bad'.class_type must be a non-empty string",
+             "node 'other' must be a mapping",
+             "node 'A'.inputs.source links to missing node 'absent'"])
+
+    def test_disconnected_cycles_are_reported_once_each(self) -> None:
+        self.assertEqual(validate_workflow_graph({
+            "A": self.node(first=["A", 0], duplicate=["A", 1]),
+            "B": self.node(source=["C", 0]), "C": self.node(source=["B", 0]),
+        }), ["workflow has a cycle: 'A' -> 'A'", "workflow has a cycle: 'B' -> 'C' -> 'B'"])
+
+    def test_deep_graph_uses_no_recursive_walk(self) -> None:
+        graph = {str(i): self.node(source=[str(i + 1), 0]) for i in range(2000)}
+        graph["2000"] = self.node()
+        self.assertEqual(validate_workflow_graph(graph), [])
 
     def test_workflow_must_be_mapping(self) -> None:
         self.assertEqual(

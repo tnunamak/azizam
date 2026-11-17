@@ -36,6 +36,7 @@ one (decision G9). ``reconciling`` refuses new transitions until resolved."""
 FINISHED_STATES: frozenset[str] = frozenset({"succeeded", "aborted", "failed_closed"})
 
 StepName = Literal["close", "drain", "checkpoint", "release", "load", "restore", "open"]
+EFFECT_STEPS: frozenset[str] = frozenset({"checkpoint", "release", "load", "restore"})
 
 Outcome = Literal["success", "no_change", "partial", "unknown"]
 

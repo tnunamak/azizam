@@ -48,8 +48,22 @@ def _check_run(run, label):
         raise ValueError(f"{label}: provenance is missing required fields")
     if not isinstance(provenance.get("network_namespace"), bool):
         raise ValueError(f"{label}: provenance network_namespace must be boolean")
-    if not isinstance(run.get("metrics"), list):
-        raise ValueError(f"{label}: metrics must be a list")
+    if not isinstance(run.get("metrics"), list) or not run["metrics"]:
+        raise ValueError(f"{label}: missing metrics: metrics must be a nonempty list")
+    mixes = metadata["mix_hashes"]
+    if not isinstance(mixes, dict) or not mixes:
+        raise ValueError(f"{label}: mix_hashes must be a nonempty object")
+    # Check the original run, before the multi-mix split can discard a row.
+    observed = set()
+    for metric in run["metrics"]:
+        _metric_key(metric)
+        mix = metric["mix"]
+        if not isinstance(mix, str) or mix not in mixes:
+            raise ValueError(f"{label}: metric mix {mix!r} is absent from metadata (undeclared mix {mix!r})")
+        observed.add(mix)
+    missing = set(mixes) - observed
+    if missing:
+        raise ValueError(f"{label}: missing metrics for mixes without metric rows: {', '.join(sorted(missing))}")
 
 
 def _blocks(document, label):

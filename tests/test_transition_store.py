@@ -160,6 +160,48 @@ def test_an_unknown_outcome_never_finishes_the_operation_and_reconciling_needs_o
     assert held.state == "reconciling"
 
 
+@pytest.mark.parametrize("step", ["release", "load", "checkpoint", "restore"])
+@pytest.mark.parametrize("state", ["aborted", "succeeded", "failed_closed"])
+def test_unsettled_effect_intent_cannot_finish(tmp_path: Path, step: str, state: str) -> None:
+    gates, store = make(tmp_path)
+    op = begin(store).operation
+    pending = store.write_intent(op.op_id, intent(op.op_id, step))
+    assert pending.step_outcome is None
+    with pytest.raises(StaleOutcome) as refused:
+        store.finish(op.op_id, state, GATE_FOR_STATE[state])  # type: ignore[arg-type]
+    assert op.op_id in str(refused.value) and step in str(refused.value)
+    assert store.get(op.op_id) == pending
+    assert gates.state("d") == "closed"
+    reloaded_gates, reloaded_store = make(tmp_path)
+    assert reloaded_store.get(op.op_id) == pending
+    assert reloaded_gates.state("d") == "closed"
+
+
+def test_null_drain_intent_can_abort_and_reopen(tmp_path: Path) -> None:
+    gates, store = make(tmp_path)
+    op = begin(store).operation
+    store.write_intent(op.op_id, intent(op.op_id, "drain"))
+    done = store.finish(op.op_id, "aborted", "open")
+    assert (done.state, done.step_outcome, gates.state("d")) == ("aborted", None, "open")
+
+
+def test_null_open_intent_can_succeed_and_records_success(tmp_path: Path) -> None:
+    gates, store = make(tmp_path)
+    op = begin(store).operation
+    store.write_intent(op.op_id, intent(op.op_id, "open"))
+    done = store.finish(op.op_id, "succeeded", "open")
+    assert (done.state, done.step_outcome, gates.state("d")) == ("succeeded", "success", "open")
+
+
+def test_settled_release_can_abort_and_reopen(tmp_path: Path) -> None:
+    gates, store = make(tmp_path)
+    op = begin(store).operation
+    store.write_intent(op.op_id, intent(op.op_id, "release"))
+    store.write_outcome(op.op_id, "release", EffectResult(outcome="success"))
+    done = store.finish(op.op_id, "aborted", "open")
+    assert (done.state, done.step_outcome, gates.state("d")) == ("aborted", "success", "open")
+
+
 def test_finish_refuses_a_gate_the_state_does_not_leave_and_a_second_finish(tmp_path: Path) -> None:
     gates, store = make(tmp_path)
     op = begin(store).operation

@@ -57,10 +57,7 @@ export async function followMeshJob(id: string, deps: MeshJobDeps): Promise<Mesh
       failingSince = null;
       deps.onReconnecting(false);
       if (job.status === "succeeded") {
-        const blob = await deps.content(id);
-        failingSince = null;
-        deps.onReconnecting(false);
-        return deps.stopped() ? { kind: "stopped" } : { kind: "done", blob };
+        return downloadMeshContent(id, deps);
       }
       if (job.status === "failed") {
         const message = job.error?.trim() || FAILED_FALLBACK;
@@ -70,6 +67,32 @@ export async function followMeshJob(id: string, deps: MeshJobDeps): Promise<Mesh
       }
       if (job.status === "canceled") return { kind: "canceled" };
       if (job.status === "missing") return { kind: "failed", message: MISSING };
+    } catch (error) {
+      if (deps.stopped()) return { kind: "stopped" };
+      if (!deps.isNetworkFailure(error)) throw error;
+      failingSince ??= deps.now();
+      if (deps.now() - failingSince >= deps.unreachableAfterMs) {
+        deps.onReconnecting(false);
+        return { kind: "unreachable" };
+      }
+      deps.onReconnecting(true);
+    }
+    await deps.wait(meshPollDelayMs(attempt));
+    attempt += 1;
+  }
+}
+
+/** Once succeeded, only content requests govern reconnection and its time budget. */
+async function downloadMeshContent(id: string, deps: MeshJobDeps): Promise<MeshJobOutcome> {
+  let attempt = 0;
+  let failingSince: number | null = null;
+  for (;;) {
+    if (deps.stopped()) return { kind: "stopped" };
+    try {
+      const blob = await deps.content(id);
+      failingSince = null;
+      deps.onReconnecting(false);
+      return deps.stopped() ? { kind: "stopped" } : { kind: "done", blob };
     } catch (error) {
       if (deps.stopped()) return { kind: "stopped" };
       if (!deps.isNetworkFailure(error)) throw error;

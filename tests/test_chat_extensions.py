@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -18,6 +23,77 @@ from gateway.chat_extensions import (  # noqa: E402
 
 
 class TestChatExtensions(unittest.TestCase):
+    def test_standard_container_field_follows_temporary_registry(self) -> None:
+        import gateway.chat_extensions as module
+
+        registry = ROOT / "registry" / "thinking_controls.yml"
+        original = yaml.safe_load(registry.read_text(encoding="utf-8"))
+        original_field = original["container_field"]
+        self.assertIn(original_field, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+        body = {"model": "default", "messages": [], "extra_template_args": {"nested": [1]}}
+        self.assertNotIn("extra_template_args", module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+        changed = dict(original, container_field="extra_template_args")
+        real_open = Path.open
+        reads = []
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory) / "thinking_controls.yml"
+            temporary.write_text(yaml.safe_dump(changed), encoding="utf-8")
+
+            def redirected_open(path, *args, **kwargs):
+                if path == registry:
+                    reads.append(path)
+                    return real_open(temporary, *args, **kwargs)
+                return real_open(path, *args, **kwargs)
+
+            try:
+                with patch.object(Path, "open", redirected_open):
+                    importlib.reload(module)
+                    self.assertTrue(reads)
+                    self.assertNotIn(original_field, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+                    self.assertIn("extra_template_args", module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+                    result = module.validate_chat_completions_extensions(body)
+                    self.assertTrue(result.ok)
+                    self.assertEqual(result.request, body)
+                    self.assertIsNot(result.request["extra_template_args"], body["extra_template_args"])
+                    self.assertNotIn("extra_template_args", module.STANDARD_RESPONSES_FIELDS)
+            finally:
+                importlib.reload(module)
+        self.assertIn(original_field, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+        self.assertNotIn("extra_template_args", module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+
+    def test_reserved_container_field_refuses_module_reload(self) -> None:
+        import gateway.chat_extensions as module
+
+        registry = ROOT / "registry" / "thinking_controls.yml"
+        original = yaml.safe_load(registry.read_text(encoding="utf-8"))
+        real_open = Path.open
+        for reserved in ("backend", "policy_profile"):
+            with self.subTest(container_field=reserved):
+                with tempfile.TemporaryDirectory() as directory:
+                    temporary = Path(directory) / "thinking_controls.yml"
+                    temporary.write_text(
+                        yaml.safe_dump(dict(original, container_field=reserved)),
+                        encoding="utf-8",
+                    )
+
+                    def redirected_open(path, *args, **kwargs):
+                        if path == registry:
+                            return real_open(temporary, *args, **kwargs)
+                        return real_open(path, *args, **kwargs)
+
+                    try:
+                        with patch.object(Path, "open", redirected_open):
+                            with self.assertRaisesRegex(
+                                ValueError, "container_field.*gateway-owned"
+                            ):
+                                importlib.reload(module)
+                    finally:
+                        importlib.reload(module)
+                self.assertNotIn(reserved, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+                self.assertFalse(module.validate_chat_completions_extensions(
+                    {"model": "default", "messages": [], reserved: {}}
+                ).ok)
+
     @staticmethod
     def _request_body(validate, extensions):
         body = {"model": "default", "extensions": extensions}

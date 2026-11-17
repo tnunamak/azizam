@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
 
@@ -37,6 +38,7 @@ RESOLUTION_NODE = "94"     # Trellis2UpsampleStage: target_resolution
 OUTPUT_NODE = "322"        # Save3DAdvanced: the textured GLB
 RESOLUTIONS = (512, 1024, 1536)
 SEED_MAX = 4294967295
+DEFAULT_MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
 
 class Refusal(Exception):
@@ -130,9 +132,12 @@ class Pixal3DService:
             entry = await self._wait(client, prompt_id)
         except PromptEnded:
             raise
+        except asyncio.CancelledError:
+            await self._finish_cleanup(client, prompt_id)
+            raise
         except Exception:
-            # Every other failed wait (timeout, a failed or malformed poll) leaves the submitted prompt possibly running.
-            await self._cancel_prompt(client, prompt_id)
+            # Every other failed wait leaves the submitted prompt possibly running.
+            await self._finish_cleanup(client, prompt_id)
             raise
         ref = find_glb(entry.get("outputs") or {})
         if ref is None:
@@ -142,13 +147,38 @@ class Pixal3DService:
             raise Refusal(502, f"ComfyUI would not return the GLB ({got.status_code})")
         return got.content
 
+    async def _finish_cleanup(self, client: httpx.AsyncClient, prompt_id: str) -> None:
+        # Keep the client open through cleanup, including repeated caller cancellation.
+        cleanup = asyncio.create_task(self._cancel_prompt(client, prompt_id))
+        cancellation = None
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception:
+                break
+        try:
+            cleanup.result()
+        except (Exception, asyncio.CancelledError):
+            logging.getLogger(__name__).warning("Prompt cleanup failed")
+        if cancellation is not None:
+            raise cancellation
+
     async def _wait(self, client: httpx.AsyncClient, prompt_id: str) -> dict[str, Any]:
         deadline = asyncio.get_running_loop().time() + self.timeout
         while True:
             history = upstream_object(await client.get(f"{self.base_url}/history/{prompt_id}"), "history")
-            entry = history.get(prompt_id)
-            if entry:
-                status = entry.get("status") or {}
+            if prompt_id in history:
+                entry = history[prompt_id]
+                if not isinstance(entry, dict):
+                    raise Refusal(502, "History prompt entry must be an object")
+                status = entry.get("status", {})
+                outputs = entry.get("outputs", {})
+                if not isinstance(status, dict) or not isinstance(outputs, dict):
+                    raise Refusal(502, "History status and outputs must be objects")
+                if OUTPUT_NODE in outputs and not isinstance(outputs[OUTPUT_NODE], dict):
+                    raise Refusal(502, "History output node must be an object")
                 if status.get("status_str") == "error":
                     raise PromptEnded(502, "ComfyUI reported an error for the prompt")
                 if status.get("completed") or entry.get("outputs"):
@@ -184,7 +214,10 @@ class Pixal3DService:
 
 def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,
                client_factory: Callable[[], httpx.AsyncClient] | None = None,
-               poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0) -> FastAPI:
+               poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0,
+               max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES) -> FastAPI:
+    if type(max_image_bytes) is not int or max_image_bytes < 1:
+        raise ValueError("max_image_bytes must be a positive integer")
     service = Pixal3DService(base_url, prompt if prompt is not None else load_prompt(),
                              client_factory or (lambda: httpx.AsyncClient(timeout=60.0)), poll_interval, timeout, cleanup_timeout)
     app = FastAPI(title="Pixal3D ComfyUI service")
@@ -197,7 +230,17 @@ def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,
     async def generate(image: UploadFile = File(...), seed: int | None = Form(None),
                        resolution: int | None = Form(None), bg_removal: str | None = Form(None)) -> Response:
         # bg_removal is accepted for contract compatibility; the Pixal3D prompt removes the background itself.
-        data = await image.read()
+        with BytesIO() as buffered:
+            total = 0
+            while True:
+                chunk = await image.read(min(64 * 1024, max_image_bytes + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_image_bytes:
+                    return JSONResponse({"error": f"image exceeds the {max_image_bytes} byte limit"}, status_code=413)
+                buffered.write(chunk)
+            data = buffered.getvalue()
         if not data:
             return JSONResponse({"error": "the image is empty"}, status_code=400)
         if resolution is not None and resolution not in RESOLUTIONS:
@@ -218,7 +261,8 @@ def _app_from_env() -> FastAPI:
     return create_app(os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"),
                       poll_interval=float(os.environ.get("PIXAL3D_POLL_SECONDS", "2")),
                       timeout=float(os.environ.get("PIXAL3D_TIMEOUT_SECONDS", "900")),
-                      cleanup_timeout=float(os.environ.get("PIXAL3D_CLEANUP_TIMEOUT_SECONDS", "5")))
+                      cleanup_timeout=float(os.environ.get("PIXAL3D_CLEANUP_TIMEOUT_SECONDS", "5")),
+                      max_image_bytes=int(os.environ.get("PIXAL3D_MAX_IMAGE_BYTES", str(DEFAULT_MAX_IMAGE_BYTES))))
 
 
 app = _app_from_env()

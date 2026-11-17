@@ -1130,3 +1130,73 @@ def test_huge_integers_and_steps_give_a_message_or_a_report_error_not_an_excepti
 def test_a_decimal_step_accepts_what_float_modulo_wrongly_refused():
     assert validate_input_value("x", 0.3, {"type": "number", "step": 0.1}) is None
     assert validate_input_value("x", 0.35, {"type": "number", "step": 0.1}) is not None
+
+
+def test_workflow_sources_reject_non_string_package_reference(tmp_path):
+    from workflow_sources import workflow_files
+    package = tmp_path / "extensions" / "bundled" / "demo" / "extension.yml"
+    package.parent.mkdir(parents=True)
+    package.write_text("objects: {workflows: [42]}\n", encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        workflow_files(tmp_path)
+    assert str(package) in str(caught.value)
+    assert "42" in str(caught.value)
+
+
+def test_command_directory_skips_directories_and_keeps_hidden_files(tmp_path, capsys):
+    from workflow_sources import workflow_files
+    directory = tmp_path / "manifests" / "workflows"
+    directory.mkdir(parents=True)
+    (directory / "folder.yml").mkdir()
+    (directory / "folder.yaml").mkdir()
+    files = [directory / name for name in ("visible.yml", ".hidden.yml", ".hidden.yaml")]
+    for path in files:
+        path.write_text(yaml.safe_dump(base()), encoding="utf-8")
+    assert command._files([str(directory)]) == sorted(files)
+    assert workflow_files(tmp_path) == [(path, None) for path in sorted(files)]
+    assert command.run_check([str(directory)], True) == 0
+    results = json.loads(capsys.readouterr().out)
+    assert [item["file"] for item in results] == [str(path) for path in sorted(files)]
+    assert all(item["errors"] == [] for item in results)
+
+
+def test_convert_existing_file_keeps_exact_bytes(tmp_path, capsys):
+    source = tmp_path / "source.yml"
+    source.write_text(yaml.safe_dump(base()), encoding="utf-8")
+    target = tmp_path / "out.yml"
+    original = b"do not truncate\x00\xff\n"
+    target.write_bytes(original)
+    assert command.run_convert(str(source), str(target)) == 2
+    assert target.read_bytes() == original
+    assert f"{target} already exists; it is not overwritten" in capsys.readouterr().err
+
+
+def test_convert_new_file_writes_yaml(tmp_path):
+    source = tmp_path / "source.yml"
+    source.write_text(yaml.safe_dump(base()), encoding="utf-8")
+    target = tmp_path / "out.yml"
+    assert command.run_convert(str(source), str(target)) == 0
+    assert yaml.safe_load(target.read_text(encoding="utf-8")) == base()
+
+
+def test_convert_racing_file_creation_never_truncates(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "source.yml"
+    source.write_text(yaml.safe_dump(base()), encoding="utf-8")
+    target = tmp_path / "out.yml"
+    original = b"another writer\x00\xff\n"
+    real_open = Path.open
+    injected = False
+
+    def racing_open(path, mode="r", *args, **kwargs):
+        nonlocal injected
+        if path == target and ("w" in mode or "x" in mode) and not injected:
+            injected = True
+            with real_open(target, "wb") as output:
+                output.write(original)
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", racing_open)
+    assert command.run_convert(str(source), str(target)) == 2
+    assert injected
+    assert target.read_bytes() == original
+    assert f"{target} already exists; it is not overwritten" in capsys.readouterr().err
