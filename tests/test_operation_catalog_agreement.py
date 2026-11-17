@@ -800,3 +800,65 @@ def test_missing_operation_projection_conflicting_declaration(tmp_path):
     with pytest.raises(ValueError, match="Conflicting declared operation"):
         missing_model_operations(models, {"route_intents": {"sample.exact": "display"}}, existing)
     assert existing[0]["family"] == "different"
+
+
+def _dispatch_accepts_task(monkeypatch, op, task, **kwargs):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import dispatch
+    from gateway.engine_protocol.errors import UnknownOperation
+    from gateway import service_registry
+
+    offering = {"id": "sample", "tasks": [{"task": task}]}
+    service = {"enabled": True}
+    doc = SimpleNamespace(executor="http-v1",
+                          operations={op: SimpleNamespace(op_class="generate")})
+    monkeypatch.setattr(dispatch, "opted_in", lambda value: True)
+    monkeypatch.setattr(dispatch, "offerings_of", lambda *args: [offering])
+    monkeypatch.setattr(dispatch, "connection_config", lambda value: {"protocol": "sample"})
+    monkeypatch.setattr(dispatch.description, "load_registry", lambda: {"sample": doc})
+    monkeypatch.setattr(service_registry, "validate_protocol_dispatch_local_only", lambda value: None)
+    try:
+        return dispatch.resolve({"services": {"sample": service}}, "sample", op, **kwargs) is not None
+    except UnknownOperation:
+        return False
+
+
+def test_dispatch_task_aliases_agree_with_catalog(monkeypatch):
+    from gateway.operation_catalog import project_dispatch_task_aliases
+
+    catalog = load(CATALOG)
+    # Frozen pre-cutover admission, not an oracle derived from the new projection.
+    # images was verified by the maintainer at 3edfb7a59db7756b1a99ed745e7eb455e7fba14f.
+    frozen = {
+        "images": {"image", "image.generate"},
+        "speech": {"speech", "speech.synthesis"},
+        "embeddings": {"embeddings", "text.embeddings"},
+        "chat": {"chat", "chat.generate"},
+    }
+    words = set(catalog.operations)
+    words |= {row["family"] for row in catalog.operations.values()}
+    words |= {row["word"] for row in catalog.relations("spelling", "legacy")}
+    words |= {row["word"] for row in catalog.relations("family")}
+    candidates = words | set(frozen) | set().union(*frozen.values()) | {"unrelated.task"}
+    for op in sorted(candidates):
+        expected = frozen.get(op, {op})
+        assert project_dispatch_task_aliases(op, catalog=catalog) == expected, op
+        # One task per offering: another allowed task cannot mask a broadened alias.
+        for task in sorted(candidates):
+            assert _dispatch_accepts_task(monkeypatch, op, task, catalog=catalog) == (
+                task in expected
+            ), (op, task, expected)
+
+
+def test_dispatch_task_aliases_follow_catalog_mutation(tmp_path, monkeypatch):
+    document = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))
+    row = next(row for row in document["relations"]
+               if row["kind"] == "spelling" and row["context"] == "legacy" and row["word"] == "speech")
+    row["operation"] = "text.embeddings"
+    path = tmp_path / "operations.yml"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    for binding in (path, load(path)):
+        assert _dispatch_accepts_task(monkeypatch, "speech", "text.embeddings", catalog=binding)
+        assert _dispatch_accepts_task(monkeypatch, "speech", "embed", catalog=binding)
+        assert _dispatch_accepts_task(monkeypatch, "speech", "speech", catalog=binding)
+        assert not _dispatch_accepts_task(monkeypatch, "speech", "speech.synthesis", catalog=binding)
