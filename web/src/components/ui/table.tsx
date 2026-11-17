@@ -3,6 +3,11 @@
 import * as React from "react";
 import { cn } from "@/lib/cn";
 
+const TableCaptionContext = React.createContext<{
+  id: string;
+  setCaptionId: (id: string | undefined) => void;
+} | null>(null);
+
 /**
  * DESIGN "List, table and card anatomy": a 36 header in `text-label` subtle
  * ink with no fill, 40 rows (36 with `dense`, for Usage and Activity), and
@@ -18,6 +23,14 @@ function Table({
   // scrollable-region-focusable), so the container takes focus only then.
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [scrolls, setScrolls] = React.useState(false);
+  const generatedCaptionId = React.useId();
+  const [captionId, setCaptionId] = React.useState<string>();
+  const captionContext = React.useMemo(
+    () => ({ id: generatedCaptionId, setCaptionId }),
+    [generatedCaptionId],
+  );
+  const labelledBy = props["aria-labelledby"] || undefined;
+  const label = labelledBy ? undefined : props["aria-label"] || undefined;
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
@@ -34,14 +47,19 @@ function Table({
       ref={containerRef}
       data-slot="table-container"
       tabIndex={scrolls ? 0 : undefined}
+      role={scrolls ? "region" : undefined}
+      aria-labelledby={scrolls ? labelledBy || (label ? undefined : captionId) : undefined}
+      aria-label={scrolls ? label : undefined}
       className="relative w-full overflow-x-auto"
     >
-      <table
-        data-slot="table"
-        data-dense={dense ? "" : undefined}
-        className={cn("group/table text-meta w-full caption-bottom", className)}
-        {...props}
-      />
+      <TableCaptionContext.Provider value={captionContext}>
+        <table
+          data-slot="table"
+          data-dense={dense ? "" : undefined}
+          className={cn("group/table text-meta w-full caption-bottom", className)}
+          {...props}
+        />
+      </TableCaptionContext.Provider>
     </div>
   );
 }
@@ -139,10 +157,20 @@ const tableNumeric = "figures text-right";
 
 function TableCaption({
   className,
+  id,
   ...props
 }: React.ComponentProps<"caption">) {
+  const context = React.useContext(TableCaptionContext);
+  const captionId = id ?? context?.id;
+  const registerCaption = context?.setCaptionId;
+  React.useEffect(() => {
+    if (!registerCaption) return;
+    registerCaption(captionId);
+    return () => registerCaption(undefined);
+  }, [captionId, registerCaption]);
   return (
     <caption
+      id={captionId}
       data-slot="table-caption"
       className={cn("text-muted-foreground text-meta mt-4", className)}
       {...props}
