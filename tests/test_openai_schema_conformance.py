@@ -362,8 +362,9 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         # A second sampler stage restarts its own bar; the reported progress must not drop.
         proxy._workflow_run_core()._record_progress(video_id.removeprefix("video_"), 7)
         self.assertGreaterEqual(poll()["progress"], 85)
-        self.comfy.history[rr.NEW_PROMPT_ID] = rr_fake.succeeded_history("remix_00001_.mp4")
+        # The file is served before the history names it: the job's worker reads both on its own thread.
         self.comfy.view_bytes["remix_00001_.mp4"] = _rendered_mp4()
+        self.comfy.history[rr.NEW_PROMPT_ID] = rr_fake.succeeded_history("remix_00001_.mp4")
         self.comfy.wait_for_status(self.client, video_id, "completed")
         done = poll()
         self.assertEqual((done["status"], done["progress"]), ("completed", 100))
