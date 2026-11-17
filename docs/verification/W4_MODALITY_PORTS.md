@@ -305,7 +305,7 @@ It does not pre-publish an asset or replace the audio handler.
 Invalid multipart timeout configuration raises typed `service_unavailable` / `capacity`. Parameterized declared-run
 start failures preserve each multipart refusal code and its client message.
 
-Committed-tree hermetic commands and quoted output:
+Committed-tree hermetic commands and quoted output from the preceding fix round:
 
 ```sh
 nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-hardening-proof.xml -n 4 tests/test_w4_audio_failure_parity.py tests/test_w4_empty_results.py tests/test_declared_delivery.py tests/test_c2d_f_probe_bounds.py tests/test_declared_operation_job.py
@@ -330,7 +330,7 @@ No reviewer was started.
 
 ## Final audio review corrections
 
-Owned synchronous rows are failed and discarded for both `CancelledError` and `CancellationPending`. Queued rows retain
+Unpublished owned synchronous rows are failed and discarded for both `CancelledError` and `CancellationPending`. Queued rows retain
 native cancellation settlement and restart recovery. Tests cancel a real in-flight HTTP request and check that no row
 remains, including hidden terminal rows. Synchronous unindexable results discard their unpublished internal row and use
 the existing delivery function to return the original bytes. The unsupported-type and Opus cases compare status, body,
@@ -349,3 +349,18 @@ This round adds nine cases: two 600-poll cases, two unindexable sync cases, two 
 CancellationPending case, one queued route-cancellation receipt case and one client-disconnect comparison. The existing
 shutdown and worker-storage cases are strengthened without adding cases. Combined owner-only budget proposal at
 original `tests/budgets.toml` line 678: `pytest = 29909` (+79 over 29830; +9 after the prior proposal of 29900).
+
+
+Final-review committed-tree commands and quoted output:
+
+```sh
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-final-review-proof.xml -n 4 tests/test_w4_audio_failure_parity.py tests/test_audio_media_job_integration.py tests/test_declared_delivery.py tests/test_declared_operation_job.py tests/test_w4_empty_results.py tests/test_c2d_f_probe_bounds.py
+# 108 passed in 10.79s
+nice -n 15 scripts/run-hermetic-pytest.sh --junit-xml-out ../w4-audio-final-review-regression.xml -n 4 tests/test_w4_audio_declared.py tests/test_w4_mesh_declared.py tests/test_audio_media_jobs.py tests/test_audio_job_runs_from_pin.py tests/test_audio_duration_publication.py tests/test_result_bundle_audio.py tests/test_audio_declared_result_boundary.py tests/test_adapter_differential_s7_mesh_rows.py tests/test_modality_paths.py tests/test_audio_route_selectors.py tests/test_engine_knowledge_boundary.py tests/test_implicit_marker_ratchet.py
+# 143 passed in 22.17s
+```
+
+The owner oracles, frozen copies and existing wire fixtures are unchanged. No reviewer was started. Expect it to work
+because cancellation cleanup is exercised by a cancelled HTTP request, unindexable audio is compared with the original
+handler, and storage and reads before delivery use the actual route and worker. Confidence: 97% for tested local paths;
+live engines remain unverified.
