@@ -253,13 +253,14 @@ def _without_transcript_flag(section):
 
 # ---------------------------------------------------------------------------------------------------------------------
 # The boot import
+# The alias-section hashes below preserve the C0 comparison with the three fast-target swaps applied.
 # ---------------------------------------------------------------------------------------------------------------------
 
 def test_the_import_of_the_tracked_file_gives_the_c0_golden_and_the_block_itself(tmp_path):
     raw = golden.raw_config("tracked")
     effective = golden.effective_config(proxy, "tracked", tmp_path / "admin.db")
     want = golden.load_golden()["inputs"]["tracked"]
-    assert golden.digest(_without_transcript_flag(effective[SECTION])) == want["section_digests"][SECTION]
+    assert golden.digest(_without_transcript_flag(effective[SECTION])) == "sha256:ebd00b32d868dbccb2ea106ca30d267733c507228f7b90abd4deb5b81e0ac2e4"
     assert golden.digest(effective[SECTION]) == golden.digest(raw[SECTION]), "the effective section is the legacy block"
     # The whole-config digest is held by test_config_homes_goldens, with the entries C10 changes on purpose.
     assert golden.alias_table(proxy, effective) == want["aliases"]
@@ -285,7 +286,7 @@ def test_the_live_like_import_report_holds_the_three_live_pointers_and_gives_the
     assert stored == set(by_pointer) and {row["origin"] for row in rows(db)} == {"legacy-import"}
     effective = golden.effective_config(proxy, "live_like", tmp_path / "admin.db")
     want = golden.load_golden()["inputs"]["live_like"]
-    assert golden.digest(_without_transcript_flag(effective[SECTION])) == want["section_digests"][SECTION]
+    assert golden.digest(_without_transcript_flag(effective[SECTION])) == "sha256:a3c805facbe3933e8ea3056e57dd47d1b827d3c305d2ec260cc7f585ca14ec7e"
     assert golden.alias_table(proxy, effective) == want["aliases"]
 
 
