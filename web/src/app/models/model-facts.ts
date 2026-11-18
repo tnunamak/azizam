@@ -26,11 +26,14 @@ function dateISO(value: unknown): string | null {
 export function modelDates(row: Record<string, unknown> | CatalogRow): Array<{
   label: (typeof dateFields)[number][0];
   iso: string;
+  /** A date with no time names a calendar day, not an instant: show it as that day in every time zone. */
+  calendarDay: boolean;
 }> {
   const facts = row as Record<string, unknown>;
   return dateFields.flatMap(([label, field]) => {
-    const iso = dateISO(facts[field]);
-    return iso === null ? [] : [{ label, iso }];
+    const value = facts[field];
+    const iso = dateISO(value);
+    return iso === null ? [] : [{ label, iso, calendarDay: typeof value === "string" && value.length === 10 }];
   });
 }
 

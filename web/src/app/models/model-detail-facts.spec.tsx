@@ -131,9 +131,14 @@ describe("model detail dates and source", () => {
   });
 
   it("renders every available date but omits invalid dates and source URLs", async () => {
-    const detail = await openDetails({ added_at: "2026-06-15", updated_at: "2027-01-15T08:00:00Z", released_at: "not a date", source_url: "javascript:alert(1)" });
-    expect(detail.getByText("Added here", { selector: "dt" })).toBeVisible();
-    expect(detail.getByText("Updated", { selector: "dt" })).toBeVisible();
+    const updated = "2027-01-15T08:00:00Z";
+    const detail = await openDetails({ added_at: "2026-06-15", updated_at: updated, released_at: "not a date", source_url: "javascript:alert(1)" });
+    const day = { year: "numeric", month: "short", day: "numeric" } as const;
+    // A date with no time is that calendar day in every zone: build the expectation from local parts, not from UTC.
+    expect(detail.getByText("Added here", { selector: "dt" }).nextElementSibling?.textContent)
+      .toBe(new Date(2026, 5, 15).toLocaleDateString(undefined, day));
+    expect(detail.getByText("Updated", { selector: "dt" }).nextElementSibling?.textContent)
+      .toBe(new Date(updated).toLocaleDateString(undefined, day));
     expect(detail.queryByText("Released", { selector: "dt" })).toBeNull();
     expect(detail.queryByRole("link", { name: "Source" })).toBeNull();
   });

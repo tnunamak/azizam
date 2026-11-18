@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Check,
@@ -630,7 +630,7 @@ function LoadingCatalog() {
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-4">
       <dt className="text-muted-foreground text-meta sm:w-36 sm:shrink-0">{label}</dt>
@@ -710,7 +710,7 @@ function DetailSheet({
                     value={`${row.io.input.join(", ") || "—"} to ${row.io.output.join(", ") || "—"}`}
                   />
                 )}
-                {dates.map(({ label, iso }) => (
+                {dates.map(({ label, iso, calendarDay }) => (
                   <Fact
                     key={label}
                     label={label}
@@ -718,6 +718,7 @@ function DetailSheet({
                       year: "numeric",
                       month: "short",
                       day: "numeric",
+                      ...(calendarDay ? { timeZone: "UTC" } : {}),
                     })}
                   />
                 ))}
