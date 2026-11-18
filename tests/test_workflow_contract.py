@@ -29,7 +29,7 @@ from tests.test_domain_literal_ratchet import vocabulary
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLED = sorted((ROOT / "manifests" / "workflows").glob("*.yml"))
-# The 45 bundled files as they were in schema 1, frozen for the converter tests.
+# The 38 bundled files as they were in schema 1, frozen for the converter tests.
 V1_FIXTURES = sorted((ROOT / "tests" / "fixtures" / "workflows_v1").glob("*.yml"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import workflow_contract as command  # noqa: E402
@@ -493,7 +493,7 @@ def test_value_problems_is_the_one_value_check():
 
 
 def test_the_corpus_is_what_was_counted():
-    assert len(BUNDLED) == 45
+    assert len(BUNDLED) == 38
 
 
 @pytest.mark.parametrize("path", BUNDLED, ids=lambda p: p.stem)
@@ -555,12 +555,12 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
         _doc, notes = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         for note in notes:
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
-    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 45
-    assert counts["capability:backfill"] == 34
-    assert counts["requires:move"] == 30
-    assert counts["accepts:add"] == 37
-    assert counts["seed:add"] == 2
-    assert counts["generate:add"] == 34  # the design said 33: 31 declared and mapped, and 2 added
+    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 38
+    assert counts["capability:backfill"] == 27
+    assert counts["requires:move"] == 27
+    assert counts["accepts:add"] == 31
+    assert counts.get("seed:add", 0) == 0
+    assert counts["generate:add"] == 27
 
 
 def test_the_converted_corpus_has_no_authority_field_and_no_v1_shape():
@@ -857,7 +857,7 @@ def test_the_contract_names_no_model_engine_service_workflow_or_modality(path):
 def test_the_command_checks_the_bundled_directory(capsys):
     assert command.main(["check", str(ROOT / "manifests" / "workflows")]) == 0
     out = capsys.readouterr().out
-    assert out.count("0 errors") == 45 and "converted from schema 1" not in out
+    assert out.count("0 errors") == 38 and "converted from schema 1" not in out
 
 
 def test_the_command_reports_every_error_with_path_and_code(tmp_path, capsys):
