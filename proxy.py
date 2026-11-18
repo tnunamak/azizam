@@ -12914,6 +12914,11 @@ def _video_closure_workflow_ids(name: str) -> tuple[str, ...]:
     mapped = workflow_id_for_video_key(name)
     if mapped is not None:
         return (mapped,)
+    config = _video_workflow_table().get(name)
+    manifest = _find_video_manifest(name, config) if config else None
+    workflow_id = str(manifest.get("id") or "") if manifest else ""
+    if workflow_id:
+        return (workflow_id,)
     intents = {INTENT_VIDEO_GENERATE, domain_rows.route_execution_intent("/v1/videos/edits", "admission")}
     matches = set()
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
@@ -12922,18 +12927,14 @@ def _video_closure_workflow_ids(name: str) -> tuple[str, ...]:
         bindings = record.manifest.get("bindings") or {}
         stems = {Path(binding["workflow"]).stem for binding in bindings.values()
                  if isinstance(binding, Mapping) and isinstance(binding.get("workflow"), str)}
-        if name in stems or name in (record.id, record.id.removeprefix(f"{record.intent}.")):
+        if name in stems or name == record.id:
             matches.add(record.id)
-    if matches:
-        return tuple(sorted(matches))
-    config = _video_workflow_table().get(name)
-    manifest = _find_video_manifest(name, config) if config else None
-    workflow_id = str(manifest.get("id") or "") if manifest else ""
-    return (workflow_id,) if workflow_id else ()
+    return tuple(sorted(matches))
 
 
-def _video_workflow_closure(name: str) -> PolicyDecision | None:
-    for workflow_id in _video_closure_workflow_ids(name):
+def _video_workflow_closure(name: str, *, workflow_ids: Iterable[str] | None = None) -> PolicyDecision | None:
+    ids = _video_closure_workflow_ids(name) if workflow_ids is None else workflow_ids
+    for workflow_id in ids:
         decision = _closed_workflow_decision(workflow_id)
         if decision is not None:
             return decision
@@ -26252,9 +26253,10 @@ def _resume_pending_video_media_jobs() -> int:
     return resumed
 
 
-def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> PolicyDecision:
+def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, workflow_name: str, *,
+                               workflow_ids: Iterable[str] | None = None) -> PolicyDecision:
     """The plan check of a video job, at submit and before each later step."""
-    closed = _video_workflow_closure(workflow_name)
+    closed = _video_workflow_closure(workflow_name, workflow_ids=workflow_ids)
     if closed is not None:
         return closed
     return evaluate_and_apply(
@@ -26287,7 +26289,11 @@ def _video_media_job_step_auth(
     body = payload.get("body") if isinstance(payload.get("body"), Mapping) else {}
     requested_model = body.get("model") or _video_default_workflow()
     workflow_name = str(job.get("workflow") or "")
-    decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
+    metadata = job.get("metadata") if isinstance(job.get("metadata"), Mapping) else {}
+    saved = metadata.get("accepted_workflow_ids")
+    saved_ids = (item for item in saved if isinstance(item, str)) if isinstance(saved, list) else ()
+    workflow_ids = tuple(sorted(set(saved_ids) | set(_video_closure_workflow_ids(workflow_name))))
+    decision = _video_job_policy_decision(auth_context, requested_model, workflow_name, workflow_ids=workflow_ids)
     if decision.denied:
         return _media_job_failure(_policy_denied_response(decision))
     target = _workflow_target_policy_decision(
@@ -26322,7 +26328,8 @@ async def _submit_video_media_job(
         return error_response
     assert workflow_name is not None
     requested_model = body.get("model") or _video_default_workflow()
-    policy_decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
+    workflow_ids = _video_closure_workflow_ids(workflow_name)
+    policy_decision = _video_job_policy_decision(auth_context, requested_model, workflow_name, workflow_ids=workflow_ids)
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
     admission_response = _media_job_admission_response(INTENT_VIDEO_GENERATE, auth_context=auth_context)
@@ -26352,6 +26359,7 @@ async def _submit_video_media_job(
         ),
     )
 
+    job.metadata["accepted_workflow_ids"] = list(workflow_ids)
     try:
         _persist_video_media_job_payload(
             job.job_id,
