@@ -14,6 +14,8 @@ description: Repaint the area you marked in a picture, following your descriptio
 typical_seconds: 33
 inputs:
   prompt:
+    label: what to make
+    help: Describe the change you want.
     type: string
     required: true
   source_image:
@@ -25,19 +27,27 @@ inputs:
     required: true
     description: RGBA image. Transparent pixels (alpha=0) mark the region to regenerate.
   negative_prompt:
+    label: what to avoid
+    help: Describe anything you want left out.
     type: string
     default: ""
   steps:
+    label: refinement steps
+    help: More steps add detail but take longer.
     type: integer
     minimum: 1
     maximum: 60
     default: 25
   cfg:
+    label: prompt strength
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 10
     default: 1.0
   seed:
+    label: variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
     generate:
@@ -45,23 +55,31 @@ inputs:
       minimum: 0
       maximum: 4294967295
   mask_expand:
+    label: edit area size
+    help: Positive values expand the edit area in pixels; negative values shrink it.
     type: integer
     minimum: -256
     maximum: 256
     default: 0
     description: Pixels to grow (positive) or shrink (negative) the edit mask before sampling.
   mask_feather:
+    label: edit edge softness
+    help: Higher values soften edit edges but reduce precision near the boundary.
     type: integer
     minimum: 0
     maximum: 256
     description: Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).
   lanpaint_steps:
+    label: edge refinement steps
+    help: More steps improve consistency at the edit boundary but take longer.
     type: integer
     minimum: 0
     maximum: 20
     default: 5
     description: LanPaint's internal Langevin refinement steps per sampler step ("turns of thinking"). Higher = better boundary consistency, slower.
   prompt_mode:
+    label: edit priority
+    help: Image First favors seamless blending, while Prompt First follows the edit instruction more literally.
     choices_from: {node_type: LanPaint_KSampler, input: LanPaint_PromptMode}
     type: string
     enum: ["Image First", "Prompt First"]
