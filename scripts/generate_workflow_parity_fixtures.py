@@ -35,10 +35,12 @@ def main() -> None:
         return
     if sys.argv[1:] == ["--config-homes"]:
         import tempfile
-        import proxy
-        from tests.config_homes_golden import capture
+        from tests import config_homes_golden
+        Path.home().joinpath(".tmp").mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory() as directory:
-            data = capture(proxy, Path(directory))
+            config_homes_golden.GOLDEN_PATH = Path(directory) / "goldens.json"
+            config_homes_golden.main(["--write"])
+            data = json.loads(config_homes_golden.GOLDEN_PATH.read_text())
         print("CONFIG_HOMES_JSON=" + json.dumps(data, sort_keys=True))
         return
     if sys.argv[1:] == ["--request-maps"]:
