@@ -598,3 +598,31 @@ def test_owner_setting_switch_applies_without_restart(tmp_path, admin_db):
     save(admin_db, {**SAVED, "enabled": False})
     assert run(made.admit(graph("a.safetensors"))) is None
     assert reads == [1] and not made._reserved and not made._loaded
+
+
+def test_switch_read_runs_off_the_event_loop(tmp_path):
+    import threading
+    threads = []
+
+    def saved():
+        threads.append(threading.current_thread())
+        return None
+
+    made = hma.HostMemoryAdmission(hma.load_policy(), saved_setting=saved,
+                                   read_available=lambda: pytest.fail("read memory while disabled"))
+    assert run(made.is_enabled()) is False
+    assert run(made.admit(graph("a.safetensors"))) is None
+    assert threads and all(thread is not threading.main_thread() for thread in threads)
+
+
+def test_unreadable_switch_setting_leaves_admission_off(tmp_path):
+    import sqlite3
+
+    def saved():
+        raise sqlite3.OperationalError("database is locked")
+
+    made = hma.HostMemoryAdmission(hma.load_policy(), saved_setting=saved,
+                                   read_available=lambda: pytest.fail("read memory while disabled"))
+    assert run(made.is_enabled()) is False
+    assert run(made.admit(graph("a.safetensors"))) is None
+    assert not made._reserved and not made._loaded
