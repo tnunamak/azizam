@@ -96,3 +96,27 @@ def test_identity_failure_keeps_previous_creation_failure(tmp_path, monkeypatch)
     assert len(calls) == 2
     assert not choices._tasks
     assert not store.path.exists()
+
+
+def test_unset_store_reads_nothing_and_starts_no_refresh(monkeypatch):
+    """Until the gateway sets the process store at startup, runs validate against the manifest enum and touch no file."""
+    from types import SimpleNamespace
+    from gateway.engine_protocol import choice_lists
+    monkeypatch.setattr(choice_lists, 'STORE', None)
+    monkeypatch.setattr(choice_lists, 'fetch_fresh', lambda *a: pytest.fail('fetched with no store'))
+    identity = SimpleNamespace(service_id='svc', origin='http://203.0.113.10:8188')
+    inputs = {'pick': {'type': 'string', 'enum': ['a'], 'choices_from': {'node_type': 'N', 'input': 'pick'}}}
+    assert choice_lists.choices_for_run(identity, inputs) == {}
+    assert choice_lists._tasks == {}
+
+
+def test_identity_without_an_address_starts_no_refresh(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import choice_lists
+    from gateway.engine_protocol.choice_store import ChoiceStore
+    monkeypatch.setattr(choice_lists, 'STORE', ChoiceStore(tmp_path / 'choices.json'))
+    monkeypatch.setattr(choice_lists, 'fetch_fresh', lambda *a: pytest.fail('fetched with no address'))
+    identity = SimpleNamespace(service_id='svc', origin='')
+    inputs = {'pick': {'type': 'string', 'enum': ['a'], 'choices_from': {'node_type': 'N', 'input': 'pick'}}}
+    assert choice_lists.choices_for_run(identity, inputs) == {}
+    assert choice_lists._tasks == {}

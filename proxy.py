@@ -163,6 +163,7 @@ from gateway.engine_protocol.types import Reply as AdapterReply
 from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
 from gateway.engine_protocol.errors import UnsupportedByAdapter as ProtocolUnsupportedByAdapter
 from gateway.engine_protocol import node_info
+from gateway.engine_protocol import choice_lists
 from gateway.engine_protocol import node_ui_graph
 from gateway.engine_protocol.node_validation import validate_workflow_graph
 from gateway.engine_protocol import chunked_stt
@@ -14373,6 +14374,7 @@ async def _serve(app: FastAPI):
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
     node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "graph_object_info"
+    choice_lists.STORE = choice_lists.ChoiceStore(Path(__file__).resolve().parent / "cache" / "engine_choices.json")
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
