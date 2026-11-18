@@ -22365,6 +22365,11 @@ async def _proxy_offset_inpaint_tile_request(
     missing = [name for name, value in (("base_model", base_model), ("inpaint_model", inpaint_model)) if not value]
     base_workflow = inpaint_workflow = base_manifest = inpaint_manifest = None
     if not missing:
+        for intent, dependency_name in ((generate_intent, base_model), (edit_intent, inpaint_model)):
+            record = _image_workflow_record(intent, dependency_name)
+            decision = _closed_workflow_decision(record.id if record is not None else None)
+            if decision is not None:
+                return _policy_denied_response(decision)
         base_workflow = load_graph_workflow(base_model, intent=generate_intent)
         inpaint_workflow = load_graph_workflow(inpaint_model, intent=edit_intent)
         base_manifest = _find_image_manifest(generate_intent, base_model)
