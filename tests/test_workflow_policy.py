@@ -55,13 +55,19 @@ def policy_text(rows: dict[str, Any]) -> str:
 
 
 DEMO = "image.generate.test-demo-package"
+RETIRED_KLEIN = {
+    "image.edit.flux2-klein", "image.edit.flux2-klein-4b", "image.edit.flux2-klein-4b-inpaint",
+    "image.generate.flux2-klein", "image.generate.flux2-klein-4b", "image.generate.flux2-klein-4b-seamless-tile",
+    "image.generate.flux2-klein-snofs"}
 
 
 def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_demo_package_and_nothing_else():
     bundled = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in BUNDLED.glob("*.yml")}
     policy = release_policy()
     assert set(policy) == bundled and len(policy) == 45   # the demo package's row is a package row: not a bundled workflow's
-    assert {facts.exposure for facts in policy.values()} == {"default"}
+    # The FLUX.2 Klein workflows are retired (their weights are gone), so the release file disables them; the rest are default.
+    assert {record_id for record_id, facts in policy.items() if facts.exposure == "disabled"} == RETIRED_KLEIN
+    assert {facts.exposure for record_id, facts in policy.items() if record_id not in RETIRED_KLEIN} == {"default"}
     # Only the two image-to-3D records carry a ``selection_rank``: their first-choice order (docs/design/MESH_WORKFLOW_SELECTION.md).
     assert {(facts.trust_tier, facts.resource_tier) for facts in policy.values()} == {("stable", "batch")}
     assert {facts.tags for facts in policy.values()} == {()}
@@ -152,7 +158,7 @@ def test_control_a_workflow_without_facts_needs_configuration_in_every_reader(tm
     assert (summary["exposure"], summary["trust_tier"], summary["resource_tier"], summary["tags"]) == (None, None, None, [])
     (cap,) = [capabilities.capability_from_workflow_record(record, backend=backend) for backend in record.supported_backends]
     assert cap.exposure == "disabled" and any("needs configuration" in caveat for caveat in cap.caveats)
-    stated = summarize_workflow(registry.get("image.generate.flux2-klein"), "internal")
+    stated = summarize_workflow(registry.get("image.generate.moss-image"), "internal")
     assert "needs_configuration" not in stated and stated["exposure"] == "default"
 
 
@@ -249,7 +255,7 @@ def test_the_policy_of_a_workflow_is_its_record_facts_and_a_model_request_has_it
 
     record = proxy.GATEWAY_WORKFLOW_REGISTRY.get(TILE)
     assert proxy._image_manifest_policy_metadata(record.manifest) == {
-        "exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
+        "exposure": "disabled", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
     assert proxy._image_manifest_policy_metadata(None)["exposure"] == "default"
     with pytest.raises(NeedsConfiguration):
         proxy._image_manifest_policy_metadata({"id": "no.such.workflow"})
