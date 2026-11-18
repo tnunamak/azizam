@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
-from gateway import asset_types, generated_defaults, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
+from gateway import asset_types, generated_defaults, host_memory_admission, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
 from gateway.engine_protocol import graph_round
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
@@ -294,7 +294,7 @@ class NodeGraphRunner:
         current = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
         metadata = current.get("metadata") or {}
         if metadata.get("protocol_submitting") or not _only_files(ctx.pin.contract):
-            await protocol_jobs.run(runtime, op, body, job_id=ctx.job_id)
+            await protocol_jobs.run(runtime, op, body, job_id=ctx.job_id, caller=ctx.caller)
             return
         if media_jobs.is_terminal(str(current.get("status") or "")):
             return
@@ -432,13 +432,22 @@ class NodeGraphRunner:
                     and type(inputs[target[1]]) is type(round_body[name]) and inputs[target[1]] == round_body[name]):
                 verified_bindings[target] = name
         attribution = MappingProxyType(verified_bindings)
-        if resume is None:
-            media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
-                                     path=media_jobs.DB_PATH)
-
         async def cancelled() -> bool:
             job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
             return bool((job.get("metadata") or {}).get("cancel_requested_at"))
+
+        lease = None
+        if resume is None:
+            try:
+                lease = await self._wait_for_host_memory(ctx, adapter, payload, cancelled)
+                if lease is not None and await cancelled():
+                    raise host_memory_admission.HostMemoryCancelled()
+                media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
+                                         path=media_jobs.DB_PATH)
+            except BaseException:
+                if lease is not None:
+                    lease.finish(False)
+                raise
 
         def job_metadata() -> Mapping[str, Any]:
             return (media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}).get("metadata") or {}
@@ -451,16 +460,23 @@ class NodeGraphRunner:
                 media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={ENGINE_PROMPT_KEY: prompt_id},
                                          path=media_jobs.DB_PATH)
 
-        if probe is not None:
-            probe.start()
+        succeeded = False
+
+        def completed() -> None:
+            nonlocal succeeded
+            succeeded = True
+
         try:
+            if probe is not None:
+                probe.start()
             result = await graph_round.run_round(
                 adapter, session, payload, headers, graph=graph, label=label, max_wait_s=runtime.wait_s,
                 control_timeout=host.control_timeout(), resume_prompt_id=resume, cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
                 on_progress=ctx.record_progress if job_metadata().get(ENGINE_PROGRESS_FLAG) else (lambda _percent: None),
-                on_submitted=lambda prompt_id: keep_prompt(prompt_id),
+                on_submitted=lambda prompt_id: keep_prompt(prompt_id), on_completed=completed,
                 observe=lambda status: host.observed(ctx, status, graph))
+            succeeded = True
         except graph_round.RoundFailure as failed:
             # The submit marker only means "a submit may be in flight": a round that ended in failure leaves none.
             if resume is None:
@@ -477,6 +493,8 @@ class NodeGraphRunner:
                 ctx.record_result_metadata({"queue_position": failed.queue_position})
             raise failure from failed
         finally:
+            if lease is not None:
+                lease.finish(succeeded)
             if probe is not None:
                 try:
                     await probe.stop()
@@ -489,6 +507,18 @@ class NodeGraphRunner:
             ctx.record_result_metadata({"filename": result.names[0]})
         name = next(iter(result.files)) if len(result.files) == 1 else None
         return name, files
+
+    async def _wait_for_host_memory(self, ctx: RunContext, adapter: Any, payload: Mapping[str, Any], cancelled=None):
+        """A job waits for the host's memory as long as it takes (up to the policy's ceiling) and says so to its caller: the
+        job stays ``running`` and its events carry the phase ``waiting_for_memory`` with the GB it needs and the host has."""
+        admit = getattr(adapter, "admit_prompt", None)
+        if admit is None:
+            return
+
+        def report(state: host_memory_admission.WaitState | None) -> None:
+            media_jobs.append_event(ctx.job_id, "attempt", host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)
+
+        return await admit(payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(getattr(ctx, "caller", None)), bounded=False, on_wait=report, cancelled=cancelled))
 
     # -- the reviewed stages that read the run's own facts (a host may still supply a stage of the same name) ----------------
 

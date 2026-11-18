@@ -173,3 +173,75 @@ def test_remote_unreadable_version_refuses_next_socket_io(owner, gateway, monkey
             await (stream.read(1024) if io == 'read' else stream.write(b'synthetic'))
     asyncio.run(run())
     assert bound.revoked and not calls
+
+
+def _commit_during_refresh(factory, monkeypatch, path, times):
+    """Each of the first ``times`` refreshes reads the registry, then an unrelated commit lands before the recheck."""
+    real_check, calls = factory.check, []
+    def check(*args, **kwargs):
+        calls.append(1)
+        real_check(*args, **kwargs)
+        if len(calls) <= times:
+            _external_generation_commit(path)
+    monkeypatch.setattr(factory, 'check', check)
+    return calls
+
+
+def test_remote_commit_during_refresh_reads_again_and_keeps_unchanged_authority(owner, gateway, monkeypatch):
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    _external_generation_commit(gateway.path)
+    calls = _commit_during_refresh(factory, monkeypatch, gateway.path, times=1)
+    asyncio.run(bound.check_current())
+    assert len(calls) == 2 and not bound.revoked
+
+
+def test_remote_registry_that_never_settles_refuses_after_bounded_reads(owner, gateway, monkeypatch):
+    from gateway.remote_engine import MAX_AUTHORITY_REFRESHES
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    _external_generation_commit(gateway.path)
+    calls = _commit_during_refresh(factory, monkeypatch, gateway.path, times=100)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bound.check_current())
+    assert len(calls) == MAX_AUTHORITY_REFRESHES and bound.revoked
+
+
+def test_remote_database_replaced_during_refresh_with_the_same_revision_is_read_again(owner, gateway, monkeypatch, tmp_path):
+    """A restored or swapped admin.db can carry the same registry revision with other authority: its file is new, so
+    no snapshot of the old file may stand for it."""
+    import json
+    import os
+    from gateway.sqlite_startup import connect
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    # Make the cached authority stale first, so the check refreshes; the copy then has the same revision.
+    _external_generation_commit(gateway.path)
+    replacement = tmp_path / 'replacement.db'
+    source, copy = connect(gateway.path), connect(replacement)
+    try:
+        source.backup(copy)
+        (value_json,) = copy.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()
+        registry = json.loads(value_json)
+        registry.setdefault('services', {}).setdefault('smell-box', {})['enabled'] = False
+        copy.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(registry),))
+        copy.commit()
+    finally:
+        source.close()
+        copy.close()
+    real_check, calls = factory.check, []
+    def check(*args, **kwargs):
+        calls.append(1)
+        real_check(*args, **kwargs)
+        if len(calls) == 1:
+            # Empty the old file's write-ahead log first, or SQLite would replay its pages over the new file.
+            wal = connect(gateway.path)
+            try:
+                wal.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            finally:
+                wal.close()
+            os.replace(replacement, gateway.path)
+    monkeypatch.setattr(factory, 'check', check)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bound.check_current())
+    assert len(calls) == 2 and bound.revoked

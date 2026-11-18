@@ -28,7 +28,7 @@ from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_identity import find_workflow_record, other_intent_owns_stem
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
-from gateway import browser_origin, client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway import browser_origin, client_errors, gateway_lifetime, host_memory_admission, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
@@ -8547,6 +8547,7 @@ async def _graph_run_round(
     *,
     vram_probe: Optional[_VramProbe] = None,
     request: Request | None = None,
+    caller: Any = None,
     max_wait_s: int | None = None,
     binding: Mapping[str, Any] | None = None,
     contract_outputs: Mapping[str, Any] | None = None,
@@ -8577,22 +8578,39 @@ async def _graph_run_round(
             except Exception as e:
                 print(f"[proxy] VRAM probe stop error: {e}", flush=True)
 
-    adapter = _graph_adapter(capability)
-    graph = _graph(client, capability)
-    engine = adapter.label
+    lease = None
+    succeeded = False
+
+    def completed() -> None:
+        nonlocal succeeded
+        succeeded = True
+
     try:
+        adapter = _graph_adapter(capability)
+        graph = _graph(client, capability)
+        submit_payload = _build_graph_submit_payload(workflow, capability)
+        # A synchronous caller waits a bounded time for the host's memory, then gets the retryable busy answer.
+        admit = getattr(adapter, "admit_prompt", None)
+        if admit is not None:
+            lease = await admit(submit_payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(
+                caller if caller is not None else getattr(getattr(request, "state", None), "caller", None))))
         result = await graph_round.run_round(
-            adapter, graph, _build_graph_submit_payload(workflow, capability), headers,
+            adapter, graph, submit_payload, headers,
             graph=workflow, label=label, max_wait_s=float(max_wait_s or _graph_service(capability).timeout),
             control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=lambda: _graph_connection(capability=capability),
-            is_disconnected=lambda: _request_is_disconnected(request),
+            is_disconnected=lambda: _request_is_disconnected(request), on_completed=completed,
             binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
             cadence=adapter.poll_for(intent or _image_admission_intent("images.generate")),
             say=lambda text: print(f"[proxy] {text}", flush=True))
+        succeeded = True
+    except host_memory_admission.HostMemoryBusy:
+        return host_memory_admission.busy_response(), []
     except graph_round.RoundFailure as failed:
         return _round_failure_response(failed, adapter, graph), []
     finally:
+        if lease is not None:
+            lease.finish(succeeded)
         await _finalize_probe()
     # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6 limits.
     images = _SelectedImages(raw for files in result.files.values() for raw in files)
@@ -17181,7 +17199,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             raise identity_api.IdentityUnavailable(admission)
         identity_record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
         error, images = await _graph_run_round(
-            client, graph, dict(headers), "identity scene",
+            client, graph, dict(headers), "identity scene", caller=auth_context,
             max_wait_s=int(_identity_cfg().get("max_wait_s", 3600)),
             # The result is the file its manifest's selector names (CODE_TO_DATA_S2, D5).
             binding=_identity_template()[1],
@@ -26339,7 +26357,7 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
                                             may_switch=_target_activation(auth_context) != "existing_only")
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
                                      path=media_jobs.DB_PATH)
-            await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
+            await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id, caller=auth_context)
             receipt_owner.report(status="succeeded", reason="completed")
             await receipt_owner.settle()
         except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
@@ -27504,7 +27522,7 @@ class _WorkflowRunPort:
         body = {**dict(ctx.inputs), **dict(ctx.generated)}
         if ctx.media:
             body.update(await self._stage_media(ctx, adapter, connection))
-        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id, caller=ctx.caller)
 
     async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
         """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with
@@ -29079,7 +29097,7 @@ class _PreparedAudioGeneration:
                 status=media_jobs.STATUS_RUNNING, metadata={"mode": "sync_media_route", "publication_pending": True})
             self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
         try:
-            return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
+            return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id, caller=self.auth_context)
         except asyncio.CancelledError:
             if self.owns_job:
                 self._fail_unpublished_job()
@@ -34568,7 +34586,7 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
     try:
         operation = runtime.target.description.operations["images"]
         if operation.job is not None:
-            refs = await protocol_jobs.run(runtime, "images", body, job_id=job_id)
+            refs = await protocol_jobs.run(runtime, "images", body, job_id=job_id, caller=auth_context)
         else:
             reply = await runtime.invoke("images", body)
             if isinstance(reply, ProtocolStreamReply):

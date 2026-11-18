@@ -340,7 +340,7 @@ class MultipartRunner:
             self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False))
         prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout, resources.aclose)
         await declared_operation_job.run(prepared, str(ctx.pin.contract["intent"]),
-                                         {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id)
+                                         {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id, caller=ctx.caller)
 
     def _tell_retry_after(self, job_id: str, spec: ExclusivePoolSpec) -> None:
         try:

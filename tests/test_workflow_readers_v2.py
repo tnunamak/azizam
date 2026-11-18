@@ -17,6 +17,8 @@ Review every existing entry that changes before replacing it.
 
 Re-captured for the six added model workflows: existing entries change only the mesh generator’s rank:2 tag
 in capabilities, member catalog, projection and the three audience summaries.
+Re-captured when the seven FLUX.2 Klein workflows were retired: only their exposure changes, default to disabled,
+in the same six readers.
 
 Re-captured for train 54: summaries/catalogs add status and superseded_by; audio inputs add declared enums,
 short help and detailed instrumental guidance. Audio document hashes follow those edits. No other output moved.

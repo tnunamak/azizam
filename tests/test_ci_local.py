@@ -146,6 +146,9 @@ class World:
         self.repo = tmp / "repo"
         self.gh_log = tmp / "gh.log"
         self.bin.mkdir()
+        # A quiet host by default: the step limits stay at their base.
+        self.loadavg = tmp / "loadavg"
+        self.loadavg.write_text("0.50 0.40 0.30 1/100 1\n")
         for name, body in STUBS.items():
             (self.bin / name).write_text(f"#!/usr/bin/env bash\n{body}\n")
             (self.bin / name).chmod(0o755)
@@ -177,7 +180,8 @@ class World:
 
     def env(self, **extra: str) -> dict[str, str]:
         return {"HOME": str(self.home), "PATH": f"{self.bin}:/usr/bin:/bin", "LANG": "C.UTF-8",
-                "FAKE_BIN": str(self.bin), "FAKE_GH_LOG": str(self.gh_log), **extra}
+                "FAKE_BIN": str(self.bin), "FAKE_GH_LOG": str(self.gh_log),
+                "AZIZAM_CI_LOADAVG_FILE": str(self.loadavg), **extra}
 
     def args(self, *extra: str) -> list[str]:
         return [str(self.repo / "scripts/ci-local"), "--force", "--browser-workers", "1", "--order-seed", "5", *extra]
@@ -409,6 +413,40 @@ def test_step_limit_is_clamped_to_one_hour(world: World) -> None:
     timeout.chmod(0o755)
     result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="9000")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("load, limit", [("0.50", "100"), ("6.00", "100"), ("9.00", "150"), ("48.00", "800"), ("400.00", "3600")])
+def test_step_limit_scales_with_host_load_and_the_receipt_keeps_the_load(world: World, load: str, limit: str) -> None:
+    # 12 cores: the limit is the base times 2 x load1 / 12 when that is more than 1, at most an hour.
+    world.loadavg.write_text(f"{load} 1.00 1.00 1/100 1\n")
+    (world.bin / "nproc").write_text("#!/usr/bin/env bash\necho 12\n")
+    (world.bin / "nproc").chmod(0o755)
+    timeout = world.bin / "timeout"
+    timeout.write_text("#!/usr/bin/env bash\n"
+                       f"[[ $3 == {limit}s ]] || exit 92\n"
+                       "if [[ $* == *run-hermetic-pytest.sh* ]]; then exit 124; fi\n"
+                       "shift 3; exec \"$@\"\n")
+    timeout.chmod(0o755)
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="100")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"python-hermetic exceeded the {limit}-second step limit (host load {load} at start, {load} at end)" in result.stdout
+    assert "exit 92" not in result.stdout and "\t92\t" not in (world.receipts / "steps.tsv").read_text()
+    assert (world.receipts / "steps/python-hermetic.load").read_text() == f"{load}\t{load}\t{limit}\n"
+    cost = json.loads((world.receipts / "cost.json").read_text())["steps"]["python-hermetic"]
+    assert (cost["load_start"], cost["load_end"], cost["limit_s"]) == (float(load), float(load), float(limit))
+
+
+@pytest.mark.skipif(shutil.which("gawk") is None, reason="needs GNU awk")
+def test_step_limit_works_under_gnu_awk(world: World) -> None:
+    # GNU awk refuses some builtin names as -v variables; the gate runs whatever awk the host has.
+    (world.bin / "awk").unlink()
+    (world.bin / "awk").symlink_to(shutil.which("gawk"))
+    world.loadavg.write_text("18.00 1.00 1.00 1/100 1\n")
+    (world.bin / "nproc").write_text("#!/usr/bin/env bash\necho 12\n")
+    (world.bin / "nproc").chmod(0o755)
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="100")
+    assert "awk: fatal" not in result.stdout + result.stderr
+    assert (world.receipts / "steps/python-hermetic.load").read_text() == "18.00\t18.00\t300\n"
 
 
 def _step_with_unrelated_grandchild(world: World) -> Path:
@@ -766,7 +804,7 @@ def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     lines = result.stdout.splitlines()
     header = next(line for line in lines if line.startswith("step "))
-    assert header.split() == ["step", "rc", "wall_s", "cpu_s", "peak_mb"]
+    assert header.split() == ["step", "rc", "wall_s", "cpu_s", "peak_mb", "load_start", "load_end"]
     rows = []
     for line in lines[lines.index(header) + 1:]:
         if line.startswith("critical path"):
@@ -892,6 +930,83 @@ chmod +x "$root/bin/python3.12"
         expected.append("continued")
     assert calls == expected
     assert result.stderr.count("hermetic pytest: reinstalling Python 3.12.13") == int(not existing)
+@pytest.mark.parametrize("offline_error", ["", "not found in the cache", "the lock file is malformed"])
+def test_hermetic_runner_warms_a_cold_uv_cache_once_from_the_hashed_lock(tmp_path: Path, offline_error: str) -> None:
+    # Each uv version reads its own cache layout, so a uv upgrade leaves a full cache cold: the offline
+    # install fails. The runner fills the cache online from the same lock, with hashes, then installs
+    # offline. Any other install failure is reported as it is.
+    repo, home, bin_dir = (tmp_path / name for name in ("repo", "home", "bin"))
+    (repo / "scripts/lib").mkdir(parents=True)
+    (repo / "tests/fixtures/config_homes").mkdir(parents=True)
+    bin_dir.mkdir()
+    runner = repo / "scripts/run-hermetic-pytest.sh"
+    shutil.copy2(ROOT / "scripts/run-hermetic-pytest.sh", runner)
+    (repo / "scripts/lib/scratch.sh").write_text("scratch_reap_on_death() { :; }\nscratch_on_signal() { :; }\n")
+    for relative in ("tests/requirements-hermetic.lock", "tests/requirements-hermetic.in",
+                     "requirements.txt", "tests/fixtures/config_homes/deployment_startup.yml"):
+        (repo / relative).write_text("")
+    python = home / ".tmp/azizam-hermetic-python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12"
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/bash\necho "Python 3.12.13"\n')
+    python.chmod(0o755)
+    cache = home / ".tmp/hermetic-uv-cache"
+
+    def script(path: Path, body: str) -> None:
+        path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
+        path.chmod(0o755)
+
+    script(repo / "scripts/hermetic_source_preflight.sh", ":")
+    for name in ("bwrap", "ip"):
+        script(bin_dir / name, "exit 92")  # No sandbox or network namespace is needed.
+    script(bin_dir / "git", f"""
+case $3 in
+  rev-parse) echo 0123abcd ;;
+  archive) tar -cf - -C "{repo}" tests/fixtures/config_homes/deployment_startup.yml ;;
+  *) exit 93 ;;
+esac""")
+    # Stop at the first operation after the install; no tests run.
+    script(bin_dir / "find", 'echo continued >> "$(dirname "$0")/calls"; exit 74')
+    script(bin_dir / "uv", f"""
+calls="$(dirname "$0")/calls"
+case "$1 ${{2:-}}" in
+  "--version ") echo "uv 9.9.9" ;;
+  "venv --no-project") for dir; do :; done; mkdir -p "$dir/bin"; echo venv >> "$calls" ;;
+  "pip sync")
+    [[ " $* " == *" --require-hashes "* && " $* " == *" --no-build "* && " $* " == *" {repo}/tests/requirements-hermetic.lock "* ]] || exit 94
+    if [[ " $* " != *" --offline "* ]]; then echo "sync online" >> "$calls"; mkdir -p "$UV_CACHE_DIR"; : > "$UV_CACHE_DIR/warm"; exit 0; fi
+    echo "sync offline" >> "$calls"
+    error="{offline_error}"
+    if [[ -n $error && ! -e $UV_CACHE_DIR/warm ]]; then echo "error: $error" >&2; exit 2; fi ;;
+  *) exit 95 ;;
+esac""")
+    (bin_dir / "awk").symlink_to(next(filter(None, map(shutil.which, ("mawk", "gawk", "original-awk")))))
+
+    def run() -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        (bin_dir / "calls").unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", str(runner)], text=True, capture_output=True, timeout=30,
+            env={"HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin", "AZIZAM_PRIORITY_SET": "1"},
+        )
+        return result, (bin_dir / "calls").read_text().splitlines()
+
+    result, calls = run()
+    warmed = "hermetic pytest: warming the uv cache online: uv 9.9.9 has no cached copy of the lock"
+    if offline_error == "the lock file is malformed":
+        assert result.returncode == 2, result.stderr  # uv's own exit status
+        assert "error: the lock file is malformed" in result.stderr
+        assert calls == ["venv", "sync offline"]
+        assert warmed not in result.stderr and not (cache / "warm").exists()
+        return
+    assert result.returncode == 74, result.stderr
+    if offline_error:
+        assert calls == ["venv", "sync offline", "venv", "sync online", "sync offline", "continued"]
+        assert result.stderr.count(warmed) == 1
+        result, calls = run()  # The cache is now warm for this uv: no second warm-up.
+        assert result.returncode == 74, result.stderr
+    assert calls == ["venv", "sync offline", "continued"]
+    assert warmed not in result.stderr
+
+
 def test_the_first_run_journey_is_timed_end_to_end_into_cost_json(world: World) -> None:
     result = world.run(FAKE_COMPOSE_S="200", FAKE_FIRST_RUN_S="12.5")
     assert result.returncode == 0, result.stdout + result.stderr

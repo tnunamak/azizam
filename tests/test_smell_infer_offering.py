@@ -101,6 +101,108 @@ def test_the_smell_offering_never_resubmits_after_a_lost_reply(jobs_db):  # noqa
     assert len(posts) == 1, "the submit was sent again after its reply was lost"
 
 
+def _without_web_comments(source: str) -> str:
+    """Blank comments, preserving regex/string bytes and original line offsets."""
+    chars = list(source)
+    # Each interpolation has its own token context and balanced code braces.
+    contexts = [{"mode": "code", "depth": 0, "previous": "", "word": ""}]
+    regex_prefixes = set("(,=:[!&|?{};+-*%<>~^")
+    regex_words = {"return", "typeof", "case", "do", "else", "in", "of", "void", "yield"}
+    comment = None
+    index = 0
+    while index < len(source):
+        char = source[index]
+        pair = source[index:index + 2]
+        context = contexts[-1]
+        mode = context["mode"]
+        if comment == "line":
+            if char in "\r\n":
+                comment = None
+            else:
+                chars[index] = " "
+            index += 1
+        elif comment == "block":
+            if pair == "*/":
+                chars[index:index + 2] = [" ", " "]
+                comment = None
+                index += 2
+            else:
+                if char not in "\r\n":
+                    chars[index] = " "
+                index += 1
+        elif mode != "code":
+            if char == "\\":
+                index += 2
+            elif mode == "\x60" and pair == "${":
+                contexts.append({"mode": "code", "depth": 1, "previous": "{", "word": ""})
+                index += 2
+            else:
+                if char == mode:
+                    contexts.pop()
+                    contexts[-1]["previous"] = char
+                    contexts[-1]["word"] = ""
+                index += 1
+        elif char in ("'", '"', "\x60"):
+            contexts.append({"mode": char})
+            index += 1
+        elif pair in ("//", "/*"):
+            chars[index:index + 2] = [" ", " "]
+            comment = "line" if pair == "//" else "block"
+            index += 2
+        elif pair in ("++", "--"):
+            previous = context["previous"]
+            postfix = previous.isalnum() or previous in ("_", "$", ")", "]")
+            # A postfix operator ends an expression; a prefix keeps slash context.
+            context["previous"] = ")" if postfix else char
+            context["word"] = ""
+            index += 2
+        elif char == "/" and (
+            not context["previous"]
+            or context["previous"] in regex_prefixes
+            or context["word"] in regex_words
+        ):
+            # A slash inside a character class is not the closing delimiter.
+            index += 1
+            in_class = False
+            while index < len(source):
+                current = source[index]
+                if current == "\\":
+                    index += 2
+                    continue
+                if current == "[":
+                    in_class = True
+                elif current == "]":
+                    in_class = False
+                elif current == "/" and not in_class:
+                    index += 1
+                    break
+                index += 1
+            while index < len(source) and source[index].isalpha():
+                index += 1
+            context["previous"] = "/"
+            context["word"] = ""
+        elif char.isspace():
+            index += 1
+        elif char.isalnum() or char in "_$":
+            start = index
+            while index < len(source) and (source[index].isalnum() or source[index] in "_$"):
+                index += 1
+            context["previous"] = source[index - 1]
+            context["word"] = source[start:index]
+        else:
+            if context["depth"]:
+                if char == "{":
+                    context["depth"] += 1
+                elif char == "}":
+                    context["depth"] -= 1
+                    if context["depth"] == 0:
+                        contexts.pop()
+            context["previous"] = char
+            context["word"] = ""
+            index += 1
+    return "".join(chars)
+
+
 def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
     """Scan a repository-shaped tree and report source locations only."""
     folder = root / "web" / "src" if web else root / "gateway"
@@ -119,7 +221,8 @@ def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
             with tokenize.open(path) as handle:
                 source = handle.read()
             tree = ast.parse(source, filename=str(path))
-            docstring_lines = set()
+            source_lines = source.splitlines(keepends=True)
+            docstring_spans = []
             for node in ast.walk(tree):
                 if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                     first = node.body[0] if node.body else None
@@ -128,12 +231,20 @@ def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
                         and isinstance(first.value, ast.Constant)
                         and isinstance(first.value.value, str)
                     ):
-                        docstring_lines.add(first.value.lineno)
+                        docstring_spans.append((
+                            (first.lineno, first.col_offset),
+                            (first.end_lineno, first.end_col_offset),
+                        ))
             for token in tokenize.generate_tokens(io.StringIO(source).readline):
-                if token.type == tokenize.COMMENT or (
-                    token.type == tokenize.STRING and token.start[0] in docstring_lines
-                ):
+                if token.type == tokenize.COMMENT:
                     continue
+                if token.type == tokenize.STRING:
+                    # AST columns are UTF-8 byte offsets; tokenize uses characters.
+                    start = (token.start[0], len(source_lines[token.start[0] - 1][:token.start[1]].encode("utf-8")))
+                    end = (token.end[0], len(source_lines[token.end[0] - 1][:token.end[1]].encode("utf-8")))
+                    if any(span_start <= start and end <= span_end
+                           for span_start, span_end in docstring_spans):
+                        continue
                 if "smell" in token.string.lower():
                     hits.add(f"{relative}:{token.start[0]}")
             continue
@@ -144,9 +255,9 @@ def _offering_hits(root: Path, *, web: bool = False) -> list[str]:
             source = raw.decode("utf-8")
         except UnicodeDecodeError:
             continue  # Binary assets are not source text.
+        if web:
+            source = _without_web_comments(source)
         for line_number, line in enumerate(source.splitlines(), start=1):
-            if web and line.lstrip().startswith(("//", "*", "/*")):
-                continue
             if "smell" in line.lower():
                 hits.add(f"{relative}:{line_number}")
     return sorted(hits)
@@ -165,6 +276,33 @@ def test_no_web_source_names_the_smell_offering():
 @pytest.mark.parametrize(
     ("relative_path", "source", "web", "expected_lines"),
     [
+        ("gateway/inline.py", '"""module docs"""; OFFERING = "smell"\n', False, [1]),
+        ("gateway/joined.py", '("ordinary documentation "\n "smell documentation")\n', False, []),
+        ("gateway/after.py", '("ordinary documentation "\n "smell documentation")\nOFFERING = "smell"\n', False, [3]),
+        ("gateway/unicode.py", '"""é docs"""; OFFERING = "smell"\n', False, [1]),
+        ("web/src/inline.ts", '/* explanation */ const offering = "smell";\n', True, [1]),
+        ("web/src/quoted.ts", 'const url = "https://example.invalid"; const offering = "smell";\n', True, [1]),
+        ("web/src/template.ts", 'const url = \x60https://example.invalid/*text*/\x60; const offering = "smell";\n', True, [1]),
+        ("web/src/after-block.ts", '/* explanation\n smell docs */ const offering = "smell";\n', True, [2]),
+        ("web/src/inline-comment.ts", 'const value = 1; // smell docs\n', True, []),
+        ("web/src/string-comment.ts", 'const text = "/* smell */";\n', True, [1]),
+        ("web/src/regex-class.ts", "const marker = /[/*]/; const offering = \"smell\";\n", True, [1]),
+        ("web/src/regex-escape.ts", "const marker = /a\\/b/; const offering = \"smell\";\n", True, [1]),
+        ("web/src/real-block.ts", "const value = 1; /* smell documentation */\n", True, []),
+        ("web/src/division.ts", "const r = a / b; // smell\n", True, []),
+        ("web/src/postfix-inc-line.ts", "let x = 4; const r = x++ / 2; // smell documentation\n", True, []),
+        ("web/src/postfix-dec-line.ts", "let x = 4; const r = x-- / 2; // smell documentation\n", True, []),
+        ("web/src/postfix-inc-block.ts", "let x = 4; const r = x++ / 2; /* smell documentation */\n", True, []),
+        ("web/src/postfix-dec-block.ts", "let x = 4; const r = x-- / 2; /* smell documentation */\n", True, []),
+        ("web/src/postfix-inc-string.ts", 'let x = 4; const r = x++ / 2; const text = "smell documentation";\n', True, [1]),
+        ("web/src/postfix-dec-string.ts", 'let x = 4; const r = x-- / 2; const text = "smell documentation";\n', True, [1]),
+        ("web/src/prefix-inc-regex.ts", 'const r = ++ /[/*]/; const text = "smell documentation";\n', True, [1]),
+        ("web/src/template-expression.ts", "const text = `${1 /* smell documentation */}`;\n", True, []),
+        ("web/src/template-text.ts", "const text = `smell ${1}`;\n", True, [1]),
+        ("web/src/nested-template.ts", "const text = `${{value: `${1 /* smell docs */}`}.value}`;\n", True, []),
+        ("web/src/template-code.ts", "const text = `${{value: \"smell\"}.value}`;\n", True, [1]),
+        ("web/src/regex-return.ts", "function f() { return /[/*]/g; } const offering = \"smell\";\n", True, [1]),
+        ("web/src/regex-class-escape.ts", "const marker = /[\\]/*]/g; const offering = \"smell\";\n", True, [1]),
         ("gateway/constant.py", 'QUERY = """SMELL"""\n', False, [1]),
         (
             "gateway/docs.py",
@@ -186,6 +324,33 @@ def test_no_web_source_names_the_smell_offering():
         ("web/src/comments.ts", "// smell\n  /* smell\n * smell\n */\n", True, []),
     ],
     ids=[
+        "same-line-docstring-assignment",
+        "joined-docstring",
+        "after-joined-docstring",
+        "unicode-docstring-boundary",
+        "after-typescript-block-comment",
+        "quoted-double-slash",
+        "template-comment-markers",
+        "after-multiline-block-comment",
+        "trailing-line-comment",
+        "quoted-block-comment",
+        "regex-class",
+        "regex-escape",
+        "real-block",
+        "division",
+        "postfix-inc-line",
+        "postfix-dec-line",
+        "postfix-inc-block",
+        "postfix-dec-block",
+        "postfix-inc-string",
+        "postfix-dec-string",
+        "prefix-inc-regex",
+        "template-expression",
+        "template-text",
+        "nested-template",
+        "template-code",
+        "regex-return",
+        "regex-class-escape",
         "triple-quoted-constant",
         "real-docstrings",
         "gateway-json",

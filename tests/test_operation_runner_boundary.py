@@ -38,12 +38,15 @@ def _docstring_nodes(tree: ast.Module) -> set[int]:
 _UNFOLDED = object()
 
 
-def _folded_value(node: ast.AST):
-    """Evaluate only literal construction, never source names or arbitrary calls."""
+def _folded_value(node: ast.AST, bindings=None):
+    """Fold syntax using known literal bindings, never execute source code."""
+    bindings = {} if bindings is None else bindings
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id, _UNFOLDED)
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, int, float, bool, type(None))):
         return node.value
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _folded_value(node.left), _folded_value(node.right)
+        left, right = _folded_value(node.left, bindings), _folded_value(node.right, bindings)
         if isinstance(left, str) and isinstance(right, str):
             return left + right
     if isinstance(node, ast.JoinedStr):
@@ -54,8 +57,8 @@ def _folded_value(node: ast.AST):
                 continue
             if not isinstance(part, ast.FormattedValue):
                 return _UNFOLDED
-            value = _folded_value(part.value)
-            spec = "" if part.format_spec is None else _folded_text(part.format_spec)
+            value = _folded_value(part.value, bindings)
+            spec = "" if part.format_spec is None else _folded_text(part.format_spec, bindings)
             if value is _UNFOLDED or spec is None:
                 return _UNFOLDED
             if part.conversion == ord("s"):
@@ -72,18 +75,18 @@ def _folded_value(node: ast.AST):
                 return _UNFOLDED
         return "".join(parts)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        receiver = _folded_text(node.func.value)
+        receiver = _folded_text(node.func.value, bindings)
         if receiver is None:
             return _UNFOLDED
         if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
             values = node.args[0]
             if isinstance(values, (ast.List, ast.Tuple)):
-                parts = [_folded_text(value) for value in values.elts]
+                parts = [_folded_text(value, bindings) for value in values.elts]
                 if all(isinstance(part, str) for part in parts):
                     return receiver.join(parts)
         if node.func.attr == "format":
-            args = [_folded_value(value) for value in node.args]
-            kwargs = {item.arg: _folded_value(item.value) for item in node.keywords}
+            args = [_folded_value(value, bindings) for value in node.args]
+            kwargs = {item.arg: _folded_value(item.value, bindings) for item in node.keywords}
             if None in kwargs or any(value is _UNFOLDED for value in [*args, *kwargs.values()]):
                 return _UNFOLDED
             try:
@@ -93,20 +96,172 @@ def _folded_value(node: ast.AST):
     return _UNFOLDED
 
 
-def _folded_text(node: ast.AST) -> str | None:
+def _folded_text(node: ast.AST, bindings=None) -> str | None:
     """Fold literal string construction without importing or executing source code."""
-    value = _folded_value(node)
+    value = _folded_value(node, bindings)
     return value if isinstance(value, str) else None
 
+
+
+def _bound_names(nodes):
+    """Names made local by bindings; nested scopes own their bindings."""
+    pending = list(nodes)
+    names = set()
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            continue
+        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            continue
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        pending.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def _nodes_with_bindings(tree):
+    """Visit lexical scopes in source order, keeping only proven literal values."""
+    def forget(target, bindings):
+        for child in ast.walk(target):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
+                bindings.pop(child.id, None)
+
+    def walk(node, bindings, deferred_bindings=None, whole_iterable=False):
+        def descend(child, local):
+            yield from walk(child, local, deferred_bindings)
+
+        yield node, dict(bindings)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            # Defaults and annotations belong to the enclosing scope.
+            for child in ast.iter_child_nodes(node):
+                if child is node.args or child in getattr(node, "decorator_list", ()) or child is getattr(node, "returns", None):
+                    yield from descend(child, bindings)
+            # Deferred bodies cannot assume enclosing values at call time.
+            # Methods also do not resolve bare names through class locals.
+            local = {}
+            body = [node.body] if isinstance(node, ast.Lambda) else node.body
+            if not isinstance(node, ast.Lambda):
+                bindings.pop(node.name, None)
+            for child in body:
+                yield from walk(child, local)
+            return
+        if isinstance(node, ast.ClassDef):
+            for child in [*node.decorator_list, *node.bases, *node.keywords]:
+                yield from descend(child, bindings)
+            bindings.pop(node.name, None)
+            local = dict(bindings)
+            for child in node.body:
+                yield from descend(child, local)
+            return
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            if node.value is not None:
+                yield from descend(node.value, bindings)
+            if isinstance(node, ast.AnnAssign):
+                yield from descend(node.annotation, bindings)
+            value = _folded_value(node.value, bindings) if node.value is not None else _UNFOLDED
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                yield from descend(target, bindings)
+                forget(target, bindings)
+                if isinstance(target, ast.Name) and value is not _UNFOLDED:
+                    bindings[target.id] = value
+            return
+        if isinstance(node, (ast.AugAssign, ast.Delete)):
+            for child in ast.iter_child_nodes(node):
+                yield from descend(child, bindings)
+            for target in node.targets if isinstance(node, ast.Delete) else [node.target]:
+                forget(target, bindings)
+            return
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bindings.pop(alias.asname or alias.name.split(".")[0], None)
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            changed = _bound_names(ast.iter_child_nodes(node))
+            # Only eager iterable parts run before the target/body can rebind names.
+            if isinstance(node, (ast.For, ast.AsyncFor)):
+                deferred = {name: value for name, value in bindings.items() if name not in changed}
+                yield from walk(node.iter, dict(bindings), deferred, whole_iterable=True)
+            # Any iteration may follow writes from a previous iteration.
+            # Neither a while test nor the else suite can rely on entry literals.
+            for name in changed:
+                bindings.pop(name, None)
+            if isinstance(node, ast.While):
+                yield from descend(node.test, dict(bindings))
+            else:
+                yield from descend(node.target, dict(bindings))
+            for suite in (node.body, node.orelse):
+                local = dict(bindings)
+                for child in suite:
+                    yield from descend(child, local)
+            return
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                yield from descend(item.context_expr, bindings)
+                if item.optional_vars is not None:
+                    forget(item.optional_vars, bindings)
+                    yield from descend(item.optional_vars, bindings)
+            for child in node.body:
+                yield from descend(child, bindings)
+            return
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            local = dict(bindings)
+            deferred_bindings = None if deferred_bindings is None else dict(deferred_bindings)
+            for index, generator in enumerate(node.generators):
+                yield from descend(generator.iter, local)
+                # A generator evaluates its first iterable now, all remaining parts on next().
+                if isinstance(node, ast.GeneratorExp) and index == 0 and deferred_bindings is not None:
+                    # Only the whole iterable is consumed exclusively by this loop.
+                    # Nested generators can escape and resume after later rebindings.
+                    local = dict(deferred_bindings) if whole_iterable else {}
+                forget(generator.target, local)
+                if deferred_bindings is not None:
+                    forget(generator.target, deferred_bindings)
+                yield from descend(generator.target, local)
+                for condition in generator.ifs:
+                    yield from descend(condition, local)
+            for child in ([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]):
+                yield from descend(child, local)
+            return
+        if isinstance(node, (ast.If, ast.Try)):
+            # Branch-dependent writes cannot establish constants after a join.
+            if hasattr(node, "test"):
+                yield from descend(node.test, bindings)
+            for field in ("body", "orelse", "handlers", "finalbody"):
+                local = dict(bindings)
+                if isinstance(node, ast.Try) and field != "body":
+                    changed = list(node.body)
+                    if field == "finalbody":
+                        # Finally follows either success or an exception,
+                        # including writes made by an else suite or handler.
+                        changed.extend(node.handlers)
+                        changed.extend(node.orelse)
+                    for name in _bound_names(changed):
+                        local.pop(name, None)
+                for child in getattr(node, field, ()):
+                    yield from descend(child, local)
+            for name in _bound_names(ast.iter_child_nodes(node)):
+                bindings.pop(name, None)
+            return
+        if isinstance(node, ast.ExceptHandler) and node.name:
+            bindings.pop(node.name, None)
+        for child in ast.iter_child_nodes(node):
+            yield from descend(child, bindings)
+
+    yield from walk(tree, {})
 
 def _violations(source: str) -> list[str]:
     tree = ast.parse(source)
     skipped = _docstring_nodes(tree)
     found: list[str] = []
-    for node in ast.walk(tree):
+    for node, bindings in _nodes_with_bindings(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"getattr", "setattr"}:
             attribute = node.args[1] if len(node.args) > 1 else None
-            if attribute is None or _folded_text(attribute) is None:
+            if attribute is None or _folded_text(attribute, bindings) is None:
                 found.append(f"line {node.lineno}: {node.func.id} attribute argument does not fold to a literal")
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
@@ -140,8 +295,8 @@ def _violations(source: str) -> list[str]:
                 found.append(f"line {node.lineno}: literal {value!r}")
             elif DIGITS_ONLY.match(value):
                 found.append(f"line {node.lineno}: literal {value!r} is a bare id")
-        elif isinstance(node, (ast.BinOp, ast.JoinedStr, ast.Call)) and _folded_text(node) is not None:
-            value = _folded_text(node)
+        elif isinstance(node, (ast.BinOp, ast.JoinedStr, ast.Call)) and _folded_text(node, bindings) is not None:
+            value = _folded_text(node, bindings)
             if FORBIDDEN_LITERAL.search(value):
                 found.append(f"line {node.lineno}: literal {value!r} (folded)")
             elif DIGITS_ONLY.match(value):
@@ -285,6 +440,39 @@ def test_runner_boundary_closes_syntax_gaps(source):
     assert len(findings) == 1, (source, findings)
 
 
+
+
+@pytest.mark.parametrize("expression", ["A + B", "f'{A}{B}'", "'{}{}'.format(A, B)"])
+def test_runner_boundary_folds_names_in_source_order(expression):
+    source = "A = 'node'\nB = '_id'\nvalue = result[" + expression + "]\n"
+    findings = _violations(source)
+    assert len(findings) == 1, findings
+    assert "node_id" in findings[0]
+
+
+@pytest.mark.parametrize("source", [
+    "A = 'sta'\nB = 'tus'\nvalue = result[A + B]\n",
+    "A = 'node'\ndef f(A):\n    return result[A + '_id']\n",
+    "A = 'node'\nA = 'sta'\nvalue = result[A + '_id']\n",
+    "A = 'node'\nA = dynamic()\nvalue = result[A + '_id']\n",
+    "A = 'node'\nA += suffix\nvalue = result[A + '_id']\n",
+    "A = 'node'\ndel A\nvalue = result[A + '_id']\n",
+    "A = 'node'\nfor A in values:\n    value = result[A + '_id']\n",
+    "A = 'node'\nwith context() as A:\n    value = result[A + '_id']\n",
+    "A = 'node'\nimport settings as A\nvalue = result[A + '_id']\n",
+    "A = 'node'\nfrom settings import A\nvalue = result[A + '_id']\n",
+    "A = 'node'\nvalue = [result[A + '_id'] for A in values]\n",
+])
+def test_runner_boundary_invalidates_shadowed_or_rebound_names(source):
+    assert _violations(source) == []
+
+
+def test_runner_boundary_function_bindings_do_not_escape():
+    source = "A = 'sta'\ndef f():\n    A = 'node'\n    return result[A + '_id']\nvalue = result[A + 'tus']\n"
+    findings = _violations(source)
+    assert len(findings) == 1 and "node_id" in findings[0], findings
+
+
 def test_runner_boundary_plain_names_and_folded_attributes_are_clean():
     source = """class Runner:
     def run(self, item):
@@ -303,3 +491,132 @@ def test_runner_boundary_plain_names_and_folded_attributes_are_clean():
 ])
 def test_runner_boundary_reports_unresolved_attribute(source):
     assert "attribute argument does not fold to a literal" in _violations(source)[0]
+
+
+def test_runner_boundary_folds_derived_bindings_and_keeps_comprehension_scope():
+    source = ("A = 'no'\nB = A + 'de'\nC = '_id'\n"
+              "items = [result[B + C] for B in values]\n"
+              "value = result[''.join([B, C])]\n")
+    findings = _violations(source)
+    assert len(findings) == 1 and "node_id" in findings[0], findings
+
+@pytest.mark.parametrize("source,line", [
+    pytest.param("A = 'status'\ndef f():\n    return getattr(obj, A)\nA = dynamic()\n", 3, id="deferred-function"),
+    pytest.param("A = 'status'\nasync def f():\n    return getattr(obj, A)\nA = dynamic()\n", 3, id="deferred-async-function"),
+    pytest.param("A = 'status'\nf = lambda: getattr(obj, A)\nA = dynamic()\n", 2, id="deferred-lambda"),
+    pytest.param("class C:\n    A = 'status'\n    def m(self):\n        return getattr(obj, A)\n", 4, id="class-local-shadow"),
+    pytest.param("A = 'status'\nfor item in values:\n    getattr(obj, A)\n    A = dynamic()\n", 3, id="loop-carried-binding"),
+    pytest.param("A = 'status'\nwhile getattr(obj, A):\n    A = dynamic()\n", 2, id="while-test-binding"),
+    pytest.param("A = 'status'\ntry:\n    A = dynamic()\nfinally:\n    getattr(obj, A)\n", 5, id="try-finally-binding"),
+    pytest.param("A = 'status'\ntry:\n    A = dynamic()\nexcept Exception:\n    getattr(obj, A)\n", 5, id="try-handler-binding"),
+    pytest.param("A = 'status'\ntry:\n    pass\nexcept Exception:\n    A = dynamic()\nfinally:\n    getattr(obj, A)\n", 7, id="handler-finally-binding"),
+])
+def test_runner_boundary_rejects_unproven_deferred_or_carried_bindings(source, line):
+    assert _violations(source) == [
+        f"line {line}: getattr attribute argument does not fold to a literal"
+    ]
+
+
+def test_runner_boundary_keeps_local_literals_and_eager_defaults():
+    source = ("A = 'status'\n"
+              "def f(value=getattr(obj, A)):\n"
+              "    B = 'status'\n"
+              "    return getattr(obj, B)\n"
+              "g = lambda value=getattr(obj, A): getattr(obj, 'status')\n")
+    assert _violations(source) == []
+
+
+def test_runner_boundary_for_iterable_uses_entry_bindings():
+    source = "A = 'node'\nfor item in result[A + '_id']:\n    A = dynamic()\n"
+    assert _violations(source) == ["line 2: literal 'node" + "_id' (folded)"]
+
+
+def test_runner_boundary_for_safe_iterable_keeps_entry_binding():
+    source = "A = 'status'\nfor item in getattr(obj, A):\n    A = dynamic()\n"
+    assert _violations(source) == []
+
+
+def test_runner_boundary_async_for_iterable_uses_entry_bindings():
+    source = ("async def run():\n"
+              "    A = 'node'\n"
+              "    async for item in result[A + '_id']:\n"
+              "        A = dynamic()\n")
+    assert _violations(source) == ["line 3: literal 'node" + "_id' (folded)"]
+
+
+@pytest.mark.parametrize("expression,reported", [
+    pytest.param("(getattr(obj, A) for value in values)", True, id="generator-element"),
+    pytest.param("(value for value in values if getattr(obj, A))", True, id="generator-filter"),
+    pytest.param("(later for value in values for later in getattr(obj, A))", True, id="generator-later-iterable"),
+    pytest.param("[getattr(obj, A) for value in values]", False, id="eager-list"),
+    pytest.param("{getattr(obj, A) for value in values}", False, id="eager-set"),
+    pytest.param("{value: getattr(obj, A) for value in values}", False, id="eager-dict"),
+    pytest.param("map(lambda value: getattr(obj, A), values)", True, id="lambda-body"),
+    pytest.param("map(lambda A: getattr(obj, A), values)", True, id="lambda-shadow"),
+    pytest.param("map(lambda value=getattr(obj, A): value, values)", False, id="lambda-default"),
+    pytest.param("iter([getattr(obj, A) for value in values])", False, id="nested-eager-list"),
+    pytest.param("iter((getattr(obj, A) for value in values))", True, id="nested-generator"),
+])
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["for", "async-for"])
+def test_runner_boundary_iterable_defers_only_lazy_parts(expression, reported, asynchronous):
+    if asynchronous:
+        source = ("async def run():\n    A = 'status'\n"
+                  f"    async for item in {expression}:\n        A = dynamic()\n")
+        line = 3
+    else:
+        source = f"A = 'status'\nfor item in {expression}:\n    A = dynamic()\n"
+        line = 2
+    assert _violations(source) == (
+        [f"line {line}: getattr attribute argument does not fold to a literal"] if reported else []
+    )
+
+
+def test_runner_boundary_generator_first_iterable_keeps_entry_binding():
+    source = "A = 'node'\nfor item in (value for value in result[A + '_id']):\n    A = dynamic()\n"
+    assert _violations(source) == ["line 2: literal 'node" + "_id' (folded)"]
+
+
+def test_runner_boundary_iterable_lambda_cannot_keep_unchanged_names():
+    source = ("A = 'status'\nB = 'status'\n"
+              "for item in ((lambda: getattr(obj, B)) for value in values if getattr(obj, B)):\n"
+              "    A = dynamic()\n")
+    assert _violations(source) == [
+        "line 3: getattr attribute argument does not fold to a literal"
+    ]
+
+
+@pytest.mark.parametrize("expression", [
+    pytest.param("[lambda: getattr(obj, A)]", id="lambda-body"),
+    pytest.param("[(getattr(obj, A) for value in values)]", id="generator-element"),
+    pytest.param("[(value for value in values if getattr(obj, A))]", id="generator-filter"),
+    pytest.param("[(later for value in values for later in getattr(obj, A))]", id="generator-later-iterable"),
+])
+def test_runner_boundary_iterable_deferred_values_can_escape(expression):
+    source = ("A = 'status'\n"
+              f"for item in {expression}:\n"
+              "    saved = item\n"
+              "A = dynamic()\n"
+              "saved() if callable(saved) else list(saved)\n")
+    assert _violations(source) == [
+        "line 2: getattr attribute argument does not fold to a literal"
+    ]
+
+
+def test_runner_boundary_whole_iterable_generator_keeps_unchanged_names():
+    source = ("A = 'status'\nB = 'status'\n"
+              "for item in (getattr(obj, B) for value in values if getattr(obj, B)):\n"
+              "    A = dynamic()\n")
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("expression", [
+    pytest.param("[lambda value=getattr(obj, A): value]", id="lambda-default"),
+    pytest.param("[(value for value in getattr(obj, A))]", id="generator-first-iterable"),
+])
+def test_runner_boundary_escaping_values_keep_eager_entry_bindings(expression):
+    source = ("A = 'status'\n"
+              f"for item in {expression}:\n"
+              "    saved = item\n"
+              "A = dynamic()\n"
+              "saved() if callable(saved) else list(saved)\n")
+    assert _violations(source) == []

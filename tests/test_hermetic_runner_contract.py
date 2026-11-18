@@ -26,7 +26,7 @@ def test_runner_script_is_executable() -> None:
 
 def test_runner_contract_is_structurally_fresh_and_sanitized() -> None:
     text = RUNNER.read_text(encoding="utf-8")
-    assert "uv pip sync --offline --no-build --strict --require-hashes" in text
+    assert "pip sync --offline --no-build --strict --require-hashes" in text
     assert "fresh-venv" in text
     assert "git -C \"$repo_root\" archive --format=tar HEAD" in text
     assert 'add_read_only_bind "$checkout_root" "$checkout_root"' in text

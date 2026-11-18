@@ -210,3 +210,54 @@ def test_choices_from_passes_full_contract_and_keeps_fallback(choices_manifest):
     del choices_manifest["inputs"]["choice"]["choices_from"]
     assert enforce_contract(choices_manifest) is None
     assert choices_manifest == original
+
+
+@pytest.mark.parametrize("declared, choices, allowed", [
+    pytest.param(True, {"choice": ["3", "5"], "plain": ["5"]}, ["3", "5"], id="snapshot"),
+    pytest.param(True, None, ["2", "3", "4", "6"], id="none"),
+    pytest.param(True, {"other": ["3", "5"]}, ["2", "3", "4", "6"], id="other-name"),
+    pytest.param(False, {"choice": ["3", "5"]}, ["2", "3", "4", "6"], id="undeclared"),
+    pytest.param(True, {"choice": []}, ["2", "3", "4", "6"], id="empty"),
+    pytest.param(True, {"choice": None}, ["2", "3", "4", "6"], id="null"),
+    pytest.param(True, {"choice": "35"}, ["2", "3", "4", "6"], id="text"),
+    pytest.param(True, {"choice": ["3", 5]}, ["2", "3", "4", "6"], id="non-string"),
+])
+def test_validate_inputs_choice_snapshot(choices_manifest, declared, choices, allowed):
+    from copy import deepcopy
+    from gateway.manifests import validate_inputs
+
+    spec = {"type": "string", "enum": ["2", "3", "4", "6"], "max_length": 1}
+    if declared:
+        spec["choices_from"] = {"node_type": "FixtureNode", "input": "selection"}
+    choices_manifest["inputs"] = {
+        "choice": spec, "plain": {"type": "string", "enum": ["2"]},
+    }
+    original, snapshot = deepcopy(choices_manifest), deepcopy(choices)
+    for value in ["2", "3", "4", "5", "6"]:
+        result = validate_inputs(choices_manifest, {"choice": value, "plain": "2"}, choices=choices)
+        if value in allowed:
+            assert result.accepted == {"choice": value, "plain": "2"}
+            assert result.rejected == {} and result.errors == []
+        else:
+            message = "choice must be one of: " + ", ".join(allowed)
+            assert result.accepted == {"plain": "2"}
+            assert result.rejected == {"choice": message}
+            assert result.errors == [ContractError(("inputs", "choice"), "value_invalid", message)]
+    # An undeclared sibling never borrows the snapshot, even when explicitly named.
+    result = validate_inputs(choices_manifest, {"plain": "5"}, choices=choices)
+    assert result.rejected == {"plain": "plain must be one of: 2"}
+    assert result.errors == [ContractError(("inputs", "plain"), "value_invalid", "plain must be one of: 2")]
+    # Type checking still precedes the enum override.
+    result = validate_inputs(choices_manifest, {"choice": 3}, choices=choices)
+    assert result.rejected == {"choice": "choice must be a string"}
+    assert result.errors == [ContractError(("inputs", "choice"), "value_invalid", "choice must be a string")]
+    assert choices_manifest == original and choices == snapshot
+    # Omitted keyword retains the existing caller behavior, even after a snapshot call.
+    assert validate_inputs(choices_manifest, {"choice": "2"}).accepted == {"choice": "2"}
+    assert validate_inputs(choices_manifest, {"choice": "5"}).rejected == {
+        "choice": "choice must be one of: 2, 3, 4, 6",
+    }
+    if declared:
+        result = validate_inputs(choices_manifest, {"choice": "55"}, choices={"choice": ["55"]})
+        assert result.rejected == {"choice": "choice must have at most 1 characters"}
+        assert choices_manifest == original

@@ -29,8 +29,8 @@ function Table({
     () => ({ id: generatedCaptionId, setCaptionId }),
     [generatedCaptionId],
   );
-  const labelledBy = props["aria-labelledby"] || undefined;
-  const label = labelledBy ? undefined : props["aria-label"] || undefined;
+  const labelledBy = props["aria-labelledby"]?.trim() || undefined;
+  const label = props["aria-label"]?.trim() || undefined;
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
@@ -47,7 +47,7 @@ function Table({
       ref={containerRef}
       data-slot="table-container"
       tabIndex={scrolls ? 0 : undefined}
-      role={scrolls ? "region" : undefined}
+      role={scrolls && (labelledBy || label || captionId) ? "region" : undefined}
       aria-labelledby={scrolls ? labelledBy || (label ? undefined : captionId) : undefined}
       aria-label={scrolls ? label : undefined}
       className="relative w-full overflow-x-auto"

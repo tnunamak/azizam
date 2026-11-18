@@ -30,6 +30,8 @@ from gateway.engine_protocol.errors import ProtocolError
 _FACTORIES = weakref.WeakSet()
 _FACTORY_LOCK = threading.Lock()
 PRODUCTION_READY = True
+# Reads of the registry before an engine I/O whose snapshot a concurrent commit overtook; then the I/O is refused.
+MAX_AUTHORITY_REFRESHES = 3
 
 
 def invalidate_registry(path, before=None, after=None):
@@ -226,6 +228,9 @@ class ClientFactory:
             version = self._registry_version.version() if self._registry_version is not None else None
             snapshot = self._registry()
             revision = snapshot.get('operator_settings_generation', snapshot.get('generation'))
+            # A revision counts within one database file: a replaced file (a new epoch) may reuse the number.
+            if revision is not None and version is not None:
+                revision = (version[0], revision)
             cached = self._current_cache.get(service_id)
             if revision is not None and cached is not None and cached[0] == revision:
                 self._current_cache[service_id] = (*cached[:3], version)
@@ -276,12 +281,17 @@ class ClientFactory:
                 self._check_identity(cap, service_id, address)
                 version = self._registry_version.version()
                 cached = self._current_cache.get(service_id)
-                if cached is None or cached[3] != version:
+                refreshes = 0
+                while cached is None or cached[3] != version:
+                    # Never authorize I/O from a snapshot overtaken during refresh: a commit while it was read (any
+                    # admin.db commit moves the version) means read again. A registry that never settles is refused.
+                    if refreshes == MAX_AUTHORITY_REFRESHES:
+                        raise refused()
+                    refreshes += 1
                     await asyncio.to_thread(self.check, cap, service_id=service_id, address=address)
-                    # Do not authorize I/O from a snapshot overtaken during refresh.
                     version = self._registry_version.version()
                     cached = self._current_cache.get(service_id)
-                if cached is None or cached[3] != version or cached[2] != cap.policy_generation:
+                if cached[2] != cap.policy_generation:
                     raise refused()
                 self._check_identity(cap, service_id, address)
             except Exception:
@@ -419,6 +429,9 @@ def factory_from_store():
         version = reader.version()
         if cached is not None and version == cached_version:
             return cached
+        if cached is not None and version[0] != cached_version[0]:
+            # A replaced database file: its revision number says nothing about the old file's snapshot.
+            cached = None
         with request_connections.request_scope():
             revision = admin_store.service_registry_generation(path=path)
             if cached is not None and cached['operator_settings_generation'] == revision:
