@@ -497,7 +497,7 @@
           "intent": "image.edit",
           "job_id": null,
           "latency_ms": "<duration>",
-          "manifest_hash": "8b5c2cfdc8e7c4ee6160223074cde864124f70edccb79f2449c856e96f8ec0b7",
+          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
           "manifest_version": "0.1.0",
           "metadata": {},
