@@ -170,7 +170,7 @@ def test_unknown_image_job_refusal_is_recorded_like_wrong_kind(tmp_path):
         assert not media_jobs(obs)
         receipt = receipt_row(obs)
         assert receipt["status"] == "rejected"
-        assert receipt["rejected_inputs"]["model"] == "model_incompatible"
+        assert receipt["receipt_json"]["rejected_inputs"]["model"] == "model_incompatible"
 
 
 def _closed_route_setup(rig):
