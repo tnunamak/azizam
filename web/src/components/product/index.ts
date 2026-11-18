@@ -1,3 +1,4 @@
+export * from "./discovery-tabs";
 export * from "./page-header";
 export * from "./empty-state";
 export * from "./error-state";
