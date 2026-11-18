@@ -7,6 +7,7 @@ import yaml
 
 
 EXPECTED = {
+    ("image.edit.seedvr2-upscale", "color_correction_method"),
     ("audio.generate.ace-step-1.5-xl-turbo", "timesignature"),
     ("audio.generate.ace-step-1.5-xl-turbo", "language"),
     ("audio.generate.ace-step-1.5-xl-turbo", "keyscale"),
