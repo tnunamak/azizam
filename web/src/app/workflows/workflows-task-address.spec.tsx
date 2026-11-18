@@ -41,7 +41,13 @@ async function selected(value: string) {
 }
 // The catalog's shape for a workflow whose engine setup is not finished: no reason
 // names a down engine, so the shared mapping calls it setup.
-const setupOnly = { status: "not_configured", reason_code: "unavailable_unconfigured", available: false };
+// The gateway's own shape: a setup code plus its prose reason.
+const setupOnly = {
+  status: "not_configured",
+  reason_code: "unavailable_unconfigured",
+  available: false,
+  reason: "An engine it needs is not set up.",
+};
 function stubCatalogWithSetupVideo() {
   const withSetup = {
     ...catalog,

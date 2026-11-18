@@ -96,6 +96,33 @@ describe("workflowAvailabilityView: one mapping for Workflows and Try", () => {
     ).toEqual({ href: "/status", action: "Open Status" });
   });
 
+  it("reads a setup code as setup even when the gateway adds a reason", () => {
+    // The gateway's own shape for an engine nobody set up: the prose must not turn it into "down".
+    const unset = {
+      status: "not_configured",
+      reason_code: "unavailable_unconfigured",
+      available: false,
+      reason: "An engine it needs is not set up.",
+      engine: "comfyui",
+    };
+    expect(workflowAvailabilityView(unset, { owner: false })).toEqual({
+      readiness: "setup",
+      runnable: false,
+      pickerNote: "Unavailable",
+      text: MEMBER_SETUP_NOTE,
+      fix: null,
+    });
+    expect(workflowAvailabilityView(unset, { owner: true })).toEqual({
+      readiness: "setup",
+      runnable: false,
+      pickerNote: "Unavailable",
+      text: "An engine it needs is not set up.",
+      fix: { href: "/engines?service=comfyui", action: "Open Engines" },
+    });
+    const off = { status: "unavailable", reason_code: "unavailable_disabled", available: false, reason: "Turned off." };
+    expect(workflowAvailabilityView(off, { owner: false }).readiness).toBe("setup");
+  });
+
   it("lets busy, starting and degraded workflows wait without a fix link", () => {
     expect(
       workflowAvailabilityView({ status: "busy", available: false }, { owner: true }),
