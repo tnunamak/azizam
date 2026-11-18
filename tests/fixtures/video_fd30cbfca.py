@@ -910,3 +910,46 @@ async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapp
     if policy_response is not None:
         return policy_response
     return await proxy_graph_video_create(request, caller, body_override=body)
+
+
+def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str, *, receipt: RouteReceipt | None = None) -> Response | None:
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.video",
+            intent=INTENT_VIDEO_GENERATE,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=workflow_id_for_video_key(workflow_name),
+            backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="expensive",
+        ),
+        receipt,
+    )
+    if decision.denied:
+        return _policy_denied_response(decision)
+    target = _workflow_target_policy_decision(
+        auth_context,
+        capability=_VIDEO_GRAPH_CAPABILITY,
+        requested=str(requested_model) if requested_model is not None else None,
+        resolved=str(workflow_name),
+        extra_ids=(workflow_id_for_video_key(workflow_name),),
+    )
+    if target is not None and target.denied:
+        return _policy_denied_response(target)
+    return None
+
+
+def _policy_denied_response(decision: PolicyDecision) -> Response:
+    """403 in the OpenAI error shape with the design §3.3 access code."""
+    reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+    error: dict[str, Any] = {"message": reason, "type": "access_error", "code": decision.code or "policy_denied"}
+    if decision.side:
+        error["details"] = {"side": decision.side, "plans": [s.split(":", 1)[1] for s in decision.sources
+                                                         if s.startswith("access_plan:")]}
+    return _gateway_refusal(Response(
+        content=json.dumps({"error": error}),
+        status_code=403,
+        media_type="application/json",
+    ), "authorization")

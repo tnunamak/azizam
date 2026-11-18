@@ -6,7 +6,9 @@
     "proxy_graph_video_create": "92253e7f0605131fb5411d78e23d18ab184adf00cc17bd74d883012494ce48d0",
     "_proxy_graph_video_create": "626a8e6a00f0883bfd72a12a2e60ea7c00a97f9bac958824e1bac8c126bdfc1e",
     "_submit_video_chain": "ecc019fa2fca6098d18be2e60928a2a5b84e9df8679d2a1e45a21a443b77ff76",
-    "_legacy_video_create": "452528cecfcedb851e54ce366f8409d15b57cabfa512d79b6b118b520bbf108f"
+    "_legacy_video_create": "452528cecfcedb851e54ce366f8409d15b57cabfa512d79b6b118b520bbf108f",
+    "_chain_policy_denial": "de65144d06f320ecab115770ef21ed4b499193701dd98832b83026b62897ebc2",
+    "_policy_denied_response": "63addf99d0854363e156272bc8cfbfd12091b98ec6e0214f401a4b27b423962f"
   },
   "grid_sha256": "27ff3458d1c3f59aac16698c5d434f70c250656b1a35052d79393ba5338b1d98",
   "unchanged_proxy_helpers": {
@@ -30,7 +32,6 @@
     "_capture_retention_facts": "c81c1705a4a66da4deea3b7af754c81462f915583d5f80d741e579377c3c2393",
     "_chain_failure_error": "0e9b002c618b96772d4c372c6e9e8fc188fff5b0a4442c81bf0f86452a931545",
     "_chain_number": "bf594bee3e3c403d03be4134c25432d9779bf94efc01d3e2b4be76c8ec787baa",
-    "_chain_policy_denial": "de65144d06f320ecab115770ef21ed4b499193701dd98832b83026b62897ebc2",
     "_chain_workflow_for": "22148ed848e07464fccee60d9a6864f16ca42604a1ac8ba10e4d7f8bfb2ec263",
     "_collect_media_input_leftovers": "8e3d13ac4a35b60ebcf398f970602fc636dcd54d24e3bb4fd8e4c6504da0c79e",
     "_compat_cfg": "ec6712c58ad3ce9e24ea89feadb3f027fd5cabdb7975b3ed383b3a1a31626ace",
@@ -94,7 +95,6 @@
     "_parse_chain_options": "7816f65a5aecba3cacc7e3fc90051fcf6b8879bf92874a199e32b6daca574298",
     "_parse_chain_shots": "f51aae326fd7f889f640b7145834b40212265bc25860a0d4d22a2b05c3089659",
     "_persist_video_record": "b02b19964a924bb7223d96d2f904dadbf3c024f8bd6ded6995f6065c1b6b4de3",
-    "_policy_denied_response": "63addf99d0854363e156272bc8cfbfd12091b98ec6e0214f401a4b27b423962f",
     "_prompt_id_from_video_id": "41395a8edd356d0d741ad2353937b1db7217d2032ab6a7cc4a78ffeca2c11b7b",
     "_read_asset_metadata": "bc88f1564b488f897854b02579d6e325972fa28e87ab71040c37d374e9366849",
     "_read_video_create_form_body": "9db33194d18f9daa542918549ed571dbbcb50ae3838ed5f43b1877faf1511b49",
