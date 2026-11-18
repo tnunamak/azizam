@@ -46,7 +46,7 @@ inputs:
       maximum: 4294967295
   batch_size:
     label: Number of clips
-    help: How many clips to make at once.
+    help: Makes this many clips, but only the first one comes back.
     type: integer
     minimum: 1
     maximum: 4

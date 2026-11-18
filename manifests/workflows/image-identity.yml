@@ -123,7 +123,7 @@ inputs:
     description: likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.
   mode:
     label: waiting mode
-    help: Choose async to receive a job to check later, or sync to wait for the result.
+    help: Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.
     type: string
     enum: ["auto", "sync", "async"]
     default: auto
