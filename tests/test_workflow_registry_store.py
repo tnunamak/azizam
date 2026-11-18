@@ -23,7 +23,7 @@ from tests.registry_test_helpers import write_service_registry_for_test
 from tests.workflow_runtime_fakes import FakeSnapshot, entry
 
 ME = Actor("owner", "owner-1", "Owner")
-BUNDLED_ID = "image.generate.flux2-klein-4b"
+BUNDLED_ID = "image.generate.krea2-turbo"
 FACTS = WorkflowFacts(exposure="default", trust_tier="stable", resource_tier="batch", resource_class="image", tags=("a",))
 MODEL_KINDS = frozenset({"model", "model_alias", "frontend", "route"})
 

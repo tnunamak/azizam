@@ -11,7 +11,7 @@ import pytest
 from gateway import admin_store, discovery, registry_layers, service_registry
 from tests.registry_test_helpers import write_legacy_registry_for_test
 
-BUNDLED_ID = "image.generate.flux2-klein-4b"
+BUNDLED_ID = "image.generate.krea2-turbo"
 
 
 def contract(workflow_id: str) -> dict:
