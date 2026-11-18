@@ -98,7 +98,6 @@ def test_real_composed_workflows_have_derived_catalog_states_offline():
     composed = [record for record in registry.records() if "gateway" in record.supported_backends]
     assert {record.id for record in composed} == {
         "image.analyze.face-likeness", "image.edit.image-identity",
-        "image.generate.flux2-klein-4b-seamless-tile",
     }
     caps = [_composed_cap(registry, record.id) for record in composed]
     services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
@@ -110,7 +109,6 @@ def test_real_composed_workflows_have_derived_catalog_states_offline():
     states = {row["id"]: row["availability"]["status"] for row in catalog["workflows"]}
     assert states == {
         "image.analyze.face-likeness": "idle", "image.edit.image-identity": "idle",
-        "image.generate.flux2-klein-4b-seamless-tile": "ready",
     }
     models = build_models_catalog(
         capabilities=projected,
@@ -121,7 +119,6 @@ def test_real_composed_workflows_have_derived_catalog_states_offline():
     model_states = {row["id"]: row["availability"]["status"] for row in models["models"]}
     assert model_states == {
         "face-likeness": "idle", "image-identity": "idle",
-        "flux2-klein-4b-seamless-tile": "ready",
     }
 
 
@@ -131,7 +128,7 @@ def test_workflows_catalog_carries_the_composed_reason_and_engine_only():
 
     registry = _composed_registry()
     composed = _composed_cap(registry, "image.edit.image-identity")
-    plain = capability_from_workflow_record(registry.get("image.generate.flux2-klein-4b"), backend="comfyui")
+    plain = capability_from_workflow_record(registry.get("image.generate.krea2-turbo"), backend="comfyui")
     services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
     projected = project_capabilities([composed, plain], service_records=services,
                                      evidence={"faces": _FACES_STOPPED,
@@ -141,8 +138,8 @@ def test_workflows_catalog_carries_the_composed_reason_and_engine_only():
             for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
     identity = rows["image.edit.image-identity"]
     assert (identity["status"], identity["reason"], identity["engine"]) == ("unavailable", "ComfyUI is down.", "comfyui")
-    assert "reason" not in rows["image.generate.flux2-klein-4b"]
-    assert "engine" not in rows["image.generate.flux2-klein-4b"]
+    assert "reason" not in rows["image.generate.krea2-turbo"]
+    assert "engine" not in rows["image.generate.krea2-turbo"]
 
 
 def test_home_rows_project_composed_workflows_from_their_engines():

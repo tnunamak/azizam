@@ -295,21 +295,21 @@ class WorkflowRegistryTests(unittest.TestCase):
 
     def test_committed_sample_manifest_loads_via_registry(self) -> None:
         registry = WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
-        self.assertIn("image.edit.flux2-klein-4b", registry.ids())
-        record = registry.get("image.edit.flux2-klein-4b")
+        self.assertIn("image.edit.qwen-image-2.1-edit", registry.ids())
+        record = registry.get("image.edit.qwen-image-2.1-edit")
         assert record is not None
         client = summarize_workflow(record, audience="client")
         self.assertEqual(client["intent"], "image.edit")
         self.assertEqual(client["supported_backends"], ["comfyui"])
         # Client summary must not leak the committed workflow JSON path.
         self.assertNotIn(
-            "workflows/images/flux2-klein-4b-edit.json", repr(client)
+            "workflows/images/qwen-image-2.1-edit.json", repr(client)
         )
 
         admin = summarize_workflow(record, audience="admin")
         self.assertEqual(
             admin["bindings"][0]["workflow_artifact"],
-            "workflows/images/flux2-klein-4b-edit.json",
+            "workflows/images/qwen-image-2.1-edit.json",
         )
         self.assertTrue(admin["trusted"])
         self.assertEqual(len(admin["manifest_hash"]), 64)
