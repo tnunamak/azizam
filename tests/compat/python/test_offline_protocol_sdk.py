@@ -83,7 +83,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
                 "/v1/images/generations",
                 headers={"Authorization": f"Bearer {raw_key}"},
                 json={
-                    "model": "flux2-klein-4b",
+                    "model": "krea2-turbo",
                     "prompt": "fixture blue square",
                     "n": 1,
                 },

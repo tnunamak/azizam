@@ -285,13 +285,13 @@ class SyncMediaRouteTests(unittest.TestCase):
         import anyio
 
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
             "response_format": "b64_json",
         }
         job = media_jobs.MediaJob(
             intent="image.generate",
-            workflow="image.generate.flux2-klein-4b",
+            workflow="image.generate.krea2-turbo",
             backend="comfyui",
             request_id="req_existing_image_job",
             status=media_jobs.STATUS_QUEUED,
