@@ -67,5 +67,3 @@ class TestSeamlessTileHelpers(unittest.TestCase):
                 0, 255, 255, 0,
             ],
         )
-
-
