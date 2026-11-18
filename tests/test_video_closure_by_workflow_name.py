@@ -11,7 +11,7 @@ from gateway.workflow_projections import SnapshotRegistry
 import base64
 
 
-class ReviewProbeTests(RemixReplaceBase):
+class VideoClosureByWorkflowNameTests(RemixReplaceBase):
     def setUp(self):
         super().setUp()
         from fastapi.testclient import TestClient
@@ -81,7 +81,7 @@ class ReviewProbeTests(RemixReplaceBase):
             assert isinstance(result, tuple), ('next step authorized', type(result).__name__)
             assert result[1]['error_code'] == 'workflow_disabled'
 
-    def test_worker_polls_after_custom_edit_disabled(self):
+    def test_worker_stops_when_custom_edit_is_disabled_after_submit(self):
         import asyncio
         import tempfile
         from pathlib import Path
