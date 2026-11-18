@@ -1,5 +1,6 @@
 "use client";
 
+import { DiscoveryTabs } from "@/components/product/discovery-tabs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -892,6 +893,7 @@ export default function WorkflowsPage() {
 
   return (
     <div className="space-y-(--space-section)">
+      <DiscoveryTabs current="workflows" />
       <PageHeader
         title="Workflows"
         count={data ? rows.length : undefined}
