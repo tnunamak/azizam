@@ -102,7 +102,11 @@ async def owner_choices(entries, resolve_identity, *, refresh=False):
         async def bounded_start(service, identity, declarations):
             task = asyncio.create_task(start(service, identity, declarations))
             _owner_refreshes.add(task)
-            task.add_done_callback(_owner_refreshes.discard)
+            def finished(done):
+                _owner_refreshes.discard(done)
+                if not done.cancelled() and done.exception() is not None:
+                    _log.error('Choice refresh failed for service %s', service, exc_info=done.exception())
+            task.add_done_callback(finished)
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=OWNER_REFRESH_TIMEOUT)
             except TimeoutError:
@@ -117,7 +121,8 @@ async def owner_choices(entries, resolve_identity, *, refresh=False):
             data = freshness(store, service, [declaration], now=now)[0]
             if not identity.origin and not data['failure_reason']:
                 data['failure_reason'] = 'no service address'
-            current_failure = data['failure_reason'] and (snapshot is None or data['failed_at'] is None or data['failed_at'] > snapshot.fetched_at)
+            current_failure = not identity.origin or (data['failure_reason'] and
+                (snapshot is None or data['failed_at'] is None or data['failed_at'] > snapshot.fetched_at))
             state = 'failed' if current_failure else 'missing' if snapshot is None else 'stale' if data['stale'] else 'fresh'
         else:
             reason = 'no bound service' if not service else 'no service address' if not identity.origin else None

@@ -68,3 +68,90 @@ def test_owner_timeout_returns_refreshing_while_fetch_continues(tmp_path, monkey
             await asyncio.gather(*tuple(cl._tasks.values()))
         assert store.read('svc', 'N', 'pick').choices == ['good']
     asyncio.run(scenario())
+
+
+def test_empty_bindings_show_failure(monkeypatch):
+    monkeypatch.setattr(cl, 'STORE', None)
+    entry = NS(id='unbound', bindings={}, contract={'inputs': {'pick': {'choices_from': {'node_type': 'N', 'input': 'pick'}}}})
+    rows = asyncio.run(cl.owner_choices([entry], lambda *args: pytest.fail('unbound entry resolved')))
+    assert rows[0]['state'] == 'failed' and rows[0]['failure_reason'] == 'no bound service'
+
+
+def test_public_choice_declaration_does_not_change_input_bytes():
+    import copy
+    import json
+    from gateway.discovery import _portable_inputs
+    from gateway.workflow_openapi import _input_schema
+    spec = {'type': 'string', 'enum': ['fallback'], 'required': True}
+    declared = copy.deepcopy(spec)
+    declared['choices_from'] = {'node_type': 'private-node', 'input': 'private-input'}
+    for project in (lambda s: _portable_inputs({'pick': s}), lambda s: _input_schema(s, form=False)):
+        before = json.dumps(project(spec), sort_keys=True).encode()
+        after = json.dumps(project(declared), sort_keys=True).encode()
+        assert before == after
+
+
+def test_owner_cancel_preserves_started_refresh(tmp_path, monkeypatch):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    monkeypatch.setattr(cl, 'STORE', store)
+    entry = NS(id='demo', bindings={'first': object()}, contract={'inputs': {'pick': {'choices_from': {'node_type': 'N', 'input': 'pick'}}}})
+    entered, release = threading.Event(), threading.Event()
+    def fetch(*args):
+        entered.set()
+        assert release.wait(5)
+        return {'input': {'required': {'pick': [['good']]}}}
+    monkeypatch.setattr(cl, 'fetch_fresh', fetch)
+    async def scenario():
+        task = asyncio.create_task(cl.owner_choices([entry], lambda *args: NS(service_id='svc', origin='http://203.0.113.10'), refresh=True))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert 'svc' in cl._tasks and not cl._tasks['svc'].cancelled()
+        finally:
+            release.set()
+            await asyncio.gather(*tuple(cl._owner_refreshes))
+        assert store.read('svc', 'N', 'pick').choices == ['good']
+        assert not cl._tasks and not cl._task_declarations
+    asyncio.run(scenario())
+
+
+def test_concurrent_disjoint_refreshes_never_overlap(tmp_path, monkeypatch):
+    store = ChoiceStore(tmp_path / 'choices.json')
+    monkeypatch.setattr(cl, 'STORE', store)
+    entered, release = threading.Event(), threading.Event()
+    active, overlap, calls = 0, [], []
+    lock = threading.Lock()
+    def fetch(origin, node):
+        nonlocal active
+        with lock:
+            active += 1
+            overlap.append(active)
+            calls.append(node)
+        try:
+            if node == 'A':
+                entered.set()
+                assert release.wait(5)
+            return {'input': {'required': {'pick': [['good']]}}}
+        finally:
+            with lock:
+                active -= 1
+    monkeypatch.setattr(cl, 'fetch_fresh', fetch)
+    def entry(node):
+        return NS(id=node, bindings={'first': object()}, contract={'inputs': {'pick': {'choices_from': {'node_type': node, 'input': 'pick'}}}})
+    identity = NS(service_id='svc', origin='http://203.0.113.10')
+    async def scenario():
+        cl.choices_for_run(identity, entry('A').contract['inputs'])
+        assert await asyncio.to_thread(entered.wait, 5)
+        tasks = [asyncio.create_task(cl.owner_choices([entry(n)], lambda *args: identity, refresh=True)) for n in ('B', 'C', 'B')]
+        try:
+            for _ in range(20):
+                await asyncio.sleep(0.001)
+        finally:
+            release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 5)
+    asyncio.run(scenario())
+    assert max(overlap) == 1
+    assert set(calls) == {'A', 'B', 'C'}
+    assert not cl._tasks and not cl._task_declarations
