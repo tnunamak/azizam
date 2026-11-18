@@ -8,7 +8,7 @@ migration:
   exclude_capabilities: [chat, completions]
   config_mapping: chunking
 # Which workflow intents each alias section of /gateway/v1/aliases may name, and the prefix
-# older alias targets carry before the workflow's short id (image-flux2-klein -> flux2-klein).
+# older alias targets carry before the workflow's short id (image-krea2-turbo -> krea2-turbo).
 alias_operation_intents:
   images: [{intent: image.generate, target_prefix: image-}]
   image_edits: [{intent: image.edit, target_prefix: image-}]
