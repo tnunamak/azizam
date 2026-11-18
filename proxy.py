@@ -26723,6 +26723,16 @@ async def gateway_image_generations_media_job(request: Request):
         response = _policy_denied_response(decision)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
+    # After the policy decision, so a member whose plan or categories refuse the model hears that refusal, not
+    # whether the model exists; before admission, so an unknown model never makes a job.
+    if (protocol_target is None and _gateway_image_generate_binding(manifest) is None
+            and not load_graph_workflow(resolved_model, intent=generate_intent)):
+        _record_image_input(receipt, "model", rejected_reason="model_incompatible")
+        response = model_compatibility_error(
+            ModelCompatibilityError(f"Model '{resolved_model}' is not available for image generation.", code="model_not_found")
+        )
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
     admission_response = _media_job_admission_response(domain_rows.IMAGE_GENERATE, receipt=receipt)
     if admission_response is not None:
         await run_receipt_write(finish_image_route_receipt, receipt, admission_response)

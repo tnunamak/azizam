@@ -14,6 +14,7 @@ from tests.support.access import authenticated, identity, plan_for
 from tests.support.s7_parity_images_rig import observe
 from tests import test_adapter_differential as base
 from tests.support.adapter_differential_rig import comfy_exchanges, history_done
+from tests.support.s7_parity_images_facts import receipt_row
 from tests.test_s7_parity_images import EDIT, GEN, JOB, body, form, job_body, job_setup, media_jobs, ok
 
 GEN_INTENT, EDIT_INTENT = "image.generate", "image.edit"
@@ -146,6 +147,18 @@ def test_an_image_job_naming_an_edit_model_is_refused_at_submit(tmp_path, model)
 def test_an_image_job_naming_a_generate_model_is_still_accepted(tmp_path):
     obs = observe(tmp_path, JOB, job_body(model="krea2-turbo"), job_setup(), row=False, name="accept-job")
     assert obs.status == 202, obs.body
+
+
+def test_unknown_image_job_refusal_is_recorded_like_wrong_kind(tmp_path):
+    unknown = observe(tmp_path / "unknown", JOB, job_body(model="no-such-image-model-probe"), job_setup(), row=False)
+    wrong_kind = observe(tmp_path / "wrong-kind", JOB, job_body(model="qwen-image-2.1-edit"), job_setup(), row=False)
+    for obs in (unknown, wrong_kind):
+        assert obs.status == 404, obs.body
+        assert '"code": "model_not_found"' in obs.body["text"]
+        assert not media_jobs(obs)
+        receipt = receipt_row(obs)
+        assert receipt["status"] == "rejected"
+        assert receipt["receipt_json"]["rejected_inputs"]["model"] == "model_incompatible"
 
 
 def _closed_route_setup(rig):

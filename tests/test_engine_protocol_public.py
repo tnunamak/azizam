@@ -132,6 +132,14 @@ def test_public_images_use_core_assets_and_jobs(engine, sync, monkeypatch):
         assert [(r.method,r.url.path,r.content) for r in engine.fake.requests] == [('POST','/prefix/api/v3/renders',b'{"spec":{"text":"blue","dims":"512x512"}}'),('GET','/prefix/api/v3/renders/job-1',b''),('GET','/prefix/api/v3/renders/job-1/outputs/output-1',b'')]
 
 
+def test_unknown_image_job_model_is_refused_with_a_declared_image_offering(engine):
+    response = engine.client.post('/gateway/v1/media/jobs/image-generations',
+                                  json={'model': 'no-such-image-model-probe', 'prompt': 'blue'})
+    assert response.status_code == 404
+    assert response.json()['error']['code'] == 'model_not_found'
+    assert media_jobs.recent(path=media_jobs.DB_PATH, audience='internal') == []
+
+
 def test_upstream_advice_becomes_typed_public_failure(engine):
     engine.fake.status=429
     response=chat(engine)
