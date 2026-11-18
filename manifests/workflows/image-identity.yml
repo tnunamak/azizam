@@ -90,6 +90,7 @@ inputs:
     help: Chooses how multiple reference photos of one person are scored.
     type: string
     enum: ["best", "mean"]
+    choice_labels: {best: Best photo, mean: Average of all photos}
     default: best
     description: How several reference photos of one person are scored.
   max_refs_per_person:
@@ -105,6 +106,7 @@ inputs:
     help: Chooses whether face refinement is off, automatic, or applied to everyone.
     type: string
     enum: ["off", "auto", "all"]
+    choice_labels: {"off": "Off", auto: Automatic, all: Every person}
     default: auto
     description: Per-person head refinement after composing. A pass is kept only if it helps that person and hurts nobody.
   refine_attempts:
@@ -119,13 +121,15 @@ inputs:
     help: Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.
     type: string
     enum: ["likeness", "as_written"]
+    choice_labels: {likeness: Keep the likeness, as_written: Pose as written}
     default: likeness
     description: likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.
   mode:
     label: waiting mode
-    help: Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.
+    help: Automatic waits only for one attempt without refinement and otherwise returns a job to check later.
     type: string
     enum: ["auto", "sync", "async"]
+    choice_labels: {auto: Automatic, sync: Wait for the result, async: Return a job to check later}
     default: auto
     description: async returns a media job (poll_url, content_url). auto is async unless attempts=1 and refine=off.
   thresholds:

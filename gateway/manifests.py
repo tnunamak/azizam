@@ -121,6 +121,21 @@ class ErrorCollector:
                 raise
 
 
+def choice_key(value: Any) -> str | None:
+    """The text a choice value has as a ``choice_labels`` key: what the web page's String(value) gives it.
+
+    None for a number whose exponent form the two languages write differently (1e-07 against 1e-7); such a choice
+    cannot be named.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        if not math.isfinite(value) or "e" in repr(value):
+            return None
+        return str(int(value)) if value.is_integer() else repr(value)
+    return str(value)
+
+
 def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors:
     """A single-error ``ContractErrors``, for a check that has nothing to gather."""
     return ContractErrors([ContractError(tuple(path), code, message)])
@@ -494,6 +509,14 @@ def collect_manifest_errors(
             for key in ("label", "help"):
                 if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
                     errors.add(("inputs", name, key), "value_empty", f"input {name} {key} must be a non-empty string")
+            if "choice_labels" in spec and not _enum_is_broken(spec):
+                # Names are judged against a well-formed enum only; a broken enum is the contract check's report.
+                labels, enum = spec["choice_labels"], spec.get("enum")
+                if (not isinstance(labels, Mapping) or not labels or not isinstance(enum, list) or not enum
+                        or any(not isinstance(value, str) or not value.strip() for value in labels.values())
+                        or any(key not in {choice_key(value) for value in enum} for key in labels)):
+                    errors.add(("inputs", name, "choice_labels"), "choice_labels_invalid",
+                               f"input {name} choice_labels requires a non-empty enum and non-empty labels for enum values")
             if "choices_from" in spec:
                 choices = spec["choices_from"]
                 enum = spec.get("enum")
@@ -550,6 +573,14 @@ def _cardinalities(bindings: Any, binding_descriptors: Mapping[str, Any] | None)
         if hook is not None:
             found[form] = hook
     return found
+
+
+def _enum_is_broken(spec: Mapping[str, Any]) -> bool:
+    """An enum the contract check refuses: not a list, empty, or holding a value of another type than its input's."""
+    if "enum" not in spec:
+        return False
+    enum, bare = spec["enum"], {"type": spec.get("type")}
+    return not isinstance(enum, list) or not enum or any(validate_input_value("enum", option, bare) is not None for option in enum)
 
 
 def _holds(value: Any, name: str) -> bool:

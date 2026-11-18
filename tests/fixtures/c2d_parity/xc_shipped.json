@@ -56,7 +56,7 @@
         },
         "identity": {
           "id": "audio.generate.ace-step-1.5-xl-turbo",
-          "manifest_hash": "4e25aa23259df20cf842beae1e12922d9a1e41229d12c8d18b0955a385859a80",
+          "manifest_hash": "8cfabe3cc957d6cf7b9b38dfaec01ee72d1e72af0e47400b4396002d1c117554",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -919,7 +919,7 @@
         },
         "identity": {
           "id": "video.edit.rife-interpolate",
-          "manifest_hash": "5bca1f48d10b6a4733e1b8bea212ba4a4d19b86cc114e9af39a91d25dfe2ee07",
+          "manifest_hash": "cf501c211043e6cef1428b66f993b5104ee39daf7eed562e275aedb83494deaa",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1036,7 +1036,7 @@
         },
         "identity": {
           "id": "image.generate.sdxl-seamless-tile",
-          "manifest_hash": "09060607081ccea8961a085ab886e9917cca997f1db8b91c8a99726b3f893cdd",
+          "manifest_hash": "d47d9db49b49dbf2b6e8f3a2935fc5dcad135aada627f82296e02d413b7554ba",
           "source": null,
           "trusted": false,
           "version": "0.1.1"
@@ -1125,7 +1125,7 @@
         },
         "identity": {
           "id": "image.edit.seedvr2-upscale",
-          "manifest_hash": "8419080f1dc98a4dbc00ffb19e19364e8a51eae5c38d647aa662e603d2a134a2",
+          "manifest_hash": "bdac483a4798ccf81c98221000af29201373296ff91ff212f35c733480379b52",
           "source": null,
           "trusted": false,
           "version": "0.1.0"

@@ -45,12 +45,14 @@ inputs:
     help: Choose the number of beats in each bar.
     type: string
     enum: ["2", "3", "4", "6"]
+    choice_labels: {"2": "2 beats per bar", "3": "3 beats per bar", "4": "4 beats per bar", "6": "6 beats per bar"}
   language:
     choices_from: {node_type: TextEncodeAceStepAudio1.5, input: language}
     label: language
     help: Choose the language for the lyrics.
     type: string
     enum: ["ar", "az", "bg", "bn", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr", "he", "hi", "hr", "ht", "hu", "id", "is", "it", "ja", "ko", "la", "lt", "ms", "ne", "nl", "no", "pa", "pl", "pt", "ro", "ru", "sa", "sk", "sr", "sv", "sw", "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "yue", "zh", "unknown"]
+    choice_labels: {"ar": Arabic, "az": Azerbaijani, "bg": Bulgarian, "bn": Bengali, "ca": Catalan, "cs": Czech, "da": Danish, "de": German, "el": Greek, "en": English, "es": Spanish, "fa": Persian, "fi": Finnish, "fr": French, "he": Hebrew, "hi": Hindi, "hr": Croatian, "ht": Haitian Creole, "hu": Hungarian, "id": Indonesian, "is": Icelandic, "it": Italian, "ja": Japanese, "ko": Korean, "la": Latin, "lt": Lithuanian, "ms": Malay, "ne": Nepali, "nl": Dutch, "no": Norwegian, "pa": Punjabi, "pl": Polish, "pt": Portuguese, "ro": Romanian, "ru": Russian, "sa": Sanskrit, "sk": Slovak, "sr": Serbian, "sv": Swedish, "sw": Swahili, "ta": Tamil, "te": Telugu, "th": Thai, "tl": Tagalog, "tr": Turkish, "uk": Ukrainian, "ur": Urdu, "vi": Vietnamese, "yue": Cantonese, "zh": Chinese, "unknown": No specific language}
   keyscale:
     choices_from: {node_type: TextEncodeAceStepAudio1.5, input: keyscale}
     label: musical key

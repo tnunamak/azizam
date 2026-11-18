@@ -11,6 +11,7 @@ from gateway.manifests import (
     ContractError,
     ContractErrors,
     ManifestError,
+    choice_key,
     validate_manifest,
 )
 from tests.contract_error_corpus import (
@@ -261,3 +262,43 @@ def test_validate_inputs_choice_snapshot(choices_manifest, declared, choices, al
         result = validate_inputs(choices_manifest, {"choice": "55"}, choices={"choice": ["55"]})
         assert result.rejected == {"choice": "choice must have at most 1 characters"}
         assert choices_manifest == original
+
+
+def test_choice_labels_name_only_the_inputs_own_choices():
+    def with_mode(**extra):
+        doc = base_manifest()
+        doc["inputs"]["mode"] = {"type": "string", "enum": ["auto", "sync"], **extra}
+        return doc
+
+    # Names for some or all of the choices are accepted; a choice without one shows as its value.
+    validate_manifest(with_mode(choice_labels={"sync": "Wait for the result"}), {"eng": descriptor()})
+    for bad in (
+        with_mode(choice_labels={"later": "Later"}),  # not one of the choices
+        with_mode(choice_labels={"auto": " "}),  # an empty name
+        with_mode(choice_labels=["auto"]),  # not a map
+    ):
+        with pytest.raises(ContractErrors) as caught:
+            validate_manifest(bad, {"eng": descriptor()})
+        assert listed(caught.value) == [(("inputs", "mode", "choice_labels"), "choice_labels_invalid")]
+    no_enum = base_manifest()
+    no_enum["inputs"]["mode"] = {"type": "string", "choice_labels": {"auto": "Automatic"}}
+    with pytest.raises(ContractErrors) as caught:
+        validate_manifest(no_enum, {"eng": descriptor()})
+    assert listed(caught.value) == [(("inputs", "mode", "choice_labels"), "choice_labels_invalid")]
+
+
+def test_choice_label_keys_are_the_text_the_browser_gives_each_choice():
+    # The web page looks a name up by String(value): 2.0 is "2" there, true is "true", 1e-07 is "1e-7".
+    assert [choice_key(v) for v in ("auto", 512, 2.0, 2.5, True)] == ["auto", "512", "2", "2.5", "true"]
+    assert choice_key(1e-07) is None  # an exponent form the two languages write differently is not nameable
+
+    def with_scale(enum, labels):
+        doc = base_manifest()
+        doc["inputs"]["scale"] = {"type": "number", "enum": enum, "choice_labels": labels}
+        return doc
+
+    validate_manifest(with_scale([1.0, 2.5], {"1": "Same size", "2.5": "Two and a half times"}), {"eng": descriptor()})
+    for enum, labels in (([1.0], {"1.0": "Same size"}), ([1e-07], {"1e-07": "Tiny"})):
+        with pytest.raises(ContractErrors) as caught:
+            validate_manifest(with_scale(enum, labels), {"eng": descriptor()})
+        assert listed(caught.value) == [(("inputs", "scale", "choice_labels"), "choice_labels_invalid")]

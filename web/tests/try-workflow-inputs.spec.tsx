@@ -804,3 +804,50 @@ describe("TM-12 optional inputs can return to unset", () => {
     expect(screen.queryByRole("option", { name: "Not set" })).toBeNull();
   });
 });
+
+describe("a choice input shows its readable names", () => {
+  const named: WorkflowInput[] = [
+    {
+      name: "mode",
+      type: "string",
+      enum: ["auto", "sync", "async"],
+      required: true,
+      choice_labels: { auto: "Automatic", async: "Return a job to check later" },
+    },
+  ];
+
+  function Harness({ onChange }: { onChange: (json: string) => void }) {
+    const [json, setJson] = useState(JSON.stringify({ mode: "auto" }));
+    return (
+      <WorkflowInputs
+        inputs={named}
+        json={json}
+        onChange={(next) => {
+          setJson(next);
+          onChange(next);
+        }}
+      />
+    );
+  }
+
+  it("shows each choice by its name, falls back to the value, and sends the value", async () => {
+    Element.prototype.scrollIntoView ??= () => undefined;
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    const mode = screen.getByRole("combobox", { name: /Mode Required/ });
+    expect(mode).toHaveTextContent("Automatic");
+    mode.focus();
+    fireEvent.keyDown(mode, { key: "Enter" });
+    expect(await screen.findByRole("option", { name: "sync" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "async" })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: "Return a job to check later" }));
+    expect(JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}")).toEqual({ mode: "async" });
+    expect(mode).toHaveTextContent("Return a job to check later");
+  });
+
+  it("names the choices beside the values a typed request must use", () => {
+    expect(() => parseWorkflowInputs(JSON.stringify({ mode: "later" }), named)).toThrow(
+      "Mode must be one of: auto (Automatic), sync, async (Return a job to check later).",
+    );
+  });
+});

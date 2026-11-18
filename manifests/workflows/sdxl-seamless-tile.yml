@@ -66,24 +66,15 @@ inputs:
     help: The method the model uses to build the result. Keep the default unless you are comparing methods.
     choices_from: {node_type: KSampler, input: sampler_name}
     type: string
-    enum:
-      - euler
-      - euler_ancestral
-      - dpmpp_2m
-      - dpmpp_2m_sde
-      - dpmpp_sde
-      - uni_pc
+    enum: [euler, euler_ancestral, dpmpp_2m, dpmpp_2m_sde, dpmpp_sde, uni_pc]
+    choice_labels: {"euler": "Euler", "euler_ancestral": "Euler ancestral", "dpmpp_2m": "DPM++ 2M", "dpmpp_2m_sde": "DPM++ 2M SDE", "dpmpp_sde": "DPM++ SDE", "uni_pc": "UniPC"}
   scheduler:
     label: Step timing
     help: How the refinement steps are spaced. Keep the default unless you are comparing results.
     choices_from: {node_type: KSampler, input: scheduler}
     type: string
-    enum:
-      - karras
-      - normal
-      - simple
-      - sgm_uniform
-      - beta
+    enum: [karras, normal, simple, sgm_uniform, beta]
+    choice_labels: {"karras": "Karras", "normal": "Normal", "simple": "Simple", "sgm_uniform": "SGM uniform", "beta": "Beta"}
   seam_blending:
     label: Seam blending
     help: Sets the blending value used when making the picture seamless.

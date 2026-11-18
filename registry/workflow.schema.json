@@ -315,6 +315,7 @@
         "type": {},
         "label": {},
         "help": {},
+        "choice_labels": {},
         "description": {},
         "required": {
           "type": "boolean"
@@ -365,6 +366,7 @@
         "type": {},
         "label": {},
         "help": {},
+        "choice_labels": {},
         "description": {},
         "required": {
           "type": "boolean"
@@ -450,6 +452,7 @@
         "type": {},
         "label": {},
         "help": {},
+        "choice_labels": {},
         "description": {},
         "required": {
           "type": "boolean"
@@ -485,6 +488,7 @@
         "type": {},
         "label": {},
         "help": {},
+        "choice_labels": {},
         "description": {},
         "required": {
           "type": "boolean"
@@ -539,6 +543,7 @@
         "type": {},
         "label": {},
         "help": {},
+        "choice_labels": {},
         "description": {},
         "required": {
           "type": "boolean"
@@ -578,6 +583,15 @@
         },
         "description": {
           "$ref": "#/$defs/text"
+        },
+        "choice_labels": {
+          "type": "object",
+          "description": "A readable name for each choice value, keyed by the value as text. The value stays what is sent; the name is shown.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
         }
       }
     },

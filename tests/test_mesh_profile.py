@@ -115,7 +115,7 @@ GRAMMAR: dict[str, tuple[Edit, tuple[tuple[Any, ...], str], Edit | None]] = {
     "V13 default a float": (at(RESOLUTION + ("default",), 1.5), (RESOLUTION + ("default",), "default_invalid"), None),
     "V13 default a bool": (at(RESOLUTION + ("default",), True), (RESOLUTION + ("default",), "default_invalid"), at(RESOLUTION + ("default",), 512)),
     # V14 / V15: enums
-    "V14 integer enum empty": (at(RESOLUTION + ("enum",), []), (RESOLUTION + ("enum",), "limit_exceeded"), at(RESOLUTION + ("enum",), [512, 1024])),
+    "V14 integer enum empty": (at(RESOLUTION + ("enum",), []), (RESOLUTION + ("enum",), "limit_exceeded"), at(RESOLUTION + ("enum",), [512, 1024, 1536, 2048])),
     "V14 integer enum not a list": (at(RESOLUTION + ("enum",), "abc"), (RESOLUTION + ("enum",), "type_mismatch"), None),
     "V14 string enum empty": (at(("inputs", "bg_removal", "enum"), []), (("inputs", "bg_removal", "enum"), "limit_exceeded"), None),
     "V15 integer enum holds text": (at(RESOLUTION + ("enum",), [512, "1024"]), (RESOLUTION + ("enum", 1), "enum_value_invalid"), None),
