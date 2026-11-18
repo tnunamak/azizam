@@ -26354,7 +26354,7 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
                                             may_switch=_target_activation(auth_context) != "existing_only")
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
                                      path=media_jobs.DB_PATH)
-            await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
+            await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id, caller=auth_context)
             receipt_owner.report(status="succeeded", reason="completed")
             await receipt_owner.settle()
         except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
@@ -29094,7 +29094,7 @@ class _PreparedAudioGeneration:
                 status=media_jobs.STATUS_RUNNING, metadata={"mode": "sync_media_route", "publication_pending": True})
             self.job_id = media_jobs.create(job, path=media_jobs.DB_PATH).job_id
         try:
-            return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id)
+            return await declared_operation_job.run(self, INTENT_AUDIO_GENERATE, body, job_id=self.job_id, caller=self.auth_context)
         except asyncio.CancelledError:
             if self.owns_job:
                 self._fail_unpublished_job()

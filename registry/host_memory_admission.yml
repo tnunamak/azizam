@@ -15,7 +15,6 @@ job_wait_s: 7200
 # (the engine takes seconds to stage a model, and a second prompt must not read memory that is already spoken for).
 poll_s: 2
 report_s: 30
-settle_s: 30
 # Seconds a model counts as resident after the gateway sent it.
 resident_ttl_s: 600
 # Seconds the busy answer tells the caller to wait (Retry-After).

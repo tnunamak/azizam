@@ -17,7 +17,7 @@ BUSY_MESSAGE = "The host's memory is busy with other work. Try again soon."
 
 
 def policy(root, **over):
-    values = dict(margin_bytes_by_kind={"personal": 1000, "service": 5000}, wait_s=10.0, job_wait_s=1000.0, report_s=0.0, poll_s=2.0, settle_s=0.0, resident_ttl_s=600.0,
+    values = dict(margin_bytes_by_kind={"personal": 1000, "service": 5000}, wait_s=10.0, job_wait_s=1000.0, report_s=0.0, poll_s=2.0, resident_ttl_s=600.0,
                   model_extensions=(".safetensors", ".gguf"), model_roots=(str(root),))
     values.update(over)
     return hma.HostMemoryPolicy(**values)
@@ -159,10 +159,10 @@ def test_a_host_memory_reading_that_fails_admits(tmp_path):
 def test_an_admitted_load_is_reserved_so_a_second_prompt_waits(tmp_path):
     weights(tmp_path, "a.safetensors", 10_000)
     weights(tmp_path, "b.safetensors", 10_000)
-    made, clock = admission(tmp_path, [11_000, 11_000, 11_000, 22_000], settle_s=3.0)
+    made, clock = admission(tmp_path, [11_000, 11_000, 11_000, 22_000])
     run(made.admit(graph("a.safetensors")))
     run(made.admit(graph("b.safetensors")))
-    assert clock.slept == [2.0, 2.0]                            # b waited for a's reservation to settle, then for room
+    assert clock.slept == [2.0, 2.0]                            # b waited until enough room was available
 
 
 def test_models_are_found_in_a_folder_under_a_root_and_models_of_lists_each_once(tmp_path):
@@ -270,7 +270,7 @@ def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(
         clock.now += seconds
         await asyncio.sleep(0)
 
-    made = hma.HostMemoryAdmission(policy(tmp_path, settle_s=3.0), read_available=host,
+    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=host,
                                    sleep=sleep, clock=clock)
     order = []
 
@@ -389,7 +389,7 @@ def test_graph_runner_uses_injected_admission_when_shared_is_off(tmp_path, monke
     from gateway.node_graph_runner import NodeGraphRunner
 
     weights(tmp_path, "big.safetensors", 10_000)
-    made, clock = admission(tmp_path, [1, 11_000], settle_s=30)
+    made, clock = admission(tmp_path, [1, 11_000])
     monkeypatch.setattr(hma, "shared", lambda: hma.HostMemoryAdmission(hma.HostMemoryPolicy()))
     adapter = node_graph.NodeGraphAdapter(admission=made)
     ctx = SimpleNamespace(caller=None, job_id="job")
@@ -402,7 +402,7 @@ def test_graph_runner_uses_injected_admission_when_shared_is_off(tmp_path, monke
 
 def test_lease_records_residency_only_on_success_and_finish_is_idempotent(tmp_path):
     weights(tmp_path, "a.safetensors", 10000)
-    made, clock = admission(tmp_path, [11000], settle_s=0)
+    made, clock = admission(tmp_path, [11000])
     lease = run(made.admit(graph("a.safetensors")))
     assert not made._loaded
     lease.finish(False)
@@ -418,7 +418,7 @@ def test_lease_records_residency_only_on_success_and_finish_is_idempotent(tmp_pa
 def test_reservation_lasts_until_finish_or_owner_wait_ceiling(tmp_path):
     weights(tmp_path, "a.safetensors", 10000)
     weights(tmp_path, "b.safetensors", 10000)
-    made, clock = admission(tmp_path, [11000], settle_s=0, job_wait_s=6)
+    made, clock = admission(tmp_path, [11000], job_wait_s=6)
     first = run(made.admit(graph("a.safetensors")))
     second = run(made.admit(graph("b.safetensors")))
     assert clock.slept == [2.0, 2.0, 2.0]

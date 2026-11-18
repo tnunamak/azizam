@@ -7,7 +7,7 @@ What a prompt loads is read from the prompt: each string value that ends with a 
 file's size on disk under the configured roots (``registry/host_memory_admission.yml``; the engine directory named by
 the engine directory the registry file names adds its models folder and its extra-paths file's base paths). A model whose file is not
 found counts for nothing; a prompt with no sized model is admitted without a look at memory. A model is resident when the
-gateway sent it within ``resident_ttl_s`` and the engine's models were not freed since; residency the gateway cannot show is
+gateway completed it within ``resident_ttl_s`` and the engine's models were not freed since; residency the gateway cannot show is
 treated as not resident.
 
 The margin depends on the kind of App that asks (``admin_store.APP_KINDS``: a ``personal`` App has a person behind it; a
@@ -39,7 +39,7 @@ BUSY_REASON = "host_memory_busy"
 BUSY_CODE = "resource_unavailable"
 WAITING_PHASE = "waiting_for_memory"
 _DECLARATION = Path(__file__).resolve().parents[1] / "registry" / "host_memory_admission.yml"
-_KEYS = {"schema_version", "margin_gb", "wait_s", "job_wait_s", "poll_s", "report_s", "settle_s",
+_KEYS = {"schema_version", "margin_gb", "wait_s", "job_wait_s", "poll_s", "report_s",
          "resident_ttl_s", "retry_after_s", "model_extensions", "model_roots", "engine_dir_env",
          "engine_models_folder", "engine_extra_paths_file"}
 SETTING_KEY = "host_memory_admission"
@@ -54,7 +54,6 @@ class HostMemoryPolicy:
     job_wait_s: float = 7200.0
     poll_s: float = 2.0
     report_s: float = 30.0
-    settle_s: float = 30.0
     resident_ttl_s: float = 600.0
     retry_after_s: int = 30
     model_extensions: tuple[str, ...] = (".safetensors",)
@@ -107,7 +106,7 @@ def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
     return HostMemoryPolicy(
         margin_bytes_by_kind={kind: int(gb * GIB) for kind, gb in margins.items()},
         wait_s=float(env.get(ENV_WAIT) or document["wait_s"]), job_wait_s=float(document["job_wait_s"]),
-        poll_s=float(document["poll_s"]), report_s=float(document["report_s"]), settle_s=float(document["settle_s"]),
+        poll_s=float(document["poll_s"]), report_s=float(document["report_s"]),
         resident_ttl_s=float(document["resident_ttl_s"]), retry_after_s=int(document["retry_after_s"]),
         model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots), configured=bool(engine_dir or roots))
 
@@ -365,10 +364,14 @@ class HostMemoryAdmission:
         reservation = (now + policy.job_wait_s, staged)
         self._reserved.append(reservation)
         lease = Lease(self, names, reservation)
-        if ask.on_wait is not None and reported is not None:
-            result = ask.on_wait(None)      # the wait is over
-            if asyncio.iscoroutine(result):
-                await result
+        try:
+            if ask.on_wait is not None and reported is not None:
+                result = ask.on_wait(None)      # the wait is over
+                if inspect.isawaitable(result):
+                    await result
+        except BaseException:
+            lease.finish(False)
+            raise
         return lease
 
 
