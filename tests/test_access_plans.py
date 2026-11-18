@@ -268,11 +268,11 @@ def test_same_plan_both_sides_is_evaluated_once():
 
 def test_listed_items_grant_only_those_items():
     listed = plan(can_use={"chat": CapabilityGrant(models=frozenset({"a"})),
-                           "image": CapabilityGrant(workflows=frozenset({"flux2-klein-4b"}))})
+                           "image": CapabilityGrant(workflows=frozenset({"krea2-turbo"}))})
     effective = access(listed)
     assert evaluate(effective, PolicyRequest(intent="chat.completions", model="a")).allowed
     assert evaluate(effective, PolicyRequest(intent="chat.completions", model="b")).denied
-    assert evaluate(effective, PolicyRequest(intent="image.generate", workflow="flux2-klein-4b")).allowed
+    assert evaluate(effective, PolicyRequest(intent="image.generate", workflow="krea2-turbo")).allowed
     assert evaluate(effective, PolicyRequest(intent="image.generate", workflow="sdxl")).denied
 
 

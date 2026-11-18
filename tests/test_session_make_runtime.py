@@ -84,7 +84,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
     def test_source_input_reads_the_found_record_contract(self) -> None:
         for intent, expected in (("image.edit", "required"), ("image.generate", "none")):
             with self.subTest(intent=intent):
-                self.assertEqual(self.runtime.source_input(intent, "flux2-klein-4b"), expected)
+                self.assertEqual(self.runtime.source_input(intent, "krea2-turbo"), expected)
         # An owner graph with no record keeps the intent rule.
         self.assertEqual(self.runtime.source_input("image.edit", "no-such-graph"), "required")
         self.assertEqual(self.runtime.source_input("image.generate", "no-such-graph"), "none")

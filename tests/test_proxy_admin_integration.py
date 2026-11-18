@@ -251,7 +251,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
 
         denied = self.client.post(
             "/v1/images/generations",
-            json={"model": "flux2-klein-4b", "prompt": "test"},
+            json={"model": "krea2-turbo", "prompt": "test"},
             headers={"Authorization": f"Bearer {app_key}"},
         )
         self.assertEqual(denied.status_code, 403, denied.text)
