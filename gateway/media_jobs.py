@@ -336,8 +336,6 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
     )
     if audience == "internal":
         return dict(data)
-    if "metadata" in data:
-        data["metadata"] = {k: v for k, v in data["metadata"].items() if k != "accepted_workflow_ids"}
     # OWNER_VISIBILITY_STEP3: admin job content needs Own or a closed owner operational projection.
     if audience == "admin":
         return {k: data[k] for k in ADMIN_VISIBLE_FIELDS if k in data}

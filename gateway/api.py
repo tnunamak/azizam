@@ -126,6 +126,9 @@ def _resolve_request_audience(
 # identifiers are never in an API body, whatever the audience.
 def _job_body(row: Mapping[str, Any], resolver: output_availability.AssetPathResolver | None = None) -> dict[str, Any]:
     # ``results`` is the named results the job published (``result_bundle.results_view``), added by the job providers.
+    row = dict(row)
+    if isinstance(row.get("metadata"), Mapping):
+        row["metadata"] = {k: v for k, v in row["metadata"].items() if k != "accepted_workflow_ids"}
     return output_availability.project(
         {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata", "results"}}, resolver)
 
