@@ -205,3 +205,36 @@ def test_remote_registry_that_never_settles_refuses_after_bounded_reads(owner, g
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(bound.check_current())
     assert len(calls) == MAX_AUTHORITY_REFRESHES and bound.revoked
+
+
+def test_remote_database_replaced_during_refresh_with_the_same_revision_is_read_again(owner, gateway, monkeypatch, tmp_path):
+    """A restored or swapped admin.db can carry the same registry revision with other authority: its file is new, so
+    no snapshot of the old file may stand for it."""
+    import json
+    import os
+    from gateway.sqlite_startup import connect
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    replacement = tmp_path / 'replacement.db'
+    source, copy = connect(gateway.path), connect(replacement)
+    try:
+        source.backup(copy)
+        (value_json,) = copy.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()
+        registry = json.loads(value_json)
+        registry.setdefault('services', {}).setdefault('smell-box', {})['enabled'] = False
+        copy.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(registry),))
+        copy.commit()
+    finally:
+        source.close()
+        copy.close()
+    _external_generation_commit(gateway.path)
+    real_check, calls = factory.check, []
+    def check(*args, **kwargs):
+        calls.append(1)
+        real_check(*args, **kwargs)
+        if len(calls) == 1:
+            os.replace(replacement, gateway.path)
+    monkeypatch.setattr(factory, 'check', check)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bound.check_current())
+    assert len(calls) == 2 and bound.revoked
