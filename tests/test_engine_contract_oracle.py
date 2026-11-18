@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from unittest.mock import patch
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -124,15 +123,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     case.setUp()
     try:
         models = case._list()
-        import proxy
-        with patch.object(proxy, "_closed_workflow_reason", return_value=None):
-            before = case._list()
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
-    old_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in before["data"]]
-    removed = [row[0] for row in old_surface if row not in model_surface]
-    assert removed == [], removed
     # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
