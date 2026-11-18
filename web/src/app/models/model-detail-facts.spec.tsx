@@ -131,9 +131,15 @@ describe("model detail dates and source", () => {
   });
 
   it("renders every available date but omits invalid dates and source URLs", async () => {
-    const detail = await openDetails({ added_at: "2026-06-15", updated_at: 1800000000, released_at: "not a date", source_url: "javascript:alert(1)" });
+    const detail = await openDetails({ added_at: "2026-06-15", updated_at: "2027-01-15T08:00:00Z", released_at: "not a date", source_url: "javascript:alert(1)" });
     expect(detail.getByText("Added here", { selector: "dt" })).toBeVisible();
     expect(detail.getByText("Updated", { selector: "dt" })).toBeVisible();
+    expect(detail.queryByText("Released", { selector: "dt" })).toBeNull();
+    expect(detail.queryByRole("link", { name: "Source" })).toBeNull();
+  });
+
+  it("omits a date given as a bare number, which has no unit", async () => {
+    const detail = await openDetails({ released_at: 1800000000 });
     expect(detail.queryByText("Released", { selector: "dt" })).toBeNull();
     expect(detail.queryByRole("link", { name: "Source" })).toBeNull();
   });
