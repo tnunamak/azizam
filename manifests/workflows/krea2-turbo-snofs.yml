@@ -104,3 +104,5 @@ bindings:
           path: loras/snofs_krea_v1_4.safetensors
         - role: vae
           path: vae/qwen_image_vae.safetensors
+released_at: "2026-06-22"
+source_url: https://huggingface.co/krea/Krea-2-Turbo

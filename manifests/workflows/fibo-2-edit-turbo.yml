@@ -73,3 +73,4 @@ bindings:
           path: text_encoders/qwen3vl_4b_int8_convrot.safetensors
         - role: vae
           path: vae/flux2-vae.safetensors
+source_url: https://huggingface.co/briaai/Fibo-2.0-edit-turbo

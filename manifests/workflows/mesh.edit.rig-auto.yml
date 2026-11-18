@@ -27,3 +27,4 @@ bindings:
       mesh: mesh
     service: local3d-stages
     path: /rig
+source_url: https://github.com/vltrx/UniRig

@@ -92,3 +92,4 @@ bindings:
           path: text_encoders/qwen_3_06b_base.safetensors
         - role: vae
           path: vae/qwen_image_vae.safetensors
+source_url: https://huggingface.co/circlestone-labs/Anima

@@ -169,3 +169,5 @@ bindings:
       scheduler:
         - node: "20"
           input: scheduler
+released_at: "2026-04-02"
+source_url: https://huggingface.co/ACE-Step/acestep-v15-xl-turbo

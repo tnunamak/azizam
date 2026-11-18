@@ -146,3 +146,5 @@ bindings:
           path: text_encoders/qwen3vl_8b_w4a8.safetensors
         - role: vae
           path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors
+released_at: "2026-09-20"
+source_url: https://huggingface.co/Qwen/Qwen-Image-2.1

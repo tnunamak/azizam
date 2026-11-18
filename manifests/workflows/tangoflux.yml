@@ -77,3 +77,4 @@ bindings:
       batch_size:
         - node: "2"
           input: batch_size
+source_url: https://huggingface.co/declare-lab/TangoFlux

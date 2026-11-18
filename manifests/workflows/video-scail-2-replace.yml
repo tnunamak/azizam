@@ -158,3 +158,4 @@ bindings:
           path: checkpoints/sam3.1_multiplex_fp16.safetensors
         - role: clip_vision
           path: clip_vision/clip_vision_h.safetensors
+source_url: https://huggingface.co/zai-org/SCAIL-2

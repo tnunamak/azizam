@@ -136,3 +136,4 @@ bindings:
       seam_blending:
         - node: "45"
           input: blending
+source_url: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
