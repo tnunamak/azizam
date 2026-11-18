@@ -215,6 +215,8 @@ def test_remote_database_replaced_during_refresh_with_the_same_revision_is_read_
     from gateway.sqlite_startup import connect
     factory = _remote_factory(owner)
     bound = factory.transport(factory.admit('smell-box'))
+    # Make the cached authority stale first, so the check refreshes; the copy then has the same revision.
+    _external_generation_commit(gateway.path)
     replacement = tmp_path / 'replacement.db'
     source, copy = connect(gateway.path), connect(replacement)
     try:
@@ -227,7 +229,6 @@ def test_remote_database_replaced_during_refresh_with_the_same_revision_is_read_
     finally:
         source.close()
         copy.close()
-    _external_generation_commit(gateway.path)
     real_check, calls = factory.check, []
     def check(*args, **kwargs):
         calls.append(1)
