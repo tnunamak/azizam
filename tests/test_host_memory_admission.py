@@ -462,7 +462,7 @@ def test_protocol_job_asks_as_the_callers_service_kind(monkeypatch):
 
 
 def test_off_adapter_returns_before_compiling_or_reading(monkeypatch):
-    made = hma.HostMemoryAdmission(hma.HostMemoryPolicy(), saved_setting=lambda: pytest.fail("setting read"),
+    made = hma.HostMemoryAdmission(hma.HostMemoryPolicy(), saved_setting=lambda: None,
                                    read_available=lambda: pytest.fail("memory read"))
     monkeypatch.setattr(hma, "shared", lambda: made)
     adapter = node_graph.NodeGraphAdapter()
@@ -575,3 +575,11 @@ def test_disabled_protocol_job_does_not_check_cancel_before_submit(monkeypatch):
     monkeypatch.setattr(media_jobs, "get", lambda *a, **k: {"metadata": {"cancel_requested_at": "now"}})
     with pytest.raises(Submitted):
         run(jobs.run(runtime, "test", {}, job_id="job"))
+
+
+def test_setting_switch_requires_boolean_and_defaults_off():
+    assert hma.validate_setting({k: v for k, v in SAVED.items() if k != "enabled"})["enabled"] is False
+    assert hma.validate_setting({**SAVED, "enabled": True})["enabled"] is True
+    assert hma.validate_setting({**SAVED, "enabled": False})["enabled"] is False
+    with pytest.raises(hma.InvalidHostMemorySetting):
+        hma.validate_setting({**SAVED, "enabled": 1})

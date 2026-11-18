@@ -51,3 +51,17 @@ memory, so a timer buys nothing, per A3/A4); freeing during a prompt.
 **Unproven.** Whether `/free` returns the staged RAM to the host promptly (it should, measure MemAvailable before and after on
 an idle engine); the PSI threshold; whether the head-of-queue trigger thrashes when two people alternate models. Measure each
 before building.
+
+## Before switch-on
+
+Admission covers image graph rounds and engine_protocol jobs only. `_submit_video_graph` and prepared audio generation start submit without admission.
+
+A reservation held until a prompt ends double-counts weights after they load: MemAvailable already reflects those bytes. End the reservation when the load is observed.
+
+Further work before switch-on:
+
+- Account for memory beyond MemAvailable, and invalidate residency after eviction.
+- Classify trusted-address service Apps as service Apps.
+- Start the probe after the memory wait, and notice client disconnects during that wait.
+- Remove the extra compile when admission is on.
+- Avoid building the policy in `on_freed` while admission is off.

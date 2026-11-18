@@ -12,7 +12,7 @@ treated as not resident.
 
 The margin depends on the kind of App that asks (``admin_store.APP_KINDS``: a ``personal`` App has a person behind it; a
 ``service`` App has none and yields to every personal request). The margin per kind, ``wait_s`` and ``job_wait_s`` are owner
-settings (key ``host_memory_admission`` in admin.db, ``validate_setting``); the shipped file is their read-only default and
+settings (key ``host_memory_admission`` in admin.db, ``validate_setting``); admission runs only when that setting enables it; the shipped file is their read-only default and
 the saved setting wins. Within a kind the order is first come, first served. A synchronous request waits ``wait_s`` and then gets the retryable busy answer.
 A job waits up to ``job_wait_s`` and reports its wait to the caller through ``Ask.on_wait``.
 """
