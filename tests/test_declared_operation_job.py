@@ -268,13 +268,16 @@ def test_persisted_cancel_resistant_cleanup_settles_without_success(job_store):
             finally:
                 cleanup_finished.set()
 
+        async def submit(*_args):
+            job_store.snapshot["metadata"]["cancel_requested_at"] = "synthetic-cancel-request"
+            return SimpleNamespace(id="upstream-job")
+
         adapter = SimpleNamespace(
-            submit=AsyncMock(return_value=SimpleNamespace(id="upstream-job")),
+            submit=AsyncMock(side_effect=submit),
             poll=AsyncMock(return_value=SimpleNamespace(state=protocol_jobs.JobState.succeeded)),
             fetch_assets=AsyncMock(return_value=[_file()]),
             cancel=AsyncMock(side_effect=cancel),
         )
-        job_store.snapshot["metadata"]["cancel_requested_at"] = "synthetic-cancel-request"
         task = asyncio.create_task(protocol_jobs.run(_runtime(adapter), INTENT, {}, job_id=JOB_ID))
         try:
             done, _pending = await asyncio.wait({task}, timeout=OUTER_WAIT_S)
