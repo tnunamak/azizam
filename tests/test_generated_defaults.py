@@ -1060,6 +1060,16 @@ def test_a_job_whose_binding_has_no_pin_is_still_accepted_and_draws_at_run(jobs_
     assert manifest is not None and generated_defaults.generated_inputs(manifest.get("inputs") or {})
     assert not proxy._manifest_has_pin(manifest)
     assert proxy._manifest_has_pin(proxy._find_image_manifest("image.generate", IMAGE_BODY["model"]))
+    from dataclasses import replace
+
+    workflow_id = "image.generate.flux2-klein-4b-seamless-tile"
+    provider = proxy.GATEWAY_REGISTRY_PROVIDER
+    current = provider.current()
+    original = current.get(workflow_id)
+    enabled = replace(original, state="active", facts=replace(original.facts, exposure="default"))
+    snapshot = replace(current, workflows={**current.workflows, workflow_id: enabled})
+    monkeypatch.setattr(type(provider), "current", lambda self: snapshot)
+    monkeypatch.setattr(proxy, "WORKFLOW_SNAPSHOTS", provider)
     job_id = submit_image(TILE_BODY)
     assert DefinitionStore(jobs_db).envelope(job_id) is None
 
