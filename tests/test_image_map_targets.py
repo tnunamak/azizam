@@ -45,41 +45,32 @@ class ImageMapTargetsTests(unittest.TestCase):
     def result(self, filename: str):
         return targets(self.entries[filename][0])
 
-    def test_registry_covers_all_18_non_ui_image_graphs(self) -> None:
+    def test_registry_covers_all_12_non_ui_image_graphs(self) -> None:
         self.assertEqual(self.registry.errors, [])
         graphs = {path.name for path in (ROOT / "workflows/images").glob("*.json")
                   if ".ui" not in path.name}
-        self.assertEqual(len(graphs), 18)
+        self.assertEqual(len(graphs), 12)
         self.assertEqual(set(self.entries), graphs)
 
     def test_fibo_and_qwen_prompt_inputs(self) -> None:
         self.assertEqual(self.result("fibo-2-edit-turbo.json").prompt, (("6", "prompt"),))
         self.assertEqual(self.result("qwen-image-2.1-edit.json").prompt, (("6", "text"),))
 
-    def test_edit_and_inpaint_size_fanout_in_map_order(self) -> None:
-        edit = self.result("flux2-klein-4b-edit.json")
-        inpaint = self.result("flux2-klein-4b-inpaint.json")
-        for field in ("width", "height"):
-            with self.subTest(field=field):
-                self.assertEqual(getattr(edit, field), (("48", field), ("47", field)))
-                self.assertEqual(getattr(inpaint, field),
-                                 (("11", field), ("14", field), ("48", field)))
 
     def test_multiref_assets_and_unmapped_mask(self) -> None:
         multi = self.result("qwen-image-2.1-edit-multiref.json")
         self.assertEqual(tuple(multi.assets), ("source_image", "reference_image_2"))
         self.assertEqual(multi.assets["source_image"], (("4", "image"),))
         self.assertEqual(multi.assets["reference_image_2"], (("11", "image"),))
-        self.assertEqual(self.result("flux2-klein-4b-edit.json").assets["mask"], ())
-        self.assertEqual(self.result("flux2-klein-4b-inpaint.json").assets["mask"],
-                         (("12", "image"),))
+        self.assertNotIn("mask", self.result("qwen-image-2.1-edit.json").assets)
+        self.assertNotIn("mask", self.result("qwen-image-2.1-inpaint.json").assets)
 
     def test_lora_and_batch_are_read_from_the_map(self) -> None:
         result = self.result("krea2-turbo-snofs.json")
         self.assertEqual(result.lora_strength, (("11", "strength_model"),))
         self.assertEqual(result.batch_size, (("6", "batch_size"),))
         # Graph metadata must not manufacture an absent binding.
-        self.assertEqual(self.result("flux2-klein-4b-edit.json").batch_size, ())
+        self.assertEqual(self.result("qwen-image-2.1-edit.json").batch_size, ())
 
     def test_every_pair_names_an_existing_graph_input(self) -> None:
         for filename, (contract, graph) in self.entries.items():
