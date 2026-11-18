@@ -153,7 +153,7 @@ describe("a picture-edit workflow on Try", () => {
 
   it("asks for the missing picture on its field and sends nothing", async () => {
     await openWorkflow();
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "Make the sky purple" },
     });
     await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
@@ -164,7 +164,7 @@ describe("a picture-edit workflow on Try", () => {
 
   it("sends the chosen picture as the route's file part", async () => {
     await openWorkflow();
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "Make the sky purple" },
     });
     const source = screen.getByRole("group", { name: /Picture to change/ });
@@ -187,7 +187,7 @@ describe("a picture-edit workflow on Try", () => {
     account.promptMemory.mockResolvedValue(promptMemory(false));
     await openWorkflow();
     await screen.findByText("Words aren’t kept");
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "Make the sky purple" },
     });
     const source = screen.getByRole("group", { name: /Picture to change/ });
@@ -231,7 +231,7 @@ describe("a workflow with repeated image[] parts", () => {
 
   async function open() {
     await openWorkflow(owner, "Two reference pictures");
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "Combine both pictures" },
     });
   }
@@ -357,7 +357,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
 
   it("sends both pictures as image[] parts in manifest order, with no reference_image_2 part", async () => {
     await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "Put the ghost beside the boy" },
     });
     // Choose the second picture first: the wire order follows the manifest,
@@ -408,7 +408,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     expect(screen.getByText("old.png")).toBeVisible();
     await upload(/second picture/i, "new-second.png");
     await upload(/main picture/i, "new-main.png");
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "Blend the new pictures" },
     });
     await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
@@ -420,7 +420,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
   it("restores what was typed and attached for a workflow when switching back to it", async () => {
     activeCatalog = { workflows: [...multirefCatalog.workflows, ...catalog.workflows] };
     await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
-    const description = () => screen.getByRole("textbox", { name: /Describe the picture|^Description/ });
+    const description = () => screen.getByRole("textbox", { name: /^What to make/ });
     fireEvent.change(description(), { target: { value: "Keep the tones warm" } });
     await userEvent.upload(
       screen.getByRole("group", { name: /main picture/i })
@@ -473,7 +473,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
       }));
     });
     expect(screen.queryByText("From your Library")).toBeNull();
-    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^What to make/ }), {
       target: { value: "New model needs a fresh picture" },
     });
     await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
