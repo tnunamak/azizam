@@ -192,7 +192,9 @@ def _deliberate(key: str) -> str | None:
         return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
     if path.startswith("/admin/api/config/") and path not in {"/admin/api/config/export", "/admin/api/config/reload"} or path == "/admin/api/config":
         return "config_sections"  # owner routes for the config sections (gateway/config_api.py); tests/test_config_api.py covers them
-    if path == "/admin/api/workflows" or path.startswith("/admin/api/workflows/"):
+    if path == "/admin/api/workflows" or path.startswith("/admin/api/workflows/") or path in {
+        "/admin/api/workflow-choices", "/admin/api/workflow-choices/refresh",
+    }:
         return "workflow_owner"  # the owner's workflow store routes (gateway/workflow_owner_api.py)
     if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
         return "access-plans"

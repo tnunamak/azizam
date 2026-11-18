@@ -18140,6 +18140,7 @@ app.include_router(
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
         transitions=lambda: TRANSITION_RUNTIME,
         workflow_registry=WORKFLOW_REGISTRY_STORE,
+        workflow_resolve_identity=lambda entry, binding_key=None: _WORKFLOW_RUN_PORT.adapter_identity(entry, binding_key or next(iter(entry.bindings)), entry.bindings[binding_key or next(iter(entry.bindings))]),
         workflow_entry_problems=_workflow_owner_entry_problems,
         workflow_listing_scope=lambda: _one_operator_override_read(),
     )

@@ -10,7 +10,10 @@ from gateway.engine_protocol.node_info import fetch_fresh
 # The process store of last-known engine choices. Unset (None) means no snapshots and no refresh; the gateway sets it at
 # startup, as it does the node info disk copy, so a test that never sets it neither reads nor writes a shared file.
 STORE: ChoiceStore | None = None
+OWNER_REFRESH_TIMEOUT = 30.0
 _tasks = {}
+_task_declarations = {}
+_owner_refreshes = set()
 _log = logging.getLogger(__name__)
 
 
@@ -40,5 +43,95 @@ def choices_for_run(identity, inputs):
                 _log.exception('Choice refresh failed for service %s', service)
             finally:
                 _tasks.pop(service, None)
+                _task_declarations.pop(service, None)
         _tasks[service] = asyncio.create_task(refresh())
+        _task_declarations[service] = declarations
     return choices
+
+
+async def owner_choices(entries, resolve_identity, *, refresh=False):
+    """Describe declared inputs, optionally joining or starting service refreshes."""
+    from collections.abc import Mapping
+    from gateway.engine_protocol.choice_refresh import freshness
+
+    store = STORE
+    rows, groups = [], {}
+    for entry in entries:
+        for binding_key in entry.bindings or (None,):
+            try:
+                identity = await asyncio.to_thread(resolve_identity, entry, binding_key) if binding_key is not None else None
+            except Exception:
+                identity = None
+            inputs = entry.contract.get('inputs', {})
+            for name, spec in inputs.items():
+                declaration = spec.get('choices_from') if isinstance(spec, Mapping) else None
+                if not declaration:
+                    continue
+                declaration = dict(declaration)
+                service = identity.service_id if identity else None
+                rows.append((entry.id, binding_key, name, declaration, identity))
+                if service:
+                    group = groups.setdefault(service, (identity, []))[1]
+                    if declaration not in group:
+                        group.append(declaration)
+    refreshing = set()
+    if refresh and store is not None:
+        async def start(service, identity, declarations):
+            task = _tasks.get(service)
+            if task is not None:
+                pending = [declaration for declaration in declarations
+                           if declaration not in _task_declarations.get(service, ())]
+                await asyncio.shield(task)
+                if pending:
+                    await start(service, identity, pending)
+                return
+            if task is None:
+                def fetch(_service, node):
+                    if not identity.origin:
+                        raise ValueError('no service address')
+                    return fetch_fresh(identity.origin, node)
+                async def run():
+                    try:
+                        await asyncio.to_thread(refresh_service, store, service, declarations, fetch=fetch, now=time.time())
+                    finally:
+                        _tasks.pop(service, None)
+                        _task_declarations.pop(service, None)
+                task = _tasks[service] = asyncio.create_task(run())
+                _task_declarations[service] = declarations
+            await asyncio.shield(task)
+        async def bounded_start(service, identity, declarations):
+            task = asyncio.create_task(start(service, identity, declarations))
+            _owner_refreshes.add(task)
+            def finished(done):
+                _owner_refreshes.discard(done)
+                if not done.cancelled() and done.exception() is not None:
+                    _log.error('Choice refresh failed for service %s', service, exc_info=done.exception())
+            task.add_done_callback(finished)
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=OWNER_REFRESH_TIMEOUT)
+            except TimeoutError:
+                refreshing.add(service)
+        await asyncio.gather(*(bounded_start(service, identity, declarations) for service, (identity, declarations) in groups.items()))
+    result = []
+    now = time.time()
+    for workflow_id, binding_key, name, declaration, identity in rows:
+        service = identity.service_id if identity else None
+        snapshot = store.read(service, declaration['node_type'], declaration['input']) if store is not None and service else None
+        if store is not None and service:
+            data = freshness(store, service, [declaration], now=now)[0]
+            if not identity.origin and not data['failure_reason']:
+                data['failure_reason'] = 'no service address'
+            current_failure = not identity.origin or (data['failure_reason'] and
+                (snapshot is None or data['failed_at'] is None or data['failed_at'] > snapshot.fetched_at))
+            state = 'failed' if current_failure else 'missing' if snapshot is None else 'stale' if data['stale'] else 'fresh'
+        else:
+            reason = 'no bound service' if not service else 'no service address' if not identity.origin else None
+            data = {'fetched_at': None, 'age_s': None, 'failure_reason': reason, 'failed_at': None}
+            state = 'failed' if reason else 'missing'
+        if service in refreshing:
+            state = 'refreshing'
+        result.append({'workflow_id': workflow_id, 'binding_key': binding_key, 'input': name, 'node_type': declaration['node_type'],
+                       'service_id': service, 'choices': snapshot.choices if snapshot else None,
+                       'fetched_at': data['fetched_at'], 'age_s': data['age_s'], 'state': state,
+                       'failure_reason': data['failure_reason'], 'failed_at': data['failed_at']})
+    return result
