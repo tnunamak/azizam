@@ -28,7 +28,7 @@ from tests.support.section_edits import without_section_additions  # noqa: E402
 
 SENTINEL = "sentinel-value-must-never-print"
 TRUSTED_ID = "image.generate.anima-turbo"  # has a top-level ``requires``
-PLAIN_ID = "image.generate.flux2-klein"
+PLAIN_ID = "image.generate.krea2-turbo"
 
 
 def _v1(workflow_id: str = PLAIN_ID, **edits) -> dict:
@@ -236,7 +236,7 @@ def test_the_frozen_schema_1_copy_excludes_workflows_introduced_in_schema_two():
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         bundled[document["id"]] = document
     frozen = {record_id: record["manifest"] for record_id, record in migration.frozen_release_records().items()}
-    assert len(frozen) == 39
+    assert len(frozen) == 32
     assert set(bundled) - set(frozen) == {
         "mesh.generate.pixal3d", "mesh.edit.retopo", "mesh.edit.rig-auto",
         "mesh.edit.rig-humanoid", "mesh.edit.texture-refine", "mesh.edit.uv-unwrap"}
