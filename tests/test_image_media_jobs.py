@@ -344,6 +344,39 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         with media_jobs.connection(self.db) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0], 0)
 
+    async def test_unknown_and_wrong_kind_refusals_record_the_same_receipt(self) -> None:
+        receipts = []
+        with authenticated(), patch.object(proxy, "finish_image_route_receipt", side_effect=lambda receipt, response: receipts.append((receipt, response))):
+            unknown = await proxy.gateway_image_generations_media_job(
+                _StubJsonRequest({"model": "no-such-image-model-probe", "prompt": "probe"})
+            )
+            with patch.object(proxy, "other_intent_owns_stem", return_value=True):
+                wrong_kind = await proxy.gateway_image_generations_media_job(
+                    _StubJsonRequest({"model": "no-such-edit-model-probe", "prompt": "probe"})
+                )
+        for response, (receipt, finished_response) in zip((unknown, wrong_kind), receipts, strict=True):
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(json.loads(response.body)["error"]["code"], "model_not_found")
+            self.assertIs(response, finished_response)
+            self.assertEqual(receipt.rejected_inputs.get("model"), "model_incompatible")
+            self.assertIsNone(receipt.job_id)
+        with media_jobs.connection(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0], 0)
+
+    async def test_closed_workflow_remains_refused(self) -> None:
+        with authenticated(), patch.object(proxy, "_closed_workflow_reason", return_value="closed"):
+            response = await proxy.gateway_image_generations_media_job(
+                _StubJsonRequest({"model": "krea2-turbo", "prompt": "probe"})
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "workflow_disabled")
+
+    async def test_omitted_model_uses_default(self) -> None:
+        with authenticated(), patch.object(proxy, "_image_default_model", return_value="krea2-turbo"), \
+                patch.object(proxy, "_schedule_image_media_job", return_value=True):
+            response = await proxy.gateway_image_generations_media_job(_StubJsonRequest({"prompt": "probe"}))
+        self.assertEqual(response.status_code, 202)
+
     async def test_submit_route_creates_job_without_persisting_prompt_in_metadata(self) -> None:
         body = {
             "model": "krea2-turbo",
