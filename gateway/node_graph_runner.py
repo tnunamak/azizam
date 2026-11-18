@@ -495,7 +495,7 @@ class NodeGraphRunner:
         """A job waits for the host's memory as long as it takes (up to the policy's ceiling) and says so to its caller: the
         job stays ``running`` and its events carry the phase ``waiting_for_memory`` with the GB it needs and the host has."""
         admit = getattr(adapter, "admit_prompt", None)
-        if admit is None:
+        if admit is None or not host_memory_admission.shared().policy.model_roots:
             return
 
         def report(state: host_memory_admission.WaitState | None) -> None:
