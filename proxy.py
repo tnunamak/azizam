@@ -28,7 +28,7 @@ from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_identity import find_workflow_record, other_intent_owns_stem
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
-from gateway import browser_origin, client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway import browser_origin, client_errors, gateway_lifetime, host_memory_admission, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
@@ -8580,9 +8580,19 @@ async def _graph_run_round(
     adapter = _graph_adapter(capability)
     graph = _graph(client, capability)
     engine = adapter.label
+    submit_payload = _build_graph_submit_payload(workflow, capability)
+    try:
+        # A synchronous caller waits a bounded time for the host's memory, then gets the retryable busy answer.
+        admit = getattr(adapter, "admit_prompt", None)
+        if admit is not None:
+            await admit(submit_payload, host_memory_admission.Ask(
+                auth_kind=getattr(getattr(getattr(request, "state", None), "caller", None), "auth_kind", None)))
+    except host_memory_admission.HostMemoryBusy:
+        await _finalize_probe()
+        return host_memory_admission.busy_response(), []
     try:
         result = await graph_round.run_round(
-            adapter, graph, _build_graph_submit_payload(workflow, capability), headers,
+            adapter, graph, submit_payload, headers,
             graph=workflow, label=label, max_wait_s=float(max_wait_s or _graph_service(capability).timeout),
             control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=lambda: _graph_connection(capability=capability),
             is_disconnected=lambda: _request_is_disconnected(request),
