@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { receiptCost, receiptCostUsd } from "@/app/usage/receipt-cost";
+import { costState, receiptCost, receiptCostUsd } from "@/app/usage/receipt-cost";
 
 test("cost_usd 0.0123 is an amount", () => {
   expect(receiptCost({ cost_usd: 0.0123 })).toEqual({ kind: "amount", usd: 0.0123, excluded: 0, local: 0 });
@@ -35,4 +35,17 @@ test("normalizer amount excludes nested cost.usd while receipt display includes 
 test("invalid receipt input remains unrecorded", () => {
   for (const raw of [null, undefined, [], "receipt", { cost_usd: -1 }, { cost_usd: Infinity }])
     expect(receiptCost(raw)).toEqual({ kind: "unrecorded", local: 0 });
+});
+
+test("zero reported spend with unknown paid requests is not-reported", () => {
+  expect(costState({ usd: 0, unknownPaid: 2, local: 1, requests: 4 }))
+    .toEqual({ kind: "not-reported", excluded: 2, local: 1 });
+});
+test("positive reported spend retains its amount and unknown paid exclusions", () => {
+  expect(costState({ usd: 0.5, unknownPaid: 2, local: 1, requests: 4 }))
+    .toEqual({ kind: "amount", usd: 0.5, excluded: 2, local: 1 });
+});
+test("zero reported spend without unknown paid requests remains a remote amount", () => {
+  expect(costState({ usd: 0, unknownPaid: 0, local: 1, requests: 3 }))
+    .toEqual({ kind: "amount", usd: 0, excluded: 0, local: 1 });
 });
