@@ -233,6 +233,12 @@ def test_remote_database_replaced_during_refresh_with_the_same_revision_is_read_
         calls.append(1)
         real_check(*args, **kwargs)
         if len(calls) == 1:
+            # Empty the old file's write-ahead log first, or SQLite would replay its pages over the new file.
+            wal = connect(gateway.path)
+            try:
+                wal.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            finally:
+                wal.close()
             os.replace(replacement, gateway.path)
     monkeypatch.setattr(factory, 'check', check)
     with pytest.raises(asyncio.CancelledError):
