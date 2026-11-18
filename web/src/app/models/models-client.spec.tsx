@@ -451,6 +451,7 @@ describe("price and status", () => {
 
   it.each(states)("shows the quiet status for %s", async (_name, availability, label) => {
     renderModels(catalog([row({ availability: { ...row().availability, ...availability } })]));
+    fireEvent.click(await screen.findByRole("switch", { name: "Show unavailable" }));
     await screen.findByRole("button", { name: "chat" });
     expect(rowHas("chat", label)).toBe(true);
     // The reason sentence stays out of the row.
@@ -554,6 +555,7 @@ describe("copying", () => {
       catalog([row({ id: "up" }), row({ id: "down", availability: down })], [exact("exact", { availability: down })]),
     );
     await screen.findByRole("button", { name: "up" });
+    fireEvent.click(screen.getByRole("switch", { name: "Show unavailable" }));
     for (const id of ["up", "down", "exact"]) {
       fireEvent.click(copyButton(id));
       await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(id));
@@ -921,6 +923,7 @@ describe("Details", () => {
       catalog([row({ locality, availability: { ...row().availability, ...availability } })]),
       viewer,
     );
+    fireEvent.click(await screen.findByRole("switch", { name: "Show unavailable" }));
     await screen.findByRole("button", { name: "chat" });
     // The action is in Details, not on the row.
     expect(within(rowOf("chat")).queryByRole("link")).toBeNull();

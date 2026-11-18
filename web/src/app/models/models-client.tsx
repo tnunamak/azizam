@@ -23,6 +23,7 @@ import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { copyText } from "@/components/ui/copy-button";
 import { useViewer } from "@/components/shell/session";
@@ -571,10 +572,12 @@ function ModelRow({
 function TaskSection({
   task,
   rows,
+  hiddenUnavailable,
   onDetail,
 }: {
   task: Task;
   rows: CatalogRow[];
+  hiddenUnavailable: number;
   onDetail: (row: CatalogRow) => void;
 }) {
   const counts = new Map<string, number>();
@@ -599,6 +602,9 @@ function TaskSection({
         <p className="text-muted-foreground text-meta min-w-0">
           {taskExplainers[task]}
         </p>
+        {hiddenUnavailable > 0 && (
+          <p className="text-muted-foreground text-meta">{hiddenUnavailable} unavailable hidden</p>
+        )}
       </div>
       <ul role="list" aria-labelledby={headingId} className="divide-y border-b last:border-b-0">
         {rows.map((row) => (
@@ -885,6 +891,7 @@ const priceFilterLabels: Record<PriceFilter, string> = {
 export default function ModelsClient() {
   const viewer = useViewer();
   const [query, setQuery] = useState("");
+  const [showUnavailable, setShowUnavailable] = useState(false);
   const [price, setPrice] = useState<PriceFilter>("all");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -940,6 +947,7 @@ export default function ModelsClient() {
     if (!catalogData || appliedDeepLink.current) return;
     appliedDeepLink.current = true;
     const params = new URLSearchParams(window.location.search);
+    setShowUnavailable(params.get("unavailable") === "1");
     const model = allRows.find((row) => row.id === params.get("model"));
     if (model) setDetailId(model.id);
     const task = taskOrder.find((value) => value === params.get("capability"));
@@ -951,33 +959,42 @@ export default function ModelsClient() {
   );
   const tasksPresent = taskOrder.filter((task) => allRows.some((row) => rowTask(row) === task));
   // Facet counts respect search and the other filter, not their own selection.
-  const searched = allRows.filter((row) => itemMatches(row, query.trim()));
+  const searched = allRows.filter((row) =>
+    itemMatches(row, query.trim()) && (showUnavailable || availabilityState(row) !== "unavailable"),
+  );
   const taskCandidates = searched.filter((row) => price === "all" || costKind(row) === price);
   const priceCandidates = searched.filter((row) => taskFilter === "all" || rowTask(row) === taskFilter);
   const taskCount = (task: TaskFilter) =>
     task === "all" ? taskCandidates.length : taskCandidates.filter((row) => rowTask(row) === task).length;
   const priceCount = (kind: PriceFilter) =>
     kind === "all" ? priceCandidates.length : priceCandidates.filter((row) => costKind(row) === kind).length;
-  const visible = allRows.filter(
+  const matching = allRows.filter(
     (row) =>
       itemMatches(row, query.trim()) &&
       (price === "all" || costKind(row) === price) &&
       (taskFilter === "all" || rowTask(row) === taskFilter),
   );
-  // Within a task: the recommended name, other names, then exact models.
+  const visible = matching.filter((row) => showUnavailable || availabilityState(row) !== "unavailable");
+  // Unavailable last; preserve recommended/alias/exact order within each partition.
   const rank = (row: CatalogRow) =>
     row.recommended ? 0 : row.alias && !row.secondary_profile ? 1 : row.alias ? 2 : 3;
   const groups = taskOrder
     .map((task) => ({
       task,
+      hiddenUnavailable: showUnavailable ? 0 : matching.filter((row) =>
+        rowTask(row) === task && availabilityState(row) === "unavailable",
+      ).length,
       rows: visible
         .filter((row) => rowTask(row) === task)
         .map((row, index) => ({ row, index }))
-        .sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index)
+        .sort((a, b) =>
+          Number(availabilityState(a.row) === "unavailable") - Number(availabilityState(b.row) === "unavailable") ||
+          rank(a.row) - rank(b.row) || a.index - b.index,
+        )
         .map(({ row }) => row),
     }))
-    .filter((group) => group.rows.length > 0);
-  const filtered = Boolean(query.trim()) || price !== "all" || taskFilter !== "all";
+    .filter((group) => group.rows.length > 0 || group.hiddenUnavailable > 0);
+  const filtered = Boolean(query.trim()) || price !== "all" || taskFilter !== "all" || visible.length !== allRows.length;
 
   return (
     <div>
@@ -1060,6 +1077,10 @@ export default function ModelsClient() {
                 </SelectContent>
               </Select>
             )}
+            <label className="text-meta flex items-center gap-2">
+              <Switch checked={showUnavailable} onCheckedChange={setShowUnavailable} aria-label="Show unavailable" />
+              Show unavailable
+            </label>
             {address && (
               <div className="sm:ml-auto max-sm:w-full">
                 <GatewayAddress address={address} />
@@ -1103,6 +1124,7 @@ export default function ModelsClient() {
                   key={group.task}
                   task={group.task}
                   rows={group.rows}
+                  hiddenUnavailable={group.hiddenUnavailable}
                   onDetail={selectDetail}
                 />
               ))}
