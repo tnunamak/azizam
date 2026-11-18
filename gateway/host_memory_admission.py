@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import inspect
 import logging
 import os
 import time
@@ -215,7 +216,36 @@ class Ask:
     app_kind: str = PERSONAL
     bounded: bool = True
     on_wait: Callable[[WaitState | None], Any] | None = None
+    cancelled: Callable[[], Any] | None = None
 
+
+
+class HostMemoryCancelled(Exception):
+    """The job was cancelled before its prompt was submitted."""
+
+
+async def is_cancelled(ask: Ask) -> bool:
+    if ask.cancelled is None:
+        return False
+    result = ask.cancelled()
+    return bool(await result if inspect.isawaitable(result) else result)
+
+
+class Lease:
+    """Keep staged bytes reserved until the prompt reaches a terminal state."""
+
+    def __init__(self, owner, names, reservation=None):
+        self.owner, self.names, self.reservation = owner, names, reservation
+        self.finished = False
+
+    def finish(self, ok: bool) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        if self.reservation is not None:
+            self.owner._reserved = [entry for entry in self.owner._reserved if entry is not self.reservation]
+        if ok:
+            self.owner._loaded.update(dict.fromkeys(self.names, self.owner._clock()))
 
 class HostMemoryBusy(Exception):
     """The host did not have room in time. The caller may ask again."""
@@ -287,7 +317,9 @@ class HostMemoryAdmission:
     def _first(self, waiter: _Waiter) -> bool:
         return min(self._waiting, key=lambda w: (w.background, w.seq)) is waiter
 
-    async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> None:
+    async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease:
+        if await is_cancelled(ask):
+            raise HostMemoryCancelled()
         policy = effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None)
         names = models_of(graph, policy.model_extensions)
         now = self._clock()
@@ -298,8 +330,7 @@ class HostMemoryAdmission:
             if size is None:
                 LOG.info("host memory: no size known for a model of this prompt; it counts for nothing")
         if staged == 0:
-            self._loaded.update(dict.fromkeys(names, now))
-            return
+            return Lease(self, names)
         background = ask.app_kind == SERVICE
         margin = policy.margin_bytes_by_kind[ask.app_kind]
         limit = policy.wait_s if ask.bounded else policy.job_wait_s
@@ -308,6 +339,8 @@ class HostMemoryAdmission:
         started, reported = self._clock(), None
         try:
             while True:
+                if await is_cancelled(ask):
+                    raise HostMemoryCancelled()
                 available = await asyncio.to_thread(self._read)
                 if available is None:
                     LOG.warning("host memory: MemAvailable is unreadable; the prompt is admitted")
@@ -329,12 +362,14 @@ class HostMemoryAdmission:
         finally:
             self._waiting.remove(waiter)
         now = self._clock()
-        self._reserved.append((now + policy.settle_s, staged))
-        self._loaded.update(dict.fromkeys(names, now))
+        reservation = (now + policy.job_wait_s, staged)
+        self._reserved.append(reservation)
+        lease = Lease(self, names, reservation)
         if ask.on_wait is not None and reported is not None:
             result = ask.on_wait(None)      # the wait is over
             if asyncio.iscoroutine(result):
                 await result
+        return lease
 
 
 _SHARED: HostMemoryAdmission | None = None
