@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import WorkflowsPage from "./page";
 
-vi.mock("@/components/shell/session", () => ({ useViewer: () => ({ role: "member", admin: false }) }));
+const viewer = vi.hoisted(() => ({ role: "member", admin: false }));
+vi.mock("@/components/shell/session", () => ({ useViewer: () => viewer }));
 vi.mock("./owner-view", () => ({ OwnerView: () => null }));
 
 const workflow = (id: string, capability: string, title: string) => ({
@@ -19,6 +20,16 @@ const catalog = {
   schema_version: 1,
   workflows: [workflow("pictures", "image", "Picture sample"), workflow("clips", "video", "Video sample")],
 };
+const setupCatalog = {
+  schema_version: 1,
+  workflows: [
+    workflow("pictures", "image", "Picture sample"),
+    {
+      ...workflow("clips", "video", "Setup video sample"),
+      availability: { status: "not_configured", reason_code: "unavailable_unconfigured", available: false },
+    },
+  ],
+};
 const clients: QueryClient[] = [];
 function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -26,8 +37,8 @@ function mount() {
   render(<QueryClientProvider client={client}><WorkflowsPage /></QueryClientProvider>);
   return client;
 }
-function stubCatalog() {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(catalog), { status: 200 })));
+function stubCatalog(value = catalog) {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(value), { status: 200 })));
 }
 async function selected(value: string) {
   await waitFor(() => {
@@ -43,6 +54,8 @@ afterEach(() => {
   for (const client of clients.splice(0)) client.clear();
   vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/workflows/");
+  viewer.role = "member";
+  viewer.admin = false;
 });
 
 describe("workflow task address", () => {
@@ -65,6 +78,24 @@ describe("workflow task address", () => {
     await selected("all");
     expect(screen.getByRole("button", { name: "Details for Picture sample" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Details for Video sample" })).toBeTruthy();
+  });
+
+  it("leaves All selected for a member when the address task only has setup workflows", async () => {
+    window.history.replaceState(null, "", "/workflows/?capability=video");
+    stubCatalog(setupCatalog);
+    mount();
+    await selected("all");
+    expect(screen.getByRole("button", { name: "Details for Picture sample" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Details for Setup video sample" })).toBeNull();
+  });
+
+  it("selects an address task with only setup workflows for the owner", async () => {
+    viewer.role = "owner";
+    viewer.admin = true;
+    window.history.replaceState(null, "", "/workflows/?capability=video");
+    stubCatalog(setupCatalog);
+    mount();
+    await selected("video");
   });
 
   it("keeps a later task choice across refresh without rewriting the address, like Models", async () => {
