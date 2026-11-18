@@ -65,9 +65,8 @@ MANIFESTS = _manifests()
 GENERATE = sorted(name for name, m in MANIFESTS.items() if m["intent"] == "image.generate")
 EDITS = sorted(name for name, m in MANIFESTS.items() if m["intent"] == "image.edit")
 MULTIREF = "qwen-image-2.1-edit-multiref"
-MASKED = ("flux2-klein-4b-inpaint", "qwen-image-2.1-inpaint", "flux2-klein-4b-edit", "qwen-image-2.1-edit")
-BATCH_EDITS = ("flux2-klein-edit", "flux2-klein-4b-edit", "qwen-image-2.1-edit")
-TILE = "flux2-klein-4b-seamless-tile"
+MASKED = ("qwen-image-2.1-inpaint", "qwen-image-2.1-edit")
+BATCH_EDITS = ("qwen-image-2.1-edit",)
 
 
 def _cases() -> list[tuple[str, str]]:
@@ -84,7 +83,6 @@ def _cases() -> list[tuple[str, str]]:
             cases.append(("edit-transparent", name))
     cases += [("edit-mask", name) for name in MASKED]
     cases += [("edit-n2", name) for name in BATCH_EDITS]
-    cases.append(("tile", TILE))
     return cases
 
 
@@ -191,7 +189,7 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
     statuses: list[int] = []
     errors: list[str] = []
     with GatewayRig(f"image-graph-golden-{scenario}-{name}", tmp_path / f"run{run}") as rig:
-        names = ("flux2-klein-4b", "flux2-klein-4b-inpaint") if scenario == "tile" else (name,)
+        names = (name,)
         if scenario == "edit-mask":  # a mask moves an edit to the workflow's mask-bound sibling, whose output node may differ
             names += tuple(n for n in (name.removesuffix("-edit") + "-inpaint",) if n in MANIFESTS)
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], history=_history(*names), strict=False))
@@ -243,8 +241,6 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
         trace = rig.trace()
         receipts = trace["receipts"] or {}
         engine_requests = trace["engine_requests"]
-    if name.startswith("flux2-klein") and statuses == [409]:
-        return {"status": statuses, "errors": errors, "graphs": posted, "engine_requests": engine_requests}
     if scenario == "generate-noseed":
         for graph in posted:
             _mask_seeds(graph, MANIFESTS[name])
@@ -262,9 +258,6 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
 def test_the_engine_receives_the_recorded_graph(tmp_path, record_testsuite_property, scenario, name, roles):
     first = observe(tmp_path, scenario, name, 0, roles)
     key = f"{scenario}/{name}"
-    if name.startswith("flux2-klein"):
-        assert first["status"] == [409] and first["errors"] == ["workflow_disabled"] and first["graphs"] == [] and first["engine_requests"] == []
-        return
     if roles == "release":
         record_testsuite_property(f"image_graph_golden.{key}", json.dumps(first, sort_keys=True))
     assert first["status"] == [200], f"{key}: the route did not answer 200, so the scenario proves nothing"
@@ -280,7 +273,7 @@ def test_the_fixture_covers_every_case_and_every_shipped_image_graph():
     golden = json.loads(FIXTURE.read_text()) if FIXTURE.exists() else {}
     assert set(golden) == {f"{s}/{n}" for s, n in CASES}
     graphs = {path.stem for path in (ROOT / "workflows" / "images").glob("*.json") if ".ui" not in path.name}
-    assert len(graphs) == 18
+    assert len(graphs) == 12
     assert graphs <= set(GENERATE) | set(EDITS)
     assert graphs == set(GENERATE) | set(EDITS)
 
@@ -288,18 +281,13 @@ def test_the_fixture_covers_every_case_and_every_shipped_image_graph():
 @pytest.mark.parametrize("scenario,name", [("edit", MULTIREF), *[("edit-mask", name) for name in MASKED]])
 def test_multi_asset_golden_keeps_each_uploaded_asset_in_its_slot(tmp_path, scenario, name):
     actual = observe(tmp_path, scenario, name, 0, distinct_uploads=True)
-    if name.startswith("flux2-klein"):
-        assert actual["status"] == [409] and actual["errors"] == ["workflow_disabled"] and actual["graphs"] == [] and actual["engine_requests"] == []
-        return
     assert actual["status"] == [200]
     expected = json.loads(FIXTURE.read_text())[f"{scenario}/{name}"]
     import copy
     expected = copy.deepcopy(expected)
     for graph in expected["graphs"]:
-        # The first two graphs are mask-bound siblings with separate image and mask inputs.
-        # Other mask workflows combine alpha into the source before a single upload.
-        mapping = ({"10": "asset-1.png", "12": "asset-2.png"} if name in ("flux2-klein-4b-inpaint", "flux2-klein-4b-edit")
-                   else {"4": "asset-1.png", "11": "asset-2.png"} if name == MULTIREF
+        # Mask workflows combine alpha into the source before a single upload.
+        mapping = ({"4": "asset-1.png", "11": "asset-2.png"} if name == MULTIREF
                    else {node: "asset-1.png" for node, spec in graph.items()
                          if isinstance(spec, dict) and spec.get("inputs", {}).get("image") == "uploaded.png"})
         for node, filename in mapping.items():
