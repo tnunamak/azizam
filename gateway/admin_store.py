@@ -1132,7 +1132,14 @@ def _conn(path: Path = DB_PATH):
         return conn
 
     with request_connections.scoped("admin", path, open_connection) as conn:
-        yield conn
+        try:
+            yield conn
+        finally:
+            if conn.in_transaction:
+                # A step began a write and returned or raised before settling it. A fresh connection discards that
+                # write when it closes; a request-shared one would carry it (and the write lock) into the next step.
+                conn.rollback()
+                secret_store.transaction_ended(conn, False)
 
 
 class Transaction:
