@@ -38,6 +38,7 @@ _COL_GAP = 80
 _ROW_GAP = 40
 _ORIGIN = (40, 40)
 _ID_NAMESPACE = uuid.UUID("6f1c2f9e-6b0a-5c3e-9a57-0d1e5a7a8b11")
+_MAX_FRONTEND_ID = 2**53 - 1
 
 
 def _is_link(value: Any) -> bool:
@@ -185,10 +186,10 @@ def _graph_id(nodes: Mapping[str, Mapping]) -> str:
     return str(uuid.uuid5(_ID_NAMESPACE, canon))
 
 
-def _frontend_ids(api: Mapping[str, Any]) -> dict[str, int]:
+def _frontend_ids(api: Mapping[str, Any]) -> Optional[dict[str, int]]:
     """Map API node ids to the integer ids the frontend needs.
 
-    Canonical positive ASCII numeric ids keep their value.
+    Canonical positive ASCII numeric ids within the frontend's exact range keep their value.
     Other keys, including readable ids such as ``s0_text``, get the
     next free integers in sorted order, which keeps the result deterministic.
     """
@@ -200,10 +201,13 @@ def _frontend_ids(api: Mapping[str, Any]) -> dict[str, int]:
             value = int(key)
         except ValueError:
             continue
-        if value > 0 and str(value) == key:
+        if 1 <= value <= _MAX_FRONTEND_ID and str(value) == key:
             ids[key] = value
     taken = set(ids.values())
     nxt = max(taken, default=0)
+    # Do not fill gaps: ordinary graphs retain the existing max+1 allocation.
+    if nxt + len(api) - len(ids) > _MAX_FRONTEND_ID:
+        return None
     for key in sorted(k for k in api if k not in ids):
         nxt += 1
         ids[key] = nxt
@@ -225,6 +229,8 @@ def derive_ui_workflow(
     if not api:
         return None
     uid = _frontend_ids(api)
+    if uid is None:
+        return None
 
     infos: dict[str, Mapping] = {}
     for key, node in api.items():
@@ -364,6 +370,8 @@ def validate_ui_workflow(api_graph: Mapping[str, Any], ui: Mapping[str, Any]) ->
     api = {str(k): v for k, v in api_graph.items()
            if isinstance(v, Mapping) and "class_type" in v and not str(k).startswith("_")}
     uid = _frontend_ids(api)
+    if uid is None:
+        return ["node ids exceed the frontend safe integer range"]
     problems: list[str] = []
     nodes = {n["id"]: n for n in ui.get("nodes", [])}
     for key, node in api.items():
