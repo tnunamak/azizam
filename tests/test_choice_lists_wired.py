@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from dataclasses import replace
 import threading
 
 import pytest
@@ -21,7 +22,9 @@ def setup_run(tmp_path, monkeypatch):
     from gateway import media_jobs
     db = tmp_path / 'jobs.db'
     media_jobs.init_db(db)
-    core, _, _ = make_core(db, tmp_path, snap)
+    core, port, _ = make_core(db, tmp_path, snap)
+    original_identity = port.adapter_identity
+    monkeypatch.setattr(port, "adapter_identity", lambda *args: replace(original_identity(*args), origin="http://203.0.113.10:8188"))
     return choice_lists, store, core, snap
 
 
@@ -55,7 +58,7 @@ def test_first_run_refresh_is_single_flight(tmp_path, monkeypatch):
             assert isinstance(await submit(core, snap, 'fallback', 'one'), RunJobView)
             assert await asyncio.to_thread(entered.wait, 5)
             assert isinstance(await asyncio.wait_for(submit(core, snap, 'fallback', 'two'), 2), RunJobView)
-            assert len(calls) == 1
+            assert calls == [("http://203.0.113.10:8188", "Node")]
         finally:
             release.set()
         while choices._tasks:
