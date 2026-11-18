@@ -797,8 +797,7 @@
               "targets": [
                 {
                   "backends": [
-                    "comfyui",
-                    "gateway"
+                    "comfyui"
                   ],
                   "intent": "image.generate",
                   "workflows": [
@@ -809,49 +808,6 @@
                         "steps"
                       ],
                       "id": "image.generate.anima-turbo"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-4b"
-                    },
-                    {
-                      "controls": [
-                        "guidance",
-                        "seam_denoise",
-                        "seam_guidance",
-                        "seam_mask_expand",
-                        "seam_mask_feather",
-                        "seam_mask_width",
-                        "seam_prompt",
-                        "seam_steps",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-4b-seamless-tile"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "lora_strength",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-snofs"
                     },
                     {
                       "controls": [
@@ -926,32 +882,6 @@
                         "steps"
                       ],
                       "id": "image.edit.fibo-2-edit-turbo"
-                    },
-                    {
-                      "controls": [
-                        "guidance",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein"
-                    },
-                    {
-                      "controls": [
-                        "denoise",
-                        "guidance",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein-4b"
-                    },
-                    {
-                      "controls": [
-                        "denoise",
-                        "guidance",
-                        "mask_expand",
-                        "mask_feather",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein-4b-inpaint"
                     },
                     {
                       "controls": [],
@@ -1311,8 +1241,7 @@
               "targets": [
                 {
                   "backends": [
-                    "comfyui",
-                    "gateway"
+                    "comfyui"
                   ],
                   "intent": "image.generate",
                   "workflows": [
@@ -1323,49 +1252,6 @@
                         "steps"
                       ],
                       "id": "image.generate.anima-turbo"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-4b"
-                    },
-                    {
-                      "controls": [
-                        "guidance",
-                        "seam_denoise",
-                        "seam_guidance",
-                        "seam_mask_expand",
-                        "seam_mask_feather",
-                        "seam_mask_width",
-                        "seam_prompt",
-                        "seam_steps",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-4b-seamless-tile"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "lora_strength",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-snofs"
                     },
                     {
                       "controls": [
@@ -1440,32 +1326,6 @@
                         "steps"
                       ],
                       "id": "image.edit.fibo-2-edit-turbo"
-                    },
-                    {
-                      "controls": [
-                        "guidance",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein"
-                    },
-                    {
-                      "controls": [
-                        "denoise",
-                        "guidance",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein-4b"
-                    },
-                    {
-                      "controls": [
-                        "denoise",
-                        "guidance",
-                        "mask_expand",
-                        "mask_feather",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein-4b-inpaint"
                     },
                     {
                       "controls": [],
@@ -1825,8 +1685,7 @@
               "targets": [
                 {
                   "backends": [
-                    "comfyui",
-                    "gateway"
+                    "comfyui"
                   ],
                   "intent": "image.generate",
                   "workflows": [
@@ -1837,49 +1696,6 @@
                         "steps"
                       ],
                       "id": "image.generate.anima-turbo"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-4b"
-                    },
-                    {
-                      "controls": [
-                        "guidance",
-                        "seam_denoise",
-                        "seam_guidance",
-                        "seam_mask_expand",
-                        "seam_mask_feather",
-                        "seam_mask_width",
-                        "seam_prompt",
-                        "seam_steps",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-4b-seamless-tile"
-                    },
-                    {
-                      "controls": [
-                        "batch_size",
-                        "guidance",
-                        "lora_strength",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.generate.flux2-klein-snofs"
                     },
                     {
                       "controls": [
@@ -1954,32 +1770,6 @@
                         "steps"
                       ],
                       "id": "image.edit.fibo-2-edit-turbo"
-                    },
-                    {
-                      "controls": [
-                        "guidance",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein"
-                    },
-                    {
-                      "controls": [
-                        "denoise",
-                        "guidance",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein-4b"
-                    },
-                    {
-                      "controls": [
-                        "denoise",
-                        "guidance",
-                        "mask_expand",
-                        "mask_feather",
-                        "seed",
-                        "steps"
-                      ],
-                      "id": "image.edit.flux2-klein-4b-inpaint"
                     },
                     {
                       "controls": [],
