@@ -10,6 +10,8 @@ EXPECTED = {
     ("audio.generate.ace-step-1.5-xl-turbo", "timesignature"),
     ("audio.generate.ace-step-1.5-xl-turbo", "language"),
     ("audio.generate.ace-step-1.5-xl-turbo", "keyscale"),
+    ("image.generate.sdxl-seamless-tile", "sampler"),
+    ("image.generate.sdxl-seamless-tile", "scheduler"),
 }
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = ROOT / "manifests" / "workflows"
