@@ -125,7 +125,9 @@ def _tile(manifest, **kw):
 def _tile_manifest() -> dict:
     manifest = proxy._find_image_manifest("image.generate", TILE_MODEL)
     assert manifest is not None
-    return copy.deepcopy(manifest)
+    manifest = copy.deepcopy(manifest)
+    manifest["bindings"]["gateway"].update(base_model="krea2-turbo", inpaint_model="qwen-image-2.1-inpaint")
+    return manifest
 
 
 @pytest.mark.parametrize("missing", ["base_model", "inpaint_model"])

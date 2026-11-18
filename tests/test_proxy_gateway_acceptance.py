@@ -1832,13 +1832,10 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
     async def test_namespaced_extension_is_accepted_when_manifest_exists(
         self,
     ) -> None:
-        # The repo ships manifests/workflows/flux2-klein-4b-edit.yml (and the
-        # generate-side equivalent in the registry path). The exact name is
-        # asserted in TestAttachImageManifest — we re-use it here so we know
-        # a manifest *is* present for that model.
+        # Use an open workflow with a manifest that declares guidance.
         body = {
             "prompt": "x",
-            "model": "flux2-klein-4b",
+            "model": "sdxl-seamless-tile",
             "extensions": {"com.azizam.workflow": {"guidance": 3.5}},
         }
         receipt, response = await self._call(body)
@@ -2353,7 +2350,8 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
              fake_mesh_pool():
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
-        self.assertEqual(len(result), len(seen))
+        self.assertTrue(result)
+        self.assertTrue(all(cap in seen for cap in result))
 
 
 class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):

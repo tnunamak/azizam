@@ -100,7 +100,8 @@ class ProxyWiringTests(unittest.TestCase):
     def test_sdapi_lists_the_real_image_models(self) -> None:
         with authenticated():
             titles = [m["title"] for m in self.client.get("/sdapi/v1/sd-models").json()]
-            self.assertEqual(titles[:2], ["image", "image-fast"])
+            self.assertEqual(titles[0], "image")
+            self.assertNotIn("image-fast", titles)
             self.assertIn("krea2-turbo", titles)
             self.assertEqual(self.client.get("/sdapi/v1/options").json()["sd_model_checkpoint"], "image")
             bad = self.client.post("/sdapi/v1/txt2img", json={"prompt": "x", "enable_hr": True})

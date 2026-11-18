@@ -251,173 +251,19 @@ class TestFlux2InpaintSeedManifest(unittest.TestCase):
 
 
 class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
-    async def test_transparent_background_is_rejected_for_tile_composition(self) -> None:
-        receipt = proxy.start_image_route_receipt(
-            "/v1/images/generations",
-            access_context(),
-        )
-        body = {
-            "model": "flux2-klein-4b-seamless-tile",
-            "prompt": "painted underwater rock texture",
-            "size": "1024x1024",
-            "background": "transparent",
-        }
-
-        with derived_patch("GRAPH_ENABLED", True), patch.object(
-            proxy,
-            "configured_downstream_headers",
-            lambda _auth_context, _service: {},
-        ):
-            response = await proxy.proxy_graph_image_request(
-                _JsonRequest(body),  # type: ignore[arg-type]
-                access_context(),
-                receipt=receipt,
-            )
-
-        self.assertEqual(response.status_code, 400)
-        payload = json.loads(response.body.decode("utf-8"))
-        self.assertEqual(payload["error"]["param"], "background")
-        self.assertEqual(
-            receipt.rejected_inputs.get("background"),
-            "unsupported_for_gateway_composition",
-        )
-
-    async def test_route_generates_offsets_masks_and_inpaints(self) -> None:
-        body = {
-            "model": "flux2-klein-4b-seamless-tile",
-            "prompt": "painted underwater rock texture",
-            "size": "65x67",
-            "n": 1,
-            "response_format": "b64_json",
-            "extensions": {
-                NS: {
-                    "steps": 5,
-                    "guidance": 3.0,
-                    "seed": 10,
-                    "seam_mask_width": 2,
-                    "seam_mask_feather": 6,
-                    "seam_denoise": 0.5,
-                }
-            },
-        }
-        receipt = proxy.start_image_route_receipt(
-            "/v1/images/generations",
-            access_context(),
-        )
-        run_calls: list[dict[str, Any]] = []
-        # Odd dimensions with a distinct value in every pixel make both offset
-        # directions and both axes observable; expectations below are computed
-        # by independent index arithmetic, not by the production helper.
-        width, height = 65, 67
-        base_pixels = [
-            (x, y, (x + 3 * y) % 256, 255)
-            for y in range(height) for x in range(width)
-        ]
-        repaired_pixels = [
-            (128 + x, 128 + y, (2 * x + y) % 256, 255)
-            for y in range(height) for x in range(width)
-        ]
-        base_image = _png_from_pixels(base_pixels, size=(width, height))
-        repaired_offset = _png_from_pixels(repaired_pixels, size=(width, height))
-        expected_upload = [
-            base_pixels[((y - 34) % height) * width + ((x - 32) % width)]
-            for y in range(height) for x in range(width)
-        ]
-        expected_result = [
-            repaired_pixels[((y + 34) % height) * width + ((x + 32) % width)]
-            for y in range(height) for x in range(width)
-        ]
-        expected_mask = [
-            255 if x in (31, 32) or y in (32, 33) else 0
-            for y in range(height) for x in range(width)
-        ]
-
-        async def fake_run_round(
-            _client: Any,
-            workflow: dict[str, Any],
-            _headers: dict[str, str],
-            label: str,
-            **_kwargs: Any,
-        ) -> tuple[Response | None, list[bytes]]:
-            run_calls.append({"label": label, "workflow": copy.deepcopy(workflow)})
-            if "base" in label:
-                return None, [base_image]
-            return None, [repaired_offset]
-
-        _FakeAsyncClient.uploads = 0
-        _FakeAsyncClient.upload_files = []
-        with tempfile.TemporaryDirectory() as cache_dir:
-            media_db = Path(cache_dir) / "media_jobs.db"
-            media_jobs.init_db(media_db)
-            with patch.object(
-                proxy,
-                "IMAGE_CACHE_DIR",
-                Path(cache_dir),
-            ), patch.object(
-                media_jobs,
-                "DB_PATH",
-                media_db,
-            ), patch.object(
-                proxy,
-                "_image_url_signing_secret",
-                b"test-secret",
-            ), derived_patch("GRAPH_ENABLED", True,
-            ), patch.object(
-                proxy,
-                "configured_downstream_headers",
-                lambda _auth_context, _service: {},
-            ), patch.object(
-                proxy.httpx,
-                "AsyncClient",
-                _FakeAsyncClient,
-            ), patch.object(
-                proxy,
-                "_graph_run_round",
-                fake_run_round,
-            ):
-                response = await proxy.proxy_graph_image_request(
-                    _JsonRequest(body),  # type: ignore[arg-type]
-                    access_context(),
-                    receipt=receipt,
-                )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["X-Image-Seamless-Tile-Strategy"], "offset-inpaint")
-        self.assertEqual(response.headers["X-Image-Rounds"], "2")
-        self.assertEqual(response.headers["X-Image-Returned"], "1")
-        self.assertEqual(response.headers["X-Image-Seam-Mask-Width"], "2")
-        self.assertEqual(len(run_calls), 2)
-        self.assertEqual(run_calls[0]["workflow"]["31"]["inputs"]["seed"], 10)
-        self.assertEqual(run_calls[0]["workflow"]["31"]["inputs"]["steps"], 5)
-        self.assertEqual(run_calls[0]["workflow"]["35"]["inputs"]["guidance"], 3.0)
-        self.assertEqual(run_calls[1]["workflow"]["25"]["inputs"]["noise_seed"], 11)
-        self.assertEqual(run_calls[1]["workflow"]["49"]["inputs"]["denoise"], 0.5)
-        self.assertEqual(run_calls[1]["workflow"]["19"]["inputs"]["left"], 6)
-
-        self.assertEqual(_FakeAsyncClient.uploads, 2)
-        uploaded_image = _FakeAsyncClient.upload_files[0]["image"][1]
-        self.assertEqual(_pixels(uploaded_image), expected_upload)
-        uploaded_mask = _FakeAsyncClient.upload_files[1]["image"][1]
-        mask_values = [pixel[0] for pixel in _pixels(uploaded_mask)]
-        self.assertEqual(mask_values, expected_mask)
-        inpaint = run_calls[1]["workflow"]
-        self.assertEqual(inpaint["10"]["inputs"]["image"], "uploaded-1.png")
-        self.assertEqual(inpaint["12"]["inputs"]["image"], "uploaded-2.png")
-        for node_id in ("11", "14", "48"):
-            self.assertEqual(inpaint[node_id]["inputs"]["width"], width)
-            self.assertEqual(inpaint[node_id]["inputs"]["height"], height)
-
-        payload = json.loads(response.body.decode("utf-8"))
-        returned = payload["data"][0]
-        self.assertIn("asset_id", returned)
-        self.assertIn("asset_url", returned)
-        self.assertEqual(_pixels(base64_to_png(returned["b64_json"])), expected_result)
-        self.assertNotEqual(expected_result, base_pixels)
-        self.assertNotEqual(expected_result, repaired_pixels)
-        self.assertEqual(receipt.manifest_id, self.manifest_id())
-
-    def manifest_id(self) -> str:
-        return "image.generate.flux2-klein-4b-seamless-tile"
+    async def test_closed_tile_is_refused_before_any_engine_call(self) -> None:
+        for background in ("opaque", "transparent"):
+            with self.subTest(background=background):
+                body = {"model": "flux2-klein-4b-seamless-tile", "prompt": "painted rock", "background": background}
+                _FakeAsyncClient.uploads = 0
+                with derived_patch("GRAPH_ENABLED", True), patch.object(
+                    proxy.httpx, "AsyncClient", _FakeAsyncClient
+                ), patch.object(proxy, "_graph_run_round", new_callable=unittest.mock.AsyncMock) as run:
+                    response = await proxy.proxy_graph_image_request(_JsonRequest(body), access_context())
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(json.loads(response.body)["error"]["code"], "workflow_disabled")
+                self.assertEqual(_FakeAsyncClient.uploads, 0)
+                run.assert_not_awaited()
 
 
 def base64_to_png(value: str) -> bytes:

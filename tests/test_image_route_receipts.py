@@ -5,7 +5,7 @@ These exercise pure helpers only — no FastAPI client, no ComfyUI, no IO.
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import base64
 import io
@@ -15,7 +15,7 @@ import sys
 import tempfile
 import unittest
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -37,6 +37,20 @@ from gateway.receipts import RouteReceipt  # noqa: E402
 
 # The image handlers apply the caller's plans; these tests run as the owner.
 OWNER_CONTEXT = proxy.AuthContext(identity=identity())
+
+
+@contextmanager
+def _open_mask_fixture():
+    """The separate mask-upload contract has no open bundled equivalent."""
+    provider = proxy.GATEWAY_REGISTRY_PROVIDER
+    snapshot = provider.current()
+    entries = dict(snapshot.workflows)
+    for workflow_id in ("image.edit.flux2-klein-4b", "image.edit.flux2-klein-4b-inpaint"):
+        entry = snapshot.get(workflow_id)
+        entries[workflow_id] = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
+    snapshot = replace(snapshot, workflows=entries)
+    with patch.object(type(provider), "current", lambda self: snapshot), patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider):
+        yield
 
 
 def _png_bytes(color: tuple[int, int, int, int], size: tuple[int, int] = (2, 1)) -> bytes:
@@ -383,7 +397,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         request = _StubFormRequest(
             _StubMultipartForm([
                 ("image[]", _StubUpload()),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
             ])
         )
 
@@ -1319,7 +1333,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
     ) -> dict[str, Any]:
         return {
             "schema_version": 2,
-            "id": "image.edit.flux2-klein-4b",
+            "id": "image.edit.fibo-2-edit-turbo",
             "intent": "image.edit",
             "capability": "image",
             "inputs": inputs
@@ -1377,7 +1391,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         request = _MultipartRequest(
             [
                 ("prompt", "preserve geometry with edge conditioning"),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
                 ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
                 *(extra_parts or []),
                 (
@@ -1692,7 +1706,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         request = _MultipartRequest(
             [
                 ("prompt", "replace the left pixel"),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
                 ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
                 ("mask", _MultipartUpload("mask.png", _png_bytes((0, 0, 0, 0)))),
             ]
@@ -1756,7 +1770,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("GRAPH_ENABLED", True), patch.object(
+        with _open_mask_fixture(), derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1817,7 +1831,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("GRAPH_ENABLED", True), patch.object(
+        with _open_mask_fixture(), derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1989,7 +2003,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         request = _MultipartRequest(
             [
                 ("prompt", "combine these two references"),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
                 ("image[]", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
                 ("image[]", _MultipartUpload("b.png", _png_bytes((0, 255, 0, 255)))),
             ]
@@ -2137,7 +2151,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         request = _MultipartRequest(
             [
                 ("prompt", "combine these two references"),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
                 ("image[]", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
                 ("image[]", _MultipartUpload("b.png", _png_bytes((0, 255, 0, 255)))),
             ]
@@ -2182,7 +2196,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         request = _MultipartRequest(
             [
                 ("prompt", "make it blue"),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
                 ("image", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
             ]
         )
@@ -2348,7 +2362,7 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
         request = _MultipartRequest(
             [
                 ("prompt", "sharpen the details"),
-                ("model", "flux2-klein-4b-edit"),
+                ("model", "fibo-2-edit-turbo"),
                 ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
                 ("quality", quality),
             ]
@@ -2429,7 +2443,7 @@ class TestProxyComfyEditRequestOutputShape(unittest.IsolatedAsyncioTestCase):
         receipt = proxy.start_image_route_receipt(
             "/v1/images/edits", OWNER_CONTEXT
         )
-        request = _MultipartRequest([("model", "flux2-klein-4b-edit"), *extra_fields])
+        request = _MultipartRequest([("model", "fibo-2-edit-turbo"), *extra_fields])
         with derived_patch("GRAPH_ENABLED", True):
             response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
@@ -2470,7 +2484,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
     def _edit_workflow(self) -> dict[str, Any]:
         return {
             "_meta": {
-                "name": "flux2-klein-4b-edit",
+                "name": "qwen-image-2.1-edit",
                 "prompt_node": "6",
                 "image_node": "10",
             },
@@ -2493,12 +2507,12 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             mapping["denoise"] = [{"node": "49", "input": "denoise"}]
         return {
             "schema_version": 2,
-            "id": "image.edit.flux2-klein-4b",
+            "id": "image.edit.qwen-image-2.1-edit",
             "intent": "image.edit",
             "capability": "image",
             "inputs": inputs,
             "outputs": {"image": {"media_type": "image/png"}},
-            "bindings": {"comfyui": {"workflow": "workflows/images/flux2-klein-4b-edit.json", "map": mapping}},
+            "bindings": {"comfyui": {"workflow": "workflows/images/qwen-image-2.1-edit.json", "map": mapping}},
         }
 
     async def _run(
@@ -2622,7 +2636,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["base_workflow"]["49"]["inputs"]["denoise"], 1.0)
 
     async def test_configured_default_workflow_is_honored(self) -> None:
-        with patch.object(proxy, "_image_variations_default_workflow", lambda: "flux2-klein-4b-inpaint"):
+        with patch.object(proxy, "_image_variations_default_workflow", lambda: "fibo-2-edit-turbo"):
             receipt, response, _ = await self._run(
                 fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
                 manifest=self._edit_manifest(with_denoise=False),
@@ -2630,7 +2644,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(receipt.requested_model)
         self.assertEqual(
-            receipt.metadata["variations_delegated_workflow"], "flux2-klein-4b-inpaint"
+            receipt.metadata["variations_delegated_workflow"], "fibo-2-edit-turbo"
         )
 
     async def test_openai_model_alias_routes_to_configured_default(self) -> None:
@@ -2658,17 +2672,17 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         receipt, response, _ = await self._run(
             fields=[
                 ("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255)))),
-                ("model", "flux2-klein-4b"),
+                ("model", "qwen-image-2.1"),
             ],
             manifest=self._edit_manifest(with_denoise=False),
         )
         self.assertEqual(response.status_code, 200)
         # The client's own model string is preserved as requested_model...
-        self.assertEqual(receipt.requested_model, "flux2-klein-4b")
+        self.assertEqual(receipt.requested_model, "qwen-image-2.1")
         # ...while the actually-delegated (suffixed) workflow is recorded
         # separately, not conflated with what the client asked for.
         self.assertEqual(
-            receipt.metadata["variations_delegated_workflow"], "flux2-klein-4b-edit"
+            receipt.metadata["variations_delegated_workflow"], "qwen-image-2.1-edit"
         )
 
 

@@ -129,7 +129,7 @@ def test_each_edit_part_takes_the_list_of_its_own_contract_input():
 
 
 def test_edit_route_refuses_a_picture_its_source_input_does_not_accept(edit_rig):
-    doc = copy.deepcopy(proxy._find_image_manifest("image.edit", "flux2-klein-4b-edit"))
+    doc = copy.deepcopy(proxy._find_image_manifest("image.edit", "fibo-2-edit-turbo"))
     doc["inputs"]["source_image"]["accepts"] = ["image/png"]
     with patch.object(proxy, "_find_image_manifest", return_value=doc):
         refused = run_edit([("a.jpg", JPEG)])

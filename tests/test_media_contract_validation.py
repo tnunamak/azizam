@@ -79,14 +79,14 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
         ):
             for value in (1, 10):
                 response = await proxy.proxy_graph_image_request(
-                    _StubJsonRequest({"model": "flux2-klein-4b", "prompt": "a tree", "n": value}),
+                    _StubJsonRequest({"model": "moss-image-fast", "prompt": "a tree", "n": value}),
                     access_context(),
                 )
                 self.assertEqual(response.status_code, 200, response.body)
                 self.assertEqual(generate.call_args.kwargs["n_requested"], value)
 
     async def edit(self, *, size=None, count=1, variations=False):
-        items = [("model", "flux2-klein-4b-edit")]
+        items = [("model", "fibo-2-edit-turbo")]
         if not variations:
             items.append(("prompt", "a tree"))
         if size is not None:
