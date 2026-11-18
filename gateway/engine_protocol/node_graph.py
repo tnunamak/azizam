@@ -524,14 +524,14 @@ class NodeGraphAdapter:
         """Wait until the host has room for the models ``payload`` makes the engine load. Raises ``HostMemoryBusy`` when
         it has not in time. Call it before any submit marker is written: a refusal here sent nothing."""
         prompt = payload.get("prompt") if isinstance(payload, Mapping) else None
-        if self._admission is None and not self.admission.policy.configured:
+        if not await self.admission.is_enabled():
             return None
         return await self.admission.admit(prompt if isinstance(prompt, Mapping) else {}, ask)
 
     async def admit(self, conn: Connection, op: str, request: CanonicalRequest,
                     ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> host_memory_admission.Lease | None:
         """``admit_prompt`` for the prompt ``request`` is about to send."""
-        if self._admission is None and not self.admission.policy.configured:
+        if not await self.admission.is_enabled():
             return
         payload = request.body if op == GRAPH_SUBMIT else self._workflow_payload(op, request)
         return await self.admit_prompt(payload if isinstance(payload, Mapping) else {}, ask)

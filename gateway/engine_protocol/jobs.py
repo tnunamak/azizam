@@ -240,7 +240,7 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
                 # The host must have room for the models first. A refusal here sent nothing, so it leaves no marker.
                 lease = await admit(conn, op, request, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(caller), bounded=False, cancelled=cancelled, on_wait=lambda state: media_jobs.append_event(
                     job_id, 'attempt', host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)))
-            if cancelled():
+            if lease is not None and cancelled():
                 raise host_memory_admission.HostMemoryCancelled()
             if record_lifecycle:
                 media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,

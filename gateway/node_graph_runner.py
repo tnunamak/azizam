@@ -440,7 +440,7 @@ class NodeGraphRunner:
         if resume is None:
             try:
                 lease = await self._wait_for_host_memory(ctx, adapter, payload, cancelled)
-                if await cancelled():
+                if lease is not None and await cancelled():
                     raise host_memory_admission.HostMemoryCancelled()
                 media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
                                          path=media_jobs.DB_PATH)
@@ -512,8 +512,7 @@ class NodeGraphRunner:
         """A job waits for the host's memory as long as it takes (up to the policy's ceiling) and says so to its caller: the
         job stays ``running`` and its events carry the phase ``waiting_for_memory`` with the GB it needs and the host has."""
         admit = getattr(adapter, "admit_prompt", None)
-        if admit is None or (getattr(adapter, "_admission", None) is None
-                             and not host_memory_admission.shared().policy.configured):
+        if admit is None:
             return
 
         def report(state: host_memory_admission.WaitState | None) -> None:

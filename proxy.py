@@ -8547,6 +8547,7 @@ async def _graph_run_round(
     *,
     vram_probe: Optional[_VramProbe] = None,
     request: Request | None = None,
+    caller: Any = None,
     max_wait_s: int | None = None,
     binding: Mapping[str, Any] | None = None,
     contract_outputs: Mapping[str, Any] | None = None,
@@ -8577,20 +8578,7 @@ async def _graph_run_round(
             except Exception as e:
                 print(f"[proxy] VRAM probe stop error: {e}", flush=True)
 
-    adapter = _graph_adapter(capability)
-    graph = _graph(client, capability)
-    engine = adapter.label
-    submit_payload = _build_graph_submit_payload(workflow, capability)
     lease = None
-    try:
-        # A synchronous caller waits a bounded time for the host's memory, then gets the retryable busy answer.
-        admit = getattr(adapter, "admit_prompt", None)
-        if admit is not None:
-            lease = await admit(submit_payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(
-                getattr(getattr(request, "state", None), "caller", None))))
-    except host_memory_admission.HostMemoryBusy:
-        await _finalize_probe()
-        return host_memory_admission.busy_response(), []
     succeeded = False
 
     def completed() -> None:
@@ -8598,6 +8586,14 @@ async def _graph_run_round(
         succeeded = True
 
     try:
+        adapter = _graph_adapter(capability)
+        graph = _graph(client, capability)
+        submit_payload = _build_graph_submit_payload(workflow, capability)
+        # A synchronous caller waits a bounded time for the host's memory, then gets the retryable busy answer.
+        admit = getattr(adapter, "admit_prompt", None)
+        if admit is not None:
+            lease = await admit(submit_payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(
+                caller if caller is not None else getattr(getattr(request, "state", None), "caller", None))))
         result = await graph_round.run_round(
             adapter, graph, submit_payload, headers,
             graph=workflow, label=label, max_wait_s=float(max_wait_s or _graph_service(capability).timeout),
@@ -8608,6 +8604,8 @@ async def _graph_run_round(
             cadence=adapter.poll_for(intent or _image_admission_intent("images.generate")),
             say=lambda text: print(f"[proxy] {text}", flush=True))
         succeeded = True
+    except host_memory_admission.HostMemoryBusy:
+        return host_memory_admission.busy_response(), []
     except graph_round.RoundFailure as failed:
         return _round_failure_response(failed, adapter, graph), []
     finally:
@@ -17201,7 +17199,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             raise identity_api.IdentityUnavailable(admission)
         identity_record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
         error, images = await _graph_run_round(
-            client, graph, dict(headers), "identity scene",
+            client, graph, dict(headers), "identity scene", caller=auth_context,
             max_wait_s=int(_identity_cfg().get("max_wait_s", 3600)),
             # The result is the file its manifest's selector names (CODE_TO_DATA_S2, D5).
             binding=_identity_template()[1],
@@ -34588,7 +34586,7 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
     try:
         operation = runtime.target.description.operations["images"]
         if operation.job is not None:
-            refs = await protocol_jobs.run(runtime, "images", body, job_id=job_id)
+            refs = await protocol_jobs.run(runtime, "images", body, job_id=job_id, caller=auth_context)
         else:
             reply = await runtime.invoke("images", body)
             if isinstance(reply, ProtocolStreamReply):

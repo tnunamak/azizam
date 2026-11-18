@@ -58,7 +58,7 @@ class HostMemoryPolicy:
     retry_after_s: int = 30
     model_extensions: tuple[str, ...] = (".safetensors",)
     model_roots: tuple[str, ...] = ()
-    configured: bool = False
+    enabled: bool = False
 
 
 def app_kind_of(auth_kind: str | None) -> str:
@@ -108,7 +108,7 @@ def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
         wait_s=float(env.get(ENV_WAIT) or document["wait_s"]), job_wait_s=float(document["job_wait_s"]),
         poll_s=float(document["poll_s"]), report_s=float(document["report_s"]),
         resident_ttl_s=float(document["resident_ttl_s"]), retry_after_s=int(document["retry_after_s"]),
-        model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots), configured=bool(engine_dir or roots))
+        model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots))
 
 
 # -- the owner's setting (admin.db) over the shipped defaults ------------------------------------------------------------
@@ -124,12 +124,15 @@ def _number(value: Any) -> float | None:
 def validate_setting(value: Any) -> dict[str, Any]:
     """``{"margin_gb": {"personal": n, "service": n}, "wait_s": n, "job_wait_s": n}`` with non-negative numbers and
     ``wait_s`` not above ``job_wait_s``, or a clear refusal."""
-    if not isinstance(value, Mapping) or set(value) != {"margin_gb", "wait_s", "job_wait_s"}:
+    if not isinstance(value, Mapping) or set(value) not in ({"margin_gb", "wait_s", "job_wait_s"}, {"enabled", "margin_gb", "wait_s", "job_wait_s"}):
         raise InvalidHostMemorySetting("Supply margin_gb (one number per app kind), wait_s and job_wait_s.")
+    enabled = value.get("enabled", False)
+    if type(enabled) is not bool:
+        raise InvalidHostMemorySetting("enabled must be a boolean.")
     margins = value["margin_gb"]
     if not isinstance(margins, Mapping) or set(margins) != set(admin_store.APP_KINDS):
         raise InvalidHostMemorySetting("margin_gb needs one number for each of: " + ", ".join(admin_store.APP_KINDS) + ".")
-    checked: dict[str, Any] = {"margin_gb": {}}
+    checked: dict[str, Any] = {"enabled": enabled, "margin_gb": {}}
     for kind in admin_store.APP_KINDS:
         if _number(margins[kind]) is None:
             raise InvalidHostMemorySetting(f"margin_gb.{kind} must be a number of GB, zero or more.")
@@ -158,13 +161,13 @@ def effective(policy: HostMemoryPolicy, stored: Mapping[str, Any] | None) -> Hos
     """``policy`` (shipped file and environment) with the owner's saved setting over it."""
     if not stored:
         return policy
-    return replace(policy, margin_bytes_by_kind={kind: int(float(gb) * GIB) for kind, gb in stored["margin_gb"].items()},
+    return replace(policy, enabled=stored["enabled"], margin_bytes_by_kind={kind: int(float(gb) * GIB) for kind, gb in stored["margin_gb"].items()},
                    wait_s=float(stored["wait_s"]), job_wait_s=float(stored["job_wait_s"]))
 
 
 def setting_view(policy: HostMemoryPolicy) -> dict[str, Any]:
     """The setting as the owner sees it (GB and seconds) for ``policy``."""
-    return {"margin_gb": {kind: round(size / GIB, 3) for kind, size in policy.margin_bytes_by_kind.items()},
+    return {"enabled": policy.enabled, "margin_gb": {kind: round(size / GIB, 3) for kind, size in policy.margin_bytes_by_kind.items()},
             "wait_s": policy.wait_s, "job_wait_s": policy.job_wait_s}
 
 
@@ -316,10 +319,15 @@ class HostMemoryAdmission:
     def _first(self, waiter: _Waiter) -> bool:
         return min(self._waiting, key=lambda w: (w.background, w.seq)) is waiter
 
-    async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease:
+    async def is_enabled(self) -> bool:
+        return effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None).enabled
+
+    async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease | None:
+        policy = effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None)
+        if not policy.enabled:
+            return None
         if await is_cancelled(ask):
             raise HostMemoryCancelled()
-        policy = effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None)
         names = models_of(graph, policy.model_extensions)
         now = self._clock()
         fresh = [n for n in names if not self._resident(n, now)]
@@ -345,7 +353,7 @@ class HostMemoryAdmission:
                     LOG.warning("host memory: MemAvailable is unreadable; the prompt is admitted")
                     break
                 now = self._clock()
-                self._reserved = [(until, size) for until, size in self._reserved if until > now]
+                self._reserved = [entry for entry in self._reserved if entry[0] > now]
                 needed = staged + margin + sum(size for _, size in self._reserved)
                 if self._first(waiter) and available >= needed:
                     break

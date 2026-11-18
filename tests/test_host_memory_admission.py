@@ -17,7 +17,7 @@ BUSY_MESSAGE = "The host's memory is busy with other work. Try again soon."
 
 
 def policy(root, **over):
-    values = dict(margin_bytes_by_kind={"personal": 1000, "service": 5000}, wait_s=10.0, job_wait_s=1000.0, report_s=0.0, poll_s=2.0, resident_ttl_s=600.0,
+    values = dict(enabled=True, margin_bytes_by_kind={"personal": 1000, "service": 5000}, wait_s=10.0, job_wait_s=1000.0, report_s=0.0, poll_s=2.0, resident_ttl_s=600.0,
                   model_extensions=(".safetensors", ".gguf"), model_roots=(str(root),))
     values.update(over)
     return hma.HostMemoryPolicy(**values)
@@ -292,13 +292,13 @@ def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(
 
 # -- the margins and waits are an owner setting over the shipped file ---------------------------------------------------
 
-SAVED = {"margin_gb": {"personal": 2, "service": 30}, "wait_s": 20, "job_wait_s": 500}
+SAVED = {"enabled": True, "margin_gb": {"personal": 2, "service": 30}, "wait_s": 20, "job_wait_s": 500}
 
 
 def save(path, value):
     from gateway import admin_store
     admin_store.put_operator_setting_with_audit(
-        hma.SETTING_KEY, value, updated_by="tester", audit_action="operator.host_memory.update", audit_actor_kind="user",
+        hma.SETTING_KEY, {"enabled": True, **value}, updated_by="tester", audit_action="operator.host_memory.update", audit_actor_kind="user",
         audit_actor_id="tester", audit_actor_label="tester", audit_target_kind="operator_setting",
         audit_target_id=hma.SETTING_KEY, path=path)
 
@@ -315,7 +315,7 @@ def test_with_no_saved_setting_the_shipped_defaults_apply(admin_db):
     assert hma.stored_setting(admin_db) is None
     shipped = hma.HostMemoryPolicy()
     assert hma.effective(shipped, hma.stored_setting(admin_db)) is shipped
-    assert hma.setting_view(shipped) == {"margin_gb": {"personal": 12.0, "service": 20.0}, "wait_s": 300.0, "job_wait_s": 7200.0}
+    assert hma.setting_view(shipped) == {"enabled": False, "margin_gb": {"personal": 12.0, "service": 20.0}, "wait_s": 300.0, "job_wait_s": 7200.0}
 
 
 def test_the_saved_setting_wins_over_the_shipped_defaults(admin_db):
