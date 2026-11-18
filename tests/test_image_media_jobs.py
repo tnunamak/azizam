@@ -333,6 +333,17 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         events = media_jobs.events(job_id, audience="internal", path=self.db)
         self.assertIn("retry", [event["event_type"] for event in events])
 
+    async def test_unknown_image_model_is_refused_before_job_creation(self) -> None:
+        with authenticated(), patch.object(proxy, "_schedule_image_media_job") as schedule:
+            response = await proxy.gateway_image_generations_media_job(
+                _StubJsonRequest({"model": "no-such-image-model-probe", "prompt": "probe"})
+            )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "model_not_found")
+        schedule.assert_not_called()
+        with media_jobs.connection(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0], 0)
+
     async def test_submit_route_creates_job_without_persisting_prompt_in_metadata(self) -> None:
         body = {
             "model": "krea2-turbo",
