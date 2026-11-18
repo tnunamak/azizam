@@ -228,6 +228,9 @@ class ClientFactory:
             version = self._registry_version.version() if self._registry_version is not None else None
             snapshot = self._registry()
             revision = snapshot.get('operator_settings_generation', snapshot.get('generation'))
+            # A revision counts within one database file: a replaced file (a new epoch) may reuse the number.
+            if revision is not None and version is not None:
+                revision = (version[0], revision)
             cached = self._current_cache.get(service_id)
             if revision is not None and cached is not None and cached[0] == revision:
                 self._current_cache[service_id] = (*cached[:3], version)
@@ -426,6 +429,9 @@ def factory_from_store():
         version = reader.version()
         if cached is not None and version == cached_version:
             return cached
+        if cached is not None and version[0] != cached_version[0]:
+            # A replaced database file: its revision number says nothing about the old file's snapshot.
+            cached = None
         with request_connections.request_scope():
             revision = admin_store.service_registry_generation(path=path)
             if cached is not None and cached['operator_settings_generation'] == revision:
