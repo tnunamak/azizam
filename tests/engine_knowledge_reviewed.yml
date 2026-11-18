@@ -11,7 +11,7 @@ sites:
     category: protocol_field
     reason: Names the configuration field containing a projector-file path.
   - file: firehose_render.py
-    literal: "curl -s https://gateway.example/openai/v1/images/generations \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"flux2-klein-4b\",\"prompt\":\"a calico cat\",\"size\":\"512x512\"}'"
+    literal: "curl -s https://gateway.example/openai/v1/images/generations \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"a calico cat\",\"size\":\"512x512\"}'"
     count: 1
     category: doc_example
     reason: Copy-paste curl example in the status page's quick-test panel; it names a public model id a caller sends.

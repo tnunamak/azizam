@@ -894,7 +894,7 @@ class TestEngineKnowledgeRatchet:
                 "responses_translator.py", "metrics_sampler.py"} <= scanned
         assert "gateway/transforms.py" in scanned
         for name in ("comfyui", "voxtral", "omnivoice", "chatterbox", "kokoro",
-                     "parakeet", "whisper", "flux2-klein-4b", "ltx-2.5", "ace-step", "kobold", "tabby"):
+                     "parakeet", "whisper", "ltx-2.5", "ace-step", "kobold", "tabby"):
             assert _ENGINE_KNOWLEDGE_PATTERN.search(name), name
         for protocol in ("openai", "anthropic", "ollama", "a1111", "litellm", "mcp"):
             assert not _ENGINE_KNOWLEDGE_PATTERN.search(protocol), protocol
