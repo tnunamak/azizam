@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
+from gateway.manifests import choice_key
 from gateway.model_metadata import asset_media_type
 from gateway.model_presentation import CAPABILITY_DESCRIPTIONS
 from gateway.workflow_openapi import (
@@ -274,7 +275,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         # a choice without a name shows as its value.
         labels = declared.get("choice_labels")
         if isinstance(labels, Mapping) and isinstance(row.get("enum"), list):
-            offered = {str(option) for option in row["enum"]}
+            offered = {choice_key(option) for option in row["enum"]}
             named = {str(key): str(name) for key, name in labels.items() if str(key) in offered}
             if named:
                 row["choice_labels"] = named

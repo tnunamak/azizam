@@ -536,7 +536,7 @@ function controlFor(
           {!input.required && <SelectItem value={UNSET}>Not set</SelectItem>}
           {input.enum.map((option) => (
             <SelectItem key={String(option)} value={String(option)}>
-              {input.choice_labels?.[String(option)] ?? String(option)}
+              {choiceName(input, option) ?? String(option)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -633,7 +633,12 @@ function validateWorkflowInputValue(
 ) {
   const type = normalizedType(input);
   if (input.enum && !input.enum.includes(value)) {
-    throw new Error(`${named(input)} must be one of: ${input.enum.join(", ")}.`);
+    // A typed request must use the values; the names say what each one means.
+    const choices = input.enum.map((option) => {
+      const name = choiceName(input, option);
+      return name ? `${String(option)} (${name})` : String(option);
+    });
+    throw new Error(`${named(input)} must be one of: ${choices.join(", ")}.`);
   }
   if (type === "string" && typeof value !== "string") {
     throw new Error(`${named(input)} must be text.`);
@@ -1061,6 +1066,11 @@ function readCombinedPart(value: unknown, name: string, parts: string[]) {
 
 function isUnsupportedValue(value: unknown) {
   return value !== null && typeof value === "object";
+}
+
+// The manifest's readable name for one choice; the gateway keys each name by String(value).
+function choiceName(input: WorkflowInput, option: unknown): string | undefined {
+  return input.choice_labels?.[String(option)] || undefined;
 }
 
 function enumValue(input: WorkflowInput, value: string) {

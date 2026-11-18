@@ -121,6 +121,21 @@ class ErrorCollector:
                 raise
 
 
+def choice_key(value: Any) -> str | None:
+    """The text a choice value has as a ``choice_labels`` key: what the web page's String(value) gives it.
+
+    None for a number whose exponent form the two languages write differently (1e-07 against 1e-7); such a choice
+    cannot be named.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        if not math.isfinite(value) or "e" in repr(value):
+            return None
+        return str(int(value)) if value.is_integer() else repr(value)
+    return str(value)
+
+
 def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors:
     """A single-error ``ContractErrors``, for a check that has nothing to gather."""
     return ContractErrors([ContractError(tuple(path), code, message)])
@@ -498,7 +513,7 @@ def collect_manifest_errors(
                 labels, enum = spec["choice_labels"], spec.get("enum")
                 if (not isinstance(labels, Mapping) or not labels or not isinstance(enum, list) or not enum
                         or any(not isinstance(value, str) or not value.strip() for value in labels.values())
-                        or any(not any(key == str(value) for value in enum) for key in labels)):
+                        or any(key not in {choice_key(value) for value in enum} for key in labels)):
                     errors.add(("inputs", name, "choice_labels"), "choice_labels_invalid",
                                f"input {name} choice_labels requires a non-empty enum and non-empty labels for enum values")
             if "choices_from" in spec:

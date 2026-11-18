@@ -844,4 +844,10 @@ describe("a choice input shows its readable names", () => {
     expect(JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}")).toEqual({ mode: "async" });
     expect(mode).toHaveTextContent("Return a job to check later");
   });
+
+  it("names the choices beside the values a typed request must use", () => {
+    expect(() => parseWorkflowInputs(JSON.stringify({ mode: "later" }), named)).toThrow(
+      "Mode must be one of: auto (Automatic), sync, async (Return a job to check later).",
+    );
+  });
 });
