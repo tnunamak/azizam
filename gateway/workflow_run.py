@@ -658,21 +658,27 @@ class WorkflowRunCore:
             return RunRefused(status, first, f"workflow {entry.id} cannot start a run: {', '.join(problems)}")
         binding_key = req.binding_key or next(iter(entry.bindings))
         profile = self._projections.execution_profile(entry, binding_key, limits=port.result_limits())
-        errors = self._validate(entry, req, profile)
+        try:
+            identity = port.adapter_identity(entry, binding_key, entry.bindings[binding_key])
+        except Exception:
+            identity = None
+        from gateway.engine_protocol.choice_lists import choices_for_run
+        choices = choices_for_run(identity, plain(entry.contract).get("inputs") or {})
+        errors = self._validate(entry, req, profile, choices=choices)
         if errors:
             return RunRefused(422, INVALID_INPUTS, "the run request is not valid", problems=tuple(errors))
         refused = port.admission_refusal(profile.resource_class, caller, count_queue=True)
         if refused is not None:
             return refused
         try:
-            return await asyncio.to_thread(self._create, req, caller, entry, binding_key, profile, fence)
+            return await asyncio.to_thread(self._create, req, caller, entry, binding_key, profile, fence, identity)
         except _AdmissionLost as lost:
             return lost.refused
         except (ManifestError, generated_defaults.GeneratedValueUnavailable) as exc:
             return RunRefused(422, INVALID_INPUTS, "a generated input could not be filled",
                               problems=(ContractError(("inputs",), "generated_value_invalid", _wire_text(str(exc))),))
 
-    def _validate(self, entry: WorkflowEntry, req: RunRequest, profile) -> list[ContractError]:
+    def _validate(self, entry: WorkflowEntry, req: RunRequest, profile, *, choices=None) -> list[ContractError]:
         """Step 3: the inputs against the current contract and the media against the profile, every problem at once."""
         contract = plain(entry.contract)
         generated = generated_defaults.generated_inputs(contract.get("inputs") or {})
@@ -683,7 +689,7 @@ class WorkflowRunCore:
                 errors.append(ContractError(("inputs", name), "value_invalid", "given both as a value and as media"))
             supplied[name] = "upload"           # the placeholder: media is checked below against the profile
         try:
-            result = validate_inputs(contract, supplied)
+            result = validate_inputs(contract, supplied, choices=choices)
         except ManifestError as exc:
             return [ContractError(("contract",), "contract_invalid", _wire_text(str(exc)))]
         for error in result.errors:
@@ -710,7 +716,7 @@ class WorkflowRunCore:
         return errors
 
     def _create(self, req: RunRequest, caller: CallerContext, entry: WorkflowEntry, binding_key: str, profile,
-                fence: media_jobs.RunClaimFence | None) -> dict[str, Any]:
+                fence: media_jobs.RunClaimFence | None, identity=None) -> dict[str, Any]:
         """Steps 5 and 6: the fenced transaction. ``prepare`` runs inside it, after the claim is confirmed, so a holder
         that lost its claim draws and adopts nothing."""
         port = self._port
@@ -741,13 +747,13 @@ class WorkflowRunCore:
                 drawn = {name: item["value"] for name, item in generated.items() if "value" in item}
                 record.metadata[REQUEST_FACTS_KEY] = request_facts_record(
                     resolve_fact_refs(req.facts, req.fact_refs, job_id=record.job_id, generated=drawn))
-            identity = port.adapter_identity(entry, binding_key, binding)
+            resolved_identity = identity if identity is not None else port.adapter_identity(entry, binding_key, binding)
             envelope = build_job_envelope(
                 source_kind="workflow", source_id=entry.id, contract=execution_contract(contract),
                 binding=plain(binding.binding), template=port.template_bytes(binding),
-                protocol_id=identity.protocol_id, protocol_revision=identity.protocol_revision,
-                adapter_id=identity.adapter_id, interface_version=identity.interface_version,
-                service_id=identity.service_id, origin=identity.origin, generated=generated,
+                protocol_id=resolved_identity.protocol_id, protocol_revision=resolved_identity.protocol_revision,
+                adapter_id=resolved_identity.adapter_id, interface_version=resolved_identity.interface_version,
+                service_id=resolved_identity.service_id, origin=resolved_identity.origin, generated=generated,
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
             adopted_sources.update(self._spool.adopt(record.job_id, dict(req.sources)))

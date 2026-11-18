@@ -121,6 +121,45 @@
         "timesignature",
         "enum"
       ]
+    },
+    {
+      "after": {
+        "input": "timesignature",
+        "node_type": "TextEncodeAceStepAudio1.5"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "choices_from"
+      ]
+    },
+    {
+      "after": {
+        "input": "language",
+        "node_type": "TextEncodeAceStepAudio1.5"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "choices_from"
+      ]
+    },
+    {
+      "after": {
+        "input": "keyscale",
+        "node_type": "TextEncodeAceStepAudio1.5"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "keyscale",
+        "choices_from"
+      ]
     }
   ],
   "audio.generate.tangoflux": [

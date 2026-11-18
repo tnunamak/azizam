@@ -600,7 +600,7 @@ def test_owner_setting_switch_applies_without_restart(tmp_path, admin_db):
     assert reads == [1] and not made._reserved and not made._loaded
 
 
-def test_switch_read_runs_off_the_event_loop(tmp_path):
+def test_switch_check_stays_on_the_calling_task_and_admit_reads_off_the_event_loop(tmp_path):
     import threading
     threads = []
 
@@ -611,8 +611,9 @@ def test_switch_read_runs_off_the_event_loop(tmp_path):
     made = hma.HostMemoryAdmission(hma.load_policy(), saved_setting=saved,
                                    read_available=lambda: pytest.fail("read memory while disabled"))
     assert run(made.is_enabled()) is False
+    assert threads == [threading.main_thread()]
     assert run(made.admit(graph("a.safetensors"))) is None
-    assert threads and all(thread is not threading.main_thread() for thread in threads)
+    assert len(threads) == 2 and threads[1] is not threading.main_thread()
 
 
 def test_unreadable_switch_setting_leaves_admission_off(tmp_path):
