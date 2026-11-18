@@ -1376,8 +1376,8 @@
     },
     {
       "after": {
-        "2": "Twice as large",
-        "4": "Four times as large"
+        "2": "2× width and height",
+        "4": "4× width and height"
       },
       "before": null,
       "before_present": false,
@@ -1911,8 +1911,8 @@
     {
       "after": {
         "2": "Twice the frames",
-        "3": "Three times the frames (less tested)",
-        "4": "Four times the frames (less tested)"
+        "3": "Three times the frames (not tested here)",
+        "4": "Four times the frames (not tested here)"
       },
       "before": null,
       "before_present": false,
