@@ -63,6 +63,11 @@ class WorkflowOpenApiTests(unittest.TestCase):
         assert response.status_code == 200, response.text
         cls.spec = response.json()
         cls.catalog = {w["id"]: w for w in cls.spec[ROOT_EXTENSION]}
+        # A closed workflow (exposure disabled or the owner's run switch off) leaves the public document.
+        cls.closed = {r.id for r in cls.registry.records() if proxy._closed_workflow_reason(r.id)}
+
+    def open_records(self) -> list:
+        return [r for r in self.registry.records() if r.id not in self.closed]
 
     def schema_of(self, workflow_id: str) -> dict:
         return self.spec["components"]["schemas"][schema_name(workflow_id)]
@@ -81,7 +86,11 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 for name, where in route["fields"].items() if where["in"] == "none"}
 
     def test_every_manifest_has_typed_inputs(self) -> None:
-        for record in self.registry.records():
+        for workflow_id in self.closed:
+            with self.subTest(closed=workflow_id):
+                self.assertNotIn(workflow_id, self.catalog)
+                self.assertNotIn(schema_name(workflow_id), self.spec["components"]["schemas"])
+        for record in self.open_records():
             with self.subTest(workflow=record.id):
                 self.assertIn(record.id, self.catalog)
                 schema = self.schema_of(record.id)
@@ -111,7 +120,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         for name in names:
             self.assertRegex(name, r"^[A-Za-z0-9_]+$")
         inputs = [n for n in names if n.startswith("WorkflowInputs_")]
-        self.assertEqual(len(inputs), len(self.registry.records()))
+        self.assertEqual(len(inputs), len(self.open_records()))
 
     def test_catalog_matches_gateway_workflows_endpoint(self) -> None:
         with authenticated():
@@ -231,7 +240,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
             ]["anyOf"]
             wanted = {
                 (extension_schema_name(r.id) if r.intent.startswith("video.") else schema_name(r.id))
-                for r in self.registry.records()
+                for r in self.open_records()
                 if r.intent.startswith(intent)
             }
             self.assertEqual({o["$ref"].rsplit("/", 1)[1] for o in options}, wanted)
@@ -246,7 +255,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_sample_requests_validate(self) -> None:
         """A request built from the catalog's field map validates against the schema."""
-        for record in self.registry.records():
+        for record in self.open_records():
             sample = {}
             owned = self.owned_by_routes(record.id)
             for name, spec in record.manifest["inputs"].items():
@@ -375,7 +384,12 @@ class WorkflowOpenApiTests(unittest.TestCase):
         for operation in ("images", "image_edits", "videos", "audio_generate"):
             for entry in aliases[operation]["stable"]:
                 with self.subTest(alias=entry["alias"], operation=operation):
-                    self.assertIn(entry["alias"], listed)
+                    target = proxy.resolve_model_for_operation(operation, entry["alias"]).effective_model
+                    if proxy._closed_alias_target(operation, target):
+                        # An alias whose target is closed is closed too: no open workflow lists it.
+                        self.assertNotIn(entry["alias"], listed)
+                    else:
+                        self.assertIn(entry["alias"], listed)
         sfx = self.catalog["audio.generate.sa3-small-sfx"]
         self.assertIn("sfx", sfx["aliases"])
 
@@ -386,7 +400,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 for w in self.client.get("/gateway/v1/workflows").json()["workflows"]
             }
         timed = 0
-        for record in self.registry.records():
+        for record in self.open_records():
             declared = record.manifest.get("typical_seconds")
             self.assertEqual(listing[record.id]["typical_seconds"], declared)
             self.assertEqual(self.catalog[record.id]["typical_seconds"], declared)

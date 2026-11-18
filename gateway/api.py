@@ -55,6 +55,7 @@ from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES
 from gateway.registry_snapshot import Provider as SnapshotProvider, snapshot_of
 from gateway.workflow_projections import SnapshotRegistry
+from gateway.workflow_closed import closed_reason
 from gateway.extension_catalog import (
     summarize_extensions,
     summarize_model_capabilities,
@@ -125,6 +126,9 @@ def _resolve_request_audience(
 # identifiers are never in an API body, whatever the audience.
 def _job_body(row: Mapping[str, Any], resolver: output_availability.AssetPathResolver | None = None) -> dict[str, Any]:
     # ``results`` is the named results the job published (``result_bundle.results_view``), added by the job providers.
+    row = dict(row)
+    if isinstance(row.get("metadata"), Mapping):
+        row["metadata"] = {k: v for k, v in row["metadata"].items() if k != "accepted_workflow_ids"}
     return output_availability.project(
         {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata", "results"}}, resolver)
 
@@ -538,6 +542,10 @@ def create_gateway_router(
                 capabilities = capabilities_provider(request) or ()
                 if inspect.isawaitable(capabilities):
                     capabilities = await capabilities
+            if audience == "client":
+                snapshot = snapshot_of(request, provider)
+                capabilities = [cap for cap in capabilities if not closed_reason(
+                    snapshot.get(cap.resolved_workflow or cap.workflow))]
             catalog = summarize_capabilities(capabilities, audience=audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
@@ -603,6 +611,10 @@ def create_gateway_router(
                 capabilities = capabilities_provider(request) or ()
                 if inspect.isawaitable(capabilities):
                     capabilities = await capabilities
+            if audience == "client":
+                snapshot = snapshot_of(request, provider)
+                capabilities = [cap for cap in capabilities if not closed_reason(
+                    snapshot.get(cap.resolved_workflow or cap.workflow))]
             catalog = summarize_model_capabilities(
                 capabilities, model=model, audience=audience
             )

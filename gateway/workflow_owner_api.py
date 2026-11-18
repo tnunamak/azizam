@@ -113,7 +113,8 @@ def fact_choices(entries: Any) -> dict[str, list[str]]:
 
 def entry_view(entry: WorkflowEntry, problems: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "id": entry.id, "state": entry.state, "published": entry.published, "record_revision": entry.record_revision,
+        "id": entry.id, "state": entry.state, "exposure": entry.facts.exposure if entry.facts else None,
+        "published": entry.published, "record_revision": entry.record_revision,
         "contract_digest": entry.contract_digest, "record_digest": entry.record_digest,
         "provenance": {"trusted": entry.provenance.trusted, "source": entry.provenance.source},
         "needs_configuration": entry.needs_configuration, "entry_problems": problems,

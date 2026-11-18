@@ -97,7 +97,14 @@ def _observed():
 
 
 # Reviewed body changes and the generic completion extraction retain existing event types and access checks.
-_REVIEWED_WRITER_BODIES = {('gateway/declared_operation_job.py', 'run'): ('_complete',
+# Closure checks change these writers' bodies; their events and access classifications are unchanged.
+_REVIEWED_WRITER_BODIES = {('proxy.py', '_run_identity_job'): ('_run_identity_job',
+                                                '5f3e4f68507864a23e09f9059f2aa5c26c5bbdd198b138713466790bfada83a9'),
+ ('proxy.py', '_submit_audio_media_job'): ('_submit_audio_media_job',
+                                         'b9e0992031df95c0c1e7f72c72501f3e773e528da16974b48d839bb3bf640e29'),
+ ('proxy.py', 'gateway_image_generations_media_job'): ('gateway_image_generations_media_job',
+                                                      '3f540d28ccc60d1f130bc42dc6bb6924575a1a7ac85f2e33ea51901f9608e307'),
+ ('gateway/declared_operation_job.py', 'run'): ('_complete',
                                                 '461de5adfcb2aee581c0de0f1c65c49f2b7ff79846fca935cdbdfbd1dd0b6a43'),
  ('proxy.py', '_run_audio_media_job'): ('_run_audio_media_job',
                                         '1e05170dddaab9d1aebf2ef890c62fba6d18d5f375c8dd115df5df38a4ea669f')}

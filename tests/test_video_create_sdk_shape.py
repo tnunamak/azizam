@@ -149,6 +149,7 @@ class VideoCreateRealSdkTests(RemixReplaceBase):
                 seconds="4",
                 size="1280x720",
             )
+            self.comfy.wait_for_graphs()
         finally:
             sdk.close()
 

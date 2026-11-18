@@ -39,7 +39,7 @@ CASES = [
     ('ollama-embed', '/api/embed', {'model': 'test', 'input': 'hi'}),
     ('decisions', '/v1/decisions', {'model': 'test', 'input': 'hi'}),
     ('systemone', '/v1/systemone', {'model': 'test', 'state': 'hi', 'questions': {'q': {'type': 'choice', 'criteria': {'a': 'A', 'b': 'B'}}}}),
-    ('image', '/v1/images/generations', {'model': 'flux2-klein-4b', 'prompt': 'hi', 'response_format': 'b64_json'}),
+    ('image', '/v1/images/generations', {'model': 'moss-image-fast', 'prompt': 'hi', 'response_format': 'b64_json'}),
     ('speech', '/v1/audio/speech', {'model': 'tts-1', 'input': 'hi', 'voice': 'alloy', 'response_format': 'wav'}),
 ]
 
@@ -336,7 +336,7 @@ def test_image_rechecks_policy_after_async_preparation(dispatch_env, monkeypatch
         monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': ['image.generate']})
         return result
     monkeypatch.setattr(proxy, '_apply_workflow_extensions_to_image_request', prepare)
-    response = client.post('/v1/images/generations', json={'model': 'flux2-klein-4b', 'prompt': 'hi'})
+    response = client.post('/v1/images/generations', json={'model': 'moss-image-fast', 'prompt': 'hi'})
     assert response.status_code == 503
     assert 'intent_disabled' in response.json()['admission']['reason_codes']
     assert not calls

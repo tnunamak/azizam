@@ -211,7 +211,8 @@ def test_a_stored_revision_that_still_has_visible_to_decodes_and_the_field_is_ig
 
 def _workflow_entry():
     """A model-list entry that is a workflow, and the workflow ids that exist."""
-    entries = [e for e in proxy._build_workflow_model_entries() if e.get("azizam_intent", "").startswith("image.")]
+    entries = [e for e in proxy._build_workflow_model_entries() if e.get("azizam_intent", "").startswith("image.")
+               and not proxy._closed_workflow_reason(e.get("azizam_workflow_id"))]
     assert len(entries) >= 2
     return entries[0], entries[1]
 

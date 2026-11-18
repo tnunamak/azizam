@@ -133,7 +133,7 @@ def _old_spelling(snapshot: RegistrySnapshot, row: FrontendRow, name: str) -> st
     (``<capability>-<short id>``). It names the same workflow as the short id, so it resolves there when it names nothing itself."""
     if not name or snapshot.names.owner("workflow", name) is not None or snapshot.names.owner("workflow_alias", name) is not None:
         return name
-    for entry in _wire.candidates(snapshot, row, None):
+    for entry in _wire.candidates(snapshot, row, None, include_closed=True):
         if name == short_name(entry):
             return entry.id
     return name
@@ -169,6 +169,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                           code="registry_conflict")
         if eligible:
             chosen, manifest = eligible[0]
+            closed = _wire.closed_response(chosen)
+            if closed is not None:
+                return closed
     # Every selected reference variant has passed the same section schema as the
     # initial workflow: length, grid and size are mandatory registry facts.
     target = hooks.reference_input(chosen)
@@ -188,6 +191,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
             chosen = snapshot.get(long_id)
             if chosen is None:
                 return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
+            closed = _wire.closed_response(chosen)
+            if closed is not None:
+                return closed
             manifest = hooks.facts(chosen)
             return chosen, manifest, short_name(chosen), public_model
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",

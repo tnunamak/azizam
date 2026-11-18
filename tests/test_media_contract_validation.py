@@ -79,14 +79,14 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
         ):
             for value in (1, 10):
                 response = await proxy.proxy_graph_image_request(
-                    _StubJsonRequest({"model": "flux2-klein-4b", "prompt": "a tree", "n": value}),
+                    _StubJsonRequest({"model": "moss-image-fast", "prompt": "a tree", "n": value}),
                     access_context(),
                 )
                 self.assertEqual(response.status_code, 200, response.body)
                 self.assertEqual(generate.call_args.kwargs["n_requested"], value)
 
     async def edit(self, *, size=None, count=1, variations=False):
-        items = [("model", "flux2-klein-4b-edit")]
+        items = [("model", "fibo-2-edit-turbo")]
         if not variations:
             items.append(("prompt", "a tree"))
         if size is not None:
@@ -102,9 +102,15 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
                     self.assert_invalid(await self.edit(size=size, variations=variations), "size")
 
     async def test_edit_enforces_manifest_dimension_limits(self):
-        for size in ("1x512", "512x1", "2049x512", "512x2049"):
-            with self.subTest(size=size):
-                self.assert_invalid(await self.edit(size=size), "size")
+        # No open edit workflow declares width and height bounds. Add those bounds
+        # to the open fixture to test the generic contract validation.
+        manifest = copy.deepcopy(proxy._find_image_manifest("image.edit", "fibo-2-edit-turbo"))
+        for dimension in ("width", "height"):
+            manifest["inputs"][dimension] = {"type": "integer", "minimum": 64, "maximum": 2048}
+        with patch.object(proxy, "_find_image_manifest", return_value=manifest):
+            for size in ("1x512", "512x1", "2049x512", "512x2049"):
+                with self.subTest(size=size):
+                    self.assert_invalid(await self.edit(size=size), "size")
 
     async def test_edit_omitted_auto_and_valid_size_reach_generation(self):
         generate = AsyncMock(return_value=proxy.Response(status_code=200))

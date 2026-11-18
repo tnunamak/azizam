@@ -518,7 +518,13 @@ class CreateLongVideoTests(H3RouteBase):
         self.assertFalse([n for n in self.graph.values() if n["class_type"] == "CLIPTextEncode"])
 
     def test_progress_units_are_registered_and_progress_spans_all_segments(self) -> None:
+        import time
+        proxy._video_chain_units.pop(NEW_PROMPT_ID, None)
         self._create(model="h3-long", prompt="x", seconds=22)
+        self.comfy.wait_for_graphs()
+        deadline = time.monotonic() + 5
+        while len(proxy._video_chain_units.get(NEW_PROMPT_ID, ())) != 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
         units = proxy._video_chain_units[NEW_PROMPT_ID]
         self.assertEqual(len(units), 3)
         with patch.dict(proxy._video_chain_units, {"p": units}):

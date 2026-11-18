@@ -1368,13 +1368,29 @@ def _half_mask():
 def test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels(tmp_path):
     """Section 6.5: masking runs in the adapter before the bundle commits, so the delivered pictures and the stored
     Library file are the masked bytes, and equal to what the old route delivers and stores."""
-    # The shipped edit workflow with no mask node: its binding keeps the mask off the engine and lists the stage.
+    # Add the optional mask stage to an open edit workflow in this isolated scenario.
     big = io.BytesIO()
     Image.new("RGB", (64, 64), (200, 40, 40)).save(big, "PNG")
-    request = form(files={"image": ("in.png", big.getvalue(), "image/png"), "mask": _half_mask()}, model="flux2-klein")
+    request = form(files={"image": ("in.png", big.getvalue(), "image/png"), "mask": _half_mask()}, model="fibo-2-edit-turbo")
 
     def no_source_alpha(rig):
-        base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], strict=False))
+        wid = "image.edit.fibo-2-edit-turbo"
+        snapshot = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        original = snapshot.get(wid)
+        contract = proxy.workflow_run.plain(original.contract)
+        contract["inputs"]["mask"] = {"type": "asset", "accepts": ["image/*"]}
+        binding = contract["bindings"]["comfyui"]
+        binding["edge_only_inputs"] = ["mask"]
+        binding["result_processing"] = ["post_composite_mask"]
+        entry = dataclasses.replace(original, contract=contract, bindings={
+            **original.bindings, "comfyui": dataclasses.replace(original.bindings["comfyui"], binding=binding)})
+        rig.monkeypatch.setattr(proxy.GATEWAY_REGISTRY_PROVIDER, "_snapshot", dataclasses.replace(
+            snapshot, workflows={**snapshot.workflows, wid: entry}))
+        find_manifest = proxy._find_image_manifest
+        rig.set(proxy, "_find_image_manifest", lambda intent, model: contract if model == "fibo-2-edit-turbo"
+                else find_manifest(intent, model))
+        base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")],
+                                         history=history_done(node="10"), strict=False))
     old, row = pair(tmp_path, EDIT, request, no_source_alpha)
     old_has(old, "post-composite", header(old, "x-image-mask") == "post-composite")
     old_has(old, "a picture", _pixels(old))

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -123,9 +124,21 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     case.setUp()
     try:
         models = case._list()
+        import proxy
+        with patch.object(proxy, "_closed_workflow_reason", return_value=None):
+            before_closure = case._list()
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
+    before_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in before_closure["data"]]
+    # Closed workflows and aliases pointing only to them leave client listings.
+    removed = {
+        "flux2-klein-snofs", "flux2-klein-4b-seamless-tile", "flux2-klein-4b", "flux2-klein",
+        "flux2-klein-4b-inpaint", "flux2-klein-4b-edit", "flux2-klein-edit",
+        "image-fast", "image-edit-fast",
+    }
+    assert {row[0] for row in before_surface} - {row[0] for row in model_surface} == removed
+    assert [row for row in before_surface if row[0] not in removed] == model_surface
     # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
@@ -133,9 +146,6 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
         "moss-image": ("image", text_to_image),
         "moss-image-fast": ("image", text_to_image),
         "moss-image-quality": ("image", text_to_image),
-        "flux2-klein": ("image", text_to_image),
-        "flux2-klein-snofs": ("image", text_to_image),
-        "flux2-klein-edit": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
     }
     keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid",
                  "video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"}
@@ -166,7 +176,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # Re-captured 2026-11-08 (S5 projections): the face-likeness workflow's output modalities read from its contract and now
     # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
     # Train 54: face-likeness leaves the OpenAI model list because no OpenAI route runs it.
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "2203b28987cb3687035bd38cf9d0c2f36a559c7ea18bd2dcd3060c9fc46e80ca"
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "a99fdcb37a8ab05f76b4c983e78b3d3bba5a0d12fb8d0406e302c9c9caa8dbd5"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

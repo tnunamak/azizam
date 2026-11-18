@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import dataclasses
 import io
 import json
 
@@ -20,7 +21,7 @@ import proxy
 from gateway import media_jobs
 from gateway.workflow_run import WorkflowRunCore
 from tests import test_adapter_differential as base
-from tests.support.adapter_differential_rig import comfy_exchanges, exchange
+from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
 from tests.support.s7_parity_images_facts import (
     asset_files, assert_same, canon_jobs, data_items, doc, job_document, job_rows, receipt_summary, status)
 from tests.support.s7_parity_images_rig import ROW_PREFIX, Obs, observe
@@ -130,11 +131,28 @@ def test_1_the_fallback_graph_has_its_cutout_turned_off_explicitly(tmp_path):
 
 def test_2_a_resumed_masked_edit_is_masked(tmp_path):
     big = _png("RGB", (200, 40, 40))
-    request_ = form(files={"image": ("in.png", big, "image/png"), "mask": _half_mask()}, model="flux2-klein")
+    request_ = form(files={"image": ("in.png", big, "image/png"), "mask": _half_mask()}, model="fibo-2-edit-turbo")
     engine_output = _png("RGB", (20, 20, 20))
 
     def setup(rig):
-        base._comfy(rig, comfy_exchanges(views=[(engine_output, "image/png")], strict=False))
+        workflow_id = "image.edit.fibo-2-edit-turbo"
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        original = snapshot.get(workflow_id)
+        contract = proxy.workflow_run.plain(original.contract)
+        contract["inputs"]["mask"] = {"type": "asset", "accepts": ["image/*"]}
+        binding = contract["bindings"]["comfyui"]
+        binding["edge_only_inputs"] = ["mask"]
+        binding["result_processing"] = ["post_composite_mask"]
+        entry = dataclasses.replace(original, contract=contract, bindings={
+            **original.bindings, "comfyui": dataclasses.replace(original.bindings["comfyui"], binding=binding)})
+        rig.monkeypatch.setattr(provider, "_snapshot", dataclasses.replace(
+            snapshot, workflows={**snapshot.workflows, workflow_id: entry}))
+        find = proxy._find_image_manifest
+        rig.set(proxy, "_find_image_manifest", lambda intent, model: contract
+                if model == "fibo-2-edit-turbo" else find(intent, model))
+        base._comfy(rig, comfy_exchanges(views=[(engine_output, "image/png")],
+                                         history=history_done(node="10"), strict=False))
 
     def plain(use_interruption):
         async def go(rig):
