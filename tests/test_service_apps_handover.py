@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from gateway import accounts, admin_store, app_binding_preview
+from gateway import accounts, admin_store, app_binding_preview, request_connections
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash
 from gateway.runtime_auth import hash_api_key
 from tests.support.access import store_plan
@@ -173,6 +173,20 @@ def test_a_person_who_cannot_answer_for_an_app_is_refused_with_a_409(world):
     still = _identity(w.g, key)
     assert still is not None and not still.denial
 
+
+def test_a_refused_or_missing_handover_leaves_the_request_connection_with_no_open_write(world):
+    """Both answers come after BEGIN IMMEDIATE. Inside a request scope the admin connection is shared, so the store
+    must settle the write itself; else the next step in the request inherits the write lock."""
+    w = world
+    with request_connections.request_scope():
+        with pytest.raises(admin_store.HandoverRefused):
+            admin_store.reassign_service_app(w.service_id, "usr_nobody", path=w.g.path)
+        with admin_store.shared_connection(w.g.path) as conn:
+            assert not conn.in_transaction
+        assert admin_store.reassign_service_app("app_missing", w.owner_id, path=w.g.path) is None
+        with admin_store.shared_connection(w.g.path) as conn:
+            assert not conn.in_transaction
+    assert admin_store.get_app(w.service_id, path=w.g.path)["owner_user_id"] == w.member_id
 
 def test_one_audit_row_names_the_old_and_the_new_person_and_the_counts(world):
     w = world
