@@ -1,339 +1,322 @@
 {
- "schema_version": 1,
- "object": "workflow.catalog",
+ "counts": {
+  "capabilities": 1,
+  "workflows": 1
+ },
  "discovery_url": "/gateway/v1/workflows",
- "workflows": [
-  {
-   "id": "image.edit.flux2-klein-4b",
-   "short_id": "flux2-klein-4b",
-   "capability": "image",
-   "intent": "image.edit",
-   "title": "Flux2 Klein 4B Edit",
-   "purpose": "Edit an image from an instruction",
-   "description": "Edit an image from an instruction",
-   "inputs": [
-    {
-     "name": "prompt",
-     "type": "string",
-     "required": true,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Multipart form",
-     "request_field": "prompt",
-     "description": "Describe what you want to make.",
-     "help": "Describe what you want to make.",
-     "label": "description"
-    },
-    {
-     "name": "source_image",
-     "type": "string",
-     "required": true,
-     "accepted": true,
-     "ignored": false,
-     "applies": "File upload",
-     "request_field": "image[]",
-     "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
-     "help": "The picture you want to change.",
-     "asset": true,
-     "media_type": "image/*",
-     "label": "a picture to change"
-    },
-    {
-     "name": "mask",
-     "type": "string",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "File upload",
-     "request_field": "mask",
-     "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. White areas change; black areas stay as they are.",
-     "help": "White areas change; black areas stay as they are.",
-     "asset": true,
-     "media_type": "image/*",
-     "label": "a mask"
-    },
-    {
-     "name": "width",
-     "type": "integer",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Multipart form",
-     "request_field": "size",
-     "minimum": 64,
-     "maximum": 2048,
-     "description": "Picture width in pixels.",
-     "help": "Picture width in pixels.",
-     "label": "width"
-    },
-    {
-     "name": "height",
-     "type": "integer",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Multipart form",
-     "request_field": "size",
-     "minimum": 64,
-     "maximum": 2048,
-     "description": "Picture height in pixels.",
-     "help": "Picture height in pixels.",
-     "label": "height"
-    },
-    {
-     "name": "steps",
-     "type": "integer",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Workflow extension",
-     "request_field": "steps",
-     "minimum": 1,
-     "maximum": 100,
-     "description": "More steps take longer.",
-     "help": "More steps take longer.",
-     "label": "steps"
-    },
-    {
-     "name": "guidance",
-     "type": "number",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Workflow extension",
-     "request_field": "guidance",
-     "minimum": 0,
-     "maximum": 20,
-     "label": "prompt guidance"
-    },
-    {
-     "name": "denoise",
-     "type": "number",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Workflow extension",
-     "request_field": "denoise",
-     "default": 1,
-     "minimum": 0,
-     "maximum": 1,
-     "description": "Lower values preserve more of the original.",
-     "help": "Lower values preserve more of the original.",
-     "label": "change strength"
-    },
-    {
-     "name": "n",
-     "type": "integer",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Route option",
-     "request_field": "n",
-     "minimum": 1,
-     "maximum": 10,
-     "description": "Number of images.",
-     "label": "number of results"
-    }
-   ],
-   "outputs": [
-    {
-     "name": "image",
-     "media_type": "image/png"
-    }
-   ],
-   "engine_binding": "comfyui",
-   "engine_binding_detail": {
-    "backends": [
-     "comfyui"
-    ],
-    "available": true,
-    "status": "ready",
-    "measured": true,
-    "reason_code": "ready"
-   },
-   "availability": {
-    "status": "ready",
-    "available": true,
-    "measured": true,
-    "reason_code": "ready"
-   },
-   "typical_seconds": null,
-   "aliases": [],
-   "example_request": {
-    "method": "POST",
-    "path": "/v1/images/edits",
-    "content_type": "multipart/form-data",
-    "body": {},
-    "form": {
-     "model": "flux2-klein-4b",
-     "prompt": "A small teal fish mark on a clean white card.",
-     "size": "64x64",
-     "extensions": "{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}"
-    },
-    "files": {
-     "source_image": {
-      "input": "source_image",
-      "required": true,
-      "media_type": "image/*",
-      "field": "image[]"
-     },
-     "mask": {
-      "input": "mask",
-      "required": false,
-      "media_type": "image/*",
-      "field": "mask"
-     }
-    },
-    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image[]=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
-    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n        ('mask', stack.enter_context(open('./mask.png', 'rb'))),\n    ]\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
-    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
-   },
-   "examples": {
-    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image[]=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
-    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n        ('mask', stack.enter_context(open('./mask.png', 'rb'))),\n    ]\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
-    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
-   },
-   "native_route": null,
-   "native_passthrough_route": null,
-   "discovery_url": "/gateway/v1/workflows/image.edit.flux2-klein-4b",
-   "machine_readable_discovery_url": "/openapi.json#x-azizam-workflows",
-   "recent_jobs_url": "/me/api/media?workflow=image.edit.flux2-klein-4b",
-   "try_url": "/try/?workflow=image.edit.flux2-klein-4b",
-   "capabilities": [
-    {
-     "intent": "image.edit",
-     "input_modalities": [],
-     "output_modalities": [],
-     "execution": "sync",
-     "streaming": false,
-     "exposure": "default",
-     "trust_tier": "stable",
-     "resource_tier": "interactive",
-     "tags": [],
-     "available": true,
-     "caveats": [],
-     "capability": "image",
-     "capability_title": "Images",
-     "icon_key": "image",
-     "title": "Image.edit.flux2 Klein 4b",
-     "recommended_model": "Image.edit.flux2 Klein 4b",
-     "summary": "Generate or edit images from your prompts.",
-     "use_names": [
-      "image.edit.flux2-klein-4b"
-     ],
-     "secondary_profile": false,
-     "use_name": "image.edit.flux2-klein-4b",
-     "availability": {
-      "available": false,
-      "status": "unknown",
-      "reason": "Not measured yet",
-      "measured": false,
-      "enabled": true,
-      "configured": true,
-      "up": null,
-      "idle_startable": false,
-      "evidence": {
-       "kind": "unknown"
-      }
-     },
-     "workflow": "image.edit.flux2-klein-4b"
-    }
-   ],
-   "recent_jobs": [],
-   "recent_receipts": [],
-   "openapi": {
-    "inputs_schema": {
-     "$ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein_4b"
-    },
-    "route_inputs": [
-     {
-      "name": "n",
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 10,
-      "description": "Number of images.",
-      "in": "body",
-      "field": "n",
-      "label": "number of results"
-     }
-    ],
-    "execution": {
-     "recommended": "sync",
-     "sync": {
-      "method": "POST",
-      "path": "/v1/images/edits",
-      "content_type": "multipart/form-data",
-      "model": "flux2-klein-4b",
-      "fields": {
-       "prompt": {
-        "in": "form",
-        "field": "prompt"
-       },
-       "source_image": {
-        "in": "file",
-        "field": "image[]"
-       },
-       "mask": {
-        "in": "file",
-        "field": "mask"
-       },
-       "width": {
-        "in": "form",
-        "field": "size",
-        "combine": [
-         "width",
-         "height"
-        ]
-       },
-       "height": {
-        "in": "form",
-        "field": "size",
-        "combine": [
-         "width",
-         "height"
-        ]
-       },
-       "steps": {
-        "in": "extension",
-        "field": "steps"
-       },
-       "guidance": {
-        "in": "extension",
-        "field": "guidance"
-       },
-       "denoise": {
-        "in": "extension",
-        "field": "denoise"
-       }
-      },
-      "extensions_field": "extensions (JSON string)",
-      "output": "data[].b64_json or data[].url",
-      "response": {
-        "kind": "json"
-      }
-     },
-     "async": null
-    }
-   }
-  }
- ],
  "groups": [
   {
    "capability": "image",
-   "title": "Image",
    "count": 1,
+   "title": "Image",
    "workflow_ids": [
-    "image.edit.flux2-klein-4b"
+    "image.edit.qwen-image-2.1-edit"
    ]
   }
  ],
- "counts": {
-  "workflows": 1,
-  "capabilities": 1
- },
  "links": {
-  "self": "/me/api/workflows",
   "gateway_discovery": "/gateway/v1/workflows",
-  "openapi": "/openapi.json"
- }
+  "openapi": "/openapi.json",
+  "self": "/me/api/workflows"
+ },
+ "object": "workflow.catalog",
+ "schema_version": 1,
+ "workflows": [
+  {
+   "aliases": [],
+   "availability": {
+    "available": true,
+    "measured": false,
+    "reason_code": "configured",
+    "status": "configured"
+   },
+   "capabilities": [
+    {
+     "availability": {
+      "available": false,
+      "configured": true,
+      "enabled": true,
+      "evidence": {
+       "kind": "unknown"
+      },
+      "idle_startable": false,
+      "measured": false,
+      "reason": "Not measured yet",
+      "status": "unknown",
+      "up": null
+     },
+     "available": true,
+     "capability": "image",
+     "capability_title": "Images",
+     "caveats": [],
+     "execution": "job",
+     "exposure": "default",
+     "icon_key": "image",
+     "input_modalities": [
+      "text",
+      "image"
+     ],
+     "intent": "image.edit",
+     "output_modalities": [
+      "image"
+     ],
+     "recommended_model": "Qwen-Image 2.1 Edit",
+     "resource_tier": "batch",
+     "secondary_profile": false,
+     "streaming": false,
+     "summary": "Generate or edit images from your prompts.",
+     "tags": [],
+     "title": "Qwen-Image 2.1 Edit",
+     "trust_tier": "stable",
+     "use_name": "image.edit.qwen-image-2.1-edit",
+     "use_names": [
+      "image.edit.qwen-image-2.1-edit"
+     ],
+     "workflow": "image.edit.qwen-image-2.1-edit"
+    }
+   ],
+   "capability": "image",
+   "description": "Edit a photo from a text instruction",
+   "discovery_url": "/gateway/v1/workflows/image.edit.qwen-image-2.1-edit",
+   "engine_binding": "comfyui",
+   "engine_binding_detail": {
+    "available": true,
+    "backends": [
+     "comfyui"
+    ],
+    "measured": false,
+    "reason_code": "configured",
+    "status": "configured"
+   },
+   "example_request": {
+    "body": {},
+    "content_type": "multipart/form-data",
+    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png'",
+    "files": {
+     "source_image": {
+      "field": "image[]",
+      "input": "source_image",
+      "media_type": "image/*",
+      "required": true
+     }
+    },
+    "form": {
+     "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}",
+     "model": "qwen-image-2.1-edit",
+     "prompt": "A small teal fish mark on a clean white card."
+    },
+    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"cfg\\\":1.0,\\\"seed\\\":0}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+    "method": "POST",
+    "path": "/v1/images/edits",
+    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+   },
+   "examples": {
+    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png'",
+    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"cfg\\\":1.0,\\\"seed\\\":0}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+   },
+   "id": "image.edit.qwen-image-2.1-edit",
+   "inputs": [
+    {
+     "accepted": true,
+     "applies": "Multipart form",
+     "ignored": false,
+     "name": "prompt",
+     "request_field": "prompt",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "accepted": true,
+     "applies": "File upload",
+     "asset": true,
+     "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
+     "help": "The picture you want to change.",
+     "ignored": false,
+     "label": "a picture to change",
+     "media_type": "image/*",
+     "name": "source_image",
+     "request_field": "image[]",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": "",
+     "ignored": false,
+     "name": "negative_prompt",
+     "request_field": "negative_prompt",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": 1024,
+     "description": "Lower is faster. Large pictures can be much slower above 1024.",
+     "help": "Lower is faster. Large pictures can be much slower above 1024.",
+     "ignored": false,
+     "label": "reference size",
+     "maximum": 2048,
+     "minimum": 256,
+     "name": "reference_resolution",
+     "request_field": "reference_resolution",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": 25,
+     "description": "More steps add detail but take longer.",
+     "help": "More steps add detail but take longer.",
+     "ignored": false,
+     "label": "steps",
+     "maximum": 60,
+     "minimum": 1,
+     "name": "steps",
+     "request_field": "steps",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": 1.0,
+     "description": "Higher follows your words more closely. Try 3 to 5 if colours look too warm.",
+     "help": "Higher follows your words more closely. Try 3 to 5 if colours look too warm.",
+     "ignored": false,
+     "label": "prompt strength",
+     "maximum": 10,
+     "minimum": 0,
+     "name": "cfg",
+     "request_field": "cfg",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "ignored": false,
+     "minimum": 0,
+     "name": "seed",
+     "request_field": "seed",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "accepted": true,
+     "applies": "Route option",
+     "description": "Number of images.",
+     "ignored": false,
+     "label": "number of results",
+     "maximum": 10,
+     "minimum": 1,
+     "name": "n",
+     "request_field": "n",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "accepted": true,
+     "applies": "Route option",
+     "description": "WIDTHxHEIGHT, e.g. 960x512.",
+     "ignored": false,
+     "name": "size",
+     "request_field": "size",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "intent": "image.edit",
+   "machine_readable_discovery_url": "/openapi.json#x-azizam-workflows",
+   "native_passthrough_route": null,
+   "native_route": null,
+   "openapi": {
+    "execution": {
+     "async": null,
+     "recommended": "sync",
+     "sync": {
+      "content_type": "multipart/form-data",
+      "extensions_field": "extensions (JSON string)",
+      "fields": {
+       "cfg": {
+        "field": "cfg",
+        "in": "extension"
+       },
+       "negative_prompt": {
+        "field": "negative_prompt",
+        "in": "extension"
+       },
+       "prompt": {
+        "field": "prompt",
+        "in": "form"
+       },
+       "reference_resolution": {
+        "field": "reference_resolution",
+        "in": "extension"
+       },
+       "seed": {
+        "field": "seed",
+        "in": "extension"
+       },
+       "source_image": {
+        "field": "image[]",
+        "in": "file"
+       },
+       "steps": {
+        "field": "steps",
+        "in": "extension"
+       }
+      },
+      "method": "POST",
+      "model": "qwen-image-2.1-edit",
+      "output": "data[].b64_json or data[].url",
+      "path": "/v1/images/edits",
+      "response": {
+       "kind": "json"
+      }
+     }
+    },
+    "inputs_schema": {
+     "$ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit"
+    },
+    "route_inputs": [
+     {
+      "description": "Number of images.",
+      "field": "n",
+      "in": "body",
+      "label": "number of results",
+      "maximum": 10,
+      "minimum": 1,
+      "name": "n",
+      "type": "integer"
+     },
+     {
+      "description": "WIDTHxHEIGHT, e.g. 960x512.",
+      "field": "size",
+      "in": "form",
+      "name": "size",
+      "type": "string"
+     }
+    ]
+   },
+   "outputs": [
+    {
+     "media_type": "image/png",
+     "name": "image"
+    }
+   ],
+   "purpose": "Edit a photo from a text instruction",
+   "recent_jobs": [],
+   "recent_jobs_url": "/me/api/media?workflow=image.edit.qwen-image-2.1-edit",
+   "recent_receipts": [],
+   "short_id": "qwen-image-2.1-edit",
+   "technical_notes": "Change a photo by telling it what to do, such as swapping the background or adding an object.",
+   "title": "Qwen-Image 2.1 Edit",
+   "try_url": "/try/?workflow=image.edit.qwen-image-2.1-edit",
+   "typical_seconds": 20
+  }
+ ]
 }

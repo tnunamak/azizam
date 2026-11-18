@@ -14,10 +14,7 @@ import { ViewerContext, type Viewer } from "@/components/shell/session";
 import catalog from "./fixtures/workflows-image-edit.json";
 import multirefCatalog from "./fixtures/workflows-image-edit-multiref.json";
 
-// The real catalog row the gateway builds for "Flux2 Klein 4B Edit": its two
-// pictures are typed "string" with `asset: true`, and the recommended route
-// (multipart /v1/images/edits) sends them as the file parts "image[]" and
-// "mask". Each picture gets one picker; nothing shows a made-up path.
+// The real edit catalog row supplies an image picker and multipart route.
 const HISTORY_ON = {
   keep: true,
   retention: "7_days",
@@ -79,7 +76,7 @@ beforeEach(() => {
     configurable: true,
     value: () => {},
   });
-  account.params = new URLSearchParams("workflow=image.edit.flux2-klein-4b");
+  account.params = new URLSearchParams("workflow=image.edit.qwen-image-2.1-edit");
   account.session.mockResolvedValue({
     authenticated: true,
     apps: [{ id: "try", name: "Try" }],
@@ -118,7 +115,7 @@ const member: Viewer = {
 };
 const owner: Viewer = { ...member, name: "Sam", role: "owner", admin: true };
 
-async function openWorkflow(viewer: Viewer = member, title = "Flux2 Klein 4B Edit") {
+async function openWorkflow(viewer: Viewer = member, title = "Qwen-Image 2.1 Edit") {
   render(
     <ViewerContext.Provider value={viewer}>
       <TryPage />
@@ -407,7 +404,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
       await userEvent.click(await screen.findByRole("option", { name: new RegExp(name) }));
     };
     await upload(/main picture/i, "old.png");
-    await switchTo("Flux2 Klein 4B Edit");
+    await switchTo("Qwen-Image 2.1 Edit");
     expect(screen.queryByText("old.png")).toBeNull();
     // Switching back restores this workflow's own draft, so its earlier picture is still there.
     await switchTo("Qwen-Image 2.1 Multi-Reference Edit");
@@ -437,7 +434,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
       await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
       await userEvent.click(await screen.findByRole("option", { name: new RegExp(name) }));
     };
-    await switchTo("Flux2 Klein 4B Edit");
+    await switchTo("Qwen-Image 2.1 Edit");
     // Another workflow starts from its own example, with none of this workflow's pictures or words.
     expect(screen.queryByText("kept.png")).toBeNull();
     expect(description()).not.toHaveValue("Keep the tones warm");
@@ -471,7 +468,7 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     await userEvent.click(await screen.findByRole("button", { name: "Old model picture" }));
     await waitFor(() => expect(downloadSignal).toBeDefined());
     await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
-    await userEvent.click(await screen.findByRole("option", { name: /Flux2 Klein 4B Edit/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /Qwen-Image 2.1 Edit/ }));
     expect(downloadSignal!.aborted).toBe(true);
     await act(async () => {
       finishDownload(new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), {
