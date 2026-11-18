@@ -125,3 +125,27 @@ it("keeps the open request sheet when a live refetch no longer includes its requ
   expect(dialog.getByText("Request ID: old-request")).toBeTruthy();
   expect(dialog.getByText("Original person")).toBeTruthy();
 });
+
+it("keeps the sheet on the request's latest outcome after a live refetch drops it", async () => {
+  const { replace, requests } = await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Follow live" }));
+  fireEvent.click(screen.getByRole("button", { name: "Request details: Chat by Original person" }));
+  expect(within(screen.getByRole("dialog")).getByText("In progress")).toBeTruthy();
+  replace([row("old-request", "Original person", NOW / 1000 - 1200, "ok")]);
+  await advance(5100);
+  expect(within(screen.getByRole("dialog")).getByText("Completed")).toBeTruthy();
+  replace([row("new-request", "New person", NOW / 1000)]);
+  await advance(5100);
+  expect(requests).toHaveBeenCalledTimes(3);
+  const dialog = within(screen.getByRole("dialog"));
+  expect(dialog.getByText("Request ID: old-request")).toBeTruthy();
+  expect(dialog.getByText("Completed")).toBeTruthy();
+  expect(dialog.queryByText("In progress")).toBeNull();
+});
+
+it("a request the gateway reports as stale_incomplete still shows when it last updated", async () => {
+  await mount([row("stuck", "Stuck", NOW / 1000 - 3600, "stale_incomplete", NOW - 20 * 60_000)]);
+  const request = screen.getByRole("button", { name: "Request details: Chat by Stuck" });
+  expect(within(request).getByText("Outcome not recorded")).toBeTruthy();
+  expect(within(request).getByText(/No update since/)).toBeTruthy();
+});

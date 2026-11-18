@@ -294,6 +294,10 @@ export function Requests() {
   );
   const people = data?.pages[0]?.people ?? [];
   const liveRecord = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
+  // Keep the newest version seen, so a request that leaves the loaded rows keeps its latest outcome, not its opening one.
+  useEffect(() => {
+    if (selectedReceiptKey !== null && liveRecord) setOpenedRecord(liveRecord);
+  }, [selectedReceiptKey, liveRecord]);
   const record = selectedReceiptKey === null ? null : liveRecord ?? openedRecord;
   useEffect(() => {
     if (isFetchingNextPage || !pageButtonRef.current) return;

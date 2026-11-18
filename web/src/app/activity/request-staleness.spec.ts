@@ -42,7 +42,7 @@ describe("staleWords", () => {
     for (const status of ["accepted", "running", "in_progress"]) {
       expect(staleWords(status, old, now)).toBe(words(old));
     }
-    for (const status of [undefined, "", "queued", "failed", "cancelled", "RUNNING"]) {
+    for (const status of [undefined, "", "queued", "failed", "cancelled", "RUNNING", "incomplete"]) {
       expect(staleWords(status, old, now)).toBeNull();
     }
   });
@@ -56,5 +56,11 @@ describe("staleWords", () => {
   it("ignores a non-finite current time", () => {
     expect(staleWords("running", old, NaN)).toBeNull();
     expect(staleWords("running", old, Infinity)).toBeNull();
+  });
+
+  it("gives the last update of a receipt the gateway already judged stale, whatever this clock says", () => {
+    expect(staleWords("stale_incomplete", old, now)).toBe(words(old));
+    expect(staleWords("stale_incomplete", now - 60_000, now)).toBe(words(now - 60_000));
+    expect(staleWords("stale_incomplete", null, now)).toBeNull();
   });
 });
