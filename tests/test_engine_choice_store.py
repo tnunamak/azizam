@@ -143,25 +143,45 @@ def test_threads_writing_different_keys_keep_both(tmp_path, monkeypatch):
     assert choice_store is not None
 
 
-def _spawn_choice_writer(path, key, pipe):
-    """Use the real kernel lock, but bound contention so failures need no signals."""
+def test_bounded_flock_accepts_only_exclusive_and_unlock(tmp_path):
+    import fcntl
+
+    with (tmp_path / "lock").open("w+b") as lock:
+        bounded_flock(lock, fcntl.LOCK_EX, real_flock=fcntl.flock)
+        try:
+            for operation in (fcntl.LOCK_EX | fcntl.LOCK_NB, fcntl.LOCK_SH):
+                with pytest.raises(AssertionError, match=f"operation {operation}"):
+                    bounded_flock(lock, operation, real_flock=fcntl.flock)
+        finally:
+            bounded_flock(lock, fcntl.LOCK_UN, real_flock=fcntl.flock)
+
+
+def bounded_flock(fd, operation, *, real_flock):
+    """Bound exclusive contention without changing the requested lock contract."""
     import fcntl
     import time
 
+    if operation == fcntl.LOCK_UN:
+        return real_flock(fd, operation)
+    if operation != fcntl.LOCK_EX:
+        raise AssertionError(f"unexpected flock operation {operation}")
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            return real_flock(fd, operation | fcntl.LOCK_NB)
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("choice-store lock remained held")
+            time.sleep(min(0.01, remaining))
+
+
+def _spawn_choice_writer(path, key, pipe):
+    """Use the real kernel lock, but bound contention so failures need no signals."""
+    import fcntl
+
     real_flock = fcntl.flock
-
-    def bounded_flock(fd, operation):
-        deadline = time.monotonic() + 5
-        while True:
-            try:
-                return real_flock(fd, operation | fcntl.LOCK_NB)
-            except BlockingIOError:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("choice-store lock remained held")
-                time.sleep(min(0.01, remaining))
-
-    fcntl.flock = bounded_flock
+    fcntl.flock = lambda fd, operation: bounded_flock(fd, operation, real_flock=real_flock)
     try:
         store = ChoiceStore(path)
         pipe.send('ready')
