@@ -270,6 +270,22 @@
         "scheduler",
         "help"
       ]
+    },
+    {
+      "after": "2026-04-02",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/ACE-Step/acestep-v15-xl-turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
     }
   ],
   "audio.generate.sa3-small-sfx": [
@@ -331,6 +347,14 @@
         "inputs",
         "seed",
         "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -462,13 +486,21 @@
       ]
     },
     {
-      "after": "How many clips to make at once.",
+      "after": "Makes this many clips, but only the first one comes back.",
       "before": null,
       "before_present": false,
       "path": [
         "inputs",
         "batch_size",
         "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/declare-lab/TangoFlux",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -512,6 +544,14 @@
         "tags",
         "description"
       ]
+    },
+    {
+      "after": "https://huggingface.co/m-a-p/YuE2-3B",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
     }
   ],
   "image.edit.fibo-2-edit-turbo": [
@@ -553,6 +593,14 @@
         "inputs",
         "seed",
         "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/briaai/Fibo-2.0-edit-turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -668,13 +716,29 @@
       ]
     },
     {
-      "after": "Choose async to receive a job to check later, or sync to wait for the result.",
+      "after": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
       "before": null,
       "before_present": false,
       "path": [
         "inputs",
         "mode",
         "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -737,6 +801,22 @@
         "inputs",
         "seed",
         "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -859,6 +939,22 @@
         "inputs",
         "seed",
         "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -1055,6 +1151,22 @@
         "prompt_mode",
         "help"
       ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
     }
   ],
   "image.edit.seedvr2-upscale": [
@@ -1132,6 +1244,16 @@
       ]
     }
   ],
+  "image.generate.anima-turbo": [
+    {
+      "after": "https://huggingface.co/circlestone-labs/Anima",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
   "image.generate.krea2-turbo": [
     {
       "after": "what to make",
@@ -1171,6 +1293,86 @@
         "inputs",
         "seed",
         "help"
+      ]
+    },
+    {
+      "after": "2026-06-22",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/krea/Krea-2-Turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.krea2-turbo-snofs": [
+    {
+      "after": "2026-06-22",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/krea/Krea-2-Turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.moss-image": [
+    {
+      "after": "2026-10-16",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.moss-image-fast": [
+    {
+      "after": "https://huggingface.co/lodestones/Kromoss",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.moss-image-quality": [
+    {
+      "after": "2026-10-16",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -1419,6 +1621,194 @@
         "inputs",
         "seam_blending",
         "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "mesh.edit.rig-auto": [
+    {
+      "after": "https://github.com/vltrx/UniRig",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "mesh.edit.texture-refine": [
+    {
+      "after": "https://github.com/yiboz2001/UltraTex",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "mesh.generate.pixal3d": [
+    {
+      "after": "https://huggingface.co/TencentARC/Pixal3D",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.edit.scail-2-replace": [
+    {
+      "after": "https://huggingface.co/zai-org/SCAIL-2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-i2v": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-keyframes": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-keyframes-mid": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-long": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-t2v": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-i2v": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-keyframes": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-keyframes-mid": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-long": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-t2v": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ]
