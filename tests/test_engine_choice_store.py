@@ -143,6 +143,109 @@ def test_threads_writing_different_keys_keep_both(tmp_path, monkeypatch):
     assert choice_store is not None
 
 
+def _spawn_choice_writer(path, key, pipe):
+    """Use the real kernel lock, but bound contention so failures need no signals."""
+    import fcntl
+    import time
+
+    real_flock = fcntl.flock
+
+    def bounded_flock(fd, operation):
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                return real_flock(fd, operation | fcntl.LOCK_NB)
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("choice-store lock remained held")
+                time.sleep(min(0.01, remaining))
+
+    fcntl.flock = bounded_flock
+    try:
+        store = ChoiceStore(path)
+        pipe.send('ready')
+        store.write('s', 'node', key, ['child'], fetched_at=2)
+        pipe.send('done')
+    finally:
+        fcntl.flock = real_flock
+        pipe.close()
+
+
+def test_other_process_lock_blocks_write(tmp_path):
+    import fcntl
+    import multiprocessing
+
+    path = tmp_path / 'choices.json'
+    store = ChoiceStore(path)
+    store.write('s', 'node', 'parent', ['parent'], fetched_at=1)
+    ctx = multiprocessing.get_context('spawn')
+    receive, send = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_spawn_choice_writer, args=(path, 'child', send))
+    started = False
+    try:
+        with path.with_name(path.name + '.lock').open('r+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                proc.start()
+                started = True
+                send.close()
+                assert receive.poll(10), "writer did not become ready"
+                assert receive.recv() == 'ready'
+                # Starting the clock after readiness avoids counting spawn latency.
+                assert not receive.poll(1), "writer bypassed the sibling lock"
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+        assert receive.poll(10), "writer did not finish after unlock"
+        assert receive.recv() == 'done'
+    finally:
+        send.close()
+        if started:
+            proc.join(10)
+        receive.close()
+    assert proc.exitcode == 0
+    proc.close()
+    assert store.read('s', 'node', 'parent').choices == ['parent']
+    assert store.read('s', 'node', 'child').choices == ['child']
+
+
+def test_failed_write_releases_lock_for_other_process(tmp_path, monkeypatch):
+    import multiprocessing
+
+    path = tmp_path / 'choices.json'
+    store = ChoiceStore(path)
+
+    def fail_load():
+        raise RuntimeError('injected locked load failure')
+
+    # Patch this instance only; spawn imports a fresh module in the writer.
+    with monkeypatch.context() as patch:
+        patch.setattr(store, '_load', fail_load)
+        with pytest.raises(RuntimeError, match='injected locked load failure'):
+            store.write('s', 'node', 'failed', ['parent'], fetched_at=1)
+
+    ctx = multiprocessing.get_context('spawn')
+    receive, send = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_spawn_choice_writer, args=(path, 'after-failure', send))
+    started = False
+    try:
+        proc.start()
+        started = True
+        send.close()
+        assert receive.poll(10), "writer did not become ready"
+        assert receive.recv() == 'ready'
+        assert receive.poll(10), "failed write retained the sibling lock"
+        assert receive.recv() == 'done'
+    finally:
+        send.close()
+        if started:
+            proc.join(10)
+        receive.close()
+    assert proc.exitcode == 0
+    proc.close()
+    assert store.read('s', 'node', 'after-failure').choices == ['child']
+    assert store.read('s', 'node', 'failed') is None
+
 def test_newest_fetch_wins(tmp_path):
     store = ChoiceStore(tmp_path / 'choices.json')
     assert store.write('s', 'node', 'k', ['new'], fetched_at=200) is True
