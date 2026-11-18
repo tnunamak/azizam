@@ -15,6 +15,9 @@ For a reviewed additive workflow, capture with
 Save WORKFLOW_READERS_JSON as sorted, two-space JSON with a final newline, compressed with gzip mtime=0.
 Review every existing entry that changes before replacing it.
 
+Re-captured 2026-11-18 for train 77, second step: six more workflows (TRELLIS, PIXAL3D, RIFE, SeedVR2, SDXL tile,
+ACE-Step meter) name their choices and four help texts were reworded; only choice_labels, those help texts, their
+mirrored descriptions and the manifest hashes moved.
 Re-captured 2026-11-18 for train 77 (readable choice names): member catalog rows carry choice_labels for the named
 inputs, the image-identity mode help and its mirrored descriptions changed, and the two edited manifests' hashes moved;
 no other value changed.

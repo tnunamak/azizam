@@ -3322,7 +3322,7 @@
       "sha256": "b66fc1eb82c4d92964f74f277b97ea4cc7de6cc68ba1a127570a7f4bd393049b"
     },
     "image.edit.seedvr2-upscale": {
-      "bytes": 3389,
+      "bytes": 3329,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3403,7 +3403,7 @@
             "properties": {
               "color_correction_method": {
                 "default": "none",
-                "description": "Choose how to match colors to the original picture, or none to skip color matching.",
+                "description": "How colors are matched to the original picture.",
                 "enum": [
                   "none",
                   "lab",
@@ -3414,7 +3414,7 @@
               },
               "scale": {
                 "default": 2,
-                "description": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
+                "description": "How much larger the picture gets before sharpening.",
                 "enum": [
                   2,
                   4
@@ -3444,7 +3444,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_seedvr2_upscale",
         "run_path": null
       },
-      "sha256": "6f35982929484963716a27777fc25165b5b675059be74f5fcd410bb8d7f69bc3"
+      "sha256": "500927fdac6555c16ce426a4827c05d55c97834a1631694235ab500e513d10ab"
     },
     "image.generate.anima-turbo": {
       "bytes": 5278,
@@ -6046,7 +6046,7 @@
       "sha256": "fc941bfdb2aec99f0c8791139472ce1989fc7dc9e8b66edf497b556311531889"
     },
     "mesh.generate.trellis-2": {
-      "bytes": 4607,
+      "bytes": 4652,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6176,7 +6176,7 @@
             "description": "Send one picture; receive one textured 3D model (model/gltf-binary).",
             "properties": {
               "bg_removal": {
-                "description": "Leave empty to let the service choose.",
+                "description": "Choose how the background is cut away, or leave it empty to let the service choose.",
                 "enum": [
                   "threshold",
                   "birefnet"
@@ -6217,10 +6217,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_mesh_generate_trellis_2",
         "run_path": null
       },
-      "sha256": "c820dae284396d1d4dd2cc0e5b15767a984ad64ff884b3db02037a630bbb51aa"
+      "sha256": "9af62a614e18116850c58321ddaea0f4e0427f813655ae8e6fc1da9a96757f39"
     },
     "video.edit.rife-interpolate": {
-      "bytes": 7972,
+      "bytes": 7960,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6315,7 +6315,7 @@
             "properties": {
               "multiplier": {
                 "default": 2,
-                "description": "2 doubles the frames. 3 and 4 are less tested.",
+                "description": "How many times more frames the video gets.",
                 "enum": [
                   2,
                   3,
@@ -6342,7 +6342,7 @@
             "properties": {
               "multiplier": {
                 "default": 2,
-                "description": "2 doubles the frames. 3 and 4 are less tested.",
+                "description": "How many times more frames the video gets.",
                 "enum": [
                   2,
                   3,
@@ -6370,7 +6370,7 @@
             "properties": {
               "multiplier": {
                 "default": 2,
-                "description": "2 doubles the frames. 3 and 4 are less tested.",
+                "description": "How many times more frames the video gets.",
                 "enum": [
                   2,
                   3,
@@ -6498,7 +6498,7 @@
           }
         }
       },
-      "sha256": "88b6f9d5ef1b80c420b607c3dbbb14544b2856cb6ba9a5887c216a9e1fdf177b"
+      "sha256": "e72e818713e6b2d4161b7980be69da13a38606627df641f156bcd7d05fea6a4a"
     },
     "video.edit.scail-2-replace": {
       "bytes": 15818,

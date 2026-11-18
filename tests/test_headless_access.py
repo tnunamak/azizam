@@ -553,6 +553,8 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     and the image-identity mode help names the auto mode; only those two input schemas moved.
     Re-captured 2026-11-18 (train 77, readable choice names): the image-identity mode help uses the shown names;
     only that input schema moved. choice_labels never enters the API document.
+    Re-captured 2026-11-18 (train 77, six more workflows name their choices): reworded help for RIFE's frame multiplier
+    and SeedVR2's two choices; only those input schemas moved (the RIFE form, the RIFE and SeedVR2 inputs).
     """
     # Re-captured 2026-11-12: the generic run schema lists the five additive mesh.edit forms.
     schema = proxy.app.openapi()

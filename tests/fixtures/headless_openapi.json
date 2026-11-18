@@ -962,7 +962,7 @@
         "properties": {
           "multiplier": {
             "default": 2,
-            "description": "2 doubles the frames. 3 and 4 are less tested.",
+            "description": "How many times more frames the video gets.",
             "enum": [
               2,
               3,
@@ -1428,7 +1428,7 @@
         "properties": {
           "multiplier": {
             "default": 2,
-            "description": "2 doubles the frames. 3 and 4 are less tested.",
+            "description": "How many times more frames the video gets.",
             "enum": [
               2,
               3,
@@ -2251,7 +2251,7 @@
         "properties": {
           "color_correction_method": {
             "default": "none",
-            "description": "Choose how to match colors to the original picture, or none to skip color matching.",
+            "description": "How colors are matched to the original picture.",
             "enum": [
               "none",
               "lab",
@@ -2262,7 +2262,7 @@
           },
           "scale": {
             "default": 2,
-            "description": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
+            "description": "How much larger the picture gets before sharpening.",
             "enum": [
               2,
               4
@@ -2814,7 +2814,7 @@
         "description": "Send one picture; receive one textured 3D model (model/gltf-binary).",
         "properties": {
           "bg_removal": {
-            "description": "Leave empty to let the service choose.",
+            "description": "Choose how the background is cut away, or leave it empty to let the service choose.",
             "enum": [
               "threshold",
               "birefnet"
@@ -2856,7 +2856,7 @@
         "properties": {
           "multiplier": {
             "default": 2,
-            "description": "2 doubles the frames. 3 and 4 are less tested.",
+            "description": "How many times more frames the video gets.",
             "enum": [
               2,
               3,

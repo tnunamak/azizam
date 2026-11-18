@@ -348,6 +348,21 @@
         "language",
         "choice_labels"
       ]
+    },
+    {
+      "after": {
+        "2": "2 beats per bar",
+        "3": "3 beats per bar",
+        "4": "4 beats per bar",
+        "6": "6 beats per bar"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "choice_labels"
+      ]
     }
   ],
   "audio.generate.sa3-small-sfx": [
@@ -1310,7 +1325,7 @@
       ]
     },
     {
-      "after": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
+      "after": "How much larger the picture gets before sharpening.",
       "before": null,
       "before_present": false,
       "path": [
@@ -1330,7 +1345,7 @@
       ]
     },
     {
-      "after": "Choose how to match colors to the original picture, or none to skip color matching.",
+      "after": "How colors are matched to the original picture.",
       "before": null,
       "before_present": false,
       "path": [
@@ -1357,6 +1372,34 @@
         "inputs",
         "seed",
         "help"
+      ]
+    },
+    {
+      "after": {
+        "2": "Twice as large",
+        "4": "Four times as large"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "adain": "Fastest, roughest",
+        "lab": "Most faithful colors",
+        "none": "No color matching",
+        "wavelet": "Keep fine detail"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "choice_labels"
       ]
     }
   ],
@@ -1746,6 +1789,39 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": {
+        "dpmpp_2m": "DPM++ 2M",
+        "dpmpp_2m_sde": "DPM++ 2M SDE",
+        "dpmpp_sde": "DPM++ SDE",
+        "euler": "Euler",
+        "euler_ancestral": "Euler ancestral",
+        "uni_pc": "UniPC"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "beta": "Beta",
+        "karras": "Karras",
+        "normal": "Normal",
+        "sgm_uniform": "SGM uniform",
+        "simple": "Simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "choice_labels"
+      ]
     }
   ],
   "mesh.edit.rig-auto": [
@@ -1775,6 +1851,85 @@
       "before_present": false,
       "path": [
         "source_url"
+      ]
+    },
+    {
+      "after": {
+        "1024": "Medium detail",
+        "1536": "High detail (slowest)",
+        "512": "Low detail (fastest)"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "resolution",
+        "choice_labels"
+      ]
+    }
+  ],
+  "mesh.generate.trellis-2": [
+    {
+      "after": {
+        "1024": "Medium detail",
+        "1536": "High detail (slowest)",
+        "512": "Low detail (fastest)"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "resolution",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "birefnet": "Careful cutout (AI)",
+        "threshold": "Quick cutout"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "bg_removal",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": "Choose how the background is cut away, or leave it empty to let the service choose.",
+      "before": "Leave empty to let the service choose.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "bg_removal",
+        "help"
+      ]
+    }
+  ],
+  "video.edit.rife-interpolate": [
+    {
+      "after": {
+        "2": "Twice the frames",
+        "3": "Three times the frames (less tested)",
+        "4": "Four times the frames (less tested)"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "multiplier",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": "How many times more frames the video gets.",
+      "before": "2 doubles the frames. 3 and 4 are less tested.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "multiplier",
+        "help"
       ]
     }
   ],
