@@ -563,6 +563,8 @@ def _holds(value: Any, name: str) -> bool:
 def validate_inputs(
     manifest: dict[str, Any],
     supplied: dict[str, Any],
+    *,
+    choices: Mapping[str, list[str]] | None = None,
 ) -> InputValidationResult:
     """Check a request's inputs against the manifest, every one, to any depth. An object or array input is checked
     through its whole tree, and each refusal is listed at its place (``inputs.people[2].box``). A scalar keeps the reason
@@ -577,6 +579,12 @@ def validate_inputs(
             result.rejected[name] = "unknown input"
             result.errors.append(ContractError(("inputs", name), "input_unknown", "unknown input"))
             continue
+        # A valid snapshot replaces only this declared input's enum, never the manifest itself.
+        snapshot = choices.get(name) if choices is not None and "choices_from" in spec else None
+        if (isinstance(snapshot, list) and snapshot
+                and all(isinstance(item, str) for item in snapshot)):
+            spec = {**spec, "enum": snapshot}
+
         reason = validate_input_value(name, value, spec)
         if reason is None:
             result.accepted[name] = value
