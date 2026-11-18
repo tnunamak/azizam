@@ -70,7 +70,7 @@ def test_owner_only(owner, role, method, path):
 
 def test_owner_refresh_joins_background_refresh(owner, monkeypatch):
     client, _, _, entry = owner
-    entered, release = threading.Event(), threading.Event()
+    entered, release, joined = threading.Event(), threading.Event(), threading.Event()
     calls = []
     def fetch(*args):
         calls.append(args)
@@ -78,12 +78,18 @@ def test_owner_refresh_joins_background_refresh(owner, monkeypatch):
         assert release.wait(10)
         return {'input': {'required': {name: [['new']] for name in ('fresh', 'stale', 'missing', 'failed')}}}
     monkeypatch.setattr(choice_lists, 'fetch_fresh', fetch)
+    shield = choice_lists.asyncio.shield
+    def observe_join(task):
+        joined.set()
+        return shield(task)
+    monkeypatch.setattr(choice_lists.asyncio, 'shield', observe_join)
     identity = SimpleNamespace(service_id='svc', origin='http://203.0.113.10:8188')
     client.portal.call(choice_lists.choices_for_run, identity, entry.contract['inputs'])
     try:
         assert entered.wait(5)
         thread = threading.Thread(target=lambda: client.post('/admin/api/workflows/choices/refresh'))
         thread.start()
+        assert joined.wait(5)
         assert len(calls) == 1
     finally:
         release.set()

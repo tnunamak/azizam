@@ -74,7 +74,7 @@ def test_inventory_covers_registered_routes_and_documentation():
         Path(__file__).parents[1] / "docs/ops/HEADLESS_ACCESS.md").read_text()))
     assert documented == {(r["method"], r["path"]) for r in INVENTORY}
     assert set(OWNER_OPERATIONS) == {
-        f'{r["method"]} {r["path"]}' for r in OWNER_ROUTES if r["path"].startswith("/admin/api/")}
+        f'{r["method"]} {r["path"]}' for r in OWNER_ROUTES if r["path"].startswith("/admin/api/") and r["schema"]}
 
 
 @pytest.mark.parametrize("kind", ["mounted", "http", "websocket", "opaque"])

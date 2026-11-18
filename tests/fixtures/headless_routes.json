@@ -1990,5 +1990,29 @@
     "method": "POST",
     "path": "/admin/api/workflows/{workflow_id}/restore",
     "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.list_choices",
+    "method": "GET",
+    "path": "/admin/api/workflows/choices",
+    "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.refresh_choices",
+    "method": "POST",
+    "path": "/admin/api/workflows/choices/refresh",
+    "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.refresh_choices",
+    "method": "POST",
+    "path": "/admin/api/workflows/{workflow_id}/choices/refresh",
+    "schema": false
   }
 ]
