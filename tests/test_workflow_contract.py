@@ -29,7 +29,7 @@ from tests.test_domain_literal_ratchet import vocabulary
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLED = sorted((ROOT / "manifests" / "workflows").glob("*.yml"))
-# The 45 bundled files as they were in schema 1, frozen for the converter tests.
+# The 38 bundled files as they were in schema 1, frozen for the converter tests.
 V1_FIXTURES = sorted((ROOT / "tests" / "fixtures" / "workflows_v1").glob("*.yml"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import workflow_contract as command  # noqa: E402
@@ -493,7 +493,7 @@ def test_value_problems_is_the_one_value_check():
 
 
 def test_the_corpus_is_what_was_counted():
-    assert len(BUNDLED) == 45
+    assert len(BUNDLED) == 38
 
 
 @pytest.mark.parametrize("path", BUNDLED, ids=lambda p: p.stem)
@@ -515,15 +515,12 @@ def test_the_bundled_files_are_schema_two_and_the_frozen_copies_are_schema_one()
 
 def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but_for_the_named_edits():
     named = {"ace-step-1.5-xl-turbo"}
-    staged = {"flux2-klein-4b-edit", "flux2-klein-edit"}     # each lists the one result stage that applies its mask
     # Later edits to a released document (help text, a superseded status, engine-derived choices) are listed once, in the
     # same named edits the release migration applies; each must start from the frozen value and end at the bundled one.
     edits = json.loads((ROOT / "tests/fixtures/workflow_post_schema_edits.json").read_text())
     for path in V1_FIXTURES:
         converted, _ = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / path.name).read_text(encoding="utf-8"))
-        if path.stem in staged:
-            assert bundled["bindings"]["comfyui"].pop("result_processing") == ["post_composite_mask"], path.name
         if path.stem == "qwen-image-2.1-inpaint":       # the feather the workflow's own graph applies, not a default of 48
             spec = converted["inputs"]["mask_feather"]
             assert spec.pop("default") == 48
@@ -558,12 +555,12 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
         _doc, notes = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         for note in notes:
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
-    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 45
-    assert counts["capability:backfill"] == 34
-    assert counts["requires:move"] == 30
-    assert counts["accepts:add"] == 37
-    assert counts["seed:add"] == 2
-    assert counts["generate:add"] == 34  # the design said 33: 31 declared and mapped, and 2 added
+    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 38
+    assert counts["capability:backfill"] == 27
+    assert counts["requires:move"] == 27
+    assert counts["accepts:add"] == 31
+    assert counts.get("seed:add", 0) == 0
+    assert counts["generate:add"] == 27
 
 
 def test_the_converted_corpus_has_no_authority_field_and_no_v1_shape():
@@ -582,7 +579,7 @@ def load(name: str) -> dict:
 
 
 def test_the_converter_does_not_touch_its_argument_and_is_idempotent():
-    original = load("flux2-klein")
+    original = load("krea2-turbo")
     snapshot = copy.deepcopy(original)
     converted, notes = convert_1_to_2(original)
     assert original == snapshot and notes
@@ -628,17 +625,16 @@ def test_requirements_with_two_bindings_stay_put_so_the_check_shows_them():
 def test_a_declared_media_type_becomes_the_accepted_type_and_none_means_the_old_constant():
     video, _ = convert_1_to_2(load("video-scail-2-replace"))
     assert video["inputs"]["source_video"]["accepts"] == ["video/*"] and "media_type" not in video["inputs"]["source_video"]
-    edit, _ = convert_1_to_2(load("flux2-klein-edit"))
-    assert edit["inputs"]["source_image"]["accepts"] == ["image/*"]
+    edit_v1 = load("qwen-image-2.1-edit")
+    edit_v1["inputs"]["source_image"] = {"type": "image"}
+    edit, _ = convert_1_to_2(edit_v1)
+    assert edit["inputs"]["source_image"]["accepts"] == ["image/png", "image/jpeg", "image/webp"]
 
 
 def test_the_seed_gets_the_generator_and_a_map_key_without_an_input_becomes_a_gateway_only_input():
-    declared, _ = convert_1_to_2(load("flux2-klein"))
+    declared, _ = convert_1_to_2(load("krea2-turbo"))
     assert declared["inputs"]["seed"]["generate"] == {"generator": "random_integer", "minimum": 0, "maximum": 4294967295}
-    hidden, notes = convert_1_to_2(load("flux2-klein-edit"))
-    assert hidden["inputs"]["seed"] == {"type": "integer", "minimum": 0, "settable": False,
-                                        "generate": {"generator": "random_integer", "minimum": 0, "maximum": 4294967295}}
-    assert ("inputs", "seed") in [n.path for n in notes if n.operation == "add"]
+
 
 
 def test_a_seed_the_bindings_never_fill_gets_no_generator():
@@ -659,7 +655,7 @@ def test_the_mesh_document_converts_to_an_ordinary_one():
 
 
 def test_a_broken_document_is_not_repaired_by_the_converter():
-    v1 = load("flux2-klein")
+    v1 = load("krea2-turbo")
     v1["inputs"]["steps"]["maxium"] = 3
     doc, _ = convert_1_to_2(v1)
     assert pairs(doc) == [(("inputs", "steps", "maxium"), "unknown_field")]
@@ -845,7 +841,7 @@ def hits(text: str, names: set[str]) -> list[str]:
 
 def test_the_token_test_sees_the_names_it_is_built_from():
     names = forbidden_names()
-    assert {"trellis", "comfyui", "node-graph", "image.edit", "image", "flux2-klein", "litellm"} <= names
+    assert {"trellis", "comfyui", "node-graph", "image.edit", "image", "krea2-turbo", "litellm"} <= names
     assert hits("a binding for trellis and a seed", names) == ["seed", "trellis"]
 
 
@@ -861,11 +857,11 @@ def test_the_contract_names_no_model_engine_service_workflow_or_modality(path):
 def test_the_command_checks_the_bundled_directory(capsys):
     assert command.main(["check", str(ROOT / "manifests" / "workflows")]) == 0
     out = capsys.readouterr().out
-    assert out.count("0 errors") == 45 and "converted from schema 1" not in out
+    assert out.count("0 errors") == 38 and "converted from schema 1" not in out
 
 
 def test_the_command_reports_every_error_with_path_and_code(tmp_path, capsys):
-    v1 = load("flux2-klein")
+    v1 = load("krea2-turbo")
     v1["inputs"]["steps"]["maxium"] = 3
     v1["exposure"] = "default"
     (tmp_path / "bad.yml").write_text(yaml.safe_dump(v1), encoding="utf-8")
@@ -887,7 +883,7 @@ def test_the_command_converts_to_a_new_file_and_never_overwrites(tmp_path, capsy
 
 
 def test_the_command_prints_converted_yaml_without_an_output_file(capsys):
-    assert command.main(["convert", str(ROOT / "tests" / "fixtures" / "workflows_v1" / "flux2-klein.yml")]) == 0
+    assert command.main(["convert", str(ROOT / "tests" / "fixtures" / "workflows_v1" / "krea2-turbo.yml")]) == 0
     assert yaml.safe_load(capsys.readouterr().out)["schema_version"] == 2
 
 

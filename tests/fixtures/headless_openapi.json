@@ -38480,7 +38480,10 @@
       "typical_seconds": 2.0
     },
     {
-      "aliases": [],
+      "aliases": [
+        "image-fast",
+        "image-edit-fast"
+      ],
       "description": "Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.",
       "display_name": "FIBO 2 Edit Turbo",
       "execution": {
@@ -39621,7 +39624,9 @@
       "typical_seconds": 7.0
     },
     {
-      "aliases": [],
+      "aliases": [
+        "image-fast"
+      ],
       "description": "Make a picture quickly with less memory. Uses about 9.6 GB of memory.",
       "display_name": "MOSS Image Fast",
       "execution": {

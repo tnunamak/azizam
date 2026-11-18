@@ -101,24 +101,6 @@
         "image.edit",
         "comfyui",
         null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
         "image.edit.qwen-image-2.1-edit"
       ],
       [
@@ -142,7 +124,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -156,24 +138,6 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -214,14 +178,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ],
       [
         "mesh.edit",
@@ -737,24 +695,6 @@
         "image.edit",
         "comfyui",
         null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
         "image.edit.qwen-image-2.1-edit"
       ],
       [
@@ -778,7 +718,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -815,24 +755,6 @@
         "image.generate",
         "comfyui",
         null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -868,14 +790,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ]
     ],
     "image.edit": [
@@ -884,24 +800,6 @@
         "comfyui",
         null,
         "image.edit.fibo-2-edit-turbo"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
       ],
       [
         "image.edit",
@@ -930,7 +828,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -951,24 +849,6 @@
         "image.edit",
         "comfyui",
         null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
         "image.edit.qwen-image-2.1-edit"
       ],
       [
@@ -992,7 +872,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -1013,24 +893,6 @@
         "image.generate",
         "comfyui",
         null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -1066,14 +928,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ]
     ],
     "image.generations": [
@@ -1087,24 +943,6 @@
         "image.generate",
         "comfyui",
         null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -1140,14 +978,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ]
     ],
     "image_edits": [
@@ -1156,24 +988,6 @@
         "comfyui",
         null,
         "image.edit.fibo-2-edit-turbo"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
       ],
       [
         "image.edit",
@@ -1202,7 +1016,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -1223,24 +1037,6 @@
         "image.generate",
         "comfyui",
         null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -1276,14 +1072,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ]
     ],
     "images.edit": [
@@ -1292,24 +1082,6 @@
         "comfyui",
         null,
         "image.edit.fibo-2-edit-turbo"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
       ],
       [
         "image.edit",
@@ -1338,7 +1110,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -1449,24 +1221,6 @@
         "image.edit",
         "comfyui",
         null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
         "image.edit.qwen-image-2.1-edit"
       ],
       [
@@ -1490,7 +1244,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -1504,24 +1258,6 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -1562,14 +1298,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ],
       [
         "mesh.edit",
@@ -1841,24 +1571,6 @@
         "image.edit",
         "comfyui",
         null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
         "image.edit.qwen-image-2.1-edit"
       ],
       [
@@ -1882,7 +1594,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -1896,24 +1608,6 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -1954,14 +1648,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ],
       [
         "mesh.edit",
@@ -2352,24 +2040,6 @@
         "image.edit",
         "comfyui",
         null,
-        "image.edit.flux2-klein"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
-        "image.edit.flux2-klein-4b-inpaint"
-      ],
-      [
-        "image.edit",
-        "comfyui",
-        null,
         "image.edit.qwen-image-2.1-edit"
       ],
       [
@@ -2393,7 +2063,7 @@
       [
         "image.edit",
         "comfyui",
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
         null
       ],
       [
@@ -2407,24 +2077,6 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-4b"
-      ],
-      [
-        "image.generate",
-        "comfyui",
-        null,
-        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -2465,14 +2117,8 @@
       [
         "image.generate",
         "comfyui",
-        "flux2-klein-4b",
+        "krea2-turbo",
         null
-      ],
-      [
-        "image.generate",
-        "gateway",
-        null,
-        "image.generate.flux2-klein-4b-seamless-tile"
       ],
       [
         "mesh.edit",
@@ -3057,7 +2703,7 @@
       "sha256": "f79926baad7fd692f92d971bdc05373b371cb03a6352fc48ee58188d7bd1e7c1"
     },
     {
-      "bytes": 2100,
+      "bytes": 2101,
       "full": {
         "alias": true,
         "availability": {
@@ -3097,7 +2743,7 @@
           "price": null
         },
         "description": "Generate or edit images from your prompts.",
-        "display_name": "Flux2 Klein 4B Edit",
+        "display_name": "FIBO 2 Edit Turbo",
         "engine_label": null,
         "examples": [
           {
@@ -3123,7 +2769,7 @@
           ]
         },
         "locality": "unknown",
-        "name": "Flux2 Klein 4B Edit",
+        "name": "FIBO 2 Edit Turbo",
         "object": "model_catalog.alias",
         "operations": [
           "image_edits"
@@ -3131,9 +2777,9 @@
         "provider": "comfyui",
         "recent_receipts": [],
         "recommended": false,
-        "recommended_model": "Flux2 Klein 4B Edit",
+        "recommended_model": "FIBO 2 Edit Turbo",
         "resolves_to": {
-          "image_edits": "image.edit.flux2-klein-4b"
+          "image_edits": "image.edit.fibo-2-edit-turbo"
         },
         "same_model_as": [],
         "secondary_profile": false,
@@ -3142,7 +2788,7 @@
           "source": null,
           "typical_seconds": null
         },
-        "title": "Flux2 Klein 4B Edit",
+        "title": "FIBO 2 Edit Turbo",
         "use": {
           "curl": null,
           "javascript": {
@@ -3158,15 +2804,15 @@
         },
         "use_names": [
           "image-edit-fast",
-          "image.edit.flux2-klein-4b"
+          "image.edit.fibo-2-edit-turbo"
         ],
-        "workflow": "image.edit.flux2-klein-4b"
+        "workflow": "image.edit.fibo-2-edit-turbo"
       },
       "id": "image-edit-fast",
-      "sha256": "6f2a465836adfa592b0bb5591f7c323910418d1ed2d486f6610734c290372b44"
+      "sha256": "d25ee1c3156edc990a3e55f6613f333b7c468be0b35d1f87f557aafd96c03867"
     },
     {
-      "bytes": 2182,
+      "bytes": 2187,
       "full": {
         "alias": true,
         "availability": {
@@ -3204,8 +2850,8 @@
           "kind": "unknown",
           "price": null
         },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "Flux2 Klein 4B",
+        "description": "Make a picture quickly with less memory.",
+        "display_name": "MOSS Image Fast",
         "engine_label": null,
         "examples": [
           {
@@ -3227,7 +2873,7 @@
           ]
         },
         "locality": "unknown",
-        "name": "Flux2 Klein 4B",
+        "name": "MOSS Image Fast",
         "object": "model_catalog.alias",
         "operations": [
           "images"
@@ -3235,9 +2881,9 @@
         "provider": "comfyui",
         "recent_receipts": [],
         "recommended": false,
-        "recommended_model": "Flux2 Klein 4B",
+        "recommended_model": "MOSS Image Fast",
         "resolves_to": {
-          "images": "image.generate.flux2-klein-4b"
+          "images": "image.generate.moss-image-fast"
         },
         "same_model_as": [],
         "secondary_profile": false,
@@ -3246,7 +2892,7 @@
           "source": null,
           "typical_seconds": null
         },
-        "title": "Flux2 Klein 4B",
+        "title": "MOSS Image Fast",
         "use": {
           "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image-fast\",\"prompt\":\"A small red cabin\"}'",
           "javascript": {
@@ -3262,18 +2908,18 @@
         },
         "use_names": [
           "image-fast",
-          "image.generate.flux2-klein-4b"
+          "image.generate.moss-image-fast"
         ],
-        "workflow": "image.generate.flux2-klein-4b"
+        "workflow": "image.generate.moss-image-fast"
       },
       "id": "image-fast",
-      "sha256": "68e4a428bc1b5f1db3d6503b40c5da7e16f8302efbe344de20daee35bc26bd79"
+      "sha256": "5c193dd1c02cb028b00cc169c0abb2374ace545fc4e66547709c1a9b6d37a5a1"
     }
   ],
   "catalog_counts": {
     "aliases": 3,
-    "capabilities": 65,
-    "models": 55
+    "capabilities": 58,
+    "models": 48
   },
   "catalog_models": [
     {
@@ -3968,209 +3614,6 @@
       "sha256": "471722ed2a2340308633b716cfac2606b75c836fc563b75a63a988c30e9a0c09"
     },
     {
-      "bytes": 2082,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text"
-            ],
-            "intent": "image.generate",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "Flux2 Klein 4b",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "flux2-klein-4b",
-              "prompt": "A small red cabin"
-            },
-            "kind": "image"
-          }
-        ],
-        "icon_key": "image",
-        "id": "flux2-klein-4b",
-        "io": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "Flux2 Klein 4b",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "Flux2 Klein 4b",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "Flux2 Klein 4b",
-        "use": {
-          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"flux2-klein-4b\",\"prompt\":\"A small red cabin\"}'",
-          "javascript": {
-            "model": "flux2-klein-4b",
-            "path": "/v1/images/generations"
-          },
-          "model": "flux2-klein-4b",
-          "path": "/v1/images/generations",
-          "python": {
-            "model": "flux2-klein-4b",
-            "path": "/v1/images/generations"
-          }
-        },
-        "use_names": [
-          "flux2-klein-4b"
-        ],
-        "workflow": null
-      },
-      "id": "flux2-klein-4b",
-      "sha256": "440a7a5d7f1ed0dfa2b93bd26e0da0cec248d8b61d6d87acba78818031a2a5de"
-    },
-    {
-      "bytes": 1998,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text",
-              "image"
-            ],
-            "intent": "image.edit",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "Flux2 Klein 4b Edit",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "flux2-klein-4b-edit",
-              "prompt": "Replace the sky"
-            },
-            "files": [
-              "image"
-            ],
-            "kind": "image_edit"
-          }
-        ],
-        "icon_key": "image",
-        "id": "flux2-klein-4b-edit",
-        "io": {
-          "input": [
-            "image",
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "Flux2 Klein 4b Edit",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "Flux2 Klein 4b Edit",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "Flux2 Klein 4b Edit",
-        "use": {
-          "curl": null,
-          "javascript": {
-            "model": "flux2-klein-4b-edit",
-            "path": "/v1/images/edits"
-          },
-          "model": "flux2-klein-4b-edit",
-          "path": "/v1/images/edits",
-          "python": {
-            "model": "flux2-klein-4b-edit",
-            "path": "/v1/images/edits"
-          }
-        },
-        "use_names": [
-          "flux2-klein-4b-edit"
-        ],
-        "workflow": null
-      },
-      "id": "flux2-klein-4b-edit",
-      "sha256": "6b0ba16f68a01fb4badf45eb45640a1ef4d18690789f585abcbdbdd9381d6880"
-    },
-    {
       "bytes": 2208,
       "full": {
         "alias": false,
@@ -4369,318 +3812,6 @@
       },
       "id": "image.analyze.face-likeness",
       "sha256": "8121933a1c5f0716b503e0492e52c71f31a6e9609db572d37247fc246fafc3ce"
-    },
-    {
-      "bytes": 2070,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text",
-              "image"
-            ],
-            "intent": "image.edit",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "FIBO 2 Edit Turbo",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.edit.fibo-2-edit-turbo",
-              "prompt": "Replace the sky"
-            },
-            "files": [
-              "image"
-            ],
-            "kind": "image_edit"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.edit.fibo-2-edit-turbo",
-        "io": {
-          "input": [
-            "image",
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "FIBO 2 Edit Turbo",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "FIBO 2 Edit Turbo",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "FIBO 2 Edit Turbo",
-        "use": {
-          "curl": null,
-          "javascript": {
-            "model": "image.edit.fibo-2-edit-turbo",
-            "path": "/v1/images/edits"
-          },
-          "model": "image.edit.fibo-2-edit-turbo",
-          "path": "/v1/images/edits",
-          "python": {
-            "model": "image.edit.fibo-2-edit-turbo",
-            "path": "/v1/images/edits"
-          }
-        },
-        "use_names": [
-          "image.edit.fibo-2-edit-turbo"
-        ],
-        "workflow": "image.edit.fibo-2-edit-turbo"
-      },
-      "id": "image.edit.fibo-2-edit-turbo",
-      "sha256": "ba8b710fb4a9a76db0321d36cc81c6868e07644b8b0bd0346451f497442b76a3"
-    },
-    {
-      "bytes": 2040,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text",
-              "image"
-            ],
-            "intent": "image.edit",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "FLUX.2 Klein 9B Edit",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.edit.flux2-klein",
-              "prompt": "Replace the sky"
-            },
-            "files": [
-              "image"
-            ],
-            "kind": "image_edit"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.edit.flux2-klein",
-        "io": {
-          "input": [
-            "image",
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "FLUX.2 Klein 9B Edit",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "FLUX.2 Klein 9B Edit",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "FLUX.2 Klein 9B Edit",
-        "use": {
-          "curl": null,
-          "javascript": {
-            "model": "image.edit.flux2-klein",
-            "path": "/v1/images/edits"
-          },
-          "model": "image.edit.flux2-klein",
-          "path": "/v1/images/edits",
-          "python": {
-            "model": "image.edit.flux2-klein",
-            "path": "/v1/images/edits"
-          }
-        },
-        "use_names": [
-          "image.edit.flux2-klein"
-        ],
-        "workflow": "image.edit.flux2-klein"
-      },
-      "id": "image.edit.flux2-klein",
-      "sha256": "5e1352e0b553f4233179d26ce87259626ff526964c33f366d9b0a99e97d25e98"
-    },
-    {
-      "bytes": 2125,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text",
-              "image"
-            ],
-            "intent": "image.edit",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "Flux2 Klein 4B Inpaint",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.edit.flux2-klein-4b-inpaint",
-              "prompt": "Replace the sky"
-            },
-            "files": [
-              "image"
-            ],
-            "kind": "image_edit"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.edit.flux2-klein-4b-inpaint",
-        "io": {
-          "input": [
-            "image",
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "Flux2 Klein 4B Inpaint",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "Flux2 Klein 4B Inpaint",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "Flux2 Klein 4B Inpaint",
-        "use": {
-          "curl": null,
-          "javascript": {
-            "model": "image.edit.flux2-klein-4b-inpaint",
-            "path": "/v1/images/edits"
-          },
-          "model": "image.edit.flux2-klein-4b-inpaint",
-          "path": "/v1/images/edits",
-          "python": {
-            "model": "image.edit.flux2-klein-4b-inpaint",
-            "path": "/v1/images/edits"
-          }
-        },
-        "use_names": [
-          "image.edit.flux2-klein-4b-inpaint"
-        ],
-        "workflow": "image.edit.flux2-klein-4b-inpaint"
-      },
-      "id": "image.edit.flux2-klein-4b-inpaint",
-      "sha256": "d3b878542e86f99b5c5fd27ff114af66e90e71299fef4cd42ef852fc9f618ca7"
     },
     {
       "bytes": 2161,
@@ -5302,303 +4433,6 @@
       "sha256": "ea32871da5757302e08b34d434b4b9bdc0c1c10e976327851a0cdf171b28c6ae"
     },
     {
-      "bytes": 2194,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text"
-            ],
-            "intent": "image.generate",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "FLUX.2 Klein 9B",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.generate.flux2-klein",
-              "prompt": "A small red cabin"
-            },
-            "kind": "image"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.generate.flux2-klein",
-        "io": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "FLUX.2 Klein 9B",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "FLUX.2 Klein 9B",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "FLUX.2 Klein 9B",
-        "use": {
-          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image.generate.flux2-klein\",\"prompt\":\"A small red cabin\"}'",
-          "javascript": {
-            "model": "image.generate.flux2-klein",
-            "path": "/v1/images/generations"
-          },
-          "model": "image.generate.flux2-klein",
-          "path": "/v1/images/generations",
-          "python": {
-            "model": "image.generate.flux2-klein",
-            "path": "/v1/images/generations"
-          }
-        },
-        "use_names": [
-          "image.generate.flux2-klein"
-        ],
-        "workflow": "image.generate.flux2-klein"
-      },
-      "id": "image.generate.flux2-klein",
-      "sha256": "1a7576da2923433d42238ffe3649705f4ad72526c37cd1647fa64f29d6c51173"
-    },
-    {
-      "bytes": 2382,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text"
-            ],
-            "intent": "image.generate",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "Flux2 Klein 4B Seamless Tile",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.generate.flux2-klein-4b-seamless-tile",
-              "prompt": "A small red cabin"
-            },
-            "kind": "image"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.generate.flux2-klein-4b-seamless-tile",
-        "io": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "Flux2 Klein 4B Seamless Tile",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "gateway",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "Flux2 Klein 4B Seamless Tile",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "Flux2 Klein 4B Seamless Tile",
-        "use": {
-          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image.generate.flux2-klein-4b-seamless-tile\",\"prompt\":\"A small red cabin\"}'",
-          "javascript": {
-            "model": "image.generate.flux2-klein-4b-seamless-tile",
-            "path": "/v1/images/generations"
-          },
-          "model": "image.generate.flux2-klein-4b-seamless-tile",
-          "path": "/v1/images/generations",
-          "python": {
-            "model": "image.generate.flux2-klein-4b-seamless-tile",
-            "path": "/v1/images/generations"
-          }
-        },
-        "use_names": [
-          "image.generate.flux2-klein-4b-seamless-tile"
-        ],
-        "workflow": "image.generate.flux2-klein-4b-seamless-tile"
-      },
-      "id": "image.generate.flux2-klein-4b-seamless-tile",
-      "sha256": "43825169b61ade10d609ac31ea17f19c88056b63fea28c79037020f518abedef"
-    },
-    {
-      "bytes": 2326,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text"
-            ],
-            "intent": "image.generate",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Generate or edit images from your prompts.",
-        "display_name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.generate.flux2-klein-snofs",
-              "prompt": "A small red cabin"
-            },
-            "kind": "image"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.generate.flux2-klein-snofs",
-        "io": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "FLUX.2 Klein 9B + SNOFS (uncensored)",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
-        "use": {
-          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image.generate.flux2-klein-snofs\",\"prompt\":\"A small red cabin\"}'",
-          "javascript": {
-            "model": "image.generate.flux2-klein-snofs",
-            "path": "/v1/images/generations"
-          },
-          "model": "image.generate.flux2-klein-snofs",
-          "path": "/v1/images/generations",
-          "python": {
-            "model": "image.generate.flux2-klein-snofs",
-            "path": "/v1/images/generations"
-          }
-        },
-        "use_names": [
-          "image.generate.flux2-klein-snofs"
-        ],
-        "workflow": "image.generate.flux2-klein-snofs"
-      },
-      "id": "image.generate.flux2-klein-snofs",
-      "sha256": "226222f66bdd646e3efa9dad4408c4739d7776fd7cd66a49f98521fb5ef10c0e"
-    },
-    {
       "bytes": 2196,
       "full": {
         "alias": false,
@@ -5896,105 +4730,6 @@
       "sha256": "614f24b19093a7f2e1c0821ef570ae47e8c7953ff5420507186591238248e193"
     },
     {
-      "bytes": 2224,
-      "full": {
-        "alias": false,
-        "availability": {
-          "available": false,
-          "configured": true,
-          "enabled": true,
-          "evidence": {
-            "kind": "unknown"
-          },
-          "idle_startable": false,
-          "measured": false,
-          "reason": "Not measured yet",
-          "status": "unknown",
-          "up": null
-        },
-        "capabilities": [
-          {
-            "available": true,
-            "capability": "image",
-            "icon_key": "image",
-            "input_modalities": [
-              "text"
-            ],
-            "intent": "image.generate",
-            "label": "Images",
-            "output_modalities": [
-              "image"
-            ],
-            "streaming": false
-          }
-        ],
-        "capability": "image",
-        "capability_title": "Images",
-        "cost": {
-          "kind": "unknown",
-          "price": null
-        },
-        "description": "Make a picture quickly with less memory.",
-        "display_name": "MOSS Image Fast",
-        "engine_label": null,
-        "examples": [
-          {
-            "body": {
-              "model": "image.generate.moss-image-fast",
-              "prompt": "A small red cabin"
-            },
-            "kind": "image"
-          }
-        ],
-        "icon_key": "image",
-        "id": "image.generate.moss-image-fast",
-        "io": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "image"
-          ]
-        },
-        "locality": "unknown",
-        "name": "MOSS Image Fast",
-        "object": "model_catalog.model",
-        "operations": [],
-        "provider": "comfyui",
-        "recent_receipts": [],
-        "recommended": false,
-        "recommended_model": "MOSS Image Fast",
-        "resolves_to": {},
-        "same_model_as": [],
-        "secondary_profile": false,
-        "summary": {},
-        "timing": {
-          "source": null,
-          "typical_seconds": null
-        },
-        "title": "MOSS Image Fast",
-        "use": {
-          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image.generate.moss-image-fast\",\"prompt\":\"A small red cabin\"}'",
-          "javascript": {
-            "model": "image.generate.moss-image-fast",
-            "path": "/v1/images/generations"
-          },
-          "model": "image.generate.moss-image-fast",
-          "path": "/v1/images/generations",
-          "python": {
-            "model": "image.generate.moss-image-fast",
-            "path": "/v1/images/generations"
-          }
-        },
-        "use_names": [
-          "image.generate.moss-image-fast"
-        ],
-        "workflow": "image.generate.moss-image-fast"
-      },
-      "id": "image.generate.moss-image-fast",
-      "sha256": "80d9f7cc5b1e54d56de5960d335fa717c52b2e789dc82f16cec1ffaee25a72f3"
-    },
-    {
       "bytes": 2262,
       "full": {
         "alias": false,
@@ -6191,6 +4926,105 @@
       },
       "id": "image.generate.sdxl-seamless-tile",
       "sha256": "333e26145b69e975adc87ea7d44a83ad844af4d180198b17bbf40ac6f23ce805"
+    },
+    {
+      "bytes": 2049,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "image",
+            "icon_key": "image",
+            "input_modalities": [
+              "text"
+            ],
+            "intent": "image.generate",
+            "label": "Images",
+            "output_modalities": [
+              "image"
+            ],
+            "streaming": false
+          }
+        ],
+        "capability": "image",
+        "capability_title": "Images",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "Generate or edit images from your prompts.",
+        "display_name": "Krea2 Turbo",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": {
+              "model": "krea2-turbo",
+              "prompt": "A small red cabin"
+            },
+            "kind": "image"
+          }
+        ],
+        "icon_key": "image",
+        "id": "krea2-turbo",
+        "io": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "image"
+          ]
+        },
+        "locality": "unknown",
+        "name": "Krea2 Turbo",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "comfyui",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Krea2 Turbo",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Krea2 Turbo",
+        "use": {
+          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small red cabin\"}'",
+          "javascript": {
+            "model": "krea2-turbo",
+            "path": "/v1/images/generations"
+          },
+          "model": "krea2-turbo",
+          "path": "/v1/images/generations",
+          "python": {
+            "model": "krea2-turbo",
+            "path": "/v1/images/generations"
+          }
+        },
+        "use_names": [
+          "krea2-turbo"
+        ],
+        "workflow": null
+      },
+      "id": "krea2-turbo",
+      "sha256": "062423583402465d11b05ad2ddced3c95eaa48d1bc96186e9f2c26d7e05ceee0"
     },
     {
       "bytes": 1655,
@@ -6797,6 +5631,110 @@
       },
       "id": "mesh.generate.trellis-2",
       "sha256": "d24c80f26c915472e421650374ea193a178becc12d7d398d3ae22fe8a188d7c0"
+    },
+    {
+      "bytes": 1998,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "image",
+            "icon_key": "image",
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "intent": "image.edit",
+            "label": "Images",
+            "output_modalities": [
+              "image"
+            ],
+            "streaming": false
+          }
+        ],
+        "capability": "image",
+        "capability_title": "Images",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "Generate or edit images from your prompts.",
+        "display_name": "Qwen Image 2.1 Edit",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": {
+              "model": "qwen-image-2.1-edit",
+              "prompt": "Replace the sky"
+            },
+            "files": [
+              "image"
+            ],
+            "kind": "image_edit"
+          }
+        ],
+        "icon_key": "image",
+        "id": "qwen-image-2.1-edit",
+        "io": {
+          "input": [
+            "image",
+            "text"
+          ],
+          "output": [
+            "image"
+          ]
+        },
+        "locality": "unknown",
+        "name": "Qwen Image 2.1 Edit",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "comfyui",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Qwen Image 2.1 Edit",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Qwen Image 2.1 Edit",
+        "use": {
+          "curl": null,
+          "javascript": {
+            "model": "qwen-image-2.1-edit",
+            "path": "/v1/images/edits"
+          },
+          "model": "qwen-image-2.1-edit",
+          "path": "/v1/images/edits",
+          "python": {
+            "model": "qwen-image-2.1-edit",
+            "path": "/v1/images/edits"
+          }
+        },
+        "use_names": [
+          "qwen-image-2.1-edit"
+        ],
+        "workflow": null
+      },
+      "id": "qwen-image-2.1-edit",
+      "sha256": "a04f75b8fc8526d173bc2c1b7746c3713074fc33dc2f52562b69978177e4e29a"
     },
     {
       "bytes": 2194,
@@ -9234,24 +8172,6 @@
       "image.edit",
       "comfyui",
       null,
-      "image.edit.flux2-klein"
-    ],
-    [
-      "image.edit",
-      "comfyui",
-      null,
-      "image.edit.flux2-klein-4b"
-    ],
-    [
-      "image.edit",
-      "comfyui",
-      null,
-      "image.edit.flux2-klein-4b-inpaint"
-    ],
-    [
-      "image.edit",
-      "comfyui",
-      null,
       "image.edit.qwen-image-2.1-edit"
     ],
     [
@@ -9275,7 +8195,7 @@
     [
       "image.edit",
       "comfyui",
-      "flux2-klein-4b-edit",
+      "qwen-image-2.1-edit",
       null
     ],
     [
@@ -9289,24 +8209,6 @@
       "comfyui",
       null,
       "image.generate.anima-turbo"
-    ],
-    [
-      "image.generate",
-      "comfyui",
-      null,
-      "image.generate.flux2-klein"
-    ],
-    [
-      "image.generate",
-      "comfyui",
-      null,
-      "image.generate.flux2-klein-4b"
-    ],
-    [
-      "image.generate",
-      "comfyui",
-      null,
-      "image.generate.flux2-klein-snofs"
     ],
     [
       "image.generate",
@@ -9347,14 +8249,8 @@
     [
       "image.generate",
       "comfyui",
-      "flux2-klein-4b",
+      "krea2-turbo",
       null
-    ],
-    [
-      "image.generate",
-      "gateway",
-      null,
-      "image.generate.flux2-klein-4b-seamless-tile"
     ],
     [
       "mesh.edit",

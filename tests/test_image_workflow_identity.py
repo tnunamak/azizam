@@ -1,7 +1,6 @@
 """An image model name finds its workflow record by data (the manifest's binding file stem), not by spelling.
 
-``/v1/models`` names a model by its graph file stem; the record id is the manifest id. Two shipped edit workflows
-differ (``flux2-klein-4b-edit`` is ``image.edit.flux2-klein-4b``), so a job and a plan check must use the record's id.
+``/v1/models`` names a model by its graph file stem; the record id is the manifest id. An edit workflow differs (``qwen-image-2.1-identity`` is ``image.edit.image-identity``), so a job and a plan check must use the record's id.
 """
 from __future__ import annotations
 
@@ -22,10 +21,6 @@ GEN_INTENT, EDIT_INTENT = "image.generate", "image.edit"
 # (intent, name) -> record id, written by hand from the shipped manifests: every graph file stem and every short id.
 TABLE = [
     (GEN_INTENT, "anima-turbo", "image.generate.anima-turbo"),
-    (GEN_INTENT, "flux2-klein-4b", "image.generate.flux2-klein-4b"),
-    (GEN_INTENT, "flux2-klein-4b-seamless-tile", "image.generate.flux2-klein-4b-seamless-tile"),
-    (GEN_INTENT, "flux2-klein-snofs", "image.generate.flux2-klein-snofs"),
-    (GEN_INTENT, "flux2-klein", "image.generate.flux2-klein"),
     (GEN_INTENT, "krea2-turbo-snofs", "image.generate.krea2-turbo-snofs"),
     (GEN_INTENT, "krea2-turbo", "image.generate.krea2-turbo"),
     (GEN_INTENT, "moss-image-fast", "image.generate.moss-image-fast"),
@@ -33,11 +28,6 @@ TABLE = [
     (GEN_INTENT, "moss-image", "image.generate.moss-image"),
     (GEN_INTENT, "sdxl-seamless-tile", "image.generate.sdxl-seamless-tile"),
     (EDIT_INTENT, "fibo-2-edit-turbo", "image.edit.fibo-2-edit-turbo"),
-    (EDIT_INTENT, "flux2-klein-4b-edit", "image.edit.flux2-klein-4b"),
-    (EDIT_INTENT, "flux2-klein-4b", "image.edit.flux2-klein-4b"),
-    (EDIT_INTENT, "flux2-klein-4b-inpaint", "image.edit.flux2-klein-4b-inpaint"),
-    (EDIT_INTENT, "flux2-klein-edit", "image.edit.flux2-klein"),
-    (EDIT_INTENT, "flux2-klein", "image.edit.flux2-klein"),
     (EDIT_INTENT, "qwen-image-2.1-identity", "image.edit.image-identity"),
     (EDIT_INTENT, "qwen-image-2.1-edit-multiref", "image.edit.qwen-image-2.1-edit-multiref"),
     (EDIT_INTENT, "qwen-image-2.1-edit", "image.edit.qwen-image-2.1-edit"),
@@ -45,8 +35,6 @@ TABLE = [
     (EDIT_INTENT, "seedvr2-upscale", "image.edit.seedvr2-upscale"),
     ("image.analyze", "face-likeness", "image.analyze.face-likeness"),
     # An edit workflow's stem names no generate workflow, and the reverse; the old guess matched the first two.
-    (GEN_INTENT, "flux2-klein-4b-edit", None),
-    (GEN_INTENT, "flux2-klein-edit", None),
     (GEN_INTENT, "qwen-image-2.1-identity", None),
     (EDIT_INTENT, "no-such-model", None),
 ]
@@ -103,11 +91,11 @@ def test_identity_edit_is_found_by_its_binding_stem():
 
 
 def test_job_workflow_is_the_record_id_and_keeps_the_guess_without_a_record():
-    assert proxy._image_job_workflow_id(EDIT_INTENT, "flux2-klein-4b-edit") == "image.edit.flux2-klein-4b"
-    assert proxy._image_job_workflow_id(GEN_INTENT, "flux2-klein-4b") == "image.generate.flux2-klein-4b"
+    assert proxy._image_job_workflow_id(EDIT_INTENT, "qwen-image-2.1-identity") == "image.edit.image-identity"
+    assert proxy._image_job_workflow_id(GEN_INTENT, "krea2-turbo") == "image.generate.krea2-turbo"
     # An owner graph with no manifest keeps today's spelling.
     assert proxy._image_job_workflow_id(GEN_INTENT, "my-own-graph") == "image.generate.my-own-graph"
-    assert proxy._SESSION_MAKE_RUNTIME.workflow_id(EDIT_INTENT, "flux2-klein-4b-edit") == "image.edit.flux2-klein-4b"
+    assert proxy._SESSION_MAKE_RUNTIME.workflow_id(EDIT_INTENT, "qwen-image-2.1-identity") == "image.edit.image-identity"
 
 
 def _plan_setup(workflow):
@@ -133,7 +121,7 @@ def test_a_plan_listing_a_different_workflow_refuses_the_edit_model(tmp_path):
     assert obs.engine == []
 
 
-@pytest.mark.parametrize("model", ["flux2-klein-4b-edit", "flux2-klein-edit"])
+@pytest.mark.parametrize("model", ["qwen-image-2.1-identity", "fibo-2-edit-turbo"])
 def test_generating_with_an_edit_model_is_a_clean_refusal(tmp_path, model):
     """Before the join this was a 500 with no engine call: the generate guess picked a record whose role map did not fit
     the edit graph. Now the model is not a generate workflow: a 404 ``model_not_found``, and the engine is never called."""
@@ -144,7 +132,7 @@ def test_generating_with_an_edit_model_is_a_clean_refusal(tmp_path, model):
     assert not [e for e in obs.engine if e[1] == "/prompt"]
 
 
-@pytest.mark.parametrize("model", ["flux2-klein-4b-edit", "flux2-klein-edit"])
+@pytest.mark.parametrize("model", ["qwen-image-2.1-identity", "fibo-2-edit-turbo"])
 def test_an_image_job_naming_an_edit_model_is_refused_at_submit(tmp_path, model):
     """The async job route used to accept an edit model, store a made-up generate workflow and fail later when the job
     ran. It now refuses at submit like the sync route: 404 ``model_not_found``, no job row, no engine call."""
@@ -167,10 +155,22 @@ def _closed_route_setup(rig):
 
 
 def test_disabled_exposure_image_is_refused_before_engine(tmp_path):
-    obs = observe(tmp_path, GEN, body(model="flux2-klein-4b"), _closed_route_setup, row=False, name="closed")
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        workflow_id = "image.generate.krea2-turbo"
+        entry = current.get(workflow_id)
+        closed = replace(entry, facts=replace(entry.facts, exposure="disabled"))
+        snapshot = replace(current, workflows={**current.workflows, workflow_id: closed})
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+
+    obs = observe(tmp_path, GEN, body(model="krea2-turbo"), setup, row=False, name="closed")
     assert obs.status == 409, obs.body
     assert '"code": "workflow_disabled"' in obs.body["text"]
-    assert "workflow image.generate.flux2-klein-4b is disabled" in obs.body["text"]
+    assert "workflow image.generate.krea2-turbo is disabled" in obs.body["text"]
     assert obs.engine == []
 
 
@@ -199,48 +199,13 @@ def test_active_default_image_reaches_engine(tmp_path):
     def setup(rig):
         _closed_route_setup(rig)
         current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
-        workflow_id = "image.generate.flux2-klein-4b"
+        workflow_id = "image.generate.krea2-turbo"
         original = current.get(workflow_id)
         enabled = replace(original, state="active", facts=replace(original.facts, exposure="default"))
         snapshot = replace(current, workflows={**current.workflows, workflow_id: enabled})
         rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
         rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
 
-    obs = observe(tmp_path, GEN, body(model="flux2-klein-4b"), setup, row=False, name="active-control")
+    obs = observe(tmp_path, GEN, body(model="krea2-turbo"), setup, row=False, name="active-control")
     assert obs.status == 200, obs.body
     assert any(path == "/prompt" for _, path in obs.engine)
-
-
-@pytest.mark.parametrize("dependency_manifest_missing", [False, True])
-def test_composed_workflow_refuses_a_closed_dependency_before_engine(tmp_path, dependency_manifest_missing):
-    import copy
-    from dataclasses import replace
-
-    def setup(rig):
-        _closed_route_setup(rig)
-        provider = proxy.GATEWAY_REGISTRY_PROVIDER
-        snapshot = provider.current()
-        workflow_id = "image.edit.flux2-klein-4b-inpaint"
-        entry = snapshot.get(workflow_id)
-        entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
-        rig.monkeypatch.setattr(type(provider), "current", lambda self: replace(
-            snapshot, workflows={**snapshot.workflows, workflow_id: entry}))
-        rig.set(proxy, "WORKFLOW_SNAPSHOTS", provider)
-        find = proxy._find_image_manifest
-        composite = copy.deepcopy(find(GEN_INTENT, "flux2-klein-4b-seamless-tile"))
-        composite["id"] = "image.generate.sdxl-seamless-tile"
-        composite["bindings"]["gateway"]["model_id"] = "sdxl-seamless-tile"
-        def lookup(intent, model):
-            if intent == GEN_INTENT and model == "sdxl-seamless-tile":
-                return composite
-            if dependency_manifest_missing and model == "flux2-klein-4b":
-                return None
-            return find(intent, model)
-
-        rig.set(proxy, "_find_image_manifest", lookup)
-
-    obs = observe(tmp_path, GEN, body(model="sdxl-seamless-tile"), setup, row=False, name="closed-dependency")
-    assert obs.status == 409, obs.body
-    assert '"code": "workflow_disabled"' in obs.body["text"]
-    assert "workflow image.generate.flux2-klein-4b is disabled" in obs.body["text"]
-    assert obs.engine == []

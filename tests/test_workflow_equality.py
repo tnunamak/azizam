@@ -21,8 +21,6 @@ from gateway import workflow_equality as eq
 
 ROOT = Path(__file__).resolve().parents[1]
 V1 = ROOT / "tests" / "fixtures" / "workflows_v1"
-TILE = "image.generate.flux2-klein-4b-seamless-tile"
-TILE_FILE = "flux2-klein-4b-seamless-tile.yml"
 
 
 def make_tree(base: Path, *, workflows: Path | None = None) -> Path:
@@ -46,9 +44,6 @@ def edit(tree: Path, name: str, change) -> None:
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
-def swap_tile_targets(document: dict) -> None:
-    table = document["bindings"]["gateway"]["map"]
-    table["steps"], table["seam_steps"] = table["seam_steps"], table["steps"]
 
 
 @pytest.fixture(scope="module")
@@ -71,26 +66,11 @@ def paths(result: eq.Result) -> list[tuple[str, str, str]]:
 def test_the_bundled_bindings_are_the_converters_edits_of_the_old_ones_and_the_named_edits(trees, tmp_path):
     result = run(trees["before_v1"], trees["same"], tmp_path, checks=("binding_content",))
     assert result.ok, [d.line() for d in result.unexplained]
-    assert result.compared == {"binding_content": 46}  # 45 bundled workflows and the demo package's
+    assert result.compared == {"binding_content": 39}  # 38 bundled workflows and the demo package's
 
 
-def test_control_a_swap_of_two_composition_targets_fails_the_check(trees, tmp_path_factory):
-    swapped = make_tree(tmp_path_factory.mktemp("swapped") / "tree")
-    edit(swapped, TILE_FILE, swap_tile_targets)
-    result = run(trees["before_v1"], swapped, tmp_path_factory.mktemp("scratch"), checks=("binding_content",))
-    assert not result.ok
-    assert paths(result) == [
-        ("binding_content", TILE, "/gateway/map/seam_steps[0]/path"),
-        ("binding_content", TILE, "/gateway/map/steps[0]/path"),
-    ]
 
 
-def test_control_the_swap_changes_no_compiled_request_because_a_composition_has_no_template(trees, tmp_path_factory):
-    """Why the binding-content check exists: the request comparison cannot see this change."""
-    swapped = make_tree(tmp_path_factory.mktemp("swapped") / "tree")
-    edit(swapped, TILE_FILE, swap_tile_targets)
-    result = run(trees["same"], swapped, tmp_path_factory.mktemp("scratch"), checks=("requests",))
-    assert result.ok and not result.explained
 
 
 def test_a_named_edit_removes_one_key_and_a_schema_two_before_side_has_had_it_already():
@@ -141,10 +121,10 @@ def test_control_a_changed_target_in_a_template_workflow_changes_the_compiled_re
         mapping = document["bindings"]["comfyui"]["map"]["steps"][0]
         mapping["input"] = "not_steps"
 
-    edit(changed, "flux2-klein.yml", retarget)
+    edit(changed, "krea2-turbo.yml", retarget)
     result = run(trees["same"], changed, tmp_path_factory.mktemp("scratch"), checks=("requests",))
     assert not result.ok
-    assert {d.workflow for d in result.unexplained} == {"image.generate.flux2-klein"}
+    assert {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
     assert all(d.path.startswith("/requests") for d in result.unexplained)
 
 
@@ -168,9 +148,9 @@ def test_control_a_changed_service_record_is_a_difference(trees, tmp_path_factor
 
 def test_control_a_projection_change_is_seen(trees, tmp_path_factory):
     changed = make_tree(tmp_path_factory.mktemp("changed") / "tree")
-    edit(changed, "flux2-klein.yml", lambda d: d["inputs"]["steps"].__setitem__("maximum", 99))
+    edit(changed, "krea2-turbo.yml", lambda d: d["inputs"]["steps"].__setitem__("maximum", 99))
     result = run(trees["same"], changed, tmp_path_factory.mktemp("scratch"), checks=("projections",))
-    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.flux2-klein"}
+    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
 
 
 # ---------------------------------------------------------------------------------------------------------- pieces
@@ -211,22 +191,22 @@ def test_every_allowed_row_has_a_reason_and_the_list_is_short(tmp_path):
 
 def test_the_corpus_holds_the_callers_values_and_the_preparation_adds_defaults_and_generated_values():
     documents = eq.read_workflows(ROOT)
-    document = documents["image.generate.flux2-klein"]
-    corpus = eq.build_corpus({"image.generate.flux2-klein": document})["image.generate.flux2-klein"]
+    document = documents["image.generate.krea2-turbo"]
+    corpus = eq.build_corpus({"image.generate.krea2-turbo": document})["image.generate.krea2-turbo"]
     names = [case["name"] for case in corpus]
     assert names[:2] == ["empty", "required"] and "minimum:steps" in names and "maximum:steps" in names
     assert all("seed" not in case["values"] for case in corpus)  # a generated value is not the caller's
     assert corpus[1]["values"]  # the required inputs are supplied with a valid value
-    prepared = eq.prepare_corpus({"image.generate.flux2-klein": document}, {"image.generate.flux2-klein": corpus})["image.generate.flux2-klein"]
+    prepared = eq.prepare_corpus({"image.generate.krea2-turbo": document}, {"image.generate.krea2-turbo": corpus})["image.generate.krea2-turbo"]
     assert all(isinstance(case["values"]["seed"], int) for case in prepared)
     assert eq.build_corpus(documents) == eq.build_corpus(copy.deepcopy(documents))
     assert eq.prepare_corpus(documents, eq.build_corpus(documents)) == eq.prepare_corpus(documents, eq.build_corpus(documents))
 
 
 def test_a_schema_one_document_gets_the_same_corpus_as_its_conversion():
-    v1 = yaml.safe_load((V1 / "flux2-klein-edit.yml").read_text(encoding="utf-8"))
+    v1 = yaml.safe_load((V1 / "qwen-image-2.1-edit.yml").read_text(encoding="utf-8"))
     prepared = eq.prepare_corpus({"w": v1}, eq.build_corpus({"w": v1}))["w"]
-    assert all("seed" in case["values"] for case in prepared)  # the converter declared the seed the file only mapped
+    assert all("seed" in case["values"] for case in prepared)  # the converter declares a generator for its seed
 
 
 # ----------------------------------------------------------------------------------- the review's six findings
@@ -260,7 +240,7 @@ def test_every_workflow_file_is_read_the_way_discovery_reads_them_and_the_packag
     documents = eq.read_workflows(ROOT)
     assert "image.generate.test-demo-package" in documents
     tree = make_tree(tmp_path / "t")
-    renamed = tree / "manifests" / "workflows" / "flux2-klein.yml"
+    renamed = tree / "manifests" / "workflows" / "krea2-turbo.yml"
     renamed.rename(renamed.with_suffix(".yaml"))
     assert set(eq.read_workflows(tree)) == set(documents)
     assert eq.diff_effective(tree, tree, scratch=tmp_path).compared["requests"] > 300
@@ -290,9 +270,9 @@ def test_control_a_change_to_the_package_workflow_is_seen(trees, tmp_path_factor
 def test_a_workflow_on_one_side_only_fails_each_selected_check(check, trees, tmp_path_factory):
     """Finding 3: with checks=("requests",) removing a workflow passed."""
     removed = make_tree(tmp_path_factory.mktemp("removed") / "tree")
-    (removed / "manifests" / "workflows" / "flux2-klein.yml").unlink()
+    (removed / "manifests" / "workflows" / "krea2-turbo.yml").unlink()
     result = run(trees["same"], removed, tmp_path_factory.mktemp("scratch"), checks=(check,))
-    assert not result.ok and ("image.generate.flux2-klein", "/") in {(d.workflow, d.path) for d in result.unexplained}
+    assert not result.ok and ("image.generate.krea2-turbo", "/") in {(d.workflow, d.path) for d in result.unexplained}
     assert {d.check for d in result.unexplained} == {check}
 
 
@@ -342,16 +322,16 @@ def test_the_preparation_applies_defaults_generates_inside_the_bounds_and_runs_t
 def test_control_a_generator_range_of_zero_in_the_after_tree_changes_the_compiled_request(trees, tmp_path_factory):
     """Finding 5: generated values were handed in from the before documents, so this change was invisible."""
     changed = make_tree(tmp_path_factory.mktemp("changed") / "tree")
-    edit(changed, "flux2-klein.yml", lambda d: d["inputs"]["seed"]["generate"].__setitem__("maximum", 0))
+    edit(changed, "krea2-turbo.yml", lambda d: d["inputs"]["seed"]["generate"].__setitem__("maximum", 0))
     result = run(trees["same"], changed, tmp_path_factory.mktemp("scratch"), checks=("requests",))
-    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.flux2-klein"}
+    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
 
 
 def test_control_a_changed_default_in_the_after_tree_changes_the_compiled_request(trees, tmp_path_factory):
     changed = make_tree(tmp_path_factory.mktemp("changed") / "tree")
-    edit(changed, "flux2-klein.yml", lambda d: d["inputs"]["steps"].__setitem__("default", d["inputs"]["steps"]["maximum"] - 1))
+    edit(changed, "krea2-turbo.yml", lambda d: d["inputs"]["steps"].__setitem__("default", d["inputs"]["steps"]["maximum"] - 1))
     result = run(trees["same"], changed, tmp_path_factory.mktemp("scratch"), checks=("requests",))
-    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.flux2-klein"}
+    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
 
 
 def test_diff_effective_keeps_its_scratch_in_the_normal_temporary_directory(monkeypatch, tmp_path):
@@ -397,16 +377,16 @@ def test_a_pin_a_drop_and_a_retained_item_are_checked_by_json_type():
 def test_a_generator_range_change_that_draws_the_same_value_is_still_seen(tmp_path_factory):
     """Finding 2: 0..3 and 0..4 both draw 1 for this input, so one draw per input could not tell them apart."""
     spec = lambda high: {"type": "integer", "minimum": 0, "generate": {"generator": "random_integer", "minimum": 0, "maximum": high}}  # noqa: E731
-    assert eq.generated_value("image.generate.flux2-klein", "seed", spec(3)) == eq.generated_value("image.generate.flux2-klein", "seed", spec(4))
+    assert eq.generated_value("image.generate.krea2-turbo", "seed", spec(3)) == eq.generated_value("image.generate.krea2-turbo", "seed", spec(4))
 
     def with_range(base: Path, high: int) -> Path:
         tree = make_tree(base / "tree")
-        edit(tree, "flux2-klein.yml", lambda d: d["inputs"]["seed"]["generate"].__setitem__("maximum", high))
+        edit(tree, "krea2-turbo.yml", lambda d: d["inputs"]["seed"]["generate"].__setitem__("maximum", high))
         return tree
 
     narrow, wide = with_range(tmp_path_factory.mktemp("narrow"), 3), with_range(tmp_path_factory.mktemp("wide"), 4)
     result = run(narrow, wide, tmp_path_factory.mktemp("scratch"), checks=("requests",))
-    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.flux2-klein"}
+    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
     assert "/generate/seed/generate/maximum" in {d.path for d in result.unexplained}  # the rule itself
     assert any(d.path.startswith("/requests") for d in result.unexplained)  # and the boundary draw it moves
     assert run(narrow, with_range(tmp_path_factory.mktemp("same"), 3), tmp_path_factory.mktemp("scratch"), checks=("requests",)).ok
@@ -446,7 +426,7 @@ def test_a_package_root_is_the_folder_of_the_declaring_manifest_wherever_the_wor
     assert package_roots["image.generate.top-level"] == bundled / "top-package"
     assert package_roots["image.generate.deep-object"] == bundled / "deep-package"
     assert package_roots[DEMO] == bundled / "demo-image-package"
-    assert package_roots["image.generate.flux2-klein"] is None
+    assert package_roots["image.generate.krea2-turbo"] is None
     result = eq.diff_effective(tree, tree, scratch=tmp_path, checks=("requests",))  # each graph resolves in its own package
     assert result.ok and result.compared["requests"] > 300
 
@@ -469,21 +449,21 @@ def allowed_reason(workflow: str, path: str, scope: str, before, after):
 def test_a_hash_may_change_but_may_not_disappear_or_change_type():
     """Finding 4: any hash change was allowed, a vanished hash included."""
     for scope in ("summary:admin", "summary:internal"):
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, "a" * 64, "b" * 64)
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, "a" * 64, eq.ABSENT) is None
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, eq.ABSENT, "b" * 64) is None
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, "a" * 64, 7) is None
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, None, "b" * 64) is None
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, "a" * 64, "b" * 64)
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, "a" * 64, eq.ABSENT) is None
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, eq.ABSENT, "b" * 64) is None
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, "a" * 64, 7) is None
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, None, "b" * 64) is None
 
 
 def test_a_capability_may_become_the_inferred_value_for_the_listed_workflows_only():
     """Finding 4: any null-to-value change for any workflow was allowed."""
     for scope in ("capabilities", "projected"):
-        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, None, "image")
+        assert allowed_reason("image.generate.krea2-turbo", "[0]/capability", scope, None, "image")
         assert allowed_reason("video.generate.ltx-2.5-t2v", "[0]/capability", scope, None, "video")
-        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, None, "video") is None  # not its value
-        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, None, eq.ABSENT) is None  # disappearance
-        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, "image", None) is None
+        assert allowed_reason("image.generate.krea2-turbo", "[0]/capability", scope, None, "video") is None  # not its value
+        assert allowed_reason("image.generate.krea2-turbo", "[0]/capability", scope, None, eq.ABSENT) is None  # disappearance
+        assert allowed_reason("image.generate.krea2-turbo", "[0]/capability", scope, "image", None) is None
         assert allowed_reason("audio.generate.tangoflux", "[0]/capability", scope, None, "audio") is None  # not listed
         assert allowed_reason("unrelated.workflow", "[0]/capability", scope, None, "image") is None
 
@@ -606,7 +586,7 @@ def test_a_small_range_draws_the_same_value_as_before():
 
 def with_input_change(tmp_path_factory, change) -> Path:
     tree = make_tree(tmp_path_factory.mktemp("tree") / "tree")
-    edit(tree, "flux2-klein.yml", lambda d: change(d["inputs"]["seed"]))
+    edit(tree, "krea2-turbo.yml", lambda d: change(d["inputs"]["seed"]))
     return tree
 
 
@@ -631,22 +611,22 @@ def test_a_hash_must_keep_the_shape_of_the_digest_the_gateway_writes():
     """The gateway writes the SHA-256 of the document as 64 lowercase hexadecimal digits; nothing else is a hash."""
     good, other = "a" * 64, "0123456789abcdef" * 4
     for scope in ("summary:admin", "summary:internal"):
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, good, other)
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, good, other)
         for broken in ("", "broken", "A" * 64, "a" * 63, "a" * 65, "g" * 64, " " + "a" * 63, "a" * 64 + "\n"):
-            assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, good, broken) is None, broken
-            assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, broken, good) is None, broken
+            assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, good, broken) is None, broken
+            assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", scope, broken, good) is None, broken
 
 
 def test_the_hash_pattern_is_the_shape_of_a_real_manifest_hash():
     from gateway.manifests import manifest_identity
 
-    document = yaml.safe_load((ROOT / "manifests" / "workflows" / "flux2-klein.yml").read_text(encoding="utf-8"))
+    document = yaml.safe_load((ROOT / "manifests" / "workflows" / "krea2-turbo.yml").read_text(encoding="utf-8"))
     digest = manifest_identity(document).manifest_hash
-    assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", "summary:admin", digest, "b" * 64)
+    assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", "summary:admin", digest, "b" * 64)
     # Paired with the refusals that the old "any string" rule let through: a real digest that lost its shape is not accepted.
     for broken in (digest.upper(), digest[:-1], digest + "0", digest + "\n", digest[:-1] + "g", "sha256:" + digest):
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", "summary:admin", digest, broken) is None, broken
-        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", "summary:admin", broken, digest) is None, broken
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", "summary:admin", digest, broken) is None, broken
+        assert allowed_reason("image.generate.krea2-turbo", "/manifest_hash", "summary:admin", broken, digest) is None, broken
 
 
 def test_a_drop_matches_numbers_and_booleans_by_type():

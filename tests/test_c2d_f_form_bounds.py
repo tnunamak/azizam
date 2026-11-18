@@ -94,7 +94,7 @@ def test_a_form_inside_the_limits_is_read() -> None:
 def test_the_shape_takes_its_file_limit_from_the_spool(tmp_path) -> None:
     spool = FileRequestSpool(tmp_path, max_bytes=BLOCK * 4)
     request, taken = chunked_form([("prompt", None, 5), ("image", "a.png", BLOCK * 400)])
-    snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
+    snap = snapshot("moss-image-fast", "qwen-image-2.1-edit")
     shape = shape_of("images-edits")
     response = asyncio.run(shape.to_run_request(request, ROWS["images-edits"], snap, spool=spool))
     assert isinstance(response, Response) and response.status_code == 413

@@ -58,7 +58,7 @@ REPRESENTATIVE_CONFIG: dict = {
             "name": "ComfyUI",
             "capabilities": ["images", "generations", "videos", "audio.generate"],
             "workflows_dir": "./workflows/images",
-            "default_model": "flux2-klein-4b",
+            "default_model": "krea2-turbo",
         },
     },
     "roles": {
@@ -127,8 +127,8 @@ REPRESENTATIVE_CONFIG: dict = {
     },
     "model_compatibility": {
         "defaults": {
-            "images": "flux2-klein-4b",
-            "image_edits": "flux2-klein-4b-edit",
+            "images": "krea2-turbo",
+            "image_edits": "qwen-image-2.1-edit",
         },
     },
 }
@@ -408,10 +408,10 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         gen = _by_intent(caps, "image.generate")
         edit = _by_intent(caps, "image.edit")
         self.assertEqual(len(gen), 1)
-        self.assertEqual(gen[0].model, "flux2-klein-4b")
+        self.assertEqual(gen[0].model, "krea2-turbo")
         self.assertEqual(gen[0].execution, "job")
         self.assertEqual(len(edit), 1)
-        self.assertEqual(edit[0].model, "flux2-klein-4b-edit")
+        self.assertEqual(edit[0].model, "qwen-image-2.1-edit")
         self.assertIn("image", edit[0].input_modalities)
 
     def test_video_workflows_emit_capabilities_with_aliases(self):
@@ -607,10 +607,10 @@ def test_image_family_requires_a_selected_service_control():
     # Positive control rules out a fixture which never advertised images.
     with_comfyui = build_local_capabilities(REPRESENTATIVE_CONFIG)
     assert [c.model for c in _by_intent(with_comfyui, "image.generate")] == [
-        "flux2-klein-4b",
+        "krea2-turbo",
     ]
     assert [c.model for c in _by_intent(with_comfyui, "image.edit")] == [
-        "flux2-klein-4b-edit",
+        "qwen-image-2.1-edit",
     ]
 
 
@@ -689,11 +689,11 @@ def test_image_family_selected_backend_preserves_rows():
         for cap in caps
     ] == [
         (
-            "image.generate", "comfyui", "flux2-klein-4b", ("text",),
+            "image.generate", "comfyui", "krea2-turbo", ("text",),
             ("image",), "job", False, "batch", True, (),
         ),
         (
-            "image.edit", "comfyui", "flux2-klein-4b-edit", ("text", "image"),
+            "image.edit", "comfyui", "qwen-image-2.1-edit", ("text", "image"),
             ("image",), "job", False, "batch", True, (),
         ),
     ]

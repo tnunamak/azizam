@@ -269,7 +269,7 @@ const composedCatalog = {
     },
     {
       ...composedBase,
-      id: "image.generate.flux2-klein-4b-seamless-tile",
+      id: "image.generate.sdxl-seamless-tile",
       title: "Seamless Tile",
       availability: { status: "unavailable", reason_code: "unavailable", available: false, reason: "ComfyUI is down.", engine: "comfyui", evidence: composedEvidence },
     },
@@ -791,7 +791,7 @@ describe("composed workflow availability on Try", () => {
   });
 
   it.each([owner, member])("a down engine is named to the $role and Run stays off", async (viewer) => {
-    await openWorkflow("image.generate.flux2-klein-4b-seamless-tile", viewer);
+    await openWorkflow("image.generate.sdxl-seamless-tile", viewer);
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Seamless Tile · ComfyUI is down.");
     expect(runButton()).toBeDisabled();
     // Enter in a field still submits the form; a workflow that cannot run sends nothing.

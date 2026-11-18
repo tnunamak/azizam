@@ -205,8 +205,8 @@ def capture_models_catalog() -> dict[str, Any]:
     # (video.generate.ltx-2.5-t2v is the real id), so the catalog keeps that workflow as a model row and the alias out;
     # changing it moves the golden, which only tests/fixtures/c2d_parity/capture.py may rewrite.
     alias_views = {
-        "images": {"stable": [{"alias": "image-fast", "resolves_to": "image.generate.flux2-klein-4b"}]},
-        "image_edits": {"stable": [{"alias": "image-edit-fast", "resolves_to": "image.edit.flux2-klein-4b"}]},
+        "images": {"stable": [{"alias": "image-fast", "resolves_to": "image.generate.moss-image-fast"}]},
+        "image_edits": {"stable": [{"alias": "image-edit-fast", "resolves_to": "image.edit.fibo-2-edit-turbo"}]},
         "videos": {"stable": [{"alias": "video-default", "resolves_to": "video.generate.video-ltx-2.5-t2v"}]},
         "chat": {"stable": [{"alias": "chat-default", "resolves_to": "default"}]},
     }
@@ -547,10 +547,10 @@ BASE_URL = "https://gateway.example.test"
 # Stable-alias discovery data in the shape ``stable_aliases.describe_aliases`` returns.
 ALIASES: dict[str, Any] = {
     "images": {"stable": [
-        {"alias": "image-fast", "resolves_to": "flux2-klein-4b"},
+        {"alias": "image-fast", "resolves_to": "moss-image-fast"},
         {"alias": "image-quality", "resolves_to": "krea2-turbo"},
     ]},
-    "image_edits": {"stable": [{"alias": "image-edit-fast", "resolves_to": "flux2-klein-4b-edit"}]},
+    "image_edits": {"stable": [{"alias": "image-edit-fast", "resolves_to": "fibo-2-edit-turbo"}]},
     "videos": {"stable": [
         {"alias": "video-default", "resolves_to": "video-ltx-2.5-t2v"},
         {"alias": "video-long", "resolves_to": "video-ltx-2.5-long"},

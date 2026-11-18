@@ -44,7 +44,7 @@ class TestCollectComfyInventory(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "models" / "checkpoints" / "flux").mkdir(parents=True)
-            (root / "models" / "checkpoints" / "flux" / "klein.safetensors").write_text(
+            (root / "models" / "checkpoints" / "flux" / "example.safetensors").write_text(
                 "not read",
                 encoding="utf-8",
             )
@@ -80,14 +80,14 @@ class TestCollectComfyInventory(unittest.TestCase):
                 for artifact in artifacts
             },
             {
-                ("checkpoint", "models/checkpoints/flux/klein.safetensors", "klein.safetensors"),
+                ("checkpoint", "models/checkpoints/flux/example.safetensors", "example.safetensors"),
                 ("vae", "models/vae/ae.safetensors", "ae.safetensors"),
                 ("lora", "models/loras/style.safetensors", "style.safetensors"),
                 ("controlnet", "models/controlnet/canny.safetensors", "canny.safetensors"),
                 ("upscaler", "models/upscale_models/4x.pth", "4x.pth"),
             },
         )
-        self.assertNotIn("sha256", by_path["models/checkpoints/flux/klein.safetensors"])
+        self.assertNotIn("sha256", by_path["models/checkpoints/flux/example.safetensors"])
         self.assertNotIn(tmp, json.dumps(artifacts))
 
     def test_includes_sha256_only_from_supplied_inventory(self) -> None:

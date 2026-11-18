@@ -2623,7 +2623,7 @@ def _render_quick_test() -> str:
          'curl -s https://gateway.example/openai/v1/images/generations \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"flux2-klein-4b","prompt":"a calico cat","size":"512x512"}\''),
+         '  -d \'{"model":"krea2-turbo","prompt":"a calico cat","size":"512x512"}\''),
         ("Text-to-speech",
          'curl -s https://gateway.example/openai/v1/audio/speech \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'

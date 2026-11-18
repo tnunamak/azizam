@@ -132,8 +132,8 @@ model_compatibility:
   defaults:
     speech: mistralai/Voxtral-4B-TTS-2603
     transcriptions: parakeet-tdt-0.6b-v3
-    images: flux2-klein-4b
-    image_edits: flux2-klein-4b-edit
+    images: krea2-turbo
+    image_edits: qwen-image-2.1-edit
   aliases: {}
 ```
 

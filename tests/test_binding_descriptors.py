@@ -28,7 +28,7 @@ from tests.support.fake_upstream.async_client_stub import install_async_client_s
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / "manifests" / "workflows"
-TILE = "flux2-klein-4b-seamless-tile"
+TILE = "image-identity"
 
 
 def manifest_of(name: str) -> dict[str, Any]:
@@ -103,7 +103,7 @@ def test_an_unknown_binding_key_is_refused_with_its_path_and_code() -> None:
 
 
 def test_an_unknown_field_is_refused_with_its_path_and_code() -> None:
-    manifest = manifest_of("flux2-klein-4b-edit")
+    manifest = manifest_of("qwen-image-2.1-edit")
     manifest["inputs"]["seed"] = {"type": "integer"}
     manifest["bindings"]["comfyui"]["surprise"] = True
     assert places(manifest) == [(("bindings", "comfyui", "surprise"), "binding_field_unknown")]
@@ -111,8 +111,8 @@ def test_an_unknown_field_is_refused_with_its_path_and_code() -> None:
 
 def test_a_field_of_another_role_is_an_unknown_field() -> None:
     manifest = manifest_of(TILE)
-    manifest["bindings"]["gateway"]["prompt_node"] = "7"   # a field of identity_scene, not of this role
-    assert places(manifest) == [(("bindings", "gateway", "prompt_node"), "binding_field_unknown")]
+    manifest["bindings"]["gateway"]["base_model"] = "example"   # a field of another role
+    assert places(manifest) == [(("bindings", "gateway", "base_model"), "binding_field_unknown")]
 
 
 def test_an_unknown_role_is_refused_with_its_path_and_code() -> None:
@@ -168,7 +168,7 @@ def test_binding_errors_come_after_every_other_error() -> None:
     ("selectors", "x", "type_mismatch"),
 ])
 def test_core_checks_a_field_by_its_kind(field: str, value: Any, code: str) -> None:
-    manifest = manifest_of("flux2-klein-4b-edit")
+    manifest = manifest_of("qwen-image-2.1-edit")
     manifest["inputs"]["seed"] = {"type": "integer"}
     manifest["bindings"]["comfyui"][field] = value
     found = places(manifest)
@@ -236,7 +236,7 @@ def test_the_graph_target_check_reads_the_template_when_it_is_given() -> None:
     manifest["bindings"]["gateway"]["prompt_node"] = "999"
     assert places(manifest) == []   # no template given: the part that needs it is skipped
     assert places(manifest, templates={"gateway": graph}) == [(("bindings", "gateway", "prompt_node"), "target_missing")]
-    comfy = manifest_of("flux2-klein-4b-edit")
+    comfy = manifest_of("qwen-image-2.1-edit")
     comfy["inputs"]["seed"] = {"type": "integer"}
     comfy["bindings"]["comfyui"]["map"]["prompt"] = [{"node": "999", "input": "text"}, {"node": "x"}, {"path": ""}]
     found = places(comfy, templates=bundled_templates(comfy))
@@ -270,8 +270,6 @@ def test_every_listed_role_has_registered_code() -> None:
         assert bd.resolve_role("gateway", {"compose": role}, entry).run is run   # type: ignore[union-attr]
 
 
-def tile_body() -> dict[str, Any]:
-    return {"model": TILE, "prompt": "painted rock texture", "size": "64x64", "n": 1, "response_format": "b64_json"}
 
 
 class JsonRequest:
@@ -285,61 +283,10 @@ class JsonRequest:
         return self._body
 
 
-def run_tile_route(proxy: Any, counts: dict[str, int]) -> Any:
-    async def counting_post(*_a: Any, **_k: Any) -> Any:
-        counts["posts"] += 1
-        raise AssertionError("an engine was called")
-
-    async def counting_round(*_a: Any, **_k: Any) -> Any:
-        counts["rounds"] += 1
-        raise AssertionError("an engine was called")
-
-    receipt = proxy.start_image_route_receipt("/v1/images/generations", access_context())
-    with pytest.MonkeyPatch.context() as mp, derived_patch("GRAPH_ENABLED", True), patch.object(
-        proxy, "configured_downstream_headers", lambda _auth, _service: {}
-    ), patch.object(proxy, "_graph_run_round", counting_round):
-        # This composition has no open bundled equivalent; exercise the generic role dispatcher.
-        from dataclasses import replace
-        provider = proxy.GATEWAY_REGISTRY_PROVIDER
-        snapshot = provider.current()
-        workflow_id = "image.generate.flux2-klein-4b-seamless-tile"
-        entry = snapshot.get(workflow_id)
-        entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
-        snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
-        mp.setattr(type(provider), "current", lambda self: snapshot)
-        mp.setattr(proxy, "WORKFLOW_SNAPSHOTS", provider)
-        install_async_client_stub(mp, counting_post)
-        return asyncio.run(proxy.proxy_graph_image_request(JsonRequest(tile_body()), access_context(), receipt=receipt))
 
 
-def test_a_listed_role_with_no_registered_code_fails_binding_unavailable_with_no_engine_call() -> None:
-    import proxy
-
-    counts = {"posts": 0, "rounds": 0}
-    removed = binding_registry.unregister_role("offset_inpaint_tile")
-    assert removed is not None
-    try:
-        response = run_tile_route(proxy, counts)
-    finally:
-        binding_registry.register_role(removed.role, removed.serves, removed.run)
-    assert response.status_code == 503
-    assert json.loads(response.body)["error"]["code"] == "binding_unavailable"
-    assert counts == {"posts": 0, "rounds": 0}
 
 
-def test_a_role_registered_for_another_route_does_not_run_here() -> None:
-    import proxy
-
-    counts = {"posts": 0, "rounds": 0}
-    removed = binding_registry.unregister_role("offset_inpaint_tile")
-    assert removed is not None
-    binding_registry.register_role(removed.role, binding_registry.Entry.EDIT, removed.run)
-    try:
-        response = run_tile_route(proxy, counts)
-    finally:
-        binding_registry.register_role(removed.role, removed.serves, removed.run)
-    assert json.loads(response.body)["error"]["code"] == "binding_unavailable"
-    assert counts == {"posts": 0, "rounds": 0}
 
 
 def test_the_identity_route_refuses_an_unregistered_role_before_any_engine_work() -> None:
@@ -398,7 +345,7 @@ def test_a_pinned_job_whose_role_was_removed_fails_definition_unavailable() -> N
     contract = {key: manifest[key] for key in ("schema_version", "id", "intent", "inputs", "outputs")}
     job = pinned(manifest["bindings"]["gateway"], contract)
     assert job.manifest("gateway")["id"] == manifest["id"]
-    removed = binding_registry.unregister_role("offset_inpaint_tile")
+    removed = binding_registry.unregister_role("identity_scene")
     assert removed is not None
     try:
         with pytest.raises(DefinitionUnavailable):
@@ -409,7 +356,7 @@ def test_a_pinned_job_whose_role_was_removed_fails_definition_unavailable() -> N
 
 
 def test_a_pinned_job_with_no_role_field_is_not_affected() -> None:
-    manifest = manifest_of("flux2-klein-4b-edit")
+    manifest = manifest_of("qwen-image-2.1-edit")
     contract = {key: manifest[key] for key in ("schema_version", "id", "intent", "inputs", "outputs")}
     assert pinned(manifest["bindings"]["comfyui"], contract).manifest("comfyui")["id"] == manifest["id"]
 
@@ -487,26 +434,6 @@ def test_resolve_role_finds_nothing_for_an_unknown_binding_key_or_a_binding_with
     assert bd.resolve_role("gateway", {"compose": "identity_scene"}, binding_registry.Entry.GENERATION) is None   # other entry
 
 
-@pytest.mark.parametrize("compose", COMPOSE_CASES)
-def test_the_generation_route_refuses_a_compose_it_cannot_resolve_before_any_effect(compose: Any) -> None:
-    import proxy
-
-    ran: list[str] = []
-
-    async def unlisted(**_keywords: Any) -> Any:
-        ran.append("ran")
-
-    binding_registry.register_role("unlisted_role", binding_registry.Entry.GENERATION, unlisted)
-    manifest = manifest_of(TILE)
-    manifest["bindings"]["gateway"] = with_compose(manifest["bindings"]["gateway"], compose)
-    counts = {"posts": 0, "rounds": 0}
-    try:
-        with patch.object(proxy, "_find_image_manifest", lambda *_a, **_k: manifest):
-            response = run_tile_route(proxy, counts)
-    finally:
-        binding_registry.unregister_role("unlisted_role")
-    assert response.status_code == 503 and json.loads(response.body)["error"]["code"] == "binding_unavailable"
-    assert ran == [] and counts == {"posts": 0, "rounds": 0}
 
 
 class IdentityHarness:
@@ -643,7 +570,7 @@ def test_the_likeness_route_needs_its_role_and_runs_the_registered_implementatio
 # ---------------------------------------------------------------------------------------- graph targets, strictly
 
 def comfy_places(map_value: Any, template: Any) -> list[tuple[tuple[Any, ...], str]]:
-    manifest = manifest_of("flux2-klein-4b-edit")
+    manifest = manifest_of("qwen-image-2.1-edit")
     manifest["inputs"]["seed"] = {"type": "integer"}
     # Nothing here is about which inputs the map covers (a required input the map never applies is input_unbound, tested
     # with the grammar rows), so no input is required and the cases stay about the targets they name.
@@ -780,10 +707,10 @@ def test_a_falsey_malformed_role_fields_value_is_not_an_empty_mapping() -> None:
 
 def test_a_required_input_the_map_never_applies_is_refused_for_any_adapter_that_reads_inputs_by_its_map() -> None:
     """``input_unbound`` is the descriptor's ``inputs_via: map``, not a rule of one adapter (CODE_TO_DATA_S3, D4)."""
-    manifest = manifest_of("flux2-klein-4b-edit")
+    manifest = manifest_of("qwen-image-2.1-edit")
     del manifest["bindings"]["comfyui"]["map"]["source_image"]
     assert places(manifest) == [(("bindings", "comfyui", "map"), "input_unbound")]
-    assert places(manifest_of("flux2-klein-4b-edit")) == []
+    assert places(manifest_of("qwen-image-2.1-edit")) == []
 
 
 # ------------------------------------------------- several input maps in one descriptor

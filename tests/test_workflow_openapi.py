@@ -412,7 +412,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_alias_target_matching(self) -> None:
         self.assertEqual(match_alias_target("video-ltx-2.5-t2v", "video.generate", {"ltx-2.5-t2v"}), "ltx-2.5-t2v")
-        self.assertEqual(match_alias_target("flux2-klein-4b-edit", "image.edit", {"flux2-klein-4b"}), "flux2-klein-4b")
+        self.assertEqual(match_alias_target("qwen-image-2.1-edit", "image.edit", {"qwen-image-2.1"}), "qwen-image-2.1")
         self.assertIsNone(match_alias_target("nothing", "image.edit", {"a"}))
 
     def test_discovery_surfaces_point_at_the_catalog(self) -> None:

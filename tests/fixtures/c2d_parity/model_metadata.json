@@ -6647,84 +6647,6 @@
         "type": "image"
       }
     },
-    "image.edit.flux2-klein": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text",
-            "image"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
-    "image.edit.flux2-klein-4b": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text",
-            "image"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
-    "image.edit.flux2-klein-4b-inpaint": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text",
-            "image"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
     "image.edit.image-identity": {
       "fields": {
         "architecture": {
@@ -6856,102 +6778,6 @@
       }
     },
     "image.generate.anima-turbo": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
-    "image.generate.flux2-klein": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
-    "image.generate.flux2-klein-4b": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
-    "image.generate.flux2-klein-4b-seamless-tile": {
-      "fields": {
-        "architecture": {
-          "input_modalities": [
-            "text"
-          ],
-          "output_modalities": [
-            "image"
-          ]
-        },
-        "type": "image"
-      },
-      "record": {
-        "input_modalities": [
-          "text"
-        ],
-        "max_tokens": null,
-        "output_modalities": [
-          "image"
-        ],
-        "tags": [],
-        "type": "image"
-      }
-    },
-    "image.generate.flux2-klein-snofs": {
       "fields": {
         "architecture": {
           "input_modalities": [
@@ -8535,19 +8361,12 @@
     "audio.generate.yue2-song",
     "image.analyze.face-likeness",
     "image.edit.fibo-2-edit-turbo",
-    "image.edit.flux2-klein",
-    "image.edit.flux2-klein-4b",
-    "image.edit.flux2-klein-4b-inpaint",
     "image.edit.image-identity",
     "image.edit.qwen-image-2.1-edit",
     "image.edit.qwen-image-2.1-edit-multiref",
     "image.edit.qwen-image-2.1-inpaint",
     "image.edit.seedvr2-upscale",
     "image.generate.anima-turbo",
-    "image.generate.flux2-klein",
-    "image.generate.flux2-klein-4b",
-    "image.generate.flux2-klein-4b-seamless-tile",
-    "image.generate.flux2-klein-snofs",
     "image.generate.krea2-turbo",
     "image.generate.krea2-turbo-snofs",
     "image.generate.moss-image",

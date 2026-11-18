@@ -1,7 +1,7 @@
 """Find the registry record a model name stands for, by data and not by spelling.
 
-A model listed by ``/v1/models`` is named by its graph file stem (``flux2-klein-4b-edit``), while the
-record id is the manifest id (``image.edit.flux2-klein-4b``). The two differ for shipped workflows, so
+A model listed by ``/v1/models`` is named by its graph file stem (``qwen-image-2.1-edit``), while the
+record id is the manifest id (``image.edit.qwen-image-2.1-edit``). These names need not follow a spelling rule, so
 the stem is read from the record's own binding file, the same fact the listing reads.
 """
 

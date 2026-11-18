@@ -605,7 +605,7 @@ class GatewayMediaJobsExplicitProviderTests(unittest.TestCase):
             "/gateway/v1/media/jobs",
             json={
                 "intent": "image.generate",
-                "request": {"model": "flux2-klein-4b", "prompt": "private"},
+                "request": {"model": "krea2-turbo", "prompt": "private"},
             },
         )
 

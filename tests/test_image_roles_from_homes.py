@@ -52,15 +52,15 @@ def _release_section():
     return yaml.safe_load((ROOT / "registry" / "defaults" / "images.yml").read_text())
 
 
-def test_the_release_table_covers_all_eighteen_shipped_graphs():
-    assert len(SHIPPED) == 18
+def test_the_release_table_covers_all_twelve_shipped_graphs():
+    assert len(SHIPPED) == 12
     assert {param.values[1] for param in SHIPPED} == set(proxy._IMAGE_GRAPH_ROLES)
 
 
 def test_the_loader_the_boot_and_each_reload_use_checks_the_table_against_the_registry():
     registry = proxy.GATEWAY_WORKFLOW_REGISTRY
     binding = proxy.DERIVED._GRAPH_BINDING
-    assert len(proxy._load_image_graph_roles(_release_section(), registry, binding)) == 18
+    assert len(proxy._load_image_graph_roles(_release_section(), registry, binding)) == 12
     section = _release_section()
     section["graph_roles"]["workflows/images/not-a-graph.json"] = {}
     with pytest.raises(ValueError, match="not-a-graph"):
@@ -90,7 +90,7 @@ def test_partial_role_entry_preserves_metadata_reference_order(monkeypatch):
 @pytest.mark.parametrize("family", ["name", "prompt", "size", "seed", "batch", "references", "source", "background"])
 def test_data_wins_when_graph_metadata_disagrees(family):
     path = ("workflows/images/qwen-image-2.1-edit-multiref.json" if family == "references"
-            else "workflows/images/flux2-klein-edit.json" if family in ("batch", "source")
+            else "workflows/images/qwen-image-2.1-edit.json" if family == "source"
             else "workflows/images/krea2-turbo.json")
     manifest = next(p.values[0] for p in SHIPPED if p.values[1] == path)
     meta = json.loads((ROOT / path).read_text())["_meta"]

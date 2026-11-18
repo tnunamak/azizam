@@ -14,7 +14,7 @@ from tests.support.access import authenticated, everything, identity
 import asyncio
 
 
-EXPOSURE_ID = "image.generate.flux2-klein-4b"
+EXPOSURE_ID = "image.generate.krea2-turbo"
 STATE_ID = "image.generate.anima-turbo"
 
 
@@ -22,6 +22,7 @@ def closed_snapshot():
     snap = build({}, bundled_release(), generation=1)
     rows = dict(snap.workflows)
     rows[STATE_ID] = replace(rows[STATE_ID], state="disabled")
+    rows[EXPOSURE_ID] = replace(rows[EXPOSURE_ID], facts=replace(rows[EXPOSURE_ID].facts, exposure="disabled"))
     return replace(snap, workflows=rows)
 
 
@@ -57,7 +58,7 @@ def test_models_hide_both_closed(monkeypatch, tmp_path):
     response = asyncio.run(get())
     assert response.status_code == 200, response.text
     ids = {row["id"] for row in response.json()["data"]}
-    assert "flux2-klein-4b" not in ids
+    assert "krea2-turbo" not in ids
     assert "anima-turbo" not in ids
 
 
@@ -85,12 +86,19 @@ def test_aliases_hide_closed_targets_and_refuse_closed_run(tmp_path):
     with GatewayRig("closed-alias", tmp_path) as rig:
         use_admin_db(rig.monkeypatch, tmp_path)
         ok(rig)
+        snapshot = closed_snapshot()
+        rows = dict(snapshot.workflows)
+        edit_id = "image.edit.qwen-image-2.1-edit"
+        rows[edit_id] = replace(rows[edit_id], state="disabled")
+        snapshot = replace(snapshot, workflows=rows)
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
         rig._client._transport = StreamingASGITransport(proxy.app, client=("203.0.113.16", 1234))
         aliases = copy.deepcopy(proxy.config["model_aliases"])
-        aliases["images"]["stable"]["only-closed"] = "flux2-klein-4b"
+        aliases["images"]["stable"]["only-closed"] = "krea2-turbo"
         aliases["chat"]["stable"]["only-closed"] = "default"
-        aliases["images"]["stable"]["mixed-alias"] = "krea2-turbo"
-        aliases["image_edits"]["stable"]["mixed-alias"] = "flux2-klein-4b-edit"
+        aliases["images"]["stable"]["mixed-alias"] = "moss-image-fast"
+        aliases["image_edits"]["stable"]["mixed-alias"] = "qwen-image-2.1-edit"
         rig.monkeypatch.setitem(proxy.config, "model_aliases", aliases)
 
         async def exercise():
@@ -102,9 +110,9 @@ def test_aliases_hide_closed_targets_and_refuse_closed_run(tmp_path):
         models, closed = asyncio.run(exercise())
         rows = {row["id"]: row for row in models.json()["data"]}
         assert "only-closed" not in rows
-        assert rows["mixed-alias"]["azizam_resolves_to"] == {"images": "krea2-turbo"}
+        assert rows["mixed-alias"]["azizam_resolves_to"] == {"images": "moss-image-fast"}
         assert closed.status_code == 409
-        assert closed.json()["error"] == {"code": "workflow_disabled", "message": "workflow image.generate.flux2-klein-4b is disabled"}
+        assert closed.json()["error"] == {"code": "workflow_disabled", "message": "workflow image.generate.krea2-turbo is disabled"}
         assert not rig.recorder.engine
 
 

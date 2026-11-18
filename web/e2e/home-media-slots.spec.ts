@@ -35,7 +35,7 @@ const KINDS: Kind[] = [
       { name: "character", label: "a new character", modality: "image", accepts: ["image/*"] },
       { name: "source_video", label: "a video to change", modality: "video", accepts: ["video/*"] },
     ] },
-  { kind: "edit", label: "Edit a picture", title: "FLUX.2 Klein edit", model: "flux2-klein-edit", intent: "image.edit",
+  { kind: "edit", label: "Edit a picture", title: "Qwen-Image 2.1 Edit", model: "qwen-image-2.1-edit", intent: "image.edit",
     inputs: ["image", "text"], required: ["image", "text"] },
 ];
 const byKind = (kind: string) => KINDS.find((k) => k.kind === kind)!;

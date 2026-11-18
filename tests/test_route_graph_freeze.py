@@ -182,13 +182,12 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 # W5 adds GET /admin/api/engine-protocols for installed description metadata.
 # The route is reviewed above; the frozen digest includes its generated schema.
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
-    # MOSS, FLUX.2 Klein, FIBO and keyframe workflows add schemas, never routes or policy.
+    # MOSS, FIBO and keyframe workflows add schemas, never routes or policy.
     # Removing precisely these additions must recover the data-hygiene document,
     # which adds the reviewed missing/retryable output responses, the App key security schemes, and the security each
     # operation declares (API reference security; the route graph leaves that security out of each route's extra).
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
-             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
-             "image.generate.flux2-klein-snofs",
+             "image.generate.moss-image-quality", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
              "mesh.generate.trellis-2", "mesh.generate.pixal3d", "video.edit.video-mux",
@@ -362,4 +361,5 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-18 (train 70): the seven closed FLUX.2 Klein workflows left the document (see
     # tests/fixtures/headless_openapi.json). Before it the digest was
     # d7e0437870855d58d23f4ae152924b66d86be604c0e435f501fcfbd9f02f1b15.
+    # Fast aliases now name the open FIBO and MOSS workflows; the projected document adds only those aliases.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

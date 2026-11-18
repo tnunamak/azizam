@@ -33,7 +33,7 @@ def ok(run):
 
 
 def test_image_wire_options_reach_run_request() -> None:
-    snap = snapshot("flux2-klein")
+    snap = snapshot("moss-image-fast")
     low = ok(run_request("images-generations", json_request({"prompt": "p", "n": 1, "quality": "low", "output_format": "png"}), snap))
     high = ok(run_request("images-generations", json_request({"prompt": "p", "n": 4, "quality": "high", "output_format": "jpg",
                                                            "output_compression": 70}), snap))
@@ -53,13 +53,13 @@ def test_image_wire_options_reach_run_request() -> None:
                                            ({"background": "red"}, "background"),
                                            ({"background": "transparent", "output_format": "jpeg"}, "background")])
 def test_image_wire_options_are_checked(payload, param) -> None:
-    response = run_request("images-generations", json_request({"prompt": "p", **payload}), snapshot("flux2-klein"))
+    response = run_request("images-generations", json_request({"prompt": "p", **payload}), snapshot("moss-image-fast"))
     assert isinstance(response, Response) and response.status_code == 400
     assert json.loads(response.body)["error"]["param"] == param
 
 
 def test_image_answer_form_is_read_from_each_wire_request() -> None:
-    snap = snapshot("flux2-klein")
+    snap = snapshot("moss-image-fast")
     core, jobs = FakeRunCore(), None
     for form, expected in (("b64_json", "b64_json"), ("url", "url"), (None, "b64_json")):  # none asked: the row's default_answer
         body = {"prompt": "p", **({"response_format": form} if form else {})}
@@ -110,7 +110,7 @@ def test_optional_asset_files_each_at_limit_are_accepted(tmp_path) -> None:
 def test_default_answer_is_route_data_checked_at_load() -> None:
     from dataclasses import replace
     from gateway.frontend_shapes import RowError, parse_rows
-    snap = snapshot("flux2-klein")
+    snap = snapshot("moss-image-fast")
     assert ROWS["images-generations"].default_answer == "b64_json"
     # A row that declares one answers b64_json to a request that names none, with a URL renderer configured.
     request = json_request({"prompt": "p"})
@@ -165,9 +165,9 @@ def test_variations_with_no_model_run_the_variations_default_with_its_fixed_prom
 
 
 def test_the_old_refusal_words_for_a_missing_prompt_a_missing_image_and_an_unknown_model() -> None:
-    snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
+    snap = snapshot("moss-image-fast", "qwen-image-2.1-edit")
     texts = lambda response: json.loads(response.body)["error"]["message"]  # noqa: E731
-    assert texts(run_request("images-generations", json_request({"model": "flux2-klein"}), snap)) == "prompt is required"
+    assert texts(run_request("images-generations", json_request({"model": "moss-image-fast"}), snap)) == "prompt is required"
     assert texts(run_request("images-edits", multipart_request({"prompt": "p"}, []), snap, FakeSpool())) == "image is required"
     assert texts(run_request("images-edits", multipart_request({"prompt": "p", "model": "nope"}, [("image", "a.png", "image/png", b"A")]),
                              snap, FakeSpool())) == "Model 'nope-edit' is not available for image editing."

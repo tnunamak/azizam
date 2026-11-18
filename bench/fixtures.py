@@ -21,8 +21,7 @@ TRANSCRIPT = "controlled transcription"
 MODELS = ["demo-chat", "demo-chat-heldout"]
 GATEWAY_MODELS = set(MODELS) | {
     "ace-step-1.5-xl-turbo", "anima-turbo", "current", "current-fast",
-    "face-likeness", "flux2-klein-4b", "flux2-klein-4b-edit", "flux2-klein-4b-inpaint",
-    "flux2-klein-4b-seamless-tile", "image-identity", "krea2-turbo", "krea2-turbo-snofs",
+    "face-likeness", "image-identity", "krea2-turbo", "krea2-turbo-snofs",
     "qwen-image-2.1-edit", "qwen-image-2.1-edit-multiref", "qwen-image-2.1-inpaint",
     "sa3-small-sfx", "sdxl-seamless-tile", "seedvr2-upscale", "stt", "tangoflux", "tts",
     "video-ltx-2.5-i2v", "video-ltx-2.5-long", "video-ltx-2.5-t2v", "video-minimax-h3-i2v",

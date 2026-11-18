@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-from dataclasses import replace
-import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -17,8 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import proxy  # noqa: E402
 from gateway import frontend_mount, operation_security  # noqa: E402
 from tests.support.access import access_context  # noqa: E402
-
-TILE_MODEL = "flux2-klein-4b-seamless-tile"
 
 
 async def _endpoint(request):  # pragma: no cover - never called; the mount only needs a handler to hold
@@ -113,55 +108,3 @@ def test_unknown_route_raises_a_named_error() -> None:
 ])
 def test_shipped_rows_give_the_three_image_intents(path: str, intent: str) -> None:
     assert proxy.start_image_route_receipt(path, access_context()).intent == intent
-
-
-def _tile(manifest, **kw):
-    receipt = proxy.start_image_route_receipt("/v1/images/generations", access_context())
-    # No other bundled workflow uses this gateway composition.
-    provider = proxy.GATEWAY_REGISTRY_PROVIDER
-    snapshot = provider.current()
-    workflow_id = "image.generate.flux2-klein-4b-seamless-tile"
-    entry = snapshot.get(workflow_id)
-    entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
-    snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
-    with patch.object(type(provider), "current", lambda self: snapshot), patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider):
-        response = asyncio.run(proxy._proxy_offset_inpaint_tile_request(
-            request=None, body={}, auth_context=access_context(), receipt=receipt, manifest=manifest,
-            prompt="p", model=TILE_MODEL, size="64x64", n=1, response_format="b64_json", headers={}, **kw))
-    return response, receipt
-
-
-def _tile_manifest() -> dict:
-    manifest = proxy._find_image_manifest("image.generate", TILE_MODEL)
-    assert manifest is not None
-    manifest = copy.deepcopy(manifest)
-    manifest["bindings"]["gateway"].update(base_model="krea2-turbo", inpaint_model="qwen-image-2.1-inpaint")
-    return manifest
-
-
-@pytest.mark.parametrize("missing", ["base_model", "inpaint_model"])
-def test_tile_without_a_model_binding_is_refused_naming_it(missing: str) -> None:
-    manifest = _tile_manifest()
-    del manifest["bindings"]["gateway"][missing]
-    response, receipt = _tile(manifest)
-    assert response.status_code == 503
-    assert missing in json.loads(response.body)["error"]["message"]
-    assert "offset_inpaint_tile_prerequisite_missing" in str(receipt.to_dict())
-
-
-def test_tile_uses_exactly_the_bound_stems() -> None:
-    manifest = _tile_manifest()
-    manifest["bindings"]["gateway"].update(base_model="zz-bound-base", inpaint_model="zz-bound-inpaint")
-    loaded: list[tuple[str, str | None]] = []
-    found: list[tuple[str, str]] = []
-
-    def load(name, *, intent=None):
-        loaded.append((name, intent))
-        return None
-
-    with patch.object(proxy, "load_graph_workflow", load), \
-            patch.object(proxy, "_find_image_manifest", lambda intent, model: found.append((intent, model))):
-        response, _ = _tile(manifest)
-    assert response.status_code == 503
-    assert loaded == [("zz-bound-base", "image.generate"), ("zz-bound-inpaint", "image.edit")]
-    assert found == [("image.generate", "zz-bound-base"), ("image.edit", "zz-bound-inpaint")]

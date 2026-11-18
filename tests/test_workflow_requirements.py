@@ -105,7 +105,7 @@ class TestWorkflowRequirements(unittest.TestCase):
                 "model_artifacts": [
                     {
                         "role": "checkpoint",
-                        "path": "/srv/comfy/models/flux/klein.safetensors",
+                        "path": "/srv/comfy/models/flux/example.safetensors",
                         "sha256": "abc123",
                     }
                 ],

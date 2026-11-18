@@ -31,8 +31,8 @@ JOB_RECEIPT = {
     "protocol": "openai.images", "path": "/gateway/v1/media/jobs/image-generations",
     "accepted_at_ms": None, "finished_at_ms": JOB_CREATED_AT * 1000 + 998,
     "requested_model": None, "resolved_model": None,
-    "requested_workflow": "flux2-klein-4b",
-    "resolved_workflow": "image.generate.flux2-klein-4b",
+    "requested_workflow": "krea2-turbo",
+    "resolved_workflow": "image.generate.krea2-turbo",
     "metadata": {"private_note": "never expose this"},
 }
 CHAT_RECEIPT = {
@@ -107,8 +107,8 @@ def test_job_submission_detail_names_person_app_workflow_and_time(detail):
     assert body["person_label"] == "Alice Example"
     assert body["app_label"] == "Desktop"
     assert body["created_at"] == JOB_CREATED_AT
-    assert body["resolved_workflow"] == "image.generate.flux2-klein-4b"
-    assert body["requested_workflow"] == "flux2-klein-4b"
+    assert body["resolved_workflow"] == "image.generate.krea2-turbo"
+    assert body["requested_workflow"] == "krea2-turbo"
     assert "never expose this" not in response.text
 
 

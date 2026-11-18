@@ -1777,7 +1777,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         # the top level. The route used to silently drop it. The owner wiring
         # converts that into a 400.
         receipt, response = await self._call(
-            {"prompt": "x", "model": "flux2-klein-4b", "denoise": 0.5}
+            {"prompt": "x", "model": "krea2-turbo", "denoise": 0.5}
         )
 
         if response.status_code != 400 or "denoise" not in (
@@ -2277,7 +2277,7 @@ class TestNoBodyLeakInReceiptPersistence(unittest.TestCase):
         receipt = proxy.start_image_route_receipt(
             "/v1/images/generations", access_context()
         )
-        receipt.requested_model = "flux2-klein-4b"
+        receipt.requested_model = "krea2-turbo"
         receipt.accept_input("prompt")  # name only
 
         recorded: list[dict[str, Any]] = []

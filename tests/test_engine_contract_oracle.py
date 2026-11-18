@@ -131,15 +131,8 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
     before_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in before_closure["data"]]
-    # Closed workflows and aliases pointing only to them leave client listings.
-    removed = {
-        "flux2-klein-snofs", "flux2-klein-4b-seamless-tile", "flux2-klein-4b", "flux2-klein",
-        "flux2-klein-4b-inpaint", "flux2-klein-4b-edit", "flux2-klein-edit",
-        "image-fast", "image-edit-fast",
-    }
-    assert {row[0] for row in before_surface} - {row[0] for row in model_surface} == removed
-    assert [row for row in before_surface if row[0] not in removed] == model_surface
-    # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
+    assert before_surface == model_surface
+    # Freeze the original catalog separately from MOSS, FIBO and keyframe additions.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
         "fibo-2-edit-turbo": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
@@ -154,6 +147,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     added = set(expected_added)
     assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
     model_surface = [row for row in model_surface if row[0] not in added]
+    # The fast aliases now point at open workflows; check them above the frozen older surface.
+    assert {row[0] for row in model_surface} >= {"image-fast", "image-edit-fast"}
+    model_surface = [row for row in model_surface if row[0] not in {"image-fast", "image-edit-fast"}]
 
     app = FastAPI()
     app.include_router(create_gateway_router(provider_of(_build_registry()), capabilities_provider=lambda _r: _sample_capabilities()))

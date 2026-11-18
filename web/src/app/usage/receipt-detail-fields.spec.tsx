@@ -25,8 +25,8 @@ const jobSubmission = {
   request_id: "req_job", status: "ok", intent: "image.generate",
   accepted_at_ms: null, finished_at_ms: CREATED_AT * 1000 + 998,
   requested_model: null, resolved_model: null,
-  requested_workflow: "flux2-klein-4b",
-  resolved_workflow: "image.generate.flux2-klein-4b",
+  requested_workflow: "krea2-turbo",
+  resolved_workflow: "image.generate.krea2-turbo",
   created_at: CREATED_AT, person_label: "Alice Example", app_label: "Desktop",
 };
 const chat = {
@@ -72,7 +72,7 @@ test("a job-submission receipt shows its person, workflow and time, not 'not rec
   expect(within(sheet).getByText("Alice Example")).toBeInTheDocument();
   expect(within(sheet).getByText("Desktop")).toBeInTheDocument();
   expect(within(sheet).getByText("Workflow")).toBeInTheDocument();
-  expect(within(sheet).getByText("image.generate.flux2-klein-4b")).toBeInTheDocument();
+  expect(within(sheet).getByText("image.generate.krea2-turbo")).toBeInTheDocument();
   expect(sheet.querySelector("time")).toHaveAttribute("datetime", created);
   expect(sheet).not.toHaveTextContent("Not recorded");
   expect(sheet).not.toHaveTextContent("Model not recorded");
@@ -101,5 +101,5 @@ test("the receipts list shows the workflow when a receipt has no model", async (
   open(chat, [{ ...jobSubmission, request_id: "req_listed" }], false);
   await userEvent.click(await screen.findByRole("button", { name: "View recent requests" }));
   const row = await screen.findByRole("button", { name: /Receipt details for/ });
-  expect(within(row).getByText("image.generate.flux2-klein-4b")).toBeInTheDocument();
+  expect(within(row).getByText("image.generate.krea2-turbo")).toBeInTheDocument();
 });

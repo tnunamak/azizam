@@ -139,7 +139,7 @@ def submit(core: FakeRunCore, req: Any, snap: FakeSnapshot) -> Any:
 
 def test_the_bundled_rows_are_valid_and_each_selects_a_bundled_workflow() -> None:
     assert len(ROWS) == len(bundled_rows()) == 10
-    every = {n: contract(n) for n in ("flux2-klein", "qwen-image-2.1-edit", "tangoflux", "video-ltx-2.5-t2v", "mesh.generate.trellis-2")}
+    every = {n: contract(n) for n in ("moss-image-fast", "qwen-image-2.1-edit", "tangoflux", "video-ltx-2.5-t2v", "mesh.generate.trellis-2")}
     every["edit"] = VIDEO_EDIT
     for row in ROWS.values():
         assert any(selector_matches(row.selects, str(c["id"]), c) for c in every.values()), row.id
@@ -168,18 +168,18 @@ def test_the_rows_that_list_as_models_are_the_ones_today_lists() -> None:
 
 
 def test_images_json_fills_the_inputs_of_the_workflow_the_model_names() -> None:
-    snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
-    run = run_request("images-generations", json_request({"prompt": "a fox", "model": "image.generate.flux2-klein", "size": "512x768",
+    snap = snapshot("moss-image-fast", "qwen-image-2.1-edit")
+    run = run_request("images-generations", json_request({"prompt": "a fox", "model": "image.generate.moss-image-fast", "size": "512x768",
                                                           "response_format": "url",
                                                           "extensions": {"com.azizam.workflow": {"seed": 3}}}),
                       snap)
-    assert run.workflow_id == "image.generate.flux2-klein" and run.frontend_id == "images-generations"
+    assert run.workflow_id == "image.generate.moss-image-fast" and run.frontend_id == "images-generations"
     assert run.inputs == {"prompt": "a fox", "width": 512, "height": 768, "seed": 3}
     assert run.idempotency_key is None and not run.media
 
 
 def test_the_json_routes_pass_the_idempotency_key_and_core_replays_it() -> None:
-    snap = snapshot("flux2-klein")
+    snap = snapshot("moss-image-fast")
     core = FakeRunCore()
     first = run_request("image-jobs", json_request({"prompt": "a"}, headers={"Idempotency-Key": "k1"}), snap)
     again = run_request("image-jobs", json_request({"prompt": "a"}, headers={"Idempotency-Key": "k1"}), snap)
@@ -193,19 +193,19 @@ def test_the_json_routes_pass_the_idempotency_key_and_core_replays_it() -> None:
 
 
 def test_a_request_without_a_model_reaches_the_one_workflow_the_row_can_serve() -> None:
-    snap = snapshot("flux2-klein", "qwen-image-2.1-edit", "video-ltx-2.5-t2v")
+    snap = snapshot("moss-image-fast", "qwen-image-2.1-edit", "video-ltx-2.5-t2v")
     run = run_request("images-generations", json_request({"prompt": "a fox"}), snap)
-    assert run.workflow_id == "image.generate.flux2-klein"          # the edit workflow needs a file this wire cannot carry
+    assert run.workflow_id == "image.generate.moss-image-fast"          # the edit workflow needs a file this wire cannot carry
 
 
 def test_two_workflows_and_no_model_is_a_400_that_asks_for_a_model() -> None:
-    snap = snapshot("flux2-klein", "krea2-turbo")
+    snap = snapshot("moss-image-fast", "krea2-turbo")
     response = run_request("images-generations", json_request({"prompt": "a fox"}), snap)
     assert response.status_code == 400 and json.loads(response.body)["error"]["code"] == "workflow_ambiguous"
 
 
 def test_a_workflow_is_addressed_by_its_id_or_by_its_id_without_the_intent() -> None:
-    snap = snapshot("flux2-klein", "krea2-turbo", "qwen-image-2.1-edit")
+    snap = snapshot("moss-image-fast", "krea2-turbo", "qwen-image-2.1-edit")
     short = run_request("images-generations", json_request({"prompt": "a fox", "model": "krea2-turbo"}), snap)
     assert short.workflow_id == "image.generate.krea2-turbo"
     unknown = run_request("images-generations", json_request({"prompt": "a fox", "model": "no-such"}), snap)
@@ -215,18 +215,18 @@ def test_a_workflow_is_addressed_by_its_id_or_by_its_id_without_the_intent() -> 
 
 
 def test_the_deployment_default_runs_when_no_model_is_named_and_a_named_model_wins(monkeypatch: pytest.MonkeyPatch) -> None:
-    snap = snapshot("flux2-klein", "krea2-turbo")
+    snap = snapshot("moss-image-fast", "krea2-turbo")
     resolvers = {frontend_shapes.shapes.OpenAIImagesJson.shape_id: lambda: "krea2-turbo"}
     monkeypatch.setattr(frontend_shapes.shapes, "DEFAULT_WORKFLOWS", resolvers)
     assert run_request("images-generations", json_request({"prompt": "a fox"}), snap).workflow_id == "image.generate.krea2-turbo"
-    named = run_request("images-generations", json_request({"prompt": "a fox", "model": "image.generate.flux2-klein"}), snap)
-    assert named.workflow_id == "image.generate.flux2-klein"
+    named = run_request("images-generations", json_request({"prompt": "a fox", "model": "image.generate.moss-image-fast"}), snap)
+    assert named.workflow_id == "image.generate.moss-image-fast"
     resolvers.clear()          # no default configured: the wire asks for a model, as before
     assert run_request("images-generations", json_request({"prompt": "a fox"}), snap).status_code == 400
 
 
 def test_the_picture_encoding_fields_of_the_wire_are_not_workflow_inputs() -> None:
-    snap = snapshot("flux2-klein")
+    snap = snapshot("moss-image-fast")
     body = {"prompt": "a fox", "n": 3, "quality": "high", "background": "opaque", "output_format": "jpeg",
             "output_compression": 80, "size": "512x512", "response_format": "b64_json"}
     run = run_request("images-generations", json_request(body), snap)
@@ -239,14 +239,14 @@ def test_the_picture_encoding_fields_of_the_wire_are_not_workflow_inputs() -> No
     ({"prompt": "x", "model": "image.edit.qwen-image-2.1-edit"}, 404, "model_not_found"),   # needs a file: not this wire's
 ])
 def test_a_malformed_json_request_is_the_shapes_own_error(payload: Any, status: int, code: str | None) -> None:
-    response = run_request("images-generations", json_request(payload), snapshot("flux2-klein", "qwen-image-2.1-edit"))
+    response = run_request("images-generations", json_request(payload), snapshot("moss-image-fast", "qwen-image-2.1-edit"))
     assert response.status_code == status
     body = json.loads(response.body)["error"]
     assert body["type"] == "invalid_request_error" and (code is None or body["code"] == code)
 
 
 def test_a_multipart_file_is_staged_with_the_declared_type_and_fills_the_required_asset_input() -> None:
-    snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
+    snap = snapshot("moss-image-fast", "qwen-image-2.1-edit")
     spool = FakeSpool()
     run = run_request("images-edits", multipart_request({"prompt": "make it night", "extensions": '{"com.azizam.workflow": {"steps": 8}}'},
                                                         [("image", "photo.png", "image/webp", b"PIXELS")]), snap, spool)
@@ -307,7 +307,7 @@ def test_a_refusal_keeps_its_status_code_and_retry_after() -> None:
 
 
 def test_a_sync_image_row_waits_and_renders_one_item_per_result() -> None:
-    snap, core = snapshot("flux2-klein"), FakeRunCore()
+    snap, core = snapshot("moss-image-fast"), FakeRunCore()
     view = submit(core, run_request("images-generations", json_request({"prompt": "a"}), snap), snap)
     finish(core, view.job_id, "image", "image/png", b"PNGDATA", asset_id="ast_7")
     response = answer("images-generations", view, FakeJobService(core), asset_url=lambda ref, caller: f"/v1/assets/{ref.asset_id}")
@@ -318,7 +318,7 @@ def test_a_sync_image_row_waits_and_renders_one_item_per_result() -> None:
 
 
 def test_a_job_row_answers_with_the_job_object_and_its_location() -> None:
-    snap, core = snapshot("flux2-klein"), FakeRunCore()
+    snap, core = snapshot("moss-image-fast"), FakeRunCore()
     view = submit(core, run_request("image-jobs", json_request({"prompt": "a"}), snap), snap)
     queued = answer("image-jobs", view, FakeJobService(core))
     assert queued.status_code == 202 and queued.headers["location"] == "/gateway/v1/media/jobs/job-1"
@@ -384,14 +384,14 @@ def test_the_mesh_profile_refuses_what_the_wire_cannot_carry_and_passes_the_bund
 
 
 def test_a_workflow_no_single_purpose_row_selects_is_never_refused_at_save() -> None:
-    for name in ("video-ltx-2.5-i2v", "qwen-image-2.1-edit", "flux2-klein", "tangoflux", "video-scail-2-replace", "face-likeness"):
+    for name in ("video-ltx-2.5-i2v", "qwen-image-2.1-edit", "moss-image-fast", "tangoflux", "video-scail-2-replace", "face-likeness"):
         frontend_profiles.check(contract(name))
         assert profile_problems(contract(name)) == (), name
 
 
 def test_a_shapes_profile_names_why_a_workflow_is_out_of_reach_of_its_wire() -> None:
     generate = shape_of("images-generations")
-    assert generate.profile(contract("flux2-klein")) == ()
+    assert generate.profile(contract("moss-image-fast")) == ()
     assert generate.profile(contract("qwen-image-2.1-edit"))               # a JSON body cannot carry the file it needs
     assert generate.profile("not a mapping")                               # never an exception
 

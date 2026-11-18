@@ -39,7 +39,7 @@ defaults:
     model_id: nomic-embed-text-v1.5
   images:
     timeout: 300
-    default_model: flux2-klein-4b
+    default_model: krea2-turbo
     workflows_dir: ./workflows/images
   videos:
     video_timeout: 1800

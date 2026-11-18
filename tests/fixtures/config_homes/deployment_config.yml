@@ -1436,7 +1436,7 @@ model_aliases:
   images:
     stable:
       image: krea2-turbo           # default text-to-image
-      image-fast: flux2-klein-4b   # Apache-licensed lighter fallback
+      image-fast: moss-image-fast
       image-uncensored: krea2-turbo-snofs  # Krea 2 Turbo + SNOFS LoRA; explicit output for adults. Opt-in, never behind `image`
       image-anime: anima-turbo     # Anima Turbo anime (fast); also uncensored
     openai:
@@ -1446,9 +1446,9 @@ model_aliases:
   image_edits:
     stable:
       image: qwen-image-2.1-edit         # alias of image-edit so one name works on both routes
-      image-fast: flux2-klein-4b-edit
+      image-fast: fibo-2-edit-turbo
       image-edit: qwen-image-2.1-edit    # masks and 2+ images pick inpaint/multiref automatically
-      image-edit-fast: flux2-klein-4b-edit
+      image-edit-fast: fibo-2-edit-turbo
       image-identity: image-identity     # real people from reference photos into a new scene, with likeness scores
     openai:
       - {match: "gpt-image-*", to: image-edit}

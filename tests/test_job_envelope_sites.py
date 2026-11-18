@@ -215,9 +215,9 @@ def test_an_unreadable_graph_file_pins_nothing_and_does_not_raise(caplog: pytest
 
 
 def test_an_image_manifest_pins():
-    record = proxy.GATEWAY_WORKFLOW_REGISTRY.get("image.generate.flux2-klein-4b")
+    record = proxy.GATEWAY_WORKFLOW_REGISTRY.get("image.generate.krea2-turbo")
     built = proxy._manifest_job_envelope(record.manifest, proxy._GRAPH_CAPABILITY)
-    assert built is not None and built.envelope.source_id == "image.generate.flux2-klein-4b"
+    assert built is not None and built.envelope.source_id == "image.generate.krea2-turbo"
 
 
 def test_a_configured_video_workflow_pins_its_config_entry_and_graph():

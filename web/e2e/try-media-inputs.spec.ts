@@ -21,7 +21,7 @@ async function plainText(locator: Locator) {
 // Every workflow manifest that takes a picture or video, through the
 // gateway's real catalog (no mocks): each media input gets exactly one picker
 // on Try, and the form shows no made-up file path and no raw field name.
-// The 2026-10-09 sweep found Flux2 Klein 4B Edit's pictures rendered as text
+// The 2026-10-09 sweep found Qwen-Image 2.1 Edit's pictures rendered as text
 // boxes plus a second upload control reading "./source-image.bin".
 
 type CatalogInput = {
