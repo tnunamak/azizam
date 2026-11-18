@@ -23,6 +23,7 @@ documents what wiring is missing.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from collections import Counter
 
 import asyncio
 import copy
@@ -2350,10 +2351,14 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
              fake_mesh_pool():
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
-        self.assertTrue(result)
-        self.assertTrue(all(any((cap.intent, cap.backend, cap.model, cap.workflow) ==
-                                (candidate.intent, candidate.backend, candidate.model, candidate.workflow)
-                                for candidate in seen) for cap in result))
+        def key(cap):
+            return (cap.intent, cap.backend, cap.model, cap.workflow, cap.resolved_workflow)
+
+        expected = [cap for cap in seen
+                    if not proxy.category_enforcement.is_hidden(cap.policy_reasons)
+                    and not proxy._closed_workflow_reason(cap.resolved_workflow or cap.workflow)]
+        self.assertTrue(expected)
+        self.assertEqual(Counter(map(key, result)), Counter(map(key, expected)))
 
     def test_capability_projection_check_rejects_a_truncated_listing(self) -> None:
         original = proxy._gateway_capabilities_provider

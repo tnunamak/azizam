@@ -9388,6 +9388,10 @@ async def proxy_graph_image_request(
         return _gateway_input_error("prompt is required")
     _record_image_input(receipt, "prompt")
 
+    record = _image_workflow_record(intents.require_admission(), str(model))
+    closed = _closed_workflow_decision(record.id if record is not None else None)
+    if closed is not None:
+        return _policy_denied_response(closed)
     manifest = _find_image_manifest(intents.require_admission(), str(model))
     refusal = _generate_refusal_for_other_intent_stem(receipt, str(model), manifest, intents.require_admission())
     if refusal is not None:
@@ -12904,6 +12908,9 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
 
 def _video_workflow_closure(name: str) -> PolicyDecision | None:
     workflow_id = workflow_id_for_video_key(name)
+    if workflow_id is None:
+        record = find_workflow_record(GATEWAY_WORKFLOW_REGISTRY.records(), INTENT_VIDEO_GENERATE, name)
+        workflow_id = record.id if record is not None else None
     if workflow_id is None:
         config = _video_workflow_table().get(name)
         manifest = _find_video_manifest(name, config) if config else None
@@ -25587,6 +25594,9 @@ async def _submit_audio_media_job(
             )
         )
     requested_model = body.get("model", _audio_default_workflow())
+    closed = _audio_closed_workflow_decision(workflow_name)
+    if closed is not None:
+        return _policy_denied_response(closed)
     manifest = _load_audio_workflow_manifest(workflow_name)
     workflow_id = _audio_workflow_id(workflow_name)
     if workflow_id is None:
@@ -26217,7 +26227,7 @@ def _resume_pending_video_media_jobs() -> int:
 
 def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> PolicyDecision:
     """The plan check of a video job, at submit and before each later step."""
-    closed = _closed_workflow_decision(workflow_id_for_video_key(workflow_name))
+    closed = _video_workflow_closure(workflow_name)
     if closed is not None:
         return closed
     return evaluate_and_apply(
@@ -26636,6 +26646,12 @@ async def gateway_image_generations_media_job(request: Request):
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     generate_intent = _image_admission_intent("images.generate")
+    record = _image_workflow_record(generate_intent, resolved_model)
+    closed = _closed_workflow_decision(record.id if record is not None else None)
+    if closed is not None:
+        response = _policy_denied_response(closed)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
     manifest = _find_image_manifest(generate_intent, resolved_model)
     if receipt is not None:
         receipt.requested_workflow = model
@@ -29115,6 +29131,12 @@ def _audio_workflow_records() -> Iterator[Any]:
     return (record for record in GATEWAY_WORKFLOW_REGISTRY.records() if record.intent in media_job_intents.AUDIO_INTENTS)
 
 
+def _audio_closed_workflow_decision(workflow_name: str) -> PolicyDecision | None:
+    record = next((record for record in _audio_workflow_records()
+                   if _manifest_names_audio_workflow(record.manifest, workflow_name)), None)
+    return _closed_workflow_decision(record.id if record is not None else None)
+
+
 def _audio_workflow_id(workflow_name: str) -> str | None:
     """The registry id of the audio record a resolved workflow name names; ``None`` when no record does."""
     manifest = _load_audio_workflow_manifest(workflow_name)
@@ -29453,6 +29475,9 @@ async def proxy_audio_generate(
                 code="model_not_found",
             )
         )
+    closed = _audio_closed_workflow_decision(workflow_name)
+    if closed is not None:
+        return _policy_denied_response(closed)
     if pinned is not None:
         try:
             manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
