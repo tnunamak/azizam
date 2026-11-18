@@ -2941,7 +2941,9 @@ export default function TryPage() {
                     <p className="text-muted-foreground text-sm">{tab.help}</p>
                   )}
                   <label className="block space-y-2">
-                    <span className="text-sm font-medium">Model name</span>
+                    <span className="text-sm font-medium">
+                      {tab.value === "workflow" ? "Which workflow" : "Model name"}
+                    </span>
                     <ModelSelect
                       loading={["idle", "loading"].includes(catalogState[section])}
                       value={model[tab.value]}

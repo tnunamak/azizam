@@ -682,7 +682,15 @@ function DetailSheet({
   const source = row ? modelSource(row) : null;
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
+      <SheetContent
+        className="w-[92vw] overflow-y-auto sm:max-w-xl"
+        // Focus the panel itself so it opens at its name and facts, not
+        // scrolled down to the first control in the code samples.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          (event.currentTarget as HTMLElement).focus({ preventScroll: true });
+        }}
+      >
         {row && (
           <>
             <SheetHeader className="border-b pr-12">
@@ -725,7 +733,7 @@ function DetailSheet({
                 {source && (
                   <Fact
                     label="Source"
-                    value={<a href={source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">Source</a>}
+                    value={<a href={source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">{new URL(source).hostname}</a>}
                   />
                 )}
               </dl>

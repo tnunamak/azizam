@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -118,16 +119,23 @@ describe("model detail dates and source", () => {
     const detail = await openDetails({ released_at: released, source_url: "https://example.test/model" });
     const label = detail.getByText("Released", { selector: "dt" });
     expect(label.nextElementSibling?.textContent).toBe(new Date(released).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }));
-    const source = detail.getByRole("link", { name: "Source" });
+    // The link names the publisher's site, not "Source" a second time.
+    expect(detail.getByText("Source", { selector: "dt" })).toBeVisible();
+    const source = detail.getByRole("link", { name: "example.test" });
     expect(source).toHaveAttribute("href", "https://example.test/model");
     expect(source).toHaveAttribute("target", "_blank");
     expect(source).toHaveAttribute("rel", "noopener noreferrer");
   });
 
+  it("opens with focus on the panel, not on a control further down", async () => {
+    await openDetails({ released_at: "2026-06-15" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("dialog")));
+  });
+
   it("omits date and Source facts when none were supplied", async () => {
     const detail = await openDetails();
     for (const label of ["Released", "Added here", "Updated", "Source"]) expect(detail.queryByText(label, { selector: "dt" })).toBeNull();
-    expect(detail.queryByRole("link", { name: "Source" })).toBeNull();
+    expect(detail.queryByText("Source", { selector: "dt" })).toBeNull();
   });
 
   it("renders every available date but omits invalid dates and source URLs", async () => {
@@ -140,12 +148,12 @@ describe("model detail dates and source", () => {
     expect(detail.getByText("Updated", { selector: "dt" }).nextElementSibling?.textContent)
       .toBe(new Date(updated).toLocaleDateString(undefined, day));
     expect(detail.queryByText("Released", { selector: "dt" })).toBeNull();
-    expect(detail.queryByRole("link", { name: "Source" })).toBeNull();
+    expect(detail.queryByText("Source", { selector: "dt" })).toBeNull();
   });
 
   it("omits a date given as a bare number, which has no unit", async () => {
     const detail = await openDetails({ released_at: 1800000000 });
     expect(detail.queryByText("Released", { selector: "dt" })).toBeNull();
-    expect(detail.queryByRole("link", { name: "Source" })).toBeNull();
+    expect(detail.queryByText("Source", { selector: "dt" })).toBeNull();
   });
 });
