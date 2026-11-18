@@ -130,13 +130,11 @@ describe("a picture-edit workflow on Try", () => {
   it("gives each picture exactly one picker, in plain words", async () => {
     await openWorkflow();
     const source = screen.getByRole("group", { name: /Picture to change/ });
-    const mask = screen.getByRole("group", { name: /Mask/ });
     expect(within(source).getByText("The picture you want to change.")).toBeVisible();
     expect(within(source).getAllByRole("button", { name: "Choose a file" })).toHaveLength(1);
-    expect(within(mask).getAllByRole("button", { name: "Choose a file" })).toHaveLength(1);
-    // Two pictures, two pickers: no second upload control below the form.
-    expect(screen.getAllByRole("button", { name: "Choose a file" })).toHaveLength(2);
-    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(2);
+    // One picture, one picker: no second upload control below the form.
+    expect(screen.getAllByRole("button", { name: "Choose a file" })).toHaveLength(1);
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
     // No text box for a picture, no raw field name, no made-up path.
     expect(screen.queryByRole("textbox", { name: /source_image|Picture to change|Mask/i })).toBeNull();
     const text = document.body.textContent ?? "";
@@ -161,7 +159,6 @@ describe("a picture-edit workflow on Try", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
     const source = screen.getByRole("group", { name: /Picture to change/ });
     expect(await within(source).findByRole("alert")).toHaveTextContent("Choose a picture first");
-    expect(within(screen.getByRole("group", { name: /Mask/ })).queryByRole("alert")).toBeNull();
     expect(posts()).toHaveLength(0);
   });
 
