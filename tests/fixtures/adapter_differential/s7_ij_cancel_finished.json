@@ -322,17 +322,20 @@
     }
   ],
   "gateway_sleeps": [],
+  "job_prefixes": [
+    "mj"
+  ],
   "media_jobs": {
     "definition_blob": [
       {
         "body": {
           "kind": "binary",
-          "len": 841,
+          "len": 1006,
           "magic": "7b226964223a2269",
-          "sha256": "0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac"
+          "sha256": "426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d"
         },
         "created": "<time>",
-        "sha": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac"
+        "sha": "sha256:426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d"
       },
       {
         "body": {
@@ -357,17 +360,17 @@
     ],
     "definition_ref": [
       {
-        "blob_sha": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
-        "holder_kind": "job",
-        "job_id": "<job:1>"
-      },
-      {
         "blob_sha": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
       {
         "blob_sha": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
+      {
+        "blob_sha": "sha256:426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d",
         "holder_kind": "job",
         "job_id": "<job:1>"
       }
@@ -378,7 +381,7 @@
         "envelope_json": {
           "definitions": {
             "binding": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
-            "contract": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
+            "contract": "sha256:426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d",
             "protocol": {
               "id": "node-graph",
               "revision": "sha256:2b05c8f50205f607e0b95167dc36251c1668d447a10aa005cb8917fd06804216"
@@ -405,7 +408,7 @@
             "incarnation": "untracked",
             "kind": "workflow",
             "record_revision": null,
-            "revision": "sha256:a3d6d0f01a20c911696822bd8cb584d0a5bd909104e0fd4fc4fbf2dfd73452c7"
+            "revision": "sha256:256b00880b15276e78be40c3121716896ab4d44e67cbabe782ab056be8441f8c"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
@@ -580,11 +583,11 @@
           "envelope": {
             "adapter_id": "node-graph",
             "binding": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
-            "contract": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
+            "contract": "sha256:426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d",
             "interface_version": 2,
             "source_id": "image.generate.krea2-turbo",
             "source_kind": "workflow",
-            "source_revision": "sha256:a3d6d0f01a20c911696822bd8cb584d0a5bd909104e0fd4fc4fbf2dfd73452c7",
+            "source_revision": "sha256:256b00880b15276e78be40c3121716896ab4d44e67cbabe782ab056be8441f8c",
             "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
           },
           "results": [
@@ -955,7 +958,7 @@
           "intent": "image.generate",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
+          "manifest_hash": "d46fb628ddaa1f350a9bb3c8efd657b40eea691032060bdd430a6dcb3243f8e4",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {
@@ -965,11 +968,11 @@
               "envelope": {
                 "adapter_id": "node-graph",
                 "binding": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
-                "contract": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
+                "contract": "sha256:426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d",
                 "interface_version": 2,
                 "source_id": "image.generate.krea2-turbo",
                 "source_kind": "workflow",
-                "source_revision": "sha256:a3d6d0f01a20c911696822bd8cb584d0a5bd909104e0fd4fc4fbf2dfd73452c7",
+                "source_revision": "sha256:256b00880b15276e78be40c3121716896ab4d44e67cbabe782ab056be8441f8c",
                 "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
               },
               "results": [
@@ -1137,7 +1140,7 @@
           "intent": "image.generate",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
+          "manifest_hash": "d46fb628ddaa1f350a9bb3c8efd657b40eea691032060bdd430a6dcb3243f8e4",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {
@@ -1147,11 +1150,11 @@
               "envelope": {
                 "adapter_id": "node-graph",
                 "binding": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
-                "contract": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
+                "contract": "sha256:426c792395abe5ed42fecfa7dc4776178ff897d0d42fd6852ac489d9b11e798d",
                 "interface_version": 2,
                 "source_id": "image.generate.krea2-turbo",
                 "source_kind": "workflow",
-                "source_revision": "sha256:a3d6d0f01a20c911696822bd8cb584d0a5bd909104e0fd4fc4fbf2dfd73452c7",
+                "source_revision": "sha256:256b00880b15276e78be40c3121716896ab4d44e67cbabe782ab056be8441f8c",
                 "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
               },
               "results": [
