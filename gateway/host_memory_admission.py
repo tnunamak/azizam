@@ -233,6 +233,12 @@ async def is_cancelled(ask: Ask) -> bool:
     return bool(await result if inspect.isawaitable(result) else result)
 
 
+@dataclass(eq=False)
+class _Reservation:
+    expires: float
+    size: int
+
+
 class Lease:
     """Keep staged bytes reserved until the prompt reaches a terminal state."""
 
@@ -281,7 +287,7 @@ class HostMemoryAdmission:
         self._saved = saved_setting     # read on every admission: a save by the owner applies to the next prompt
         self._read, self._sleep, self._clock = read_available, sleep, clock
         self._loaded: dict[str, float] = {}
-        self._reserved: list[tuple[float, int]] = []
+        self._reserved: list[_Reservation] = []
         self._waiting: list[_Waiter] = []
         self._ticket = itertools.count()
         self._sizes: dict[str, int | None] = {}
@@ -353,8 +359,8 @@ class HostMemoryAdmission:
                     LOG.warning("host memory: MemAvailable is unreadable; the prompt is admitted")
                     break
                 now = self._clock()
-                self._reserved = [entry for entry in self._reserved if entry[0] > now]
-                needed = staged + margin + sum(size for _, size in self._reserved)
+                self._reserved = [entry for entry in self._reserved if entry.expires > now]
+                needed = staged + margin + sum(entry.size for entry in self._reserved)
                 if self._first(waiter) and available >= needed:
                     break
                 if now - started >= limit:
@@ -369,7 +375,7 @@ class HostMemoryAdmission:
         finally:
             self._waiting.remove(waiter)
         now = self._clock()
-        reservation = (now + policy.job_wait_s, staged)
+        reservation = _Reservation(now + policy.job_wait_s, staged)
         self._reserved.append(reservation)
         lease = Lease(self, names, reservation)
         try:
