@@ -224,7 +224,6 @@ def _orphan_workflow_patches(stored: Mapping[str, Any], release: Mapping[str, An
         and "manifest" not in workflows[item.key]
         and registry_layers.REPLACE_KEY not in workflows[item.key]
         and registry_layers.RUN_CONTROL_PATCH_KEY not in workflows[item.key]
-        and set(workflows[item.key]) <= {"id", "state", "policy", "enabled", "published", "record_revision", "incarnation", "source"}
     }
 
 

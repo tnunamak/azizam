@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import proxy
+import pytest
 from gateway import admin_store, discovery, registry_layers, service_registry
 from gateway.registry_snapshot import build, bundled_release
 from tests.registry_test_helpers import write_legacy_registry_for_test
@@ -68,12 +69,15 @@ def test_retired_stored_rows_do_not_reappear_or_run(monkeypatch, tmp_path):
     assert job.json()["error"]["code"] == "workflow_disabled"
 
 
-def test_orphan_merge_patch_is_excluded_at_startup_and_in_owner_api(monkeypatch, tmp_path):
+# A merge patch is any stored row without a manifest, a replace marker or patch_of. Its base decides, not which fields it
+# changes: an owner patch that also renamed or re-described the workflow is just as orphaned once the base is gone.
+@pytest.mark.parametrize("extra", [{}, {"display_name": "Renamed by the owner", "description": "Owner text"}], ids=["run-fields", "display-fields"])
+def test_orphan_merge_patch_is_excluded_at_startup_and_in_owner_api(monkeypatch, tmp_path, extra):
     from tests.test_registry_apply_failure import _owner_client
 
     db = use_admin_db(monkeypatch, tmp_path)
     wid = "image.generate.retired-patch"
-    row = {"id": wid, "state": "disabled", "policy": {"exposure": "disabled"}}
+    row = {"id": wid, "state": "disabled", "policy": {"exposure": "disabled"}, **extra}
     stored = {**registry_layers.empty_stored(service_registry.SERVICE_REGISTRY_SCHEMA_VERSION), "workflows": {wid: row}}
     write_legacy_registry_for_test(stored, path=db)
     admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=db)
@@ -103,8 +107,6 @@ def test_orphan_merge_patch_is_excluded_at_startup_and_in_owner_api(monkeypatch,
 
 
 def test_startup_rejects_malformed_stored_section_and_mismatched_id(tmp_path):
-    import pytest
-
     for workflows in ([], {"one": {"id": "two", "state": "disabled"}}):
         db = tmp_path / ("section.db" if isinstance(workflows, list) else "id.db")
         admin_store.init_db(db)
