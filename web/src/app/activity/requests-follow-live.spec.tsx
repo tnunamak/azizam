@@ -24,8 +24,9 @@ async function mount(records = [row("old-request", "Original person")]) {
   vi.setSystemTime(NOW);
   focusManager.setFocused(true);
   let current = records;
+  let cursor: string | null = null;
   const requests = vi.fn(async () => ({ ok: true,
-    json: async () => ({ records: current, people: [], next_cursor: null }) }));
+    json: async () => ({ records: current, people: [], next_cursor: cursor }) }));
   vi.stubGlobal("fetch", requests);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   clients.push(client);
@@ -33,7 +34,10 @@ async function mount(records = [row("old-request", "Original person")]) {
   await advance(100);
   expect(screen.getByRole("button", { name: /Request details: Chat by/ })).toBeTruthy();
   expect(requests).toHaveBeenCalledTimes(1);
-  return { client, requests, replace: (next: typeof records) => { current = next; } };
+  return { client, requests, replace: (next: typeof records, more: string | null = null) => {
+    current = next;
+    cursor = more;
+  } };
 }
 afterEach(() => {
   cleanup();
@@ -114,11 +118,11 @@ it("keeps the open request sheet on its request when a live refetch prepends a n
   expect(dialog.getByText("Request ID: old-request")).toBeTruthy();
 });
 
-it("keeps the open request sheet when a live refetch no longer includes its request", async () => {
+it("keeps the open request sheet when newer requests push it past the loaded rows", async () => {
   const { replace, requests } = await mount();
   fireEvent.click(screen.getByRole("button", { name: "Follow live" }));
   fireEvent.click(screen.getByRole("button", { name: "Request details: Chat by Original person" }));
-  replace([row("new-request", "New person", NOW / 1000)]);
+  replace([row("new-request", "New person", NOW / 1000)], "older-page");
   await advance(5100);
   expect(requests).toHaveBeenCalledTimes(2);
   const dialog = within(screen.getByRole("dialog"));
@@ -134,7 +138,7 @@ it("keeps the sheet on the request's latest outcome after a live refetch drops i
   replace([row("old-request", "Original person", NOW / 1000 - 1200, "ok")]);
   await advance(5100);
   expect(within(screen.getByRole("dialog")).getByText("Completed")).toBeTruthy();
-  replace([row("new-request", "New person", NOW / 1000)]);
+  replace([row("new-request", "New person", NOW / 1000)], "older-page");
   await advance(5100);
   expect(requests).toHaveBeenCalledTimes(3);
   const dialog = within(screen.getByRole("dialog"));
@@ -148,4 +152,14 @@ it("a request the gateway reports as stale_incomplete still shows when it last u
   const request = screen.getByRole("button", { name: "Request details: Chat by Stuck" });
   expect(within(request).getByText("Outcome not recorded")).toBeTruthy();
   expect(within(request).getByText(/No update since/)).toBeTruthy();
+});
+
+it("closes the sheet when a live refetch shows its request is gone, not pushed past the loaded rows", async () => {
+  const { replace, requests } = await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Follow live" }));
+  fireEvent.click(screen.getByRole("button", { name: "Request details: Chat by Original person" }));
+  replace([row("new-request", "New person", NOW / 1000)]);
+  await advance(5100);
+  expect(requests).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

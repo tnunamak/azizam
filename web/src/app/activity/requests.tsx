@@ -298,7 +298,18 @@ export function Requests() {
   useEffect(() => {
     if (selectedReceiptKey !== null && liveRecord) setOpenedRecord(liveRecord);
   }, [selectedReceiptKey, liveRecord]);
-  const record = selectedReceiptKey === null ? null : liveRecord ?? openedRecord;
+  // Newer requests pushed the open one past the loaded rows: every loaded row is newer and an older page remains. Any
+  // other absence means the receipt is gone (deleted or pruned), and its sheet closes.
+  const oldestLoaded = rows.length > 0 ? rows[rows.length - 1].created_at : null;
+  const pushedOut = liveRecord === null && openedRecord !== null && hasNextPage &&
+    oldestLoaded !== null && openedRecord.created_at <= oldestLoaded;
+  useEffect(() => {
+    if (data && selectedReceiptKey !== null && liveRecord === null && !pushedOut) {
+      setSelectedReceiptKey(null);
+      setOpenedRecord(null);
+    }
+  }, [data, selectedReceiptKey, liveRecord, pushedOut]);
+  const record = selectedReceiptKey === null ? null : liveRecord ?? (pushedOut ? openedRecord : null);
   useEffect(() => {
     if (isFetchingNextPage || !pageButtonRef.current) return;
     const button = pageButtonRef.current;
