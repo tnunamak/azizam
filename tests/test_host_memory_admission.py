@@ -494,3 +494,35 @@ def test_protocol_job_cancel_during_memory_wait_never_submits(tmp_path, monkeypa
         run(jobs.run(runtime, "test", {}, job_id="job"))
     assert clock.now == cancel_after
     assert not submissions and not made._reserved and not made._loaded
+
+
+@pytest.mark.parametrize("succeeds", [False, True])
+def test_protocol_job_finishes_lease_on_submit_failure_or_completion(tmp_path, monkeypatch, succeeds):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import jobs
+    from gateway.engine_protocol.types import JobRef, JobState
+
+    weights(tmp_path, "a.safetensors", 10000)
+    made, _clock = admission(tmp_path, [11000])
+    class Adapter:
+        async def admit(self, conn, op, request, ask):
+            return await made.admit(graph("a.safetensors"), ask)
+        async def submit(self, *args):
+            if not succeeds:
+                raise ValueError("refused")
+            return JobRef("test", "id")
+        async def poll(self, *args):
+            return SimpleNamespace(state=JobState.succeeded)
+        async def fetch_assets(self, *args):
+            return []
+
+    runtime = SimpleNamespace(adapter=Adapter(), connection_for=lambda op: None, record_lifecycle=False,
+                              poll_timing=lambda op: (0, 10), request=lambda op, body: body)
+    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: None)
+    if succeeds:
+        assert run(jobs.run(runtime, "test", {}, job_id="job")) == []
+    else:
+        with pytest.raises(ValueError, match="refused"):
+            run(jobs.run(runtime, "test", {}, job_id="job"))
+    assert not made._reserved
+    assert ("a.safetensors" in made._loaded) is succeeds
