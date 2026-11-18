@@ -94,3 +94,21 @@ def test_owner_refresh_joins_background_refresh(owner, monkeypatch):
 def test_owner_routes_are_excluded_from_openapi(owner):
     client, _, _, _ = owner
     assert '/admin/api/workflows/choices' not in client.get('/openapi.json').json()['paths']
+
+
+def test_unresolved_identity_is_a_per_input_failure(tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(choice_lists, 'STORE', ChoiceStore(tmp_path / 'choices.json'))
+    entry = SimpleNamespace(id='demo', contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
+    def unavailable(entry):
+        raise ValueError('unavailable')
+    rows = asyncio.run(choice_lists.owner_choices([entry], unavailable, refresh=True))
+    assert rows[0]['state'] == 'failed' and rows[0]['failure_reason'] == 'no bound service'
+
+
+def test_missing_address_records_failure(tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(choice_lists, 'STORE', ChoiceStore(tmp_path / 'choices.json'))
+    entry = SimpleNamespace(id='demo', contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
+    rows = asyncio.run(choice_lists.owner_choices([entry], lambda entry: SimpleNamespace(service_id='svc', origin=''), refresh=True))
+    assert rows[0]['state'] == 'failed' and 'no service address' in rows[0]['failure_reason']
