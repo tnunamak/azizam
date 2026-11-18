@@ -229,7 +229,7 @@ def register_workflow_owner_routes(
         return _plain({"report": {"ok": report.ok, "errors": [_with_clean(e.as_dict()) for e in report.errors]}},
                       etag=snapshot.revision)
 
-    @router.get("/workflows/choices", include_in_schema=False)
+    @router.get("/workflow-choices", include_in_schema=False)
     async def list_choices(request: Request) -> JSONResponse:
         ctx = await asyncio.to_thread(guard, request)
         if isinstance(ctx, JSONResponse):
@@ -238,7 +238,7 @@ def register_workflow_owner_routes(
         snapshot = await asyncio.to_thread(store.snapshot)
         return _plain({"choices": await owner_choices(snapshot.workflows.values(), resolve_identity)})
 
-    @router.post("/workflows/choices/refresh", include_in_schema=False)
+    @router.post("/workflow-choices/refresh", include_in_schema=False)
     @router.post("/workflows/{workflow_id}/choices/refresh", include_in_schema=False)
     async def refresh_choices(request: Request, workflow_id: str | None = None) -> JSONResponse:
         ctx = await asyncio.to_thread(guard, request)

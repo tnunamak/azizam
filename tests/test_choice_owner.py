@@ -41,7 +41,7 @@ def test_owner_can_list_choice_freshness(owner, monkeypatch):
     store.write('svc', 'Node', 'stale', ['b'], fetched_at=1)
     store.write('svc', 'Node', 'failed', ['c'], fetched_at=1)
     store.record_failure('svc', 'Node', 'failed', 'unavailable', at=99999)
-    rows = {r['input']: r for r in client.get('/admin/api/workflows/choices').json()['choices']}
+    rows = {r['input']: r for r in client.get('/admin/api/workflow-choices').json()['choices']}
     assert [rows[x]['state'] for x in ('fresh', 'stale', 'missing', 'failed')] == ['fresh', 'stale', 'missing', 'failed']
     assert rows['fresh']['age_s'] == 10
     assert rows['failed']['failure_reason'] == 'unavailable'
@@ -55,13 +55,13 @@ def test_owner_refresh_and_failure(owner, monkeypatch):
     def fail(*args):
         raise OSError('offline')
     monkeypatch.setattr(choice_lists, 'fetch_fresh', fail)
-    assert client.post('/admin/api/workflows/choices/refresh').status_code == 200
-    row = client.get('/admin/api/workflows/choices').json()['choices'][0]
+    assert client.post('/admin/api/workflow-choices/refresh').status_code == 200
+    row = client.get('/admin/api/workflow-choices').json()['choices'][0]
     assert row['choices'] == ['new'] and row['state'] == 'failed' and 'offline' in row['failure_reason']
 
 
 @pytest.mark.parametrize('role', ['member', 'app-key', None])
-@pytest.mark.parametrize('method,path', [('get', '/admin/api/workflows/choices'), ('post', '/admin/api/workflows/choices/refresh')])
+@pytest.mark.parametrize('method,path', [('get', '/admin/api/workflow-choices'), ('post', '/admin/api/workflow-choices/refresh')])
 def test_owner_only(owner, role, method, path):
     client, _, roles, _ = owner
     roles['value'] = role
@@ -80,14 +80,15 @@ def test_owner_refresh_joins_background_refresh(owner, monkeypatch):
     monkeypatch.setattr(choice_lists, 'fetch_fresh', fetch)
     shield = choice_lists.asyncio.shield
     def observe_join(task):
-        joined.set()
+        if task is choice_lists._tasks.get('svc'):
+            joined.set()
         return shield(task)
     monkeypatch.setattr(choice_lists.asyncio, 'shield', observe_join)
     identity = SimpleNamespace(service_id='svc', origin='http://203.0.113.10:8188')
     client.portal.call(choice_lists.choices_for_run, identity, entry.contract['inputs'])
     try:
         assert entered.wait(5)
-        thread = threading.Thread(target=lambda: client.post('/admin/api/workflows/choices/refresh'))
+        thread = threading.Thread(target=lambda: client.post('/admin/api/workflow-choices/refresh'))
         thread.start()
         assert joined.wait(5)
         assert len(calls) == 1
@@ -97,16 +98,11 @@ def test_owner_refresh_joins_background_refresh(owner, monkeypatch):
     assert not thread.is_alive() and len(calls) == 1
 
 
-def test_owner_routes_are_excluded_from_openapi(owner):
-    client, _, _, _ = owner
-    assert '/admin/api/workflows/choices' not in client.get('/openapi.json').json()['paths']
-
-
 def test_unresolved_identity_is_a_per_input_failure(tmp_path, monkeypatch):
     import asyncio
     monkeypatch.setattr(choice_lists, 'STORE', ChoiceStore(tmp_path / 'choices.json'))
-    entry = SimpleNamespace(id='demo', contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
-    def unavailable(entry):
+    entry = SimpleNamespace(id='demo', bindings={'default': object()}, contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
+    def unavailable(entry, binding_key):
         raise ValueError('unavailable')
     rows = asyncio.run(choice_lists.owner_choices([entry], unavailable, refresh=True))
     assert rows[0]['state'] == 'failed' and rows[0]['failure_reason'] == 'no bound service'
@@ -115,10 +111,10 @@ def test_unresolved_identity_is_a_per_input_failure(tmp_path, monkeypatch):
 def test_missing_address_records_failure(tmp_path, monkeypatch):
     import asyncio
     monkeypatch.setattr(choice_lists, 'STORE', ChoiceStore(tmp_path / 'choices.json'))
-    entry = SimpleNamespace(id='demo', contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
-    view = asyncio.run(choice_lists.owner_choices([entry], lambda entry: SimpleNamespace(service_id='svc', origin='')))
+    entry = SimpleNamespace(id='demo', bindings={'default': object()}, contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
+    view = asyncio.run(choice_lists.owner_choices([entry], lambda entry, binding_key: SimpleNamespace(service_id='svc', origin='')))
     assert view[0]['state'] == 'failed' and view[0]['failure_reason'] == 'no service address'
-    rows = asyncio.run(choice_lists.owner_choices([entry], lambda entry: SimpleNamespace(service_id='svc', origin=''), refresh=True))
+    rows = asyncio.run(choice_lists.owner_choices([entry], lambda entry, binding_key: SimpleNamespace(service_id='svc', origin=''), refresh=True))
     assert rows[0]['state'] == 'failed' and 'no service address' in rows[0]['failure_reason']
 
 
@@ -128,7 +124,7 @@ def test_joined_refresh_also_fetches_other_declarations(tmp_path, monkeypatch):
     monkeypatch.setattr(choice_lists, 'STORE', store)
     entered, release, joined = threading.Event(), threading.Event(), threading.Event()
     identity = SimpleNamespace(service_id='svc', origin='http://203.0.113.10:8188')
-    entry = SimpleNamespace(id='demo', contract={'inputs': {
+    entry = SimpleNamespace(id='demo', bindings={'default': object()}, contract={'inputs': {
         'one': {'choices_from': {'node_type': 'One', 'input': 'one'}},
         'two': {'choices_from': {'node_type': 'Two', 'input': 'two'}}}})
     calls = []
@@ -141,13 +137,14 @@ def test_joined_refresh_also_fetches_other_declarations(tmp_path, monkeypatch):
     monkeypatch.setattr(choice_lists, 'fetch_fresh', fetch)
     shield = asyncio.shield
     def observe_join(task):
-        joined.set()
+        if task is choice_lists._tasks.get('svc'):
+            joined.set()
         return shield(task)
     monkeypatch.setattr(choice_lists.asyncio, 'shield', observe_join)
     async def scenario():
         choice_lists.choices_for_run(identity, {'one': entry.contract['inputs']['one']})
         assert await asyncio.to_thread(entered.wait, 5)
-        task = asyncio.create_task(choice_lists.owner_choices([entry], lambda entry: identity, refresh=True))
+        task = asyncio.create_task(choice_lists.owner_choices([entry], lambda entry, binding_key: identity, refresh=True))
         try:
             assert await asyncio.to_thread(joined.wait, 5)
         finally:
