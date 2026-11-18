@@ -230,7 +230,7 @@ class HostMemoryBusy(Exception):
 def busy_response(retry_after_s: int | None = None):
     """The synchronous answer: 503, code ``resource_unavailable``, with Retry-After."""
     seconds = retry_after_s if retry_after_s is not None else load_policy().retry_after_s
-    return client_errors.client_error(503, BUSY_REASON, code=BUSY_CODE, error_type="api_error",
+    return client_errors.client_error(503, "host_memory_busy", code=BUSY_CODE, error_type="api_error",
                                       headers={"Retry-After": client_errors.retry_after(str(seconds)) or "30"})
 
 

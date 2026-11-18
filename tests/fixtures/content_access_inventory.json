@@ -345,6 +345,22 @@
       ],
       "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
       "access": "content:job:read"
+    },
+    {
+      "path": "gateway/engine_protocol/jobs.py",
+      "function": "_run",
+      "source_sha256": "deb64b3a5cb26902c3e9c4be151a7aecad28fc1799a3b28e02f72db2bce850d5",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/node_graph_runner.py",
+      "function": "report",
+      "source_sha256": "f40b453b609cf4647d4f50313819e8b1a48f80362b4822792ba0c97b97ecd6f4",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
     }
   ],
   "mcp_fields": {
