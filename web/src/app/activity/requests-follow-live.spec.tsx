@@ -10,8 +10,9 @@ for (const method of ["hasPointerCapture", "setPointerCapture", "releasePointerC
   Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => false });
 
 const NOW = Date.UTC(2026, 10, 18, 12);
-const row = (id: string, person: string, created = NOW / 1000 - 1200, status = "running") => ({
-  receipt: { request_id: id, intent: "chat", status },
+const row = (id: string, person: string, created = NOW / 1000 - 1200, status = "running",
+  updated: number | null = created * 1000) => ({
+  receipt: { request_id: id, intent: "chat", status, ...(updated === null ? {} : { updated_at_ms: updated }) },
   person_label: person, app_label: "Test app", created_at: created,
 });
 const clients: QueryClient[] = [];
@@ -64,15 +65,39 @@ it("following polls after five seconds without changing the query key and Pause 
   expect(requests).toHaveBeenCalledTimes(2);
 });
 
-it("shows No update since for a running receipt created twenty minutes ago", async () => {
+it("shows No update since for a running receipt last updated twenty minutes ago", async () => {
   await mount();
   const request = screen.getByRole("button", { name: "Request details: Chat by Original person" });
   expect(within(request).getByText(/No update since/)).toBeTruthy();
 });
 
-it("never shows stale words when the created time is absent", async () => {
-  await mount([{ ...row("unknown-time", "Unknown time"), created_at: 0 }]);
+it("reads the receipt's last update, not its creation: an old request updated a minute ago is not stale", async () => {
+  await mount([row("long-run", "Long run", NOW / 1000 - 3600, "running", NOW - 60_000)]);
   expect(screen.queryByText(/No update since/)).toBeNull();
+});
+
+it("makes no stale claim when the receipt has no update time", async () => {
+  await mount([row("unknown-time", "Unknown time", NOW / 1000 - 3600, "running", null)]);
+  expect(screen.queryByText(/No update since/)).toBeNull();
+});
+
+it("a paused list still ages a running request into stale without another fetch", async () => {
+  const { requests } = await mount([row("aging", "Aging", NOW / 1000 - 590, "running", NOW - 590_000)]);
+  expect(screen.queryByText(/No update since/)).toBeNull();
+  await advance(60_000);
+  expect(screen.getByText(/No update since/)).toBeTruthy();
+  expect(requests).toHaveBeenCalledTimes(1);
+});
+
+it("paused makes no refresh when the window regains focus", async () => {
+  const { requests } = await mount();
+  await act(async () => {
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await advance(100);
+  expect(requests).toHaveBeenCalledTimes(1);
 });
 
 it("keeps the open request sheet on its request when a live refetch prepends a newer row", async () => {
@@ -87,4 +112,16 @@ it("keeps the open request sheet on its request when a live refetch prepends a n
   expect(dialog.getByText("Original person")).toBeTruthy();
   expect(dialog.queryByText("New person")).toBeNull();
   expect(dialog.getByText("Request ID: old-request")).toBeTruthy();
+});
+
+it("keeps the open request sheet when a live refetch no longer includes its request", async () => {
+  const { replace, requests } = await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Follow live" }));
+  fireEvent.click(screen.getByRole("button", { name: "Request details: Chat by Original person" }));
+  replace([row("new-request", "New person", NOW / 1000)]);
+  await advance(5100);
+  expect(requests).toHaveBeenCalledTimes(2);
+  const dialog = within(screen.getByRole("dialog"));
+  expect(dialog.getByText("Request ID: old-request")).toBeTruthy();
+  expect(dialog.getByText("Original person")).toBeTruthy();
 });

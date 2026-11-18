@@ -72,6 +72,10 @@ type RequestPage = {
   sources?: { id: string; label: string }[];
 };
 
+/** The receipt's own last-update stamp (milliseconds), which the gateway refreshes while work goes on; never its creation time. */
+const lastUpdate = (receipt: Receipt): number | null =>
+  typeof receipt.updated_at_ms === "number" && Number.isFinite(receipt.updated_at_ms) ? receipt.updated_at_ms : null;
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -226,7 +230,15 @@ export function Requests() {
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
+  // The record as it was when opened: a refresh that pushes it out of the loaded pages must not close its sheet.
+  const [openedRecord, setOpenedRecord] = useState<RequestRecord | null>(null);
   const [following, setFollowing] = useFollowLive();
+  // A paused list still ages: this clock lets a running request turn stale without another fetch.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const {
     data,
     dataUpdatedAt,
@@ -242,7 +254,9 @@ export function Requests() {
     queryKey: ["activity", "requests", person, source],
     refetchInterval: following ? 5000 : false,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
+    // Paused means paused: no automatic refresh of any kind until the person follows again or changes a filter.
+    refetchOnWindowFocus: following ? "always" : false,
+    refetchOnReconnect: following,
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }): Promise<RequestPage> => {
       const params = new URLSearchParams({ limit: "50" });
@@ -262,10 +276,11 @@ export function Requests() {
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
   useEffect(() => {
+    if (!following) return;
     const refresh = () => void refetch();
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, [refetch]);
+  }, [following, refetch]);
   const rows = (data?.pages.flatMap((page) => page.records) ?? [])
     .sort((a, b) => b.created_at - a.created_at);
   const keys = receiptSelectionKeys(
@@ -278,10 +293,8 @@ export function Requests() {
     })),
   );
   const people = data?.pages[0]?.people ?? [];
-  const record = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
-  useEffect(() => {
-    if (selectedReceiptKey !== null && record === null) setSelectedReceiptKey(null);
-  }, [selectedReceiptKey, record]);
+  const liveRecord = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
+  const record = selectedReceiptKey === null ? null : liveRecord ?? openedRecord;
   useEffect(() => {
     if (isFetchingNextPage || !pageButtonRef.current) return;
     const button = pageButtonRef.current;
@@ -467,6 +480,7 @@ export function Requests() {
                         className={`${requestRowLayout} focus-visible:outline-ring hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2`}
                         onClick={(event) => {
                           openerRef.current = event.currentTarget;
+                          setOpenedRecord(row);
                           setSelectedReceiptKey(keys[index]);
                         }}
                       >
@@ -509,10 +523,9 @@ export function Requests() {
                           ) : (
                             <StateBadge state="unknown" word={outcome(row.receipt.status)} />
                           )}
-                          {/* This receipt shape records no update time; use its existing created time. */}
-                          {staleWords(row.receipt.status, row.created_at || null, Date.now()) && (
+                          {staleWords(row.receipt.status, lastUpdate(row.receipt), now) && (
                             <span className="text-muted-foreground text-meta">
-                              {staleWords(row.receipt.status, row.created_at || null, Date.now())}
+                              {staleWords(row.receipt.status, lastUpdate(row.receipt), now)}
                             </span>
                           )}
                           <p className="text-muted-foreground figures max-w-full truncate text-meta">
@@ -575,7 +588,10 @@ export function Requests() {
       <RequestReceiptSheet record={record} cost={record ? requestCost(record.receipt) : undefined} returnFocus={() => {
         (openerRef.current?.isConnected ? openerRef.current : filterRef.current)?.focus();
       }} onOpenChange={(open) => {
-        if (!open) setSelectedReceiptKey(null);
+        if (!open) {
+          setSelectedReceiptKey(null);
+          setOpenedRecord(null);
+        }
       }} />
     </div>
   );
