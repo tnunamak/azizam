@@ -27,6 +27,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test("scrolling table without a name stays focusable without a region", () => {
+  const view = render(<Table />);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(container.getAttribute("tabindex")).toBe("0");
+  expect(container.hasAttribute("role")).toBe(false);
+  expect(screen.queryByRole("region")).toBeNull();
+});
+
+test("scrolling table with a plain caption stays focusable without a region", () => {
+  const view = render(<Table><caption>Plain caption</caption></Table>);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(container.getAttribute("tabindex")).toBe("0");
+  expect(container.hasAttribute("role")).toBe(false);
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(screen.getByRole("table", { name: "Plain caption" })).toBeTruthy();
+});
+
 test("scrolling table copies its aria-label to a focusable named region", () => {
   render(<Table aria-label="Usage" />);
   const region = screen.getByRole("region", { name: "Usage" });
@@ -40,6 +57,7 @@ test("scrolling table uses its rendered caption as the region name", () => {
   const caption = screen.getByText("Requests");
   expect(caption.id).not.toBe("");
   expect(region.getAttribute("aria-labelledby")).toBe(caption.id);
+  expect(region.getAttribute("tabindex")).toBe("0");
 });
 
 test("aria-labelledby takes priority over aria-label and caption", () => {
@@ -51,7 +69,7 @@ test("aria-labelledby takes priority over aria-label and caption", () => {
   </>);
   const region = screen.getByRole("region", { name: "Outside heading" });
   expect(region.getAttribute("aria-labelledby")).toBe("usage-heading");
-  expect(region.hasAttribute("aria-label")).toBe(false);
+  expect(screen.getByRole("region", { name: "Outside heading" })).toBe(region);
 });
 
 test("aria-label takes priority over the caption", () => {
@@ -81,9 +99,74 @@ test("caption registration respects an explicit ID and cleans up when removed", 
   expect(region.getAttribute("aria-labelledby")).toBe("custom-caption");
   view.rerender(<Table />);
   expect(region.hasAttribute("aria-labelledby")).toBe(false);
+  expect(region.hasAttribute("role")).toBe(false);
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(region.getAttribute("tabindex")).toBe("0");
 });
 
 test("caption outside Table keeps working without an injected ID", () => {
   render(<table><TableCaption>Standalone caption</TableCaption></table>);
   expect(screen.getByText("Standalone caption").hasAttribute("id")).toBe(false);
+});
+
+test("whitespace aria-label does not name the scrolling region", () => {
+  const view = render(<Table aria-label="   " />);
+  const container = view.container.querySelector('[data-slot="table-container"]')!;
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(container.hasAttribute("aria-label")).toBe(false);
+  expect(container.getAttribute("tabindex")).toBe("0");
+  expect(view.container.querySelector("table")!.getAttribute("aria-label")).toBe("   ");
+});
+
+test("whitespace aria-labelledby falls back to the trimmed aria-label", () => {
+  render(<Table aria-labelledby="   " aria-label="  Usage  " />);
+  const region = screen.getByRole("region", { name: "Usage" });
+  expect(region.getAttribute("aria-label")).toBe("Usage");
+  expect(region.hasAttribute("aria-labelledby")).toBe(false);
+  expect(region.querySelector("table")!.getAttribute("aria-labelledby")).toBe("   ");
+});
+
+test("mounted caption names the region before its own state supplies text", () => {
+  let updateText!: React.Dispatch<React.SetStateAction<string>>;
+  function CaptionText() {
+    const [text, setText] = React.useState("");
+    updateText = setText;
+    return <span>{text}</span>;
+  }
+  const view = render(<Table><TableCaption><CaptionText /></TableCaption></Table>);
+  const region = screen.getByRole("region");
+  const caption = view.container.querySelector("caption")!;
+  expect(region.getAttribute("aria-labelledby")).toBe(caption.id);
+  expect(region.getAttribute("tabindex")).toBe("0");
+  act(() => updateText("Requests"));
+  expect(screen.getByRole("region", { name: "Requests" })).toBe(region);
+  act(() => updateText(""));
+  expect(screen.getByRole("region")).toBe(region);
+  expect(region.getAttribute("aria-labelledby")).toBe(caption.id);
+});
+
+test("an image-only caption names the scrolling region", () => {
+  render(<Table><TableCaption><img src="/requests.png" alt="Requests" /></TableCaption></Table>);
+  const region = screen.getByRole("region", { name: "Requests" });
+  expect(region.getAttribute("aria-labelledby")).toBe(screen.getByAltText("Requests").closest("caption")!.id);
+  expect(region.getAttribute("tabindex")).toBe("0");
+});
+
+test("aria-labelledby resolves dynamically with a trimmed aria-label fallback", () => {
+  const table = <Table aria-labelledby="  missing-heading  " aria-label="  Fallback  " />;
+  const view = render(<>{table}</>);
+  const region = screen.getByRole("region", { name: "Fallback" });
+  expect(region.getAttribute("aria-labelledby")).toBe("missing-heading");
+  expect(region.getAttribute("aria-label")).toBe("Fallback");
+  expect(region.getAttribute("tabindex")).toBe("0");
+  view.rerender(<>
+    {table}
+    <h2 id="missing-heading"><img src="/usage.png" alt="Usage" /></h2>
+  </>);
+  expect(screen.getByRole("region", { name: "Usage" })).toBe(region);
+  expect(region.getAttribute("aria-label")).toBe("Fallback");
+  view.rerender(<>{table}</>);
+  expect(screen.getByRole("region", { name: "Fallback" })).toBe(region);
+  expect(region.getAttribute("aria-labelledby")).toBe("missing-heading");
+  expect(region.getAttribute("tabindex")).toBe("0");
 });
