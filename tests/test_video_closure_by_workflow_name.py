@@ -174,3 +174,101 @@ class VideoClosureByWorkflowNameTests(RemixReplaceBase):
         assert response.status_code == 200, response.text
         self.comfy.wait_for_graphs(1)
         assert len(self.comfy.submitted) == 1
+
+    def test_unrelated_closed_suffix_does_not_block_open_binding(self):
+        key, wid, provider, snapshot, entry = self.custom('video.generate', closed=False, missing=False)
+        contract = proxy.workflow_run.plain(entry.contract)
+        other_id = 'video.generate.' + key
+        # Give the selected record a distinct id: it is selected by its binding stem.
+        selected_id = 'video.generate.selected-open-record'
+        selected_contract = copy.deepcopy(contract)
+        selected_contract['id'] = selected_id
+        selected_contract['aliases'] = []
+        selected = replace(entry, id=selected_id, contract=selected_contract)
+        contract['id'] = other_id
+        contract['aliases'] = []
+        contract['bindings'][proxy.DERIVED._GRAPH_BINDING]['workflow'] = 'workflows/videos/unrelated-closed-graph.json'
+        unrelated = replace(entry, id=other_id, contract=contract, facts=replace(entry.facts, exposure='disabled'))
+        workflows = {k: v for k, v in snapshot.workflows.items() if k != wid}
+        workflows[selected_id] = selected
+        before = replace(snapshot, workflows=workflows)
+        with patch.object(provider, '_snapshot', before), patch.object(proxy, 'GATEWAY_WORKFLOW_REGISTRY', SnapshotRegistry(before)):
+            response = self.client.post('/v1/videos/edits', json={**self.body(key), 'video': {'id': SOURCE_ID}})
+            assert response.status_code == 200, response.text
+            self.comfy.wait_for_graphs(1)
+        after = replace(before, workflows={**workflows, other_id: unrelated})
+        from gateway.registry_snapshot import workflow_names
+        from gateway.workflow_kernel import name_clashes
+        assert not name_clashes([pair for item in (selected, unrelated) for pair in workflow_names(item)])
+        from gateway.workflow_identity import find_workflow_record
+        assert find_workflow_record(SnapshotRegistry(after).records(), 'video.generate', key).id == selected_id
+        with patch.object(provider, '_snapshot', after), patch.object(proxy, 'GATEWAY_WORKFLOW_REGISTRY', SnapshotRegistry(after)):
+            response = self.client.post('/v1/videos/edits', json={**self.body(key), 'video': {'id': SOURCE_ID}})
+        assert response.status_code == 200, (response.status_code, response.text)
+        self.comfy.wait_for_graphs(2)
+        assert len(self.comfy.submitted) == 2
+
+
+    def test_manifest_identity_survives_config_removal_before_next_poll(self):
+        import asyncio
+        import tempfile
+        from pathlib import Path
+        from gateway import media_jobs
+        from test_video_media_job_integration import _StubJsonRequest
+        from fastapi import Response
+
+        key, wid, provider, snapshot, entry = self.custom('video.edit', closed=False)
+        contract = proxy.workflow_run.plain(entry.contract)
+        contract['bindings'][proxy.DERIVED._GRAPH_BINDING]['workflow'] = 'workflows/videos/different-artifact.json'
+        entry = replace(entry, contract=contract)
+        snapshot = replace(snapshot, workflows={**snapshot.workflows, wid: entry})
+        saved_key = 'operator-choice'
+        body = self.body(saved_key)
+        auth = access_context()
+        polls = []
+
+        async def status(*args, **kwargs):
+            polls.append(args[0])
+            return Response(json.dumps({'status': 'failed'}), media_type='application/json')
+
+        async def journey():
+            with patch.object(proxy, '_video_workflow_table', return_value={saved_key: {'manifest': 'custom.yml'}}), \
+                    patch.object(proxy, '_find_video_manifest', return_value=contract), \
+                    patch.object(proxy, '_video_job_envelope', return_value=None):
+                response = await proxy._submit_video_media_job(request=_StubJsonRequest(body), body=body)
+            assert response.status_code == 202, response.body
+            job_id = json.loads(response.body)['job_id']
+            accepted = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH)
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                metadata_patch={'upstream_video_id': SOURCE_ID}, path=media_jobs.DB_PATH)
+            closed = replace(entry, facts=replace(entry.facts, exposure='disabled'))
+            current = replace(snapshot, workflows={**snapshot.workflows, wid: closed})
+            with patch.object(provider, '_snapshot', current), \
+                    patch.object(proxy, 'GATEWAY_WORKFLOW_REGISTRY', SnapshotRegistry(current)), \
+                    patch.object(proxy, '_video_workflow_table', return_value={}):
+                await proxy._run_video_media_job(job_id)
+            assert not polls, ('closed manifest-only job reached status poll', polls)
+            final = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH)
+            assert final['status'] == media_jobs.STATUS_FAILED
+            assert final['error_code'] == 'workflow_disabled'
+            assert accepted['metadata']['accepted_workflow_ids'] == [wid]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            media_jobs.init_db(root / 'jobs.db')
+            with patch.object(provider, '_snapshot', snapshot), \
+                    patch.object(proxy, 'GATEWAY_WORKFLOW_REGISTRY', SnapshotRegistry(snapshot)), \
+                    patch.object(media_jobs, 'DB_PATH', root / 'jobs.db'), \
+                    patch.object(proxy, 'IMAGE_MEDIA_JOB_PAYLOAD_DIR', root / 'payloads'), \
+                    patch.object(proxy, '_schedule_video_media_job', return_value=True), \
+                    patch.object(proxy, '_auth_context_from_image_job_payload', return_value=auth), \
+                    patch.object(proxy, '_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS', 0), \
+                    patch.object(proxy, '_video_media_job_semaphore', asyncio.Semaphore(1)), \
+                    patch.object(proxy, 'proxy_graph_video_status', side_effect=status):
+                self.client.portal.call(journey)
+
+    def test_legacy_job_without_saved_ids_still_checks_current_key(self):
+        key, *_ = self.custom('video.edit', closed=True)
+        with patch.object(proxy, '_auth_context_from_image_job_payload', return_value=access_context()):
+            result = proxy._video_media_job_step_auth({'body': self.body(key)}, {'workflow': key, 'metadata': {}})
+        assert isinstance(result, tuple) and result[1]['error_code'] == 'workflow_disabled'
