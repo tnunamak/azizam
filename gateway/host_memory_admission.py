@@ -325,11 +325,21 @@ class HostMemoryAdmission:
     def _first(self, waiter: _Waiter) -> bool:
         return min(self._waiting, key=lambda w: (w.background, w.seq)) is waiter
 
+    async def _saved_setting(self) -> Mapping[str, Any] | None:
+        """The owner's saved setting, read off the event loop. An unreadable store counts as none, so admission stays off."""
+        if self._saved is None:
+            return None
+        try:
+            return await asyncio.to_thread(self._saved)
+        except Exception:
+            LOG.warning("host memory: the saved setting is unreadable; admission stays off", exc_info=True)
+            return None
+
     async def is_enabled(self) -> bool:
-        return effective(self.policy, self._saved() if self._saved else None).enabled
+        return effective(self.policy, await self._saved_setting()).enabled
 
     async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease | None:
-        policy = effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None)
+        policy = effective(self.policy, await self._saved_setting())
         if not policy.enabled:
             return None
         if await is_cancelled(ask):
