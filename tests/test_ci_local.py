@@ -436,6 +436,19 @@ def test_step_limit_scales_with_host_load_and_the_receipt_keeps_the_load(world: 
     assert (cost["load_start"], cost["load_end"], cost["limit_s"]) == (float(load), float(load), float(limit))
 
 
+@pytest.mark.skipif(shutil.which("gawk") is None, reason="needs GNU awk")
+def test_step_limit_works_under_gnu_awk(world: World) -> None:
+    # GNU awk refuses some builtin names as -v variables; the gate runs whatever awk the host has.
+    (world.bin / "awk").unlink()
+    (world.bin / "awk").symlink_to(shutil.which("gawk"))
+    world.loadavg.write_text("18.00 1.00 1.00 1/100 1\n")
+    (world.bin / "nproc").write_text("#!/usr/bin/env bash\necho 12\n")
+    (world.bin / "nproc").chmod(0o755)
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="100")
+    assert "awk: fatal" not in result.stdout + result.stderr
+    assert (world.receipts / "steps/python-hermetic.load").read_text() == "18.00\t18.00\t300\n"
+
+
 def _step_with_unrelated_grandchild(world: World) -> Path:
     script = world.repo / "scripts/run-hermetic-pytest.sh"
     script.write_text("#!/usr/bin/env bash\n"
