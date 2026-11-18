@@ -66,10 +66,7 @@ def lookup(host: str, class_type: str) -> Optional[dict[str, Any]]:
         return _disk_read(class_type)
     info: Optional[dict[str, Any]] = None
     try:
-        with engine_egress.client(timeout=httpx.Timeout(10, connect=3)) as client:
-            response = client.get(f"{host}/object_info/{quote(class_type, safe='')}", extensions=engine_egress.probe())
-        if response.status_code == 200:
-            info = response.json().get(class_type)
+        info = _fetch(host, class_type, only_200=True)
     except Exception:  # noqa: BLE001 - best effort, never fail a render
         info = None
     if info is None:
@@ -80,12 +77,21 @@ def lookup(host: str, class_type: str) -> Optional[dict[str, Any]]:
     return info
 
 
-def fetch_fresh(host: str, class_type: str) -> dict[str, Any]:
-    """Fetch ``class_type`` from the engine, bypassing the process cache and the disk copy; raise on any failure."""
+def _fetch(host: str, node_type: str, *, only_200: bool = False) -> Any:
+    """Read one definition, preserving the lookup reader's strict status policy."""
     with engine_egress.client(timeout=httpx.Timeout(10, connect=3)) as client:
-        response = client.get(f"{host}/object_info/{quote(class_type, safe='')}", extensions=engine_egress.probe())
-    response.raise_for_status()
-    info = response.json().get(class_type)
+        response = client.get(f"{host}/object_info/{quote(node_type, safe='')}", extensions=engine_egress.probe())
+    if only_200:
+        if response.status_code != 200:
+            return None
+    else:
+        response.raise_for_status()
+    return response.json().get(node_type)
+
+
+def fetch_fresh(host: str, node_type: str) -> dict[str, Any]:
+    """Fetch a node definition without process or disk caches; raise on failure."""
+    info = _fetch(host, node_type)
     if not isinstance(info, dict):
-        raise ValueError(f"engine returned no definition for {class_type}")
+        raise ValueError(f"engine returned no definition for {node_type}")
     return info
