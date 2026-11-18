@@ -26712,6 +26712,14 @@ async def gateway_image_generations_media_job(request: Request):
     if refusal is not None:
         await run_receipt_write(finish_image_route_receipt, receipt, refusal)
         return refusal
+    if (protocol_target is None and _gateway_image_generate_binding(manifest) is None
+            and not load_graph_workflow(resolved_model, intent=generate_intent)):
+        _record_image_input(receipt, "model", rejected_reason="model_incompatible")
+        response = model_compatibility_error(
+            ModelCompatibilityError(f"Model '{resolved_model}' is not available for image generation.", code="model_not_found")
+        )
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
     decision = _apply_image_route_policy(
         receipt,
         auth_context,
