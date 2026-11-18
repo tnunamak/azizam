@@ -55,7 +55,6 @@ inputs:
     default: 5
     description: LanPaint's internal Langevin refinement steps per sampler step ("turns of thinking"). Higher = better boundary consistency, slower.
   prompt_mode:
-    choices_from: {node_type: LanPaint_KSampler, input: LanPaint_PromptMode}
     type: string
     enum: ["Image First", "Prompt First"]
     default: "Image First"
