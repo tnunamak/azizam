@@ -32,7 +32,7 @@
     },
     "gateway/engine_protocol/node_info.py": {
       "/object_info": 1,
-      "class_type": 13
+      "class_type": 12
     },
     "gateway/engine_protocol/node_ui_graph.py": {
       "class_type": 11,
