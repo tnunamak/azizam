@@ -27,19 +27,12 @@ allowed:
     workflows:
       - image.analyze.face-likeness
       - image.edit.fibo-2-edit-turbo
-      - image.edit.flux2-klein
-      - image.edit.flux2-klein-4b
-      - image.edit.flux2-klein-4b-inpaint
       - image.edit.image-identity
       - image.edit.qwen-image-2.1-edit
       - image.edit.qwen-image-2.1-edit-multiref
       - image.edit.qwen-image-2.1-inpaint
       - image.edit.seedvr2-upscale
       - image.generate.anima-turbo
-      - image.generate.flux2-klein
-      - image.generate.flux2-klein-4b
-      - image.generate.flux2-klein-4b-seamless-tile
-      - image.generate.flux2-klein-snofs
       - image.generate.krea2-turbo
       - image.generate.krea2-turbo-snofs
       - image.generate.moss-image
@@ -206,16 +199,6 @@ binding_edits:
     path: [comfyui, map, prompt]
     operation: remove
     reason: "Named defect fix: prompt and tags both wrote node 5 input tags."
-  - workflow: image.edit.flux2-klein-4b
-    path: [comfyui, result_processing]
-    operation: add
-    value: [post_composite_mask]
-    reason: "The binding keeps the mask off the engine (edge_only_inputs) and now lists the stage that applies it to the result, as the route did."
-  - workflow: image.edit.flux2-klein
-    path: [comfyui, result_processing]
-    operation: add
-    value: [post_composite_mask]
-    reason: "The binding keeps the mask off the engine (edge_only_inputs) and now lists the stage that applies it to the result, as the route did."
   - workflow: video.generate.ltx-2.5-i2v
     path: [comfyui, map, height]
     operation: add

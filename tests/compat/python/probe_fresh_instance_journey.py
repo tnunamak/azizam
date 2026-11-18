@@ -661,7 +661,7 @@ class TestRuntimePlane(unittest.TestCase):
                 "/v1/images/generations",
                 bearer=key,
                 body={
-                    "model": "flux2-klein-4b",
+                    "model": "krea2-turbo",
                     "prompt": "gauntlet probe test image",
                     "n": 1,
                 },

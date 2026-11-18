@@ -125,8 +125,8 @@ def test_legacy_submitted_graph_bytes_unchanged(batch, manifest):
 
 
 # An operator can drop a workflow JSON into the workflows directory without writing a
-# manifest. These copies of the Klein graphs stand in for such operator-authored files.
-MANIFESTLESS = {"operator-klein": "flux2-klein", "operator-klein-edit": "flux2-klein-edit"}
+# manifest. These copies of open image graphs stand in for such operator-authored files.
+MANIFESTLESS = {"operator-image": "krea2-turbo", "operator-image-edit": "qwen-image-2.1-edit"}
 
 
 @pytest.mark.parametrize("name", MANIFESTLESS)
@@ -144,7 +144,7 @@ def test_manifestless_submission_matches_main_and_records_seeds(batch, monkeypat
         assert proxy._select_edit_workflow(name, image_count=1, has_mask=False) == name
     graph = json.loads(source.read_text())
     meta = graph.pop("_meta")
-    field = "noise_seed" if name.endswith("-edit") else "seed"
+    field = "seed"
     delivery = SimpleNamespace(seeds=[])
     monkeypatch.setattr(proxy.media_delivery, "current", lambda: delivery)
     draws = iter([101, 102])

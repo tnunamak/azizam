@@ -73,7 +73,7 @@ Do not send backend workflow knobs as random top-level OpenAI fields. First fetc
 
 Current examples:
 
-- `/v1/images/edits` with `model: flux2-klein-4b-edit` supports `denoise`, `steps`, and `guidance` as namespaced workflow controls. ControlNet is not currently exposed unless discovery shows a ControlNet-capable workflow.
+- `/v1/images/edits` with `model: qwen-image-2.1-edit` supports `denoise`, `steps`, and `guidance` as namespaced workflow controls. ControlNet is not currently exposed unless discovery shows a ControlNet-capable workflow.
 - `/v1/images/edits` accepts OpenAI's standard top-level multipart `mask` field. Do not put `mask` under `extensions`. Alpha masks use OpenAI polarity: transparent edits, opaque preserves. Grayscale masks use white to edit and black to preserve. If the resolved workflow has no native mask binding, the proxy preserves unmasked pixels with a documented post-composite fallback and returns `X-Image-Mask: post-composite`.
 - Future ControlNet/conditioning controls are manifest-backed workflow controls, not OpenAI top-level fields. If discovery shows an asset input such as `control_image`, multipart edits can upload it as an extra form field and reference it from the extension value: `{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}`.
 - Asset-valued workflow controls may also use `{"asset_id":"img_<sha256>"}` when the same App API key minted that prior image response and discovery shows the selected workflow supports the asset input.
@@ -92,7 +92,7 @@ Example JSON body shape:
 
 ```json
 {
-  "model": "flux2-klein-4b-edit",
+  "model": "qwen-image-2.1-edit",
   "prompt": "preserve this structure, paint it as underwater rock",
   "extensions": {
     "com.azizam.workflow": {

@@ -385,7 +385,7 @@ from gateway.engine_protocol.node_graph import graph_selector_cardinality  # noq
 from gateway.manifests import ContractErrors, enforce_contract  # noqa: E402
 
 GRAPH_HOOK = graph_selector_cardinality
-BUNDLED_IMAGE = ROOT / "manifests" / "workflows" / "flux2-klein.yml"
+BUNDLED_IMAGE = ROOT / "manifests" / "workflows" / "krea2-turbo.yml"
 
 
 def counted(**count: Any) -> dict[str, Any]:

@@ -205,9 +205,9 @@ Implemented (lives on `main`):
 - `gateway/protocols/anthropic.py` and `gateway/protocols/ollama.py`:
   pure translators for Anthropic Messages and Ollama chat/generate/tags/show/ps
   frontends, including stream-envelope translation.
-- `manifests/workflows/flux2-klein-4b*.yml` and
+- `manifests/workflows/krea2-turbo.yml` and
   `manifests/workflows/tangoflux.yml`: initial portable workflow manifests for
-  image generation/editing and TangoFlux audio generation.
+  image generation and TangoFlux audio generation.
 - Observational image-route receipts: `/v1/images/generations` and
   `/v1/images/edits` create a receipt after auth, attach a
   profile-derived policy decision, record safe field-name validation outcomes
@@ -616,7 +616,7 @@ claims:
     gpu: gpu0
     estimate_mb: 9000
   - kind: model
-    id: flux2-klein-4b
+    id: krea2-turbo
     mode: shared
   - kind: process
     service: comfyui
@@ -963,9 +963,9 @@ protocol: openai
 intent: image.generate
 auth_identity: daisy
 requested_model: gpt-image-1
-resolved_model: flux2-klein-4b
+resolved_model: krea2-turbo
 backend: comfyui
-workflow: flux2-klein-4b
+workflow: krea2-turbo
 scheduler_queue: gpu0-interactive
 resource_claims:
   - gpu0 vram estimate 3600mb
@@ -1017,7 +1017,7 @@ resources:
   vram_estimate_mb: 9000
 dependencies:
   models:
-    - flux2-klein-4b
+    - krea2-turbo
   custom_nodes: []
 concurrency:
   safe: true

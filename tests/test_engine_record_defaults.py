@@ -27,7 +27,7 @@ def test_the_release_defaults_give_the_values_the_code_gave():
     assert derived["EMBEDDINGS_HEALTH_ENDPOINT"] == "/health"
     assert derived["EMBEDDINGS_BACKEND_MODEL"] == "nomic-embed-text-v1.5"
     assert (derived["GRAPH_TIMEOUT"], derived["GRAPH_VIDEO_TIMEOUT"]) == (300, 1800)
-    assert derived["GRAPH_DEFAULT_MODEL"] == "flux2-klein-4b"
+    assert derived["GRAPH_DEFAULT_MODEL"] == "krea2-turbo"
     assert derived["GRAPH_WORKFLOWS_DIR"] == (ROOT / "workflows" / "images").resolve()
     assert derived["GRAPH_VIDEO_WORKFLOWS_DIR"] == (ROOT / "workflows").resolve()
 

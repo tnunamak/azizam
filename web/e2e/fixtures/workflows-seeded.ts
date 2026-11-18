@@ -169,9 +169,9 @@ export const composedRows = [
   },
   {
     ...faceLikenessRow,
-    id: "image.generate.flux2-klein-4b-seamless-tile",
+    id: "image.generate.sdxl-seamless-tile",
     title: "Seamless Tile",
-    discovery_url: "/gateway/v1/workflows/image.generate.flux2-klein-4b-seamless-tile",
+    discovery_url: "/gateway/v1/workflows/image.generate.sdxl-seamless-tile",
     availability: { status: "unavailable", reason_code: "unavailable", available: false, measured: true,
                     reason: "ComfyUI is down.", engine: "comfyui", evidence: composedEvidence },
   },

@@ -189,7 +189,7 @@ def gateway(monkeypatch, tmp_path, request):
         early = PolicyRequest(protocol="openai.images", intent="image.edit")
         assert runtime_auth.evaluate_and_apply(auth.identity, early).decision == ALLOWED
         resolved = PolicyRequest(
-            protocol="openai.images", intent="image.edit", workflow="flux2-klein-4b",
+            protocol="openai.images", intent="image.edit", workflow="qwen-image-2.1-edit",
         )
         decision = runtime_auth.evaluate_and_apply(auth.identity, resolved)
         assert decision.decision == POLICY_DENIED
@@ -1583,7 +1583,7 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
 
     models = {item["id"] for item in get("/v1/models")["data"]}
     assert "current" in models and "current-fast" not in models
-    assert "krea2-turbo" in models and "flux2-klein-4b" not in models
+    assert "krea2-turbo" in models
     assert "image" in models and "image-fast" not in models
     assert {item["id"] for item in get("/anthropic/v1/models")["data"]} == {"current"}
     assert {item["model"] for item in get("/api/tags")["models"]} == {"current"}

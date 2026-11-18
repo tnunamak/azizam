@@ -35,7 +35,7 @@ multipart field:
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -F model=flux2-klein-4b-edit-controlnet \
+  -F model=operator-edit-controlnet \
   -F prompt='preserve the geometry, paint it as underwater rock' \
   -F image=@input.png \
   -F control_image=@edge-map.png \
@@ -100,13 +100,6 @@ true:
 
 Current local status:
 
-- `image.generate.flux2-klein-4b-seamless-tile` is the recommended local
-  texture-tile endpoint when agents need an actually tileable result today. It
-  is gateway-composed: generate with `flux2-klein-4b`, offset by 50%/50%, mask
-  the centered seam cross, repair that mask through `flux2-klein-4b-inpaint`,
-  then offset back. It exposes base `steps`, `guidance`, and `seed`, plus
-  seam-specific `seam_mask_width`, `seam_mask_expand`, `seam_mask_feather`,
-  `seam_steps`, `seam_guidance`, `seam_denoise`, and `seam_prompt`.
 - `image.generate.sdxl-seamless-tile` is still available as the direct SDXL
   workflow. It uses `Image Seamless Texture` postprocessing and accepts
   `steps`, `guidance`, `seed`, `batch_size`, `negative_prompt`, `sampler`,
@@ -115,14 +108,7 @@ Current local status:
   is not the full circular SDXL stack; this machine does not currently have
   Make Circular VAE, Asymmetric/Tiled KSampler, or ControlNet Tile weights
   installed.
-- `image.edit.flux2-klein-4b` exposes `steps`, `guidance`, and `denoise`.
-  Standard OpenAI `mask` is accepted; without a native mask workflow it falls
-  back to gateway post-composite preservation.
-- `image.edit.flux2-klein-4b-inpaint` is auto-selected for
-  `flux2-klein-4b-edit` requests that include `mask`. It binds the normalized
-  OpenAI mask into ComfyUI with `SetLatentNoiseMask` and exposes
-  `steps`, `guidance`, `denoise`, `seed`, `mask_expand`, and `mask_feather` as
-  workflow extensions.
+- `image.edit.qwen-image-2.1-edit` exposes `steps`, `cfg`, and `seed`. Masked requests select `qwen-image-2.1-inpaint`, which applies the mask through source-image alpha.
 - ControlNet and IP-Adapter are not advertised on this machine yet. ComfyUI has
   node support, but the local inventory is missing ControlNet weights,
   IP-Adapter weights, and CLIP-vision assets. ControlNet-like controls are

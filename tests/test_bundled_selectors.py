@@ -89,7 +89,7 @@ def through_selectors(manifest: dict[str, Any], history: dict[str, Any]) -> list
 
 
 def test_the_graph_workflows_are_found_and_every_one_has_one_producer():
-    assert len(graph_manifests()) >= 30
+    assert len(graph_manifests()) >= 24
     for path in graph_manifests():
         assert len(producers(template_of(load(path)))) == 1, path.name
 
@@ -149,7 +149,7 @@ def test_every_bundled_manifest_loads_through_validate_manifest():
 # refuses selectors on a binding whose adapter takes none.
 
 IDENTITY = ROOT / "manifests" / "workflows" / "image-identity.yml"
-NO_ENGINE_HISTORY = {"face-likeness", "flux2-klein-4b-seamless-tile", "mesh.generate.trellis-2", "mesh.generate.pixal3d",
+NO_ENGINE_HISTORY = {"face-likeness", "mesh.generate.trellis-2", "mesh.generate.pixal3d",
                      "mesh.edit.retopo", "mesh.edit.uv-unwrap", "mesh.edit.rig-auto", "mesh.edit.rig-humanoid", "mesh.edit.texture-refine"}
 
 
@@ -194,11 +194,3 @@ def test_a_workflow_with_no_engine_history_has_no_graph_binding_and_its_adapter_
         with pytest.raises(output_selectors.SelectorError) as refused:
             output_selectors.check_for_save(None, declared, key)
         assert refused.value.code == "selector_malformed"
-
-
-def test_the_seamless_tile_is_made_from_two_workflows_that_have_selectors():
-    manifest = load(MANIFESTS[0].parent / "flux2-klein-4b-seamless-tile.yml")
-    (binding,) = manifest["bindings"].values()   # since schema 2 ``requires`` sits inside the single binding
-    for needed in binding["requires"]["workflows"]:
-        stem = needed.rsplit(".", 1)[1]
-        assert "selectors" in load(MANIFESTS[0].parent / f"{stem}.yml")["bindings"][BINDING], needed

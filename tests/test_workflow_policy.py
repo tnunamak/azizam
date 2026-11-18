@@ -43,7 +43,7 @@ from tests.test_workflow_readers_v2 import POLICY_KEYS_AT_TOP, Recording
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED = ROOT / "manifests" / "workflows"
 V1 = ROOT / "tests" / "fixtures" / "workflows_v1"
-TILE = "image.generate.flux2-klein-4b-seamless-tile"
+TILE = "image.generate.sdxl-seamless-tile"
 GOOD = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media", "tags": []}
 
 
@@ -55,19 +55,13 @@ def policy_text(rows: dict[str, Any]) -> str:
 
 
 DEMO = "image.generate.test-demo-package"
-RETIRED_KLEIN = {
-    "image.edit.flux2-klein", "image.edit.flux2-klein-4b", "image.edit.flux2-klein-4b-inpaint",
-    "image.generate.flux2-klein", "image.generate.flux2-klein-4b", "image.generate.flux2-klein-4b-seamless-tile",
-    "image.generate.flux2-klein-snofs"}
 
 
 def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_demo_package_and_nothing_else():
     bundled = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in BUNDLED.glob("*.yml")}
     policy = release_policy()
-    assert set(policy) == bundled and len(policy) == 45   # the demo package's row is a package row: not a bundled workflow's
-    # The FLUX.2 Klein workflows are retired (their weights are gone), so the release file disables them; the rest are default.
-    assert {record_id for record_id, facts in policy.items() if facts.exposure == "disabled"} == RETIRED_KLEIN
-    assert {facts.exposure for record_id, facts in policy.items() if record_id not in RETIRED_KLEIN} == {"default"}
+    assert set(policy) == bundled and len(policy) == 38   # the demo package's row is a package row: not a bundled workflow's
+    assert {facts.exposure for facts in policy.values()} == {"default"}
     # Only the two image-to-3D records carry a ``selection_rank``: their first-choice order (docs/design/MESH_WORKFLOW_SELECTION.md).
     assert {(facts.trust_tier, facts.resource_tier) for facts in policy.values()} == {("stable", "batch")}
     assert {facts.tags for facts in policy.values()} == {()}
@@ -255,7 +249,7 @@ def test_the_policy_of_a_workflow_is_its_record_facts_and_a_model_request_has_it
 
     record = proxy.GATEWAY_WORKFLOW_REGISTRY.get(TILE)
     assert proxy._image_manifest_policy_metadata(record.manifest) == {
-        "exposure": "disabled", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
+        "exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
     assert proxy._image_manifest_policy_metadata(None)["exposure"] == "default"
     with pytest.raises(NeedsConfiguration):
         proxy._image_manifest_policy_metadata({"id": "no.such.workflow"})
@@ -265,10 +259,10 @@ def test_the_policy_of_a_workflow_is_its_record_facts_and_a_model_request_has_it
 
 
 def test_control_a_document_without_a_capability_is_refused_not_inferred(tmp_path):
-    document = yaml.safe_load((BUNDLED / "flux2-klein.yml").read_text(encoding="utf-8"))
+    document = yaml.safe_load((BUNDLED / "krea2-turbo.yml").read_text(encoding="utf-8"))
     assert document["capability"] == "image"
     del document["capability"]
-    path = tmp_path / "flux2-klein.yml"
+    path = tmp_path / "krea2-turbo.yml"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     with pytest.raises(ContractErrors) as raised:
         load_workflow_manifest(path)
@@ -284,9 +278,9 @@ def test_the_catalog_has_no_inference_left_to_do():
 
 
 def test_a_schema_one_file_is_refused_at_load_with_the_converter_command_named(tmp_path):
-    shutil.copy(V1 / "flux2-klein.yml", tmp_path / "flux2-klein.yml")
+    shutil.copy(V1 / "krea2-turbo.yml", tmp_path / "krea2-turbo.yml")
     with pytest.raises(ContractErrors) as raised:
-        load_workflow_manifest(tmp_path / "flux2-klein.yml")
+        load_workflow_manifest(tmp_path / "krea2-turbo.yml")
     assert raised.value.code == "schema_version_unsupported"
     assert "workflow_contract.py convert" in str(raised.value)
     registry = WorkflowRegistry.from_directory(tmp_path)

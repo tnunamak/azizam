@@ -118,13 +118,6 @@
      "ace-step-1.5-xl-turbo",
      "anima-turbo",
      "fibo-2-edit-turbo",
-     "flux2-klein",
-     "flux2-klein-4b",
-     "flux2-klein-4b-edit",
-     "flux2-klein-4b-inpaint",
-     "flux2-klein-4b-seamless-tile",
-     "flux2-klein-edit",
-     "flux2-klein-snofs",
      "image-identity",
      "krea2-turbo",
      "krea2-turbo-snofs",
@@ -655,12 +648,12 @@
      "resolution": {
       "chain": [
        "image-fast",
-       "flux2-klein-4b"
+       "moss-image-fast"
       ],
       "layer": "stable",
       "operation": "images",
       "requested": "image-fast",
-      "resolves_to": "flux2-klein-4b"
+      "resolves_to": "moss-image-fast"
      }
     },
     {
@@ -763,12 +756,12 @@
      "resolution": {
       "chain": [
        "image-edit-fast",
-       "flux2-klein-4b-edit"
+       "fibo-2-edit-turbo"
       ],
       "layer": "stable",
       "operation": "image_edits",
       "requested": "image-edit-fast",
-      "resolves_to": "flux2-klein-4b-edit"
+      "resolves_to": "fibo-2-edit-turbo"
      }
     },
     {
@@ -778,12 +771,12 @@
      "resolution": {
       "chain": [
        "image-fast",
-       "flux2-klein-4b-edit"
+       "fibo-2-edit-turbo"
       ],
       "layer": "stable",
       "operation": "image_edits",
       "requested": "image-fast",
-      "resolves_to": "flux2-klein-4b-edit"
+      "resolves_to": "fibo-2-edit-turbo"
      }
     },
     {
@@ -1653,11 +1646,11 @@
       "image_edits": "qwen-image-2.1-edit"
      },
      "image-edit-fast": {
-      "image_edits": "flux2-klein-4b-edit"
+      "image_edits": "fibo-2-edit-turbo"
      },
      "image-fast": {
-      "image_edits": "flux2-klein-4b-edit",
-      "images": "flux2-klein-4b"
+      "image_edits": "fibo-2-edit-turbo",
+      "images": "moss-image-fast"
      },
      "image-identity": {
       "image_edits": "image-identity"
@@ -1735,13 +1728,6 @@
      "embed",
      "fast",
      "fibo-2-edit-turbo",
-     "flux2-klein",
-     "flux2-klein-4b",
-     "flux2-klein-4b-edit",
-     "flux2-klein-4b-inpaint",
-     "flux2-klein-4b-seamless-tile",
-     "flux2-klein-edit",
-     "flux2-klein-snofs",
      "image",
      "image-anime",
      "image-edit",
@@ -2283,12 +2269,12 @@
      "resolution": {
       "chain": [
        "image-fast",
-       "flux2-klein-4b"
+       "moss-image-fast"
       ],
       "layer": "stable",
       "operation": "images",
       "requested": "image-fast",
-      "resolves_to": "flux2-klein-4b"
+      "resolves_to": "moss-image-fast"
      }
     },
     {
@@ -2391,12 +2377,12 @@
      "resolution": {
       "chain": [
        "image-edit-fast",
-       "flux2-klein-4b-edit"
+       "fibo-2-edit-turbo"
       ],
       "layer": "stable",
       "operation": "image_edits",
       "requested": "image-edit-fast",
-      "resolves_to": "flux2-klein-4b-edit"
+      "resolves_to": "fibo-2-edit-turbo"
      }
     },
     {
@@ -2406,12 +2392,12 @@
      "resolution": {
       "chain": [
        "image-fast",
-       "flux2-klein-4b-edit"
+       "fibo-2-edit-turbo"
       ],
       "layer": "stable",
       "operation": "image_edits",
       "requested": "image-fast",
-      "resolves_to": "flux2-klein-4b-edit"
+      "resolves_to": "fibo-2-edit-turbo"
      }
     },
     {
@@ -3278,11 +3264,11 @@
       "image_edits": "qwen-image-2.1-edit"
      },
      "image-edit-fast": {
-      "image_edits": "flux2-klein-4b-edit"
+      "image_edits": "fibo-2-edit-turbo"
      },
      "image-fast": {
-      "image_edits": "flux2-klein-4b-edit",
-      "images": "flux2-klein-4b"
+      "image_edits": "fibo-2-edit-turbo",
+      "images": "moss-image-fast"
      },
      "image-identity": {
       "image_edits": "image-identity"
@@ -3359,13 +3345,6 @@
      "embed",
      "fast",
      "fibo-2-edit-turbo",
-     "flux2-klein",
-     "flux2-klein-4b",
-     "flux2-klein-4b-edit",
-     "flux2-klein-4b-inpaint",
-     "flux2-klein-4b-seamless-tile",
-     "flux2-klein-edit",
-     "flux2-klein-snofs",
      "image",
      "image-anime",
      "image-edit",

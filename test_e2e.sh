@@ -68,7 +68,7 @@ test_endpoint "STT (transcribe)" \
 echo ""
 echo "--- Image Generation ---"
 test_endpoint "Image (4B 512x512)" \
-    "curl -s -X POST $PROXY/v1/images/generations $AUTH_HEADER -H 'Content-Type: application/json' -d '{\"model\": \"flux2-klein-4b\", \"prompt\": \"a cat\", \"size\": \"512x512\"}' | python3 -c \"import sys,json; d=json.load(sys.stdin); print(f'created={d.get(\\\"created\\\")}, images={len(d.get(\\\"data\\\",[]))}')\"" \
+    "curl -s -X POST $PROXY/v1/images/generations $AUTH_HEADER -H 'Content-Type: application/json' -d '{\"model\": \"krea2-turbo\", \"prompt\": \"a cat\", \"size\": \"512x512\"}' | python3 -c \"import sys,json; d=json.load(sys.stdin); print(f'created={d.get(\\\"created\\\")}, images={len(d.get(\\\"data\\\",[]))}')\"" \
     "images=1"
 
 # LLM

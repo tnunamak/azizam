@@ -178,7 +178,7 @@ export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/gateway/v1/extensions \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 
-curl -s http://127.0.0.1:5000/gateway/v1/models/flux2-klein-4b-edit/capabilities \
+curl -s http://127.0.0.1:5000/gateway/v1/models/qwen-image-2.1-edit/capabilities \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 
 ./venv/bin/python scripts/doctor.py \
@@ -198,37 +198,6 @@ Workflow knobs live under `extensions.com.azizam.workflow`; standard API
 fields such as `model`, `prompt`, `size`, `duration`, `seconds`, and
 image-edit `mask` stay top-level. Route-native `seed` stays top-level on
 audio/video; image workflow seeds are manifest-backed extensions.
-
-Image generation seamless tile, recommended Flux2 offset+inpaint path:
-
-```bash
-export AZIZAM_API_KEY='opk_...'
-curl -s http://127.0.0.1:5000/v1/images/generations \
-  -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "flux2-klein-4b-seamless-tile",
-    "prompt": "hand-painted underwater basalt floor texture, game asset, tileable",
-    "size": "1024x1024",
-    "n": 1,
-    "response_format": "b64_json",
-    "extensions": {
-      "com.azizam.workflow": {
-        "steps": 5,
-        "guidance": 3.5,
-        "seed": 4242,
-        "seam_mask_width": 96,
-        "seam_mask_feather": 32,
-        "seam_denoise": 0.58,
-        "seam_steps": 8
-      }
-    }
-  }'
-```
-
-This is a gateway-composed route: Flux2 generation, 50%/50% circular offset,
-center seam-cross mask, Flux2 inpaint repair, then offset back. Response
-headers include `X-Image-Seamless-Tile-Strategy: offset-inpaint`.
 
 Direct SDXL postprocess tile workflow:
 
@@ -301,15 +270,14 @@ JOB_JSON=$(curl -s http://127.0.0.1:5000/gateway/v1/media/jobs \
   -d '{
     "intent": "image.generate",
     "request": {
-      "model": "flux2-klein-4b-seamless-tile",
+      "model": "sdxl-seamless-tile",
       "prompt": "hand-painted underwater basalt floor texture, game asset, tileable",
       "size": "1024x1024",
       "n": 1,
       "extensions": {
         "com.azizam.workflow": {
           "seed": 4242,
-          "seam_mask_width": 96,
-          "seam_denoise": 0.58
+          "seam_blending": 0.1
         }
       }
     }
@@ -329,16 +297,16 @@ stores only redacted metadata; the private request payload lives in
 `data/image_media_jobs/` while the job is pending/running and is removed after
 success.
 
-Image edit denoise:
+Image edit controls:
 
 ```bash
 export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -F model=flux2-klein-4b-edit \
+  -F model=qwen-image-2.1-edit \
   -F prompt='remove the background clutter' \
   -F image=@input.png \
-  -F 'extensions={"com.azizam.workflow":{"denoise":0.42,"steps":24,"guidance":3.5}}'
+  -F 'extensions={"com.azizam.workflow":{"steps":24,"cfg":3.5}}'
 ```
 
 Image edit mask:
@@ -347,7 +315,7 @@ Image edit mask:
 export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -F model=flux2-klein-4b-edit \
+  -F model=qwen-image-2.1-edit \
   -F prompt='replace only the masked area with coral texture' \
   -F image=@input.png \
   -F mask=@mask.png
@@ -357,8 +325,7 @@ curl -s http://127.0.0.1:5000/v1/images/edits \
 masks use OpenAI polarity: transparent edits, opaque preserves. Grayscale masks
 use white to edit and black to preserve. The default Qwen editor routes masked
 requests to `qwen-image-2.1-inpaint`, which binds the mask through source-image
-alpha. Explicit Flux2 edit workflows keep their documented post-composite
-fallback because they have no native inpaint node.
+alpha.
 
 Image edit with multiple reference images (gpt-image-1 shape, repeated
 `image[]`):
@@ -367,7 +334,7 @@ Image edit with multiple reference images (gpt-image-1 shape, repeated
 export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -F model=flux2-klein-4b-edit \
+  -F model=qwen-image-2.1-edit \
   -F prompt='combine these references' \
   -F 'image[]=@reference-a.png' \
   -F 'image[]=@reference-b.png'
@@ -397,7 +364,7 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "flux2-klein-4b",
+    "model": "krea2-turbo",
     "prompt": "a lighthouse at dusk",
     "size": "1024x1024",
     "background": "transparent",
@@ -412,12 +379,8 @@ workflow's native PNG output; the response's `data[].media_type` and (for
 format. `background: "transparent"` combined with `output_format: "jpeg"` is
 rejected with a `400` (jpeg has no alpha channel), matching OpenAI itself.
 `quality` maps to a per-workflow sampler-step count only when the resolved
-workflow's manifest declares a `quality_steps` table (none of the shipped
-Flux2 Klein manifests do yet — this distilled model is tuned around a fixed
-step count, and scaling its steps without empirically verifying output
-quality first risked a false "high quality" being worse than the default, so
-this was deliberately left as a data-only hook rather than guessed at). When
-no `quality_steps` table applies, `quality` is still accepted (no error) and
+workflow's manifest declares a `quality_steps` table. When no `quality_steps`
+table applies, `quality` is still accepted (no error) and
 recorded as accepted-but-not-applied on the request's gateway receipt — never
 silently dropped with no trace. The response always echoes the resolved
 `output_format`/`background`/`quality`/`size` at the top level, matching the
@@ -443,12 +406,9 @@ The backing workflow is `images.variations.default_workflow` in
 `proxy_config.yml` (default: `qwen-image-2.1-edit`, matching the edit route's
 own default). `model` is accepted: an OpenAI-named model (`dall-e-2`,
 `dall-e-3`, `gpt-image-1`, ...) resolves to the configured default; a
-concrete local workflow id (e.g. `flux2-klein-4b`) is honored literally
-(with `-edit`/`-inpaint` suffixed the same way the edit route does). When the
-resolved workflow's manifest declares a `denoise` input (both shipped
-`flux2-klein-4b-edit` and `flux2-klein-4b-inpaint` do), a configurable
-partial-denoise strength (`images.variations.denoise`, default `0.75`) is
-applied so the output resembles but is not identical to the source image.
+concrete local edit workflow id (e.g. `qwen-image-2.1-edit`) is honored literally.
+When the resolved workflow declares a `denoise` input, `images.variations.denoise`
+(default `0.75`) sets its strength.
 Fields `/v1/images/variations` does *not* accept (because OpenAI's own
 variations request doesn't have them): `prompt`, `mask`, `background`,
 `output_format`, `output_compression`, `quality`.
@@ -839,7 +799,7 @@ parameter:
 export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -F model=flux2-klein-4b-edit-controlnet \
+  -F model=operator-edit-controlnet \
   -F prompt='preserve the geometry, paint it as underwater rock' \
   -F image=@input.png \
   -F control_image=@edge-map.png \
@@ -1587,8 +1547,7 @@ What maps and what does not:
 
 - `prompt`, `width`, `height`, `steps`, `seed`, `batch_size` and `n_iter` map onto the
   chosen workflow. `cfg_scale`, `negative_prompt`, `sampler_name` and `scheduler` map
-  only when that workflow has the input (for example `flux2-klein-4b` takes
-  `guidance`; `krea2-turbo` takes none of them). Otherwise the response header
+  only when that workflow has the input. Otherwise the response header
   `x-azizam-ignored-params` names what was dropped. `steps` and `cfg_scale` clamp
   to the workflow's range and say so in the same header.
 - A size outside the workflow's range is a 422, not a silent resize.
@@ -1613,7 +1572,7 @@ anything; code in `gateway/stable_aliases.py`):
 2. **OpenAI names** (`gpt-4o`, `tts-1`, `gpt-image-1`, ...): ordered globs that
    point at a stable name, so they follow it when it is re-pointed.
 
-Concrete names (roles such as `coder-q5`, workflow ids such as `flux2-klein-4b`,
+Concrete names (roles such as `coder-q5`, workflow ids such as `krea2-turbo`,
 engine ids such as `omnivoice`) always keep working, so a client can still pin
 an exact model or settings. Unknown names pass through unchanged.
 
@@ -1626,11 +1585,11 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `rp` | `rp` (roleplay) | |
 | Embeddings | `embed` | `nomic-embed-text-v1.5` (768-dim; not vector-compatible with OpenAI's) | `text-embedding-*` |
 | Image generate | `image` | `krea2-turbo` | `gpt-image-*`, `chatgpt-image-*`, `dall-e-*` |
-| | `image-fast` | `flux2-klein-4b` | |
+| | `image-fast` | `moss-image-fast` | |
 | | `image-uncensored` | `krea2-turbo-snofs` (Krea 2 Turbo + SNOFS v1.4 LoRA; explicit output for adults, opt-in) | none |
 | | `image-anime` | `anima-turbo` (Anima Turbo v1.1, anime, uncensored) | none |
 | Image edit / variations | `image-edit` (also `image`) | `qwen-image-2.1-edit`; masks and 2+ images switch to inpaint / multiref automatically | `gpt-image-*`, `dall-e-*` |
-| | `image-edit-fast` (also `image-fast`) | `flux2-klein-4b-edit` | |
+| | `image-edit-fast` (also `image-fast`) | `fibo-2-edit-turbo` | |
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
 | | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
 | | `video-long` | `video-ltx-2.5-long` (code-built chain, up to `videos.max_total_seconds`, default 40 s) | |
@@ -1954,7 +1913,7 @@ media are replaced before embedding).
 export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/generations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"flux2-klein-4b","prompt":"a lighthouse","extensions":{"com.azizam.workflow":{"metadata":"none"}}}'
+  -d '{"model":"krea2-turbo","prompt":"a lighthouse","extensions":{"com.azizam.workflow":{"metadata":"none"}}}'
 ```
 
 - `"full"`: deliver the stored bytes, metadata included.

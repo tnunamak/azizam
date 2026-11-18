@@ -411,24 +411,19 @@ class TestRecordImageExtensionBinding(unittest.TestCase):
             record_image_extension_binding(object(), result)
 
 
-class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
-    """The committed Flux2 edit manifest must expose only real controls.
-
-    The current Flux2 Klein 4B edit workflow exposes denoise through a
-    SplitSigmasDenoise node. It still does not expose ControlNet, so
-    ControlNet controls must be rejected instead of silently no-oping.
-    """
+class TestRealEditManifestKeepsContractHonest(unittest.TestCase):
+    """A real edit manifest rejects unsupported controls and binds supported ones."""
 
     def setUp(self) -> None:
         self.manifest = load_workflow_manifest(
-            ROOT / "manifests/workflows/flux2-klein-4b-edit.yml"
+            ROOT / "manifests/workflows/qwen-image-2.1-edit.yml"
         )
 
     def test_controlnet_extension_is_rejected_against_real_manifest(self) -> None:
         body = {
             "extensions": {
                 NS: {
-                    "denoise": 0.35,
+                    "cfg": 3.5,
                     **{name: "x" for name in CONTROLNET_LIKE_EXTENSION_CONTROLS},
                 }
             }
@@ -439,38 +434,37 @@ class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
         result = resolve_workflow_extensions(
             body,
             self.manifest,
-            supported_names=("guidance", "steps", "width", "height", "denoise"),
+            supported_names=("cfg", "steps"),
         )
-        self.assertEqual(result.accepted, {"denoise": 0.35})
+        self.assertEqual(result.accepted, {"cfg": 3.5})
         self.assertEqual(
             result.rejected,
             {name: "unknown input" for name in CONTROLNET_LIKE_EXTENSION_CONTROLS},
         )
 
     def test_real_manifest_inputs_still_bind(self) -> None:
-        # Spec'd inputs (e.g. guidance and denoise) under the extensions envelope should
+        # Spec'd inputs (e.g. cfg and steps) under the extensions envelope should
         # validate and apply through the real ComfyUI binding. The host route
         # passes the top-level standard fields (prompt, source_image) on its
         # own, so the binding here narrows ``supported_names`` to only the
         # extension-shaped controls.
-        body = {"extensions": {NS: {"guidance": 3.5, "denoise": 0.42}}}
+        body = {"extensions": {NS: {"cfg": 3.5, "steps": 8}}}
         # Build the smallest possible workflow surface the binding needs.
         backend_request = {
-            "26": {"inputs": {"guidance": 4.0}},
-            "49": {"inputs": {"denoise": 1.0}},
+            "8": {"inputs": {"cfg": 4.0, "steps": 4}},
         }
         result = bind_workflow_extensions(
             body,
             self.manifest,
             "comfyui",
             backend_request,
-            supported_names=("guidance", "steps", "width", "height", "denoise"),
+            supported_names=("cfg", "steps"),
             standard_fields=STANDARD_IMAGE_EDIT_FIELDS,
         )
         self.assertTrue(result.validation.ok, result.validation.rejected)
         assert result.request is not None
-        self.assertEqual(result.request["26"]["inputs"]["guidance"], 3.5)
-        self.assertEqual(result.request["49"]["inputs"]["denoise"], 0.42)
+        self.assertEqual(result.request["8"]["inputs"]["cfg"], 3.5)
+        self.assertEqual(result.request["8"]["inputs"]["steps"], 8)
 
 
 if __name__ == "__main__":

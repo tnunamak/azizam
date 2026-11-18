@@ -13,19 +13,12 @@ workflows:
   audio.generate.yue2-song: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
   image.analyze.face-likeness: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   image.edit.fibo-2-edit-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.edit.flux2-klein: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.edit.flux2-klein-4b: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.edit.flux2-klein-4b-inpaint: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.edit.image-identity: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.edit.qwen-image-2.1-edit: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.edit.qwen-image-2.1-edit-multiref: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.edit.qwen-image-2.1-inpaint: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.edit.seedvr2-upscale: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.anima-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.generate.flux2-klein: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.generate.flux2-klein-4b: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.generate.flux2-klein-4b-seamless-tile: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  image.generate.flux2-klein-snofs: {exposure: disabled, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.krea2-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.krea2-turbo-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.moss-image: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}

@@ -510,7 +510,7 @@
       "latency_class": null,
       "lifecycle": "unknown",
       "limits": [],
-      "model": "flux2-klein-4b-edit",
+      "model": "qwen-image-2.1-edit",
       "output_media_types": [],
       "output_modalities": [
         "image"
@@ -558,7 +558,7 @@
       "latency_class": null,
       "lifecycle": "unknown",
       "limits": [],
-      "model": "flux2-klein-4b",
+      "model": "krea2-turbo",
       "output_media_types": [],
       "output_modalities": [
         "image"
@@ -1398,7 +1398,7 @@
       "latency_class": null,
       "lifecycle": "unknown",
       "limits": [],
-      "model": "flux2-klein-4b-edit",
+      "model": "qwen-image-2.1-edit",
       "output_media_types": [],
       "output_modalities": [
         "image"
@@ -1446,7 +1446,7 @@
       "latency_class": null,
       "lifecycle": "unknown",
       "limits": [],
-      "model": "flux2-klein-4b",
+      "model": "krea2-turbo",
       "output_media_types": [],
       "output_modalities": [
         "image"

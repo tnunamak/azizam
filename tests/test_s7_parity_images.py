@@ -785,20 +785,6 @@ def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
     assert_same(old, row, ("receipt", lambda o: receipt_work_fields(o, "metadata")))
 
 
-@ROW_PENDING
-def test_images_V07_offset_inpaint_needs_its_workflows(tmp_path):
-    old, row = pair(tmp_path, GEN, body(model="flux2-klein-4b-seamless-tile"), ok)
-    old_has(old, "an answer", status(old))
-    assert_same(old, row, status, failure, engine_without_probes)
-
-
-@ROW_PENDING
-def test_images_V08_offset_inpaint_success_headers(tmp_path):
-    old, row = pair(tmp_path, GEN, body(model="flux2-klein-4b-seamless-tile"), ok)
-    old_has(old, "the strategy header", header(old, "x-image-seamless-tile-strategy"))
-    assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image")))
-
-
 def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
     failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
         ["execution_error", {"node_type": "N", "node_id": "7", "exception_message": "gateway tile composition error"}]]}, "outputs": {}}}
@@ -1400,16 +1386,12 @@ def test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels(tmp_pat
 
 
 @ROW_PENDING
-def test_s7_background_fallback_and_offset_inpaint_preserve_composition(tmp_path):
+def test_s7_background_fallback_preserves_composition(tmp_path):
     transparent = {"json_body": {"prompt": "a red fox", "response_format": "b64_json", "background": "transparent"}}
     old, row = pair(tmp_path / "cutout", GEN, transparent, ok)
     old_has(old, "a picture", _pixels(old))
     assert_same(old, row, status, ("delivered pixels", _pixels), ("stored files", asset_files),
                 ("background headers", lambda o: headers_with(o, "x-image-background")))
-    old2, row2 = pair(tmp_path / "tile", GEN, body(model="flux2-klein-4b-seamless-tile"), ok)
-    old_has(old2, "an answer", status(old2))
-    assert_same(old2, row2, status, ("delivered pixels", _pixels), ("stored files", asset_files),
-                ("tile headers", lambda o: headers_with(o, "x-image-seam")), failure)
 
 
 def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_path):

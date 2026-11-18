@@ -186,7 +186,7 @@ def test_the_one_difference_is_yue2_prompt_which_the_route_edge_maps_to_tags():
 
 
 def test_a_second_graph_bound_workflow_compiles_through_the_same_operation(fake_upstreams):
-    manifest = _manifest("flux2-klein-4b")  # an image workflow that already exists
+    manifest = _manifest("krea2-turbo")  # an image workflow that already exists
     inputs = {"prompt": "a fox in snow", "width": 512, "height": 512, "steps": 4, "seed": 11}
     posted: list[Any] = []
 
@@ -340,11 +340,11 @@ def test_each_adapter_sends_its_own_client_id(fake_upstreams):
 
 
 def test_a_dict_input_bound_into_the_graph_is_copied_not_aliased():
-    manifest = _manifest("flux2-klein-4b-edit")
+    manifest = _manifest("qwen-image-2.1-edit")
     picture = {"data": "abc"}
     graph = compile_workflow(manifest, "comfyui", _template(manifest), {"prompt": "x", "source_image": picture})
     picture["data"] = "changed after compile"
-    assert graph["10"]["inputs"]["image"] == {"data": "abc"}, "the caller's dict reached the compiled graph"
+    assert graph["4"]["inputs"]["image"] == {"data": "abc"}, "the caller's dict reached the compiled graph"
 
 
 def test_an_accepted_input_with_no_mapping_is_refused_by_name():
@@ -362,12 +362,7 @@ def test_an_accepted_input_with_no_mapping_is_refused_by_name():
     assert empty.value.param == "guidance"
 
 
-def test_an_edge_only_input_is_refused_by_the_graph_compile_and_its_default_is_not_filled():
-    manifest = _manifest("flux2-klein-4b-edit")
-    with pytest.raises(InputRefused) as refused:
-        compile_workflow(manifest, "comfyui", _template(manifest),
-                         {"prompt": "x", "source_image": {"data": "abc"}, "mask": {"data": "m"}})
-    assert refused.value.param == "mask"
+def test_route_applied_video_inputs_are_marked_edge_only():
     video = _manifest("video-scail-2-replace")
     assert video["inputs"]["reference_fit"]["default"] is True
     # Every route-applied input is marked; compiling without the route's pictures must not refuse on a default.
@@ -391,7 +386,7 @@ def test_every_declared_input_of_a_graph_bound_manifest_is_mapped_or_marked_edge
 
 
 def test_another_bindings_edge_only_marker_does_not_break_the_selected_binding():
-    manifest = copy.deepcopy(_manifest("flux2-klein-4b-edit"))
+    manifest = copy.deepcopy(_manifest("qwen-image-2.1-edit"))
     manifest["bindings"]["alternate"] = copy.deepcopy(manifest["bindings"]["comfyui"])
     graph = compile_workflow(manifest, "comfyui", _template(manifest), {"prompt": "x", "source_image": {"data": "abc"}})
     assert graph

@@ -237,10 +237,10 @@ class ShippedConfigTests(unittest.TestCase):
             },
             "images": {"gpt-image-1": "krea2-turbo", "gpt-image-1-mini": "krea2-turbo", "gpt-image-1.5": "krea2-turbo",
                        "dall-e-3": "krea2-turbo", "dall-e-2": "krea2-turbo", "chatgpt-image-latest": "krea2-turbo",
-                       "image": "krea2-turbo", "image-fast": "flux2-klein-4b",
+                       "image": "krea2-turbo", "image-fast": "moss-image-fast",
                        "image-uncensored": "krea2-turbo-snofs", "image-anime": "anima-turbo"},
             "image_edits": {"gpt-image-1": "qwen-image-2.1-edit", "dall-e-2": "qwen-image-2.1-edit",
-                            "image-edit": "qwen-image-2.1-edit", "image-edit-fast": "flux2-klein-4b-edit"},
+                            "image-edit": "qwen-image-2.1-edit", "image-edit-fast": "fibo-2-edit-turbo"},
             "videos": {"sora-2": "video-ltx-2.5-t2v", "sora-2-pro": "video-ltx-2.5-t2v",
                        "sora-2-2025-12-08": "video-ltx-2.5-t2v", "video": "video-ltx-2.5-t2v"},
             "audio_generate": {"music": "ace-step-1.5-xl-turbo", "song": "yue2-song", "sfx": "sa3-small-sfx"},
@@ -454,10 +454,10 @@ class RouteTests(unittest.TestCase):
         res = proxy.resolve_model_for_operation("images", "gpt-image-1")
         self.assertEqual((res.effective_model, res.is_openai_alias), ("krea2-turbo", True))
         res = proxy.resolve_model_for_operation("image_edits", "image-edit-fast")
-        self.assertEqual(res.effective_model, "flux2-klein-4b-edit")
+        self.assertEqual(res.effective_model, "fibo-2-edit-turbo")
         res = proxy.resolve_model_for_operation("videos", "video-fast")
         self.assertEqual(res.effective_model, "video-ltx-2.5-t2v")
-        res = proxy.resolve_model_for_operation("images", "flux2-klein-4b")
+        res = proxy.resolve_model_for_operation("images", "moss-image-fast")
         self.assertFalse(res.is_openai_alias)
         with self._without_service("tts-supertonic"), self.assertRaises(proxy.ModelCompatibilityError):
             proxy.resolve_model_for_operation("speech", "supertonic")

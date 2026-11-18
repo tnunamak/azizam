@@ -16,8 +16,8 @@ from tests.registry_test_helpers import write_service_registry_for_test
 from tests.test_frontend_mount_reload import live  # noqa: F401 - fixture
 from tests.test_registry_apply_failure import _owner_client
 
-BUNDLED_ID = "image.generate.flux2-klein-4b"
-OWNER_NAME = "Owner's own Klein"
+BUNDLED_ID = "image.generate.krea2-turbo"
+OWNER_NAME = "Owner's own image workflow"
 
 
 def _bundled_manifest() -> dict:

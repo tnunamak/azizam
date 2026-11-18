@@ -11,7 +11,7 @@ type Row = Record<string, unknown>;
 
 const KINDS = [
   { kind: "mesh", label: "3D models", title: "TRELLIS.2 image to 3D", model: "mesh", intent: "mesh.generate", inputs: ["image"], required: ["image"], outputs: ["model"], action: "Make" },
-  { kind: "edit", label: "Edit a picture", title: "FLUX.2 Klein edit", model: "flux2-klein-edit", intent: "image.edit", inputs: ["image", "text"], required: ["image", "text"], outputs: ["image"], action: "Make" },
+  { kind: "edit", label: "Edit a picture", title: "Qwen-Image 2.1 Edit", model: "qwen-image-2.1-edit", intent: "image.edit", inputs: ["image", "text"], required: ["image", "text"], outputs: ["image"], action: "Make" },
   { kind: "transcribe", label: "Transcription", title: "Whisper", model: "whisper-1", intent: "audio.transcriptions", inputs: ["audio"], required: ["audio"], outputs: ["text"], action: "Transcribe" },
 ];
 

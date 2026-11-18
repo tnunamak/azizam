@@ -39,18 +39,6 @@ from gateway.receipts import RouteReceipt  # noqa: E402
 OWNER_CONTEXT = proxy.AuthContext(identity=identity())
 
 
-@contextmanager
-def _open_mask_fixture():
-    """The separate mask-upload contract has no open bundled equivalent."""
-    provider = proxy.GATEWAY_REGISTRY_PROVIDER
-    snapshot = provider.current()
-    entries = dict(snapshot.workflows)
-    for workflow_id in ("image.edit.flux2-klein-4b", "image.edit.flux2-klein-4b-inpaint"):
-        entry = snapshot.get(workflow_id)
-        entries[workflow_id] = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
-    snapshot = replace(snapshot, workflows=entries)
-    with patch.object(type(provider), "current", lambda self: snapshot), patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider):
-        yield
 
 
 def _png_bytes(color: tuple[int, int, int, int], size: tuple[int, int] = (2, 1)) -> bytes:
@@ -896,13 +884,13 @@ class TestImageEditMaskSemantics(unittest.TestCase):
     def test_inpaint_workflow_is_preferred_only_when_it_exists(self) -> None:
         with patch.object(proxy, "load_graph_workflow", lambda name, **_kw: {"ok": True} if name.endswith("-inpaint") else None):
             self.assertEqual(
-                proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
-                "flux2-klein-4b-inpaint",
+                proxy._prefer_inpaint_workflow_for_mask("qwen-image-2.1-edit"),
+                "qwen-image-2.1-inpaint",
             )
         with patch.object(proxy, "load_graph_workflow", lambda _name, **_kw: None):
             self.assertEqual(
-                proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
-                "flux2-klein-4b-edit",
+                proxy._prefer_inpaint_workflow_for_mask("qwen-image-2.1-edit"),
+                "qwen-image-2.1-edit",
             )
 
 
@@ -913,16 +901,14 @@ class TestAttachImageManifest(unittest.TestCase):
         )
 
     def test_none_receipt_is_safe(self) -> None:
-        proxy._attach_image_manifest_if_available(None, "image.edit", "flux2-klein-4b-edit")
+        proxy._attach_image_manifest_if_available(None, "image.edit", "qwen-image-2.1-edit")
 
     def test_known_edit_model_attaches_manifest(self) -> None:
         receipt = self._receipt()
         proxy._attach_image_manifest_if_available(
-            receipt, "image.edit", "flux2-klein-4b-edit"
+            receipt, "image.edit", "qwen-image-2.1-edit"
         )
-        # Manifest exists at manifests/workflows/flux2-klein-4b-edit.yml with id
-        # image.edit.flux2-klein-4b. Helper strips '-edit' suffix to match.
-        self.assertEqual(receipt.manifest_id, "image.edit.flux2-klein-4b")
+        self.assertEqual(receipt.manifest_id, "image.edit.qwen-image-2.1-edit")
         self.assertIsNotNone(receipt.manifest_hash)
 
     def test_unknown_model_records_deferred_warning(self) -> None:
@@ -943,9 +929,9 @@ class TestFinishReceiptIncludesRoutingFacts(unittest.TestCase):
             "/v1/images/generations", OWNER_CONTEXT
         )
         receipt.requested_model = "gpt-image-1"
-        receipt.resolved_model = "flux2-klein-4b"
-        receipt.requested_workflow = "flux2-klein-4b"
-        receipt.resolved_workflow = "Flux2 Klein 4B"
+        receipt.resolved_model = "krea2-turbo"
+        receipt.requested_workflow = "krea2-turbo"
+        receipt.resolved_workflow = "Krea 2 Turbo"
         receipt.accept_input("model")
         receipt.accept_input("prompt")
         receipt.reject_input("n", "out_of_range")
@@ -962,9 +948,9 @@ class TestFinishReceiptIncludesRoutingFacts(unittest.TestCase):
 
         evt = events[0]
         self.assertEqual(evt["requested_model"], "gpt-image-1")
-        self.assertEqual(evt["resolved_model"], "flux2-klein-4b")
-        self.assertEqual(evt["requested_workflow"], "flux2-klein-4b")
-        self.assertEqual(evt["resolved_workflow"], "Flux2 Klein 4B")
+        self.assertEqual(evt["resolved_model"], "krea2-turbo")
+        self.assertEqual(evt["requested_workflow"], "krea2-turbo")
+        self.assertEqual(evt["resolved_workflow"], "Krea 2 Turbo")
         self.assertIn("model", evt["accepted_inputs"])
         self.assertIn("prompt", evt["accepted_inputs"])
         self.assertEqual(evt["rejected_inputs"]["n"], "out_of_range")
@@ -1093,12 +1079,12 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_prompt_records_rejection(self) -> None:
         receipt, response = await self._run_with_json_body(
-            {"prompt": "", "model": "flux2-klein-4b"}
+            {"prompt": "", "model": "krea2-turbo"}
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(receipt.rejected_inputs.get("prompt"), "missing")
-        self.assertEqual(receipt.requested_model, "flux2-klein-4b")
-        self.assertEqual(receipt.resolved_model, "flux2-klein-4b")
+        self.assertEqual(receipt.requested_model, "krea2-turbo")
+        self.assertEqual(receipt.resolved_model, "krea2-turbo")
 
     async def test_unknown_model_returns_model_not_found(self) -> None:
         receipt, response = await self._run_with_json_body(
@@ -1751,128 +1737,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callable(captured["image_transform"]))
         self.assertEqual(_FakeAsyncClient.uploads, 1)
 
-    async def test_explicit_inpaint_workflow_requires_mask(self) -> None:
-        receipt = proxy.start_image_route_receipt(
-            "/v1/images/edits", OWNER_CONTEXT
-        )
-        request = _MultipartRequest(
-            [
-                ("prompt", "replace the left pixel"),
-                ("model", "flux2-klein-4b-inpaint"),
-                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
-            ]
-        )
-        captured: dict[str, Any] = {}
 
-        async def fake_generate(**kwargs: Any) -> Response:
-            captured.update(kwargs)
-            return Response(status_code=500)
-
-        _FakeAsyncClient.uploads = 0
-        _FakeAsyncClient.upload_files = []
-        with _open_mask_fixture(), derived_patch("GRAPH_ENABLED", True), patch.object(
-            proxy.httpx, "AsyncClient", _FakeAsyncClient
-        ), patch.object(
-            proxy,
-            "configured_downstream_headers",
-            lambda _auth_context, _service: {},
-        ), patch.object(
-            proxy,
-            "_generate_images_with_adaptive_batching",
-            fake_generate,
-        ):
-            response = await proxy.proxy_graph_image_edit_request(
-                request,  # type: ignore[arg-type]
-                OWNER_CONTEXT,
-                receipt=receipt,
-            )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(captured, {})
-        self.assertIn("mask", receipt.rejected_inputs)
-        self.assertIn("mask is required", response.body.decode())
-
-    async def test_workflow_mask_binding_uploads_normalized_mask(self) -> None:
-        from PIL import Image
-
-        receipt = proxy.start_image_route_receipt(
-            "/v1/images/edits", OWNER_CONTEXT
-        )
-        mask = Image.new("RGBA", (2, 1), (0, 0, 0, 255))
-        mask.putpixel((0, 0), (0, 0, 0, 0))
-        mask_output = io.BytesIO()
-        mask.save(mask_output, format="PNG")
-        request = _MultipartRequest(
-            [
-                ("prompt", "replace the left pixel"),
-                ("model", "flux2-klein-4b-edit"),
-                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
-                ("mask", _MultipartUpload("mask.png", mask_output.getvalue())),
-            ]
-        )
-        captured: dict[str, Any] = {}
-        bound_inputs: dict[str, Any] = {}
-
-        class _BindingResult:
-            def __init__(self, request_body: dict[str, Any]) -> None:
-                self.request = request_body
-
-        def fake_bind(_manifest: Any, _backend: str, request_body: dict[str, Any], accepted: dict[str, Any]) -> _BindingResult:
-            bound_inputs.update(accepted)
-            return _BindingResult(request_body)
-
-        async def fake_generate(**kwargs: Any) -> Response:
-            captured.update(kwargs)
-            return Response(
-                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-
-        _FakeAsyncClient.uploads = 0
-        _FakeAsyncClient.upload_files = []
-        with _open_mask_fixture(), derived_patch("GRAPH_ENABLED", True), patch.object(
-            proxy.httpx, "AsyncClient", _FakeAsyncClient
-        ), patch.object(
-            proxy,
-            "configured_downstream_headers",
-            lambda _auth_context, _service: {},
-        ), patch.object(
-            proxy,
-            "_manifest_route_managed_mask_input",
-            lambda _manifest: "source_mask",
-        ), patch.object(
-            proxy,
-            "bind_backend_request",
-            fake_bind,
-        ), patch.object(
-            proxy,
-            "_apply_manifest_route_inputs",
-            lambda _manifest, workflow, _values: workflow,
-        ), patch.object(
-            proxy,
-            "_generate_images_with_adaptive_batching",
-            fake_generate,
-        ):
-            response = await proxy.proxy_graph_image_edit_request(
-                request,  # type: ignore[arg-type]
-                OWNER_CONTEXT,
-                receipt=receipt,
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(_FakeAsyncClient.uploads, 2)
-        self.assertEqual(bound_inputs, {"source_mask": "uploaded-2.png"})
-        self.assertEqual(captured["image_response_headers"]["X-Image-Mask"], "workflow")
-        self.assertEqual(captured["image_response_headers"]["X-Image-Mask-Source"], "alpha")
-        self.assertIsNone(captured["image_transform"])
-        mask_file_tuple = _FakeAsyncClient.upload_files[1]["image"]
-        self.assertEqual(mask_file_tuple[0], "normalized-mask.png")
-        normalized_pixels = _image_pixels(mask_file_tuple[1])
-        self.assertEqual(
-            [pixel[0] for pixel in normalized_pixels],
-            [255, 0],
-        )
 
 
 class TestEditWorkflowSelection(unittest.TestCase):
@@ -1882,8 +1747,8 @@ class TestEditWorkflowSelection(unittest.TestCase):
         self.assertEqual(
             proxy._image_variations_default_workflow(), "qwen-image-2.1-edit"
         )
-        self.assertIsNotNone(proxy.load_graph_workflow("flux2-klein-4b"))
-        self.assertIsNotNone(proxy.load_graph_workflow("flux2-klein-4b-edit"))
+        self.assertIsNotNone(proxy.load_graph_workflow("krea2-turbo"))
+        self.assertIsNotNone(proxy.load_graph_workflow("qwen-image-2.1-edit"))
         workflow = proxy.load_graph_workflow("krea2-turbo")
         assert workflow is not None
         meta = workflow.pop("_meta")
@@ -1933,9 +1798,9 @@ class TestEditWorkflowSelection(unittest.TestCase):
         with section_published("model_compatibility", {"defaults": {"image_edits": "qwen-image-2.1-edit"}}):
             self.assertEqual(
                 proxy._select_edit_workflow(
-                    "flux2-klein-4b", image_count=2, has_mask=False
+                    "fibo-2-edit-turbo", image_count=2, has_mask=False
                 ),
-                "flux2-klein-4b-edit",
+                "fibo-2-edit-turbo",
             )
 
     def test_explicit_direct_edit_workflow_is_not_given_an_edit_suffix(self) -> None:
