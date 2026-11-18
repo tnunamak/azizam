@@ -188,3 +188,21 @@ class ChoiceStore:
             failures[self._failure_key(service, node_type, input)] = {'at': at, 'reason': reason}
             private_io.atomic_write_text(self.failures_path, json.dumps(failures, allow_nan=False))
             return True
+
+
+def snapshot_choices(store, service, inputs) -> dict:
+    """Copy usable last-known choices for the inputs with valid declarations."""
+    result = {}
+    for name, spec in inputs.items():
+        if not isinstance(spec, Mapping):
+            continue
+        declaration = spec.get("choices_from")
+        if not isinstance(declaration, Mapping) or set(declaration) != {"node_type", "input"}:
+            continue
+        node_type, input_name = declaration["node_type"], declaration["input"]
+        if not all(isinstance(value, str) and value for value in (node_type, input_name)):
+            continue
+        snapshot = store.read(service, node_type, input_name)
+        if snapshot is not None:
+            result[name] = list(snapshot.choices)
+    return result

@@ -4,7 +4,7 @@ import json
 import pytest
 import yaml
 
-from gateway.engine_protocol.choice_store import ChoiceStore, choices_from_node_info
+from gateway.engine_protocol.choice_store import ChoiceStore, choices_from_node_info, snapshot_choices
 
 
 def test_fixture_round_trip_and_age(tmp_path):
@@ -281,3 +281,73 @@ def test_processes_writing_different_keys_keep_all(tmp_path):
 def test_processes_without_the_lock_lose_keys(tmp_path):
     """Negative control: the same run with flock stubbed out must lose a write."""
     assert _lost_keys(_run_children(tmp_path / 'choices.json', no_lock=True))
+
+
+def test_snapshot_choices_includes_only_available_declared_inputs(tmp_path):
+    from types import MappingProxyType
+
+    store = ChoiceStore(tmp_path / "choices.json")
+    store.write("service", "node", "selection", ["last", "first"], fetched_at=100)
+    inputs = {
+        "available": {"choices_from": MappingProxyType({"node_type": "node", "input": "selection"})},
+        "missing": {"choices_from": {"node_type": "node", "input": "missing"}, "enum": ["fallback"]},
+        "plain": {"enum": ["plain"]},
+    }
+    assert snapshot_choices(store, "service", inputs) == {"available": ["last", "first"]}
+
+
+def test_snapshot_choices_keeps_stale_snapshot(tmp_path):
+    import time
+
+    store = ChoiceStore(tmp_path / "choices.json")
+    store.write("service", "node", "selection", ["saved"], fetched_at=time.time() - 172800)
+    assert store.read("service", "node", "selection").stale(now=time.time(), max_age=86400)
+    inputs = {"value": {"choices_from": {"node_type": "node", "input": "selection"}}}
+    assert snapshot_choices(store, "service", inputs) == {"value": ["saved"]}
+
+
+def test_snapshot_choices_isolates_services(tmp_path):
+    store = ChoiceStore(tmp_path / "choices.json")
+    store.write("service-a", "node", "selection", ["saved"], fetched_at=100)
+    inputs = {"value": {"choices_from": {"node_type": "node", "input": "selection"}}}
+    assert snapshot_choices(store, "service-b", inputs) == {}
+
+
+def test_snapshot_choices_skips_malformed_declarations_without_reading(tmp_path, monkeypatch):
+    store = ChoiceStore(tmp_path / "choices.json")
+
+    def unexpected_read(*args):
+        pytest.fail("malformed declaration reached the store")
+
+    monkeypatch.setattr(store, "read", unexpected_read)
+    declarations = [
+        None, [], "node", {},
+        {"node_type": "node"}, {"input": "selection"},
+        {"node_type": "", "input": "selection"},
+        {"node_type": "node", "input": ""},
+        {"node_type": 1, "input": "selection"},
+        {"node_type": "node", "input": 1},
+        {"node_type": None, "input": "selection"},
+        {"node_type": "node", "input": None},
+        {"node_type": "node", "input": "selection", "extra": "not-allowed"},
+    ]
+    inputs = {str(i): {"choices_from": declaration} for i, declaration in enumerate(declarations)}
+    inputs["plain"] = {"enum": ["fallback"]}
+    inputs["bad-spec"] = None
+    assert snapshot_choices(store, "service", inputs) == {}
+
+
+def test_snapshot_choices_copies_stored_lists(tmp_path, monkeypatch):
+    store = ChoiceStore(tmp_path / "choices.json")
+    store.write("service", "node", "selection", ["saved"], fetched_at=100)
+    snapshot = store.read("service", "node", "selection")
+    # Reuse the actual snapshot object so disk re-reading cannot hide aliasing.
+    monkeypatch.setattr(store, "read", lambda *args: snapshot)
+    inputs = {"value": {"choices_from": {"node_type": "node", "input": "selection"}}}
+    first = snapshot_choices(store, "service", inputs)
+    assert first["value"] is not snapshot.choices
+    first["value"].append("changed")
+    second = snapshot_choices(store, "service", inputs)
+    assert second == {"value": ["saved"]}
+    assert first is not second
+    assert snapshot.choices == ["saved"]
