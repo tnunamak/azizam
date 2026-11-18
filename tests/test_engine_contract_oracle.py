@@ -147,6 +147,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     added = set(expected_added)
     assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
     model_surface = [row for row in model_surface if row[0] not in added]
+    # The fast aliases now point at open workflows; check them above the frozen older surface.
+    assert {row[0] for row in model_surface} >= {"image-fast", "image-edit-fast"}
+    model_surface = [row for row in model_surface if row[0] not in {"image-fast", "image-edit-fast"}]
 
     app = FastAPI()
     app.include_router(create_gateway_router(provider_of(_build_registry()), capabilities_provider=lambda _r: _sample_capabilities()))
