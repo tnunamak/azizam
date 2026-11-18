@@ -663,7 +663,7 @@ class ClosedVideoRouteTests(RemixReplaceBase):
         self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
         self.stack.enter_context(section_key_published("videos", "remix_workflow", "video-scail-2-replace"))
 
-    def close_custom_edit_without_manifest(self):
+    def custom_edit_without_manifest(self, *, exposure="disabled"):
         import copy
         from dataclasses import replace
         from gateway.workflow_projections import SnapshotRegistry
@@ -677,7 +677,7 @@ class ClosedVideoRouteTests(RemixReplaceBase):
         contract["id"] = workflow_id
         contract["bindings"][proxy.DERIVED._GRAPH_BINDING]["workflow"] = "workflows/videos/" + key + ".json"
         entry = replace(original, id=workflow_id, contract=contract,
-                        facts=replace(original.facts, exposure="disabled"))
+                        facts=replace(original.facts, exposure=exposure))
         snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
         self.stack.enter_context(patch.object(provider, "_snapshot", snapshot))
         self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
@@ -690,7 +690,7 @@ class ClosedVideoRouteTests(RemixReplaceBase):
         return key
 
     def test_closed_custom_edit_without_manifest_refuses_before_upload(self):
-        key = self.close_custom_edit_without_manifest()
+        key = self.custom_edit_without_manifest()
         response = self.client.post("/v1/videos/edits", json={"model": key, "prompt": "a",
             "video": {"id": SOURCE_ID}, "extensions": {NS: {
                 "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
@@ -698,10 +698,18 @@ class ClosedVideoRouteTests(RemixReplaceBase):
         assert not self.comfy.uploads and not self.comfy.submitted
 
     def test_closed_custom_remix_without_manifest_refuses_before_upload(self):
-        key = self.close_custom_edit_without_manifest()
+        key = self.custom_edit_without_manifest()
         response = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"model": key, "prompt": "a",
             "extensions": {NS: {"reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
         assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_open_custom_edit_without_manifest_still_reports_missing_manifest(self):
+        key = self.custom_edit_without_manifest(exposure="default")
+        response = self.client.post("/v1/videos/edits", json={"model": key, "prompt": "a",
+            "video": {"id": SOURCE_ID}, "extensions": {NS: {
+                "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
+        assert response.status_code == 500 and response.json()["error"]["code"] == "workflow_manifest_missing", response.text
         assert not self.comfy.uploads and not self.comfy.submitted
 
     def test_disabled_remix_workflow_refuses_before_upload(self):

@@ -12170,6 +12170,7 @@ async def proxy_graph_video_create(
     body_override: Mapping[str, Any] | None = None,
     remixed_from_video_id: str | None = None,
     receipt: RouteReceipt | None = None,
+    workflow_intent: str = INTENT_VIDEO_GENERATE,
 ) -> Response:
     """POST /v1/videos — submit a job and return {video_id, status: queued}.
 
@@ -12178,7 +12179,7 @@ async def proxy_graph_video_create(
     """
     return await _with_request_media_inputs(lambda holder: _proxy_graph_video_create(
         request, auth_context, body_override=body_override, remixed_from_video_id=remixed_from_video_id,
-        receipt=receipt, media_holder=holder,
+        receipt=receipt, media_holder=holder, workflow_intent=workflow_intent,
     ))
 
 
@@ -12241,6 +12242,7 @@ async def _proxy_graph_video_create(
     remixed_from_video_id: str | None = None,
     receipt: RouteReceipt | None = None,
     media_holder: media_inputs.Holder,
+    workflow_intent: str,
 ) -> Response:
     if receipt is None:
         from gateway import media_ingestion
@@ -12252,6 +12254,7 @@ async def _proxy_graph_video_create(
             response = await _proxy_graph_video_create(
                 request, auth_context, body_override=body_override,
                 remixed_from_video_id=remixed_from_video_id, receipt=receipt, media_holder=media_holder,
+                workflow_intent=workflow_intent,
             )
         except BaseException as error:
             await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
@@ -12398,9 +12401,9 @@ async def _proxy_graph_video_create(
         return await _submit_video_chain(
             request, auth_context, body=body, workflow_name=str(chain_name),
             requested_model=requested_model, public_model=public_model, media_holder=media_holder,
-            admission_intent=admission_intent)
+            admission_intent=admission_intent, workflow_intent=workflow_intent)
     for name in dict.fromkeys((_resolve_video_workflow(str(requested_model or ""))[0], workflow_name)):
-        closed = _video_workflow_closure(name) if name else None
+        closed = _video_workflow_closure(name, workflow_intent) if name else None
         if closed is not None:
             if receipt is not None:
                 apply_policy_to_receipt(closed, receipt)
@@ -12909,10 +12912,10 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     return None, None
 
 
-def _video_workflow_closure(name: str) -> PolicyDecision | None:
+def _video_workflow_closure(name: str, intent: str) -> PolicyDecision | None:
     workflow_id = workflow_id_for_video_key(name)
     if workflow_id is None:
-        record = find_workflow_record(GATEWAY_WORKFLOW_REGISTRY.records(), INTENT_VIDEO_GENERATE, name)
+        record = find_workflow_record(GATEWAY_WORKFLOW_REGISTRY.records(), intent, name)
         workflow_id = record.id if record is not None else None
     if workflow_id is None:
         config = _video_workflow_table().get(name)
@@ -12921,10 +12924,11 @@ def _video_workflow_closure(name: str) -> PolicyDecision | None:
     return _closed_workflow_decision(workflow_id)
 
 
-def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str, *, receipt: RouteReceipt | None = None) -> Response | None:
+def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str, *,
+                         receipt: RouteReceipt | None = None, workflow_intent: str = INTENT_VIDEO_GENERATE) -> Response | None:
     requested_name, _ = _resolve_video_workflow(str(requested_model or ""))
     for name in dict.fromkeys((requested_name, workflow_name)):
-        closed = _video_workflow_closure(name) if name else None
+        closed = _video_workflow_closure(name, workflow_intent) if name else None
         if closed is not None:
             if receipt is not None:
                 apply_policy_to_receipt(closed, receipt)
@@ -13076,6 +13080,7 @@ async def _submit_video_chain(
     media_holder: media_inputs.Holder | None = None,
     admission_intent: str,
     prepare: Any = None,
+    workflow_intent: str = INTENT_VIDEO_GENERATE,
 ) -> Response:
     """Plan, build and queue a long-video chain (create with shots or long
     seconds, or an extension of `source`). ``admission_intent`` is the intent the calling route admits under."""
@@ -13102,7 +13107,8 @@ async def _submit_video_chain(
 
     delivery = media_delivery.current()
     receipt = delivery.receipt if delivery is not None else None
-    denial = _chain_policy_denial(auth_context, requested_model, workflow_name, receipt=receipt)
+    denial = _chain_policy_denial(auth_context, requested_model, workflow_name, receipt=receipt,
+                                  workflow_intent=workflow_intent)
     if denial is not None:
         return denial
 
@@ -14071,6 +14077,7 @@ async def _submit_video_remix(
         auth_context,
         body_override=create_body,
         remixed_from_video_id=remixed_from_video_id,
+        workflow_intent=domain_rows.route_execution_intent("/v1/videos/edits", "admission"),
     )
 
 
@@ -26235,7 +26242,7 @@ def _resume_pending_video_media_jobs() -> int:
 
 def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> PolicyDecision:
     """The plan check of a video job, at submit and before each later step."""
-    closed = _video_workflow_closure(workflow_name)
+    closed = _video_workflow_closure(workflow_name, INTENT_VIDEO_GENERATE)
     if closed is not None:
         return closed
     return evaluate_and_apply(
