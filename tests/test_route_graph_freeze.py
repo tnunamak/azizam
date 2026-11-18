@@ -362,4 +362,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # tests/fixtures/headless_openapi.json). Before it the digest was
     # d7e0437870855d58d23f4ae152924b66d86be604c0e435f501fcfbd9f02f1b15.
     # Fast aliases now name the open FIBO and MOSS workflows; the projected document adds only those aliases.
+    # Re-captured 2026-11-18 for input help in eleven workflows; only their input descriptions changed.
+    # Before it the digest was 18f06639e13f8d1bd9c0e2511cbf10fe34ce745b2675b84e50294f1f474c9217.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

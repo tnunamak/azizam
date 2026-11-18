@@ -160,6 +160,178 @@
         "keyscale",
         "choices_from"
       ]
+    },
+    {
+      "after": "Choose the number of beats in each bar.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose the language for the lyrics.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose the musical key for the piece.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "keyscale",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg_scale",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning variety value from 0 to 2.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "temperature",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning choice range from 0 to 1.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "top_p",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning choice limit from 0 to 1000.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "top_k",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the minimum planning choice likelihood from 0 to 1.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "min_p",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "help"
+      ]
+    },
+    {
+      "after": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "help"
+      ]
+    }
+  ],
+  "audio.generate.sa3-small-sfx": [
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the sound you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Length in seconds.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
     }
   ],
   "audio.generate.tangoflux": [
@@ -177,6 +349,126 @@
       "before_present": false,
       "path": [
         "superseded_by"
+      ]
+    },
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the sound you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Length in seconds.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "Prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "Number of clips",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "label"
+      ]
+    },
+    {
+      "after": "How many clips to make at once.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "help"
       ]
     }
   ],
@@ -222,6 +514,354 @@
       ]
     }
   ],
+  "image.edit.fibo-2-edit-turbo": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    }
+  ],
+  "image.edit.image-identity": [
+    {
+      "after": "Sets the number of attempts to make the scene.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "attempts",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher values give each reference photo a larger pixel budget.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "resolution",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose whether to use your photo as the canvas.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "photo_as_canvas",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose whether to include only the people you listed.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "only_listed_people",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose whether to stop attempts after a good match.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "stop_when_pass",
+        "help"
+      ]
+    },
+    {
+      "after": "Chooses how multiple reference photos of one person are scored.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "pooling",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher values allow more reference photos per person to be sent to the generator.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "max_refs_per_person",
+        "help"
+      ]
+    },
+    {
+      "after": "Chooses whether face refinement is off, automatic, or applied to everyone.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "refine",
+        "help"
+      ]
+    },
+    {
+      "after": "Sets the number of attempts to refine faces.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "refine_attempts",
+        "help"
+      ]
+    },
+    {
+      "after": "Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "pose_policy",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose async to receive a job to check later, or sync to wait for the result.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mode",
+        "help"
+      ]
+    }
+  ],
+  "image.edit.qwen-image-2.1-edit": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    }
+  ],
+  "image.edit.qwen-image-2.1-edit-multiref": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "reference picture resolution",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "reference_resolution",
+        "label"
+      ]
+    },
+    {
+      "after": "Sets the resolution value used when processing the two reference pictures.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "reference_resolution",
+        "help"
+      ]
+    },
+    {
+      "after": "refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    }
+  ],
   "image.edit.qwen-image-2.1-inpaint": [
     {
       "after": {
@@ -234,6 +874,186 @@
         "inputs",
         "prompt_mode",
         "choices_from"
+      ]
+    },
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "edit area size",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_expand",
+        "label"
+      ]
+    },
+    {
+      "after": "Positive values expand the edit area in pixels; negative values shrink it.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_expand",
+        "help"
+      ]
+    },
+    {
+      "after": "edit edge softness",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_feather",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher values soften edit edges but reduce precision near the boundary.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_feather",
+        "help"
+      ]
+    },
+    {
+      "after": "edge refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "lanpaint_steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps improve consistency at the edit boundary but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "lanpaint_steps",
+        "help"
+      ]
+    },
+    {
+      "after": "edit priority",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt_mode",
+        "label"
+      ]
+    },
+    {
+      "after": "Image First favors seamless blending, while Prompt First follows the edit instruction more literally.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt_mode",
+        "help"
       ]
     }
   ],
@@ -249,6 +1069,108 @@
         "inputs",
         "color_correction_method",
         "choices_from"
+      ]
+    },
+    {
+      "after": "enlargement factor",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "label"
+      ]
+    },
+    {
+      "after": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "help"
+      ]
+    },
+    {
+      "after": "color matching method",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "label"
+      ]
+    },
+    {
+      "after": "Choose how to match colors to the original picture, or none to skip color matching.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    }
+  ],
+  "image.generate.krea2-turbo": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the picture you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
       ]
     }
   ],
@@ -277,6 +1199,226 @@
         "inputs",
         "scheduler",
         "choices_from"
+      ]
+    },
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the picture you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Width",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "width",
+        "label"
+      ]
+    },
+    {
+      "after": "Picture width in pixels.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "width",
+        "help"
+      ]
+    },
+    {
+      "after": "Height",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "height",
+        "label"
+      ]
+    },
+    {
+      "after": "Picture height in pixels.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "height",
+        "help"
+      ]
+    },
+    {
+      "after": "Refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "Prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "Number of pictures",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "label"
+      ]
+    },
+    {
+      "after": "How many pictures to make at once.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "help"
+      ]
+    },
+    {
+      "after": "What to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Generation method",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "label"
+      ]
+    },
+    {
+      "after": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "help"
+      ]
+    },
+    {
+      "after": "Step timing",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "label"
+      ]
+    },
+    {
+      "after": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "help"
+      ]
+    },
+    {
+      "after": "Seam blending",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seam_blending",
+        "label"
+      ]
+    },
+    {
+      "after": "Sets the blending value used when making the picture seamless.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seam_blending",
+        "help"
       ]
     }
   ]

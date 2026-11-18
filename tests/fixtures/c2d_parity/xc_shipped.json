@@ -56,7 +56,7 @@
         },
         "identity": {
           "id": "audio.generate.ace-step-1.5-xl-turbo",
-          "manifest_hash": "39427f34a224966846dac58ceac19e2a65a674d7ae7fbe83b9ea918be8efda2d",
+          "manifest_hash": "4dc01a8a5e92f74592045dfb9a55304cf787343b7d26600490d8469f4d6e74e3",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -216,7 +216,7 @@
         },
         "identity": {
           "id": "image.edit.fibo-2-edit-turbo",
-          "manifest_hash": "f362106d058f174d33bcb438236b86f383d51820493c2f4f2f32a616d07019b2",
+          "manifest_hash": "c8edd0a806529a203a742d99c2c17debee9055456c3cb59ff35fda76d2a3e67e",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -356,7 +356,7 @@
         },
         "identity": {
           "id": "image.generate.krea2-turbo",
-          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
+          "manifest_hash": "d46fb628ddaa1f350a9bb3c8efd657b40eea691032060bdd430a6dcb3243f8e4",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -678,7 +678,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-edit-multiref",
-          "manifest_hash": "3e9232bc5b9cdadf424e7fce9cbef47d0408043de30b7790293195b1a02c0d50",
+          "manifest_hash": "b1c7eb10478c6ca44c16a4221d719f1343a33a6f04745771cad669d5e9618d24",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -756,7 +756,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-edit",
-          "manifest_hash": "523129a6f2a3003ff9302f5e1eca8be93b07bb85043a1fd7da532232faa08931",
+          "manifest_hash": "7d041326d500e5d0171ceee430a5e94f6164f9a369c388490a5c12badfa29ab7",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -832,7 +832,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-inpaint",
-          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
+          "manifest_hash": "f000d69304be4a88b05fbe9fa7fa0799645bd5a8bd934f1face1e192a5f8ec47",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -975,7 +975,7 @@
         },
         "identity": {
           "id": "audio.generate.sa3-small-sfx",
-          "manifest_hash": "66dcdc02f1d8ced3b4f32ae3fb9fd8328be09012e7ce9c470253cb289e6e6234",
+          "manifest_hash": "df35169e942e5c1e5f277f593ee4d8b35c647d42a9ecebdfc13a74f5065fc2cc",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1036,7 +1036,7 @@
         },
         "identity": {
           "id": "image.generate.sdxl-seamless-tile",
-          "manifest_hash": "a70cb797416546b9c1c13e314d62e9ef693922b3045ebb4a5ed60f750a41bb24",
+          "manifest_hash": "7066b985555cbfdf3999dd1dfbf79ae7d3978ab44c5bff8c91626999ab65eefc",
           "source": null,
           "trusted": false,
           "version": "0.1.1"
@@ -1125,7 +1125,7 @@
         },
         "identity": {
           "id": "image.edit.seedvr2-upscale",
-          "manifest_hash": "c0bed3b5781a6edaf5f5dbdbc4e9bf714864665e809ed32b02ff4c803d0355c0",
+          "manifest_hash": "8419080f1dc98a4dbc00ffb19e19364e8a51eae5c38d647aa662e603d2a134a2",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1191,7 +1191,7 @@
         },
         "identity": {
           "id": "audio.generate.tangoflux",
-          "manifest_hash": "836bb24c7c722657d75951242d00c4d0782ce5b2f6e06206d63299f773b41798",
+          "manifest_hash": "5175d05ef54650a2ba400a80d3e1069c0187d188d51e759f64506f15df0cc705",
           "source": null,
           "trusted": false,
           "version": "0.1.0"

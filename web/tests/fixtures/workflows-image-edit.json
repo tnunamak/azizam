@@ -124,7 +124,10 @@
      "name": "prompt",
      "request_field": "prompt",
      "required": true,
-     "type": "string"
+     "type": "string",
+     "label": "what to make",
+     "help": "Describe the change you want.",
+     "description": "Describe the change you want."
     },
     {
      "accepted": true,
@@ -148,7 +151,10 @@
      "name": "negative_prompt",
      "request_field": "negative_prompt",
      "required": false,
-     "type": "string"
+     "type": "string",
+     "label": "what to avoid",
+     "help": "Describe anything you want left out.",
+     "description": "Describe anything you want left out."
     },
     {
      "accepted": true,
@@ -203,7 +209,10 @@
      "name": "seed",
      "request_field": "seed",
      "required": false,
-     "type": "integer"
+     "type": "integer",
+     "label": "variation number",
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "description": "Use the same number to repeat a variation with the same settings."
     },
     {
      "accepted": true,
