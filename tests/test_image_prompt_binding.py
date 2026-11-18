@@ -96,8 +96,7 @@ def run_image(manifest):
     return asyncio.run(proxy.proxy_graph_image_edit_request(_MultipartRequest(items), proxy.NO_AUTH_CONTEXT))
 
 
-# Outside this contract: flux2-klein-4b-seamless-tile is a gateway composition;
-# image-identity uses a gateway binding; seedvr2-upscale has no prompt input.
+# Outside this contract: image-identity uses a gateway binding; seedvr2-upscale has no prompt input.
 PROMPT_MANIFESTS = [
     (path, manifest) for path, manifest in MANIFESTS
     if 'prompt' in manifest['inputs']
