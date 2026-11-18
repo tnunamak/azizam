@@ -46,7 +46,7 @@ _PREFER_TOKEN = r"[!#$%&'*+\-.^_\x60|~0-9A-Za-z]+"
 _PREFER_QUOTED_WORD = r'"(?:[\x09\x20\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\x09\x20-\x7e\x80-\xff])*"'
 _PREFER_WORD = rf"(?:{_PREFER_TOKEN}|{_PREFER_QUOTED_WORD})"
 _PREFER_OPTIONAL_VALUE = rf"(?:[ \t]*=[ \t]*{_PREFER_WORD})?"
-_PREFER_ELEMENT = re.compile(rf"[ \t]*(?P<name>{_PREFER_TOKEN}){_PREFER_OPTIONAL_VALUE}(?:[ \t]*;[ \t]*{_PREFER_TOKEN}{_PREFER_OPTIONAL_VALUE})*[ \t]*")
+_PREFER_ELEMENT = re.compile(rf"[ \t]*(?P<name>{_PREFER_TOKEN}){_PREFER_OPTIONAL_VALUE}(?:[ \t]*;(?:[ \t]*{_PREFER_TOKEN}{_PREFER_OPTIONAL_VALUE})?)*[ \t]*")
 REQUEST_ID_HEADER = "x-request-id"
 
 
