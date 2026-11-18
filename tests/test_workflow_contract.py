@@ -628,7 +628,7 @@ def test_a_declared_media_type_becomes_the_accepted_type_and_none_means_the_old_
     edit_v1 = load("qwen-image-2.1-edit")
     edit_v1["inputs"]["source_image"] = {"type": "image"}
     edit, _ = convert_1_to_2(edit_v1)
-    assert edit["inputs"]["source_image"]["accepts"] == ["image/*"]
+    assert edit["inputs"]["source_image"]["accepts"] == ["image/png", "image/jpeg", "image/webp"]
 
 
 def test_the_seed_gets_the_generator_and_a_map_key_without_an_input_becomes_a_gateway_only_input():
