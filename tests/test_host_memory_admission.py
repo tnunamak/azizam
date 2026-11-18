@@ -108,7 +108,7 @@ def test_the_sync_answer_has_an_exact_status_code_and_message():
 def test_resident_models_skip_the_wait_until_the_engine_frees_them(tmp_path):
     weights(tmp_path, "big.safetensors", 10_000)
     made, clock = admission(tmp_path, [50_000, 1, 1, 1])
-    run(made.admit(graph("big.safetensors")))          # loads it
+    run(made.admit(graph("big.safetensors"))).finish(True)  # completed
     run(made.admit(graph("big.safetensors")))          # resident: no wait although the host is full
     assert clock.slept == []
     made.forget_all()                                  # the engine freed its models
@@ -119,7 +119,7 @@ def test_resident_models_skip_the_wait_until_the_engine_frees_them(tmp_path):
 def test_a_resident_entry_expires(tmp_path):
     weights(tmp_path, "big.safetensors", 10_000)
     made, clock = admission(tmp_path, [50_000, 1], resident_ttl_s=100.0)
-    run(made.admit(graph("big.safetensors")))
+    run(made.admit(graph("big.safetensors"))).finish(True)
     clock.now += 101
     with pytest.raises(hma.HostMemoryBusy):
         run(made.admit(graph("big.safetensors")))
@@ -129,7 +129,7 @@ def test_only_models_that_are_not_resident_count(tmp_path):
     weights(tmp_path, "a.safetensors", 10_000)
     weights(tmp_path, "b.safetensors", 4_000)
     made, clock = admission(tmp_path, [50_000, 5_000])
-    run(made.admit(graph("a.safetensors")))
+    run(made.admit(graph("a.safetensors"))).finish(True)
     run(made.admit(graph("a.safetensors", "b.safetensors")))   # b needs 4000 + 1000 margin: 5000 is enough
     assert clock.slept == []
 
@@ -458,3 +458,39 @@ def test_protocol_job_asks_as_the_callers_service_kind(monkeypatch):
     with pytest.raises(Stop):
         run(jobs.run(runtime, "test", {}, job_id="job", caller=caller))
     assert seen == ["service"]
+
+
+def test_off_adapter_returns_before_compiling_or_reading(monkeypatch):
+    made = hma.HostMemoryAdmission(hma.HostMemoryPolicy(), saved_setting=lambda: pytest.fail("setting read"),
+                                   read_available=lambda: pytest.fail("memory read"))
+    monkeypatch.setattr(hma, "shared", lambda: made)
+    adapter = node_graph.NodeGraphAdapter()
+    monkeypatch.setattr(adapter, "_workflow_payload", lambda *a: pytest.fail("compiled"))
+    conn = Connection(address="http://graph.test:1", timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=1))
+    assert run(adapter.admit(conn, "other", CanonicalRequest("other", body={}))) is None
+    assert run(adapter.admit_prompt({"prompt": graph("a.safetensors")})) is None
+    assert not made._loaded and not made._reserved and not made._sizes
+
+
+@pytest.mark.parametrize("cancel_after", [0, 2])
+def test_protocol_job_cancel_during_memory_wait_never_submits(tmp_path, monkeypatch, cancel_after):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import jobs
+
+    weights(tmp_path, "a.safetensors", 10000)
+    made, clock = admission(tmp_path, [1])
+    submissions = []
+    class Adapter:
+        async def admit(self, conn, op, request, ask):
+            return await made.admit(graph("a.safetensors"), ask)
+        async def submit(self, *args):
+            submissions.append(True)
+
+    runtime = SimpleNamespace(adapter=Adapter(), connection_for=lambda op: None,
+                              poll_timing=lambda op: (1, 10), request=lambda op, body: body)
+    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: {"metadata": {"cancel_requested_at": "now" if clock.now >= cancel_after else None}})
+    monkeypatch.setattr(media_jobs, "append_event", lambda *a, **k: None)
+    with pytest.raises(hma.HostMemoryCancelled):
+        run(jobs.run(runtime, "test", {}, job_id="job"))
+    assert clock.now == cancel_after
+    assert not submissions and not made._reserved and not made._loaded
