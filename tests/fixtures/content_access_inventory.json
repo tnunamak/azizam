@@ -349,7 +349,7 @@
     {
       "path": "gateway/engine_protocol/jobs.py",
       "function": "_run",
-      "source_sha256": "deb64b3a5cb26902c3e9c4be151a7aecad28fc1799a3b28e02f72db2bce850d5",
+      "source_sha256": "f47b8b98c0a5d9133243cae146e9383d1ce78150dc366ba0b3be25ae4f8e69ae",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
