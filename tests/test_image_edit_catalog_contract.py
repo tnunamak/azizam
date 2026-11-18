@@ -26,9 +26,6 @@ EDIT_RECORDS = [record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()
 assert EDIT_RECORDS, "no image.edit manifests discovered"
 EXPECTED_EDIT_MANIFEST_IDS = {
     "image.edit.fibo-2-edit-turbo",
-    "image.edit.flux2-klein",
-    "image.edit.flux2-klein-4b",
-    "image.edit.flux2-klein-4b-inpaint",
     "image.edit.qwen-image-2.1-edit",
     "image.edit.qwen-image-2.1-edit-multiref",
     "image.edit.qwen-image-2.1-inpaint",
@@ -176,7 +173,7 @@ def test_adapter_request_keeps_repeated_parts_in_manifest_order(record):
 
 
 @pytest.mark.parametrize("filename,identifier", [
-    ("workflows-image-edit.json", "image.edit.flux2-klein-4b"),
+    ("workflows-image-edit.json", "image.edit.qwen-image-2.1-edit"),
     ("workflows-image-edit-multiref.json", "image.edit.qwen-image-2.1-edit-multiref"),
 ])
 def test_try_fixture_matches_the_real_catalog_contract(filename, identifier):

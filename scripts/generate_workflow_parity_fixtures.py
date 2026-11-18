@@ -24,6 +24,15 @@ def main() -> None:
     import conftest  # noqa: F401
     from tests.support.c2d_parity import jsonable
 
+    if sys.argv[1:] == ["--web-image-edit"]:
+        from gateway.capabilities import capability_from_workflow_record
+        from gateway.discovery import WorkflowRegistry, BUNDLED_WORKFLOWS_DIR
+        from gateway.workflows_catalog import build_workflows_catalog
+
+        record = WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR).get("image.edit.qwen-image-2.1-edit")
+        cap = capability_from_workflow_record(record, backend="comfyui")
+        print("WEB_IMAGE_EDIT_JSON=" + json.dumps(build_workflows_catalog(records=[record], capabilities=[cap]), sort_keys=True))
+        return
     if sys.argv[1:] == ["--legacy-wire"]:
         import pytest
         from gateway.litellm_content import profile
