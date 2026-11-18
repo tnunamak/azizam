@@ -82,7 +82,7 @@ it("makes no stale claim when the receipt has no update time", async () => {
 });
 
 it("a paused list still ages a running request into stale without another fetch", async () => {
-  const { requests } = await mount([row("aging", "Aging", NOW / 1000 - 590, "running", NOW - 590_000)]);
+  const { requests } = await mount([row("aging", "Aging", NOW / 1000 - 290, "running", NOW - 290_000)]);
   expect(screen.queryByText(/No update since/)).toBeNull();
   await advance(60_000);
   expect(screen.getByText(/No update since/)).toBeTruthy();

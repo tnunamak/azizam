@@ -10,16 +10,16 @@ const words = (time: number) =>
   });
 
 describe("staleWords", () => {
-  it("uses a ten-minute threshold", () => {
-    expect(STALE_AFTER_MS).toBe(10 * 60_000);
+  it("uses a five-minute threshold", () => {
+    expect(STALE_AFTER_MS).toBe(5 * 60_000);
   });
 
   it("describes a running row eleven minutes old", () => {
     expect(staleWords("running", old, now)).toBe(words(old));
   });
 
-  it("keeps a running row nine minutes old fresh", () => {
-    expect(staleWords("running", now - 9 * 60_000, now)).toBeNull();
+  it("keeps a running row four minutes old fresh", () => {
+    expect(staleWords("running", now - 4 * 60_000, now)).toBeNull();
   });
 
   it("does not label an old succeeded row stale", () => {
@@ -47,9 +47,9 @@ describe("staleWords", () => {
     }
   });
 
-  it("requires strictly more than ten minutes and ignores future times", () => {
-    expect(staleWords("running", now - STALE_AFTER_MS, now)).toBeNull();
-    expect(staleWords("running", now - STALE_AFTER_MS - 1, now)).toBe(words(now - STALE_AFTER_MS - 1));
+  it("turns stale at five minutes, as the gateway's receipt store does, and ignores future times", () => {
+    expect(staleWords("running", now - STALE_AFTER_MS + 1, now)).toBeNull();
+    expect(staleWords("running", now - STALE_AFTER_MS, now)).toBe(words(now - STALE_AFTER_MS));
     expect(staleWords("running", now + 60_000, now)).toBeNull();
   });
 
