@@ -785,10 +785,6 @@ def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
     assert_same(old, row, ("receipt", lambda o: receipt_work_fields(o, "metadata")))
 
 
-
-
-
-
 def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
     failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
         ["execution_error", {"node_type": "N", "node_id": "7", "exception_message": "gateway tile composition error"}]]}, "outputs": {}}}
@@ -1396,7 +1392,6 @@ def test_s7_background_fallback_preserves_composition(tmp_path):
     old_has(old, "a picture", _pixels(old))
     assert_same(old, row, status, ("delivered pixels", _pixels), ("stored files", asset_files),
                 ("background headers", lambda o: headers_with(o, "x-image-background")))
-
 
 
 def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_path):

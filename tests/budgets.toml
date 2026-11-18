@@ -924,7 +924,7 @@ node = 103  # +15 (2026-11-17, train 67): sweep-report rework receipt cases. Ear
 # patch.object(proxy.httpx, "AsyncClient", ...) fakes). FK-NEXT: 50 -> 47 (video workflow
 # execution, speech privacy over HTTP, prompt-memory image route).
 [ratchets]
-ad_hoc_upstream_fake_files = 44
+ad_hoc_upstream_fake_files = 43
 # Sites in proxy.py and gateway/ that name a workflow, intent, modality family, engine binding or protocol
 # (tests/test_domain_literal_ratchet.py; docs/design/CODE_TO_DATA.md). 836 on 2026-11-05. A review signal, not the oracle.
 # 843 on 2026-11-05 (ux fixes): +13 in gateway/asset_types.py, the one table of kind words and asset id prefixes, keyed by IANA top-level media types (which the rule allows); -6 that me_media.py held; +2 for the speech-to-text builders declaring a recordable audio input.

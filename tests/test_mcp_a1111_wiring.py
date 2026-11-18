@@ -101,7 +101,7 @@ class ProxyWiringTests(unittest.TestCase):
         with authenticated():
             titles = [m["title"] for m in self.client.get("/sdapi/v1/sd-models").json()]
             self.assertEqual(titles[0], "image")
-            self.assertNotIn("image-fast", titles)
+            self.assertIn("image-fast", titles)
             self.assertIn("krea2-turbo", titles)
             self.assertEqual(self.client.get("/sdapi/v1/options").json()["sd_model_checkpoint"], "image")
             bad = self.client.post("/sdapi/v1/txt2img", json={"prompt": "x", "enable_hr": True})

@@ -56,8 +56,9 @@ def engine(obs: Obs) -> list[tuple[str, str]]:
 
 
 def engine_without_probes(obs: Obs) -> list[tuple[str, str]]:
-    """The engine calls that carry the request itself (the capacity probe ``/system_stats`` is read apart)."""
-    return [pair for pair in engine(obs) if pair[1] != "/system_stats"]
+    """The engine calls that carry the request itself. The capacity probe ``/system_stats`` and the node reads that
+    fill a ``choices_from`` list (``/object_info/<node>``) are read apart: neither carries the request."""
+    return [pair for pair in engine(obs) if pair[1] != "/system_stats" and not pair[1].startswith("/object_info/")]
 
 
 def engine_bodies(obs: Obs, path: str) -> list[Any]:
