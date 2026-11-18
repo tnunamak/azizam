@@ -320,7 +320,7 @@ class HostMemoryAdmission:
         return min(self._waiting, key=lambda w: (w.background, w.seq)) is waiter
 
     async def is_enabled(self) -> bool:
-        return effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None).enabled
+        return effective(self.policy, self._saved() if self._saved else None).enabled
 
     async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease | None:
         policy = effective(self.policy, await asyncio.to_thread(self._saved) if self._saved else None)
