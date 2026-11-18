@@ -517,7 +517,7 @@ class NodeGraphAdapter:
 
     @property
     def admission(self) -> host_memory_admission.HostMemoryAdmission:
-        """The host-memory admission in front of every prompt this adapter sends (the process's own unless one was given)."""
+        """The process admission for covered prompts, unless one was supplied."""
         return self._admission or host_memory_admission.shared()
 
     async def admit_prompt(self, payload: Mapping[str, Any], ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> host_memory_admission.Lease | None:

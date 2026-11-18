@@ -583,3 +583,18 @@ def test_setting_switch_requires_boolean_and_defaults_off():
     assert hma.validate_setting({**SAVED, "enabled": False})["enabled"] is False
     with pytest.raises(hma.InvalidHostMemorySetting):
         hma.validate_setting({**SAVED, "enabled": 1})
+
+
+def test_owner_setting_switch_applies_without_restart(tmp_path, admin_db):
+    weights(tmp_path, "a.safetensors", 10000)
+    reads = []
+    made = hma.HostMemoryAdmission(policy(tmp_path, enabled=False), read_available=lambda: reads.append(1) or 11000,
+                                   saved_setting=lambda: hma.stored_setting(admin_db))
+    assert run(made.admit(graph("a.safetensors"))) is None
+    save(admin_db, {**SAVED, "enabled": True, "margin_gb": {"personal": 0, "service": 0}})
+    lease = run(made.admit(graph("a.safetensors")))
+    assert lease is not None and reads == [1]
+    lease.finish(False)
+    save(admin_db, {**SAVED, "enabled": False})
+    assert run(made.admit(graph("a.safetensors"))) is None
+    assert reads == [1] and not made._reserved and not made._loaded
