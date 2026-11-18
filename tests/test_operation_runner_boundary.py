@@ -178,14 +178,16 @@ def _nodes_with_bindings(tree):
             for alias in node.names:
                 bindings.pop(alias.asname or alias.name.split(".")[0], None)
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            # For iterables run once, before the target or body can rebind names.
+            if isinstance(node, (ast.For, ast.AsyncFor)):
+                yield from walk(node.iter, dict(bindings))
             # Any iteration may follow writes from a previous iteration.
-            # Neither the test nor the else suite can rely on entry literals.
+            # Neither a while test nor the else suite can rely on entry literals.
             for name in _bound_names(ast.iter_child_nodes(node)):
                 bindings.pop(name, None)
             if isinstance(node, ast.While):
                 yield from walk(node.test, dict(bindings))
             else:
-                yield from walk(node.iter, dict(bindings))
                 yield from walk(node.target, dict(bindings))
             for suite in (node.body, node.orelse):
                 local = dict(bindings)
@@ -509,3 +511,21 @@ def test_runner_boundary_keeps_local_literals_and_eager_defaults():
               "    return getattr(obj, B)\n"
               "g = lambda value=getattr(obj, A): getattr(obj, 'status')\n")
     assert _violations(source) == []
+
+
+def test_runner_boundary_for_iterable_uses_entry_bindings():
+    source = "A = 'node'\nfor item in result[A + '_id']:\n    A = dynamic()\n"
+    assert _violations(source) == ["line 2: literal 'node" + "_id' (folded)"]
+
+
+def test_runner_boundary_for_safe_iterable_keeps_entry_binding():
+    source = "A = 'status'\nfor item in getattr(obj, A):\n    A = dynamic()\n"
+    assert _violations(source) == []
+
+
+def test_runner_boundary_async_for_iterable_uses_entry_bindings():
+    source = ("async def run():\n"
+              "    A = 'node'\n"
+              "    async for item in result[A + '_id']:\n"
+              "        A = dynamic()\n")
+    assert _violations(source) == ["line 3: literal 'node" + "_id' (folded)"]
