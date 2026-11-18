@@ -69,7 +69,7 @@ test("aria-labelledby takes priority over aria-label and caption", () => {
   </>);
   const region = screen.getByRole("region", { name: "Outside heading" });
   expect(region.getAttribute("aria-labelledby")).toBe("usage-heading");
-  expect(region.hasAttribute("aria-label")).toBe(false);
+  expect(screen.getByRole("region", { name: "Outside heading" })).toBe(region);
 });
 
 test("aria-label takes priority over the caption", () => {
@@ -152,14 +152,21 @@ test("an image-only caption names the scrolling region", () => {
   expect(region.getAttribute("tabindex")).toBe("0");
 });
 
-test("aria-labelledby trusts its trimmed declaration without target text", () => {
-  const view = render(<Table aria-labelledby="  missing-heading  " aria-label="Fallback" />);
-  const region = screen.getByRole("region");
+test("aria-labelledby resolves dynamically with a trimmed aria-label fallback", () => {
+  const table = <Table aria-labelledby="  missing-heading  " aria-label="  Fallback  " />;
+  const view = render(<>{table}</>);
+  const region = screen.getByRole("region", { name: "Fallback" });
   expect(region.getAttribute("aria-labelledby")).toBe("missing-heading");
-  expect(region.hasAttribute("aria-label")).toBe(false);
+  expect(region.getAttribute("aria-label")).toBe("Fallback");
+  expect(region.getAttribute("tabindex")).toBe("0");
   view.rerender(<>
-    <Table aria-labelledby="  missing-heading  " aria-label="Fallback" />
+    {table}
     <h2 id="missing-heading"><img src="/usage.png" alt="Usage" /></h2>
   </>);
   expect(screen.getByRole("region", { name: "Usage" })).toBe(region);
+  expect(region.getAttribute("aria-label")).toBe("Fallback");
+  view.rerender(<>{table}</>);
+  expect(screen.getByRole("region", { name: "Fallback" })).toBe(region);
+  expect(region.getAttribute("aria-labelledby")).toBe("missing-heading");
+  expect(region.getAttribute("tabindex")).toBe("0");
 });

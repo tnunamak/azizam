@@ -30,7 +30,7 @@ function Table({
     [generatedCaptionId],
   );
   const labelledBy = props["aria-labelledby"]?.trim() || undefined;
-  const label = labelledBy ? undefined : props["aria-label"]?.trim() || undefined;
+  const label = props["aria-label"]?.trim() || undefined;
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
