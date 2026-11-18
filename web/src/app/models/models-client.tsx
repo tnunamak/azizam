@@ -1133,7 +1133,9 @@ export default function ModelsClient() {
           )}
           <p className="text-muted-foreground text-meta">
             <span role="status" aria-live="polite" aria-atomic="true">
-              {visible.length === 0
+              {visible.length === 0 && matching.length > 0
+                ? `${matching.length} matching ${matching.length === 1 ? "model is" : "models are"} unavailable and hidden. Turn on Show unavailable to see ${matching.length === 1 ? "it" : "them"}.`
+                : visible.length === 0
                 ? `No models match. 0 of ${allRows.length} model names.`
                 : filtered
                   ? `${visible.length} of ${allRows.length} model names.`

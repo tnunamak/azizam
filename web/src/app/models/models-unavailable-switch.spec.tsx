@@ -219,6 +219,7 @@ describe("Show unavailable", () => {
     expect(within(screen.getByRole("region", { name: /^Images/ })).getByText("1 unavailable hidden")).toBeVisible();
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "down" } });
     expect(screen.getByText("1 unavailable hidden")).toBeVisible();
+    expect(screen.getByText("1 matching model is unavailable and hidden. Turn on Show unavailable to see it.")).toHaveAttribute("role", "status");
     fireEvent.click(toggle());
     expect(ids()).toEqual(["down"]);
   });
