@@ -34,6 +34,8 @@ import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
 import { technicalModelDetails } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
+import { FollowLive, useFollowLive } from "./follow-live";
+import { staleWords } from "./request-staleness";
 
 /** The workflow a job-submission receipt ran; those receipts carry no model. */
 export function receiptWorkflow(receipt: Pick<Receipt, "requested_workflow" | "resolved_workflow">): string | null {
@@ -224,8 +226,10 @@ export function Requests() {
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
+  const [following, setFollowing] = useFollowLive();
   const {
     data,
+    dataUpdatedAt,
     isPending,
     isFetching,
     isError,
@@ -236,6 +240,8 @@ export function Requests() {
     refetch,
   } = useInfiniteQuery({
     queryKey: ["activity", "requests", person, source],
+    refetchInterval: following ? 5000 : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: "always",
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }): Promise<RequestPage> => {
@@ -301,6 +307,7 @@ export function Requests() {
   return (
     <div className="space-y-6 motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none">
       <ResultsStatus message={status} label="Request updates" />
+      <FollowLive following={following} onChange={setFollowing} updatedAt={dataUpdatedAt || null} />
       <p className="text-muted-foreground text-meta">
         Receipts show the outcome, model and time. They do not include what was asked.
       </p>
@@ -501,6 +508,12 @@ export function Requests() {
                             <span className="text-foreground">{outcome(row.receipt.status)}</span>
                           ) : (
                             <StateBadge state="unknown" word={outcome(row.receipt.status)} />
+                          )}
+                          {/* This receipt shape records no update time; use its existing created time. */}
+                          {staleWords(row.receipt.status, row.created_at || null, Date.now()) && (
+                            <span className="text-muted-foreground text-meta">
+                              {staleWords(row.receipt.status, row.created_at || null, Date.now())}
+                            </span>
                           )}
                           <p className="text-muted-foreground figures max-w-full truncate text-meta">
                             <time {...formatTimestamp(row.created_at || null)} />
