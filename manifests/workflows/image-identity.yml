@@ -116,7 +116,7 @@ inputs:
     default: 2
   pose_policy:
     label: pose preference
-    help: Choose likeness to adjust side-view poses, or as_written to keep your requested pose.
+    help: Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.
     type: string
     enum: ["likeness", "as_written"]
     default: likeness
