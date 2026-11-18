@@ -152,3 +152,24 @@ def test_a_synchronous_round_asks_host_memory_admission_with_the_callers_app_kin
     assert error is None
     assert images == [bytes.fromhex("89504e470d0a1a0a")]
     assert [(ask.app_kind, ask.bounded) for ask in asks] == [(kind, True)]
+
+
+def test_probe_is_stopped_when_submit_payload_build_raises(monkeypatch):
+    class Probe:
+        def __init__(self):
+            self.started = False
+            self.stopped = False
+        def start(self):
+            self.started = True
+        async def stop(self):
+            self.stopped = True
+    probe = Probe()
+    def fail(*_args):
+        raise ValueError("cannot build")
+    monkeypatch.setattr(proxy, "_build_graph_submit_payload", fail)
+    async def call():
+        async with httpx.AsyncClient() as client:
+            await proxy._graph_run_round(client, {}, {}, "probe", vram_probe=probe, capability=proxy._GRAPH_CAPABILITY)
+    with pytest.raises(ValueError, match="cannot build"):
+        asyncio.run(call())
+    assert probe.started and probe.stopped

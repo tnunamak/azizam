@@ -527,3 +527,33 @@ def test_protocol_job_finishes_lease_on_submit_failure_or_completion(tmp_path, m
             run(jobs.run(runtime, "test", {}, job_id="job"))
     assert not made._reserved
     assert ("a.safetensors" in made._loaded) is succeeds
+
+
+def test_engine_directory_without_enabled_setting_does_not_admit(tmp_path, monkeypatch):
+    (tmp_path / "models").mkdir()
+    monkeypatch.setenv(hma_env_dir(), str(tmp_path))
+    made = hma.HostMemoryAdmission(hma.load_policy(), saved_setting=lambda: None,
+                                   read_available=lambda: pytest.fail("read memory while disabled"))
+    monkeypatch.setattr(hma, "shared", lambda: made)
+    adapter = node_graph.NodeGraphAdapter()
+    monkeypatch.setattr(adapter, "_workflow_payload", lambda *a: pytest.fail("compiled while disabled"))
+    conn = Connection(address="http://graph.test:1", timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=1))
+    assert run(adapter.admit(conn, "other", CanonicalRequest("other", body={}))) is None
+    assert not made._reserved and not made._loaded
+
+
+def test_finished_overlapping_leases_do_not_leave_a_reservation(tmp_path):
+    for name in ("a.safetensors", "b.safetensors", "c.safetensors"):
+        weights(tmp_path, name, 10000)
+    available = {"value": 31000}
+    clock = Clock()
+    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=lambda: available["value"], sleep=clock.sleep, clock=clock)
+    a = run(made.admit(graph("a.safetensors")))
+    b = run(made.admit(graph("b.safetensors")))
+    a.finish(False)
+    b.finish(False)
+    available["value"] = 11000
+    c = run(made.admit(graph("c.safetensors")))
+    assert clock.slept == []
+    c.finish(False)
+    assert not made._reserved
