@@ -382,3 +382,19 @@ def test_the_app_kind_of_a_caller_is_read_from_its_identity():
     # A credential kind on the context itself is not where requests and jobs carry it; None (a lost caller) has a person.
     assert hma.app_kind_of_caller(SimpleNamespace(auth_kind="service_key", identity=None)) == "personal"
     assert hma.app_kind_of_caller(None) == "personal"
+
+
+def test_graph_runner_uses_injected_admission_when_shared_is_off(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from gateway.node_graph_runner import NodeGraphRunner
+
+    weights(tmp_path, "big.safetensors", 10_000)
+    made, clock = admission(tmp_path, [1, 11_000], settle_s=30)
+    monkeypatch.setattr(hma, "shared", lambda: hma.HostMemoryAdmission(hma.HostMemoryPolicy()))
+    adapter = node_graph.NodeGraphAdapter(admission=made)
+    ctx = SimpleNamespace(caller=None, job_id="job")
+    monkeypatch.setattr(media_jobs, "append_event", lambda *args, **kwargs: None)
+    runner = NodeGraphRunner("graph", "graph", None)
+    run(runner._wait_for_host_memory(ctx, adapter, {"prompt": graph("big.safetensors")}))
+    assert clock.slept == [2.0]
+    assert made._reserved
