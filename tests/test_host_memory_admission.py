@@ -435,3 +435,26 @@ def test_cancel_before_and_during_memory_wait(tmp_path):
             run(made.admit(graph("a.safetensors"), hma.Ask(cancelled=lambda: clock.now >= cancel_after)))
         assert clock.now == cancel_after
         assert not made._reserved and not made._loaded
+
+
+def test_protocol_job_asks_as_the_callers_service_kind(monkeypatch):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import jobs
+
+    class Stop(Exception):
+        pass
+
+    seen = []
+    class Adapter:
+        async def admit(self, conn, op, request, ask):
+            seen.append(ask.app_kind)
+            raise Stop()
+
+    adapter = Adapter()
+    runtime = SimpleNamespace(adapter=adapter, connection_for=lambda op: None,
+                              poll_timing=lambda op: (1, 10), request=lambda op, body: body)
+    caller = SimpleNamespace(identity=SimpleNamespace(auth_kind="service_key"))
+    monkeypatch.setattr(media_jobs, "get", lambda *args, **kwargs: None)
+    with pytest.raises(Stop):
+        run(jobs.run(runtime, "test", {}, job_id="job", caller=caller))
+    assert seen == ["service"]
