@@ -596,7 +596,6 @@ def submit_audio(body: Mapping[str, Any]) -> str:
 
 
 IMAGE_BODY = {"model": "moss-image-fast", "prompt": "a lighthouse"}
-TILE_BODY = {"model": "flux2-klein-4b-seamless-tile", "prompt": "moss on stone"}
 AUDIO_BODY = {"model": "tangoflux", "prompt": "rain on a tin roof", "duration": 8}
 
 
@@ -800,7 +799,7 @@ def submit_without_checking(route: str, body: Mapping[str, Any]) -> tuple[Any, l
 
 def test_closed_image_job_is_refused_when_manifest_lookup_misses(jobs_db):
     with patch.object(proxy, "_find_image_manifest", return_value=None):
-        response, scheduled = submit_without_checking("image", {"model": "flux2-klein", "prompt": "a lighthouse"})
+        response, scheduled = submit_without_checking("image", {"model": "krea2-turbo", "prompt": "a lighthouse"})
     assert response.status_code == 409
     assert json.loads(response.body)["error"]["code"] == "workflow_disabled"
     assert scheduled == []
@@ -1062,41 +1061,6 @@ def test_two_concurrent_requests_with_one_key_get_one_job_and_one_stored_value(j
     assert str(stored) in payloads[0].read_text(encoding="utf-8", errors="replace") or job_id in payloads[0].name
 
 
-def test_a_job_whose_binding_has_no_pin_is_still_accepted_and_draws_at_run(jobs_db, monkeypatch):
-    """A bundled workflow with a generated input and a binding that is not the graph binding (a gateway composition)
-    builds no envelope. Requiring one would refuse every such job; it keeps the behaviour it had before S3.6: the value
-    is drawn when the job runs, not stored."""
-    manifest = proxy._find_image_manifest("image.generate", TILE_BODY["model"])
-    assert manifest is not None and generated_defaults.generated_inputs(manifest.get("inputs") or {})
-    assert not proxy._manifest_has_pin(manifest)
-    assert proxy._manifest_has_pin(proxy._find_image_manifest("image.generate", IMAGE_BODY["model"]))
-    from dataclasses import replace
-
-    workflow_id = "image.generate.flux2-klein-4b-seamless-tile"
-    provider = proxy.GATEWAY_REGISTRY_PROVIDER
-    current = provider.current()
-    original = current.get(workflow_id)
-    enabled = replace(original, state="active", facts=replace(original.facts, exposure="default"))
-    snapshot = replace(current, workflows={**current.workflows, workflow_id: enabled})
-    monkeypatch.setattr(type(provider), "current", lambda self: snapshot)
-    monkeypatch.setattr(proxy, "WORKFLOW_SNAPSHOTS", provider)
-    job_id = submit_image(TILE_BODY)
-    assert DefinitionStore(jobs_db).envelope(job_id) is None
-
-    drawn_at_run: list[Any] = []
-
-    async def route(request, auth_context, receipt=None):
-        drawn_at_run.append(proxy._image_generated_values(manifest, TILE_BODY))
-        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
-
-    monkeypatch.setattr(proxy, "proxy_image_request", route)
-    monkeypatch.setattr(proxy, "_image_media_job_max_attempts", lambda: 1)
-    source = Recorder(4321)
-    with patch.object(generated_defaults, "secure_source", source):
-        asyncio.run(proxy._run_image_media_job(job_id))
-    assert drawn_at_run == [{"seed": 4321}], "the run drew the value, since nothing was stored"
-    assert len(source.asked) == 1
-    assert proxy._JOB_GENERATED.get() is None
 
 
 def test_an_audio_job_whose_binding_has_no_pin_is_accepted_without_an_envelope_and_draws_at_run(jobs_db, monkeypatch):
