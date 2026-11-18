@@ -115,9 +115,9 @@ def test_both_listings_draw_the_mesh_row_from_the_shared_catalog_for_the_same_ca
     callers: list[proxy.AuthContext] = []
     shared = proxy._gateway_capabilities_for_auth_context
 
-    def recording(auth_context):
+    def recording(auth_context, *, include_closed=False):
         callers.append(auth_context)
-        return shared(auth_context)
+        return shared(auth_context, include_closed=include_closed)
 
     monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", recording)
 

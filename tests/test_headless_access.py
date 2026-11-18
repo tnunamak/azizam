@@ -745,9 +745,11 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
     config_before = copy.deepcopy(proxy.config)
     # Config reload and global-cap deletion have no invalid-body/dry contract.
     # Stop at their first effect, after the route has completed authorization.
+    from gateway.engine_protocol import choice_lists
     effect = {
         ("POST", "/admin/api/config/reload"): (proxy, "reload_runtime_config"),
         ("DELETE", "/admin/api/providers/-/global-caps"): (proxy.ADMIN_STORE, "update_provider_admin_state"),
+        ("POST", "/admin/api/workflow-choices/refresh"): (choice_lists, "owner_choices"),
     }.get((row["method"], row["path"]))
     if effect:
         with patch.object(*effect, side_effect=OwnerOperationReached) as operation:

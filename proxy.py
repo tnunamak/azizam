@@ -12891,24 +12891,24 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     return None, None
 
 
-def _select_video_workflows(requested: str, name: str, config: Mapping[str, Any], body: Mapping[str, Any]):
+def _select_video_workflows(requested: str, name: str, workflow_cfg: Mapping[str, Any], body: Mapping[str, Any]):
     """Select the reference variant and any chain used by the video request."""
-    variant = config.get("i2v_workflow")
+    variant = workflow_cfg.get("i2v_workflow")
     if body.get("input_reference") and variant:
         variant_config = _video_workflow_table().get(variant)
         if variant_config:
-            name, config = variant, variant_config
-    if video_extend.engine_for(config.get("builder")):
-        return name, config, name, config, False
+            name, workflow_cfg = variant, variant_config
+    if video_extend.engine_for(workflow_cfg.get("builder")):
+        return name, workflow_cfg, name, workflow_cfg, False
     seconds = body.get("seconds")
     try:
-        beyond_native = seconds is not None and float(seconds) > float(config.get("max_seconds", 8))
+        beyond_native = seconds is not None and float(seconds) > float(workflow_cfg.get("max_seconds", 8))
     except (TypeError, ValueError):
         beyond_native = False
-    if body.get("shots") is not None or (beyond_native and config.get("chain_workflow")):
+    if body.get("shots") is not None or (beyond_native and workflow_cfg.get("chain_workflow")):
         chain_name, chain_config = _chain_workflow_for(requested)
-        return name, config, chain_name, chain_config, chain_config is None
-    return name, config, None, None, False
+        return name, workflow_cfg, chain_name, chain_config, chain_config is None
+    return name, workflow_cfg, None, None, False
 
 
 def _video_closure_workflow_ids(name: str) -> tuple[str, ...]:
@@ -17923,7 +17923,8 @@ async def _access_preview(access: EffectiveAccess, *, full_detail: bool = True,
         who_app, who_person = _app_identity(app_id)
         auth_context = AuthContext(identity=AuthIdentity(
             name="access-preview", key_hash="", access=access, app_id=who_app, person_id=who_person))
-        viewed = _viewed_gateway_capabilities(auth_context)
+        viewed = [cap for cap in _viewed_gateway_capabilities(auth_context)
+                  if not _closed_workflow_reason(cap.resolved_workflow or cap.workflow)]
         permitted = [cap for cap in viewed if cap.policy_available is not False]
         denied = [cap for cap in viewed if cap.policy_available is False]
         # A decision always records why it denied. A denial with no reason is the

@@ -30,6 +30,15 @@ from gateway.media_jobs import (  # noqa: E402
 )
 
 
+def test_accepted_workflow_ids_are_internal_metadata():
+    from gateway import media_jobs
+    job = {"metadata": {"accepted_workflow_ids": ["video.edit.example"], "mode": "async"}}
+    assert media_jobs.for_audience(job, "internal")["metadata"] == job["metadata"]
+    for audience in ("client", "admin"):
+        assert media_jobs.for_audience(job, audience)["metadata"] == {"mode": "async"}
+    assert job["metadata"]["accepted_workflow_ids"] == ["video.edit.example"]
+
+
 def _make_job(**overrides: Any) -> MediaJob:
     defaults: dict[str, Any] = dict(
         intent="video.generate",
