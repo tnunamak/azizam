@@ -156,7 +156,8 @@ class VideoClosureByWorkflowNameTests(RemixReplaceBase):
         registry = proxy.GATEWAY_WORKFLOW_REGISTRY
         records = registry.records()
         for ordered in (records, list(reversed(records))):
-            with patch.object(registry, 'records', return_value=ordered):
+            with patch.object(registry, 'records', return_value=ordered), \
+                    patch.object(proxy, '_find_video_manifest', return_value=None):
                 decision = proxy._video_job_policy_decision(access_context(), key, key)
             assert decision.denied and decision.code == 'workflow_disabled'
         assert not self.comfy.uploads and not self.comfy.submitted
@@ -170,6 +171,10 @@ class VideoClosureByWorkflowNameTests(RemixReplaceBase):
 
     def test_ambiguous_stem_with_open_records_runs(self):
         key = self.ambiguous(closed=False)
+        with patch.object(proxy, '_find_video_manifest', return_value=None):
+            ids = proxy._video_closure_workflow_ids(key)
+            assert len(ids) == 2
+            assert not proxy._video_job_policy_decision(access_context(), key, key).denied
         response = self.client.post(f'/v1/videos/{SOURCE_ID}/remix', json=self.body(key))
         assert response.status_code == 200, response.text
         self.comfy.wait_for_graphs(1)
@@ -272,3 +277,16 @@ class VideoClosureByWorkflowNameTests(RemixReplaceBase):
         with patch.object(proxy, '_auth_context_from_image_job_payload', return_value=access_context()):
             result = proxy._video_media_job_step_auth({'body': self.body(key)}, {'workflow': key, 'metadata': {}})
         assert isinstance(result, tuple) and result[1]['error_code'] == 'workflow_disabled'
+
+    def test_configured_manifest_id_wins_over_closed_matching_stem(self):
+        key = self.ambiguous(closed=True)
+        assert proxy._video_closure_workflow_ids(key) == ('video.edit.scail-2-replace',)
+        decision = proxy._video_job_policy_decision(access_context(), key, key)
+        assert not decision.denied
+
+    def test_legacy_job_without_saved_or_resolvable_ids_keeps_running(self):
+        with patch.object(proxy, '_auth_context_from_image_job_payload', return_value=access_context()), \
+                patch.object(proxy, '_video_workflow_table', return_value={}):
+            result = proxy._video_media_job_step_auth({'body': self.body('removed-key')},
+                                                      {'workflow': 'removed-key', 'metadata': {}})
+        assert isinstance(result, proxy.AuthContext)
