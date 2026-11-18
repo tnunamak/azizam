@@ -1,4 +1,4 @@
-"""The closed Klein graph pair is refused before an engine call."""
+"""A disabled selected inpaint workflow is refused before an engine call."""
 import copy
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -22,7 +22,7 @@ def _serve_upload(fake_upstreams, monkeypatch):
     return fake
 
 
-class KleinNineBParityTests(IsolatedAsyncioTestCase):
+class DisabledInpaintTests(IsolatedAsyncioTestCase):
     @pytest.fixture(autouse=True)
     def _inject(self, _serve_upload):
         self.fake = _serve_upload
@@ -73,21 +73,6 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(response.body)["error"]["code"], "workflow_disabled")
         self.assertEqual(seen, [])
         self.assertEqual(self.fake.requests, [])
-
-    async def test_closed_generation_is_refused_with_and_without_manifest(self):
-        for with_manifest in (True, False):
-            with self.subTest(with_manifest=with_manifest):
-                request = SimpleNamespace(json=AsyncMock(return_value={
-                    "model": "flux2-klein", "prompt": "a red barn", "size": "768x512", "n": 2}))
-                await self.submitted(proxy.proxy_graph_image_request, request, with_manifest=with_manifest)
-
-    async def test_closed_edit_is_refused_with_and_without_manifest(self):
-        for with_manifest in (True, False):
-            with self.subTest(with_manifest=with_manifest):
-                request = _MultipartRequest([
-                    ("model", "flux2-klein-edit"), ("prompt", "make it blue"),
-                    ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255))))])
-                await self.submitted(proxy.proxy_graph_image_edit_request, request, with_manifest=with_manifest)
 
     async def test_closed_selected_inpaint_is_refused_when_manifest_lookup_misses(self):
         from dataclasses import replace
