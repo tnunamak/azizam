@@ -208,6 +208,8 @@ class VideoClosureByWorkflowNameTests(RemixReplaceBase):
         from gateway.workflow_identity import find_workflow_record
         assert find_workflow_record(SnapshotRegistry(after).records(), 'video.generate', key).id == selected_id
         with patch.object(provider, '_snapshot', after), patch.object(proxy, 'GATEWAY_WORKFLOW_REGISTRY', SnapshotRegistry(after)):
+            with patch.object(proxy, '_find_video_manifest', return_value=None):
+                assert proxy._video_closure_workflow_ids(key) == (selected_id,)
             response = self.client.post('/v1/videos/edits', json={**self.body(key), 'video': {'id': SOURCE_ID}})
         assert response.status_code == 200, (response.status_code, response.text)
         self.comfy.wait_for_graphs(2)
@@ -290,3 +292,18 @@ class VideoClosureByWorkflowNameTests(RemixReplaceBase):
             result = proxy._video_media_job_step_auth({'body': self.body('removed-key')},
                                                       {'workflow': 'removed-key', 'metadata': {}})
         assert isinstance(result, proxy.AuthContext)
+
+    def test_later_step_checks_current_identity_alongside_saved_identity(self):
+        key, wid, provider, snapshot, entry = self.custom('video.edit', closed=False)
+        new_id = 'video.generate.replaced-workflow'
+        contract = proxy.workflow_run.plain(entry.contract)
+        contract.update(id=new_id, intent='video.generate')
+        closed = replace(entry, id=new_id, contract=contract, facts=replace(entry.facts, exposure='disabled'))
+        snapshot = replace(snapshot, workflows={**snapshot.workflows, new_id: closed})
+        job = {'workflow': key, 'metadata': {'accepted_workflow_ids': [wid]}}
+        with patch.object(provider, '_snapshot', snapshot), \
+                patch.object(proxy, 'GATEWAY_WORKFLOW_REGISTRY', SnapshotRegistry(snapshot)), \
+                patch.object(proxy, '_find_video_manifest', return_value={'id': new_id}), \
+                patch.object(proxy, '_auth_context_from_image_job_payload', return_value=access_context()):
+            result = proxy._video_media_job_step_auth({'body': self.body(key)}, job)
+        assert isinstance(result, tuple) and result[1]['error_code'] == 'workflow_disabled'
