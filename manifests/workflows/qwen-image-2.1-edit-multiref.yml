@@ -14,6 +14,8 @@ description: Combine two pictures into one, following your description of how to
 typical_seconds: 26
 inputs:
   prompt:
+    label: what to make
+    help: Describe the change you want.
     type: string
     required: true
     description: Reference each image explicitly, e.g. "<image1> ... <image2> ...".
@@ -32,24 +34,34 @@ inputs:
       - image/*
     required: true
   negative_prompt:
+    label: what to avoid
+    help: Describe anything you want left out.
     type: string
     default: ""
   reference_resolution:
+    label: reference picture resolution
+    help: Sets the resolution value used when processing the two reference pictures.
     type: integer
     minimum: 256
     maximum: 2048
     default: 1024
   steps:
+    label: refinement steps
+    help: More steps add detail but take longer.
     type: integer
     minimum: 1
     maximum: 60
     default: 25
   cfg:
+    label: prompt strength
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 10
     default: 1.0
   seed:
+    label: variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
     generate:
