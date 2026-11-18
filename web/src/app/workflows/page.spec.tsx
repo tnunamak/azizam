@@ -1770,8 +1770,8 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     const sheet = await gapOpen(user);
     await user.click(sheet.getByText(role === "owner" ? "Technical details" : "Input details", { exact: true }));
     const table = within(sheet.getByLabelText("Scrollable inputs"));
-    expect(table.getByRole("cell", { name: range, exact: true })).toBeInTheDocument();
-    expect(table.getByRole("cell", { name: defaultName, exact: true })).toBeInTheDocument();
+    expect(table.getByRole("cell", { name: range })).toBeInTheDocument();
+    expect(table.getByRole("cell", { name: defaultName })).toBeInTheDocument();
     const summaries = within(sheet.getByRole("list", { name: "Input summaries" }));
     expect(summaries.getByText(range, { exact: true })).toBeInTheDocument();
     expect(summaries.getByText(defaultName, { exact: true })).toBeInTheDocument();
