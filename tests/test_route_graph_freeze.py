@@ -358,4 +358,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # digest was 7d81428411342e23f215edb6dbb07fe321c3122f79198a349161fb47ae643ab0.
     # Re-captured 2026-11-17 for the video clip length (see the note above): the full document's digest moved with the same
     # change and nothing else. Before it the frozen digest was de79b7f36407bd2a242757953251d9e31b3ddb9f3411eb3f2d33954d70e9638b.
+    # Re-captured 2026-11-18 (train 70): the seven closed FLUX.2 Klein workflows left the document (see
+    # tests/fixtures/headless_openapi.json). Before it the digest was
+    # d7e0437870855d58d23f4ae152924b66d86be604c0e435f501fcfbd9f02f1b15.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
