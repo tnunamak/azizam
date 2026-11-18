@@ -130,6 +130,15 @@ def test_linked_seed_layout_preserves_steps_drift(values):
     api["1"]["inputs"]["steps"] = 999
     assert name_diff(ui, api) == ["  ~ 1.inputs.steps: api 999 != ui 8"]
 
+    new_ui = copy.deepcopy(ui)
+    new_ui["nodes"][0]["widgets_values"][-1] = 13
+    fresh_api = {
+        "1": {API_NODE_TYPE: "TransformA", "inputs": {"seed": ["9", 0], "steps": 8}},
+        "9": {API_NODE_TYPE: "SourceA", "inputs": {}},
+    }
+    assert ui_inputs_by_name(new_ui)["1"] == {"seed": ["9", 0], "steps": 13}
+    assert name_diff(new_ui, fresh_api) == ["  ~ 1.inputs.steps: api 8 != ui 13"]
+
 
 def write_pair(tmp_path, name="pair", api_type="TransformA", ui_type="TransformA"):
     ui = {"nodes": [{"id": 1, "type": ui_type, "inputs": [], "widgets_values": []}], "links": []}
