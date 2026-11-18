@@ -131,16 +131,23 @@ def _nodes_with_bindings(tree):
             if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
                 bindings.pop(child.id, None)
 
-    def walk(node, bindings):
+    def walk(node, bindings, deferred_bindings=None):
+        def descend(child, local):
+            yield from walk(child, local, deferred_bindings)
+
         yield node, dict(bindings)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             # Defaults and annotations belong to the enclosing scope.
             for child in ast.iter_child_nodes(node):
                 if child is node.args or child in getattr(node, "decorator_list", ()) or child is getattr(node, "returns", None):
-                    yield from walk(child, bindings)
+                    yield from descend(child, bindings)
             # Deferred bodies cannot assume enclosing values at call time.
             # Methods also do not resolve bare names through class locals.
-            local = {}
+            local = dict(deferred_bindings) if isinstance(node, ast.Lambda) and deferred_bindings is not None else {}
+            if isinstance(node, ast.Lambda):
+                for argument in ast.walk(node.args):
+                    if isinstance(argument, ast.arg):
+                        local.pop(argument.arg, None)
             body = [node.body] if isinstance(node, ast.Lambda) else node.body
             if not isinstance(node, ast.Lambda):
                 bindings.pop(node.name, None)
@@ -149,28 +156,28 @@ def _nodes_with_bindings(tree):
             return
         if isinstance(node, ast.ClassDef):
             for child in [*node.decorator_list, *node.bases, *node.keywords]:
-                yield from walk(child, bindings)
+                yield from descend(child, bindings)
             bindings.pop(node.name, None)
             local = dict(bindings)
             for child in node.body:
-                yield from walk(child, local)
+                yield from descend(child, local)
             return
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             if node.value is not None:
-                yield from walk(node.value, bindings)
+                yield from descend(node.value, bindings)
             if isinstance(node, ast.AnnAssign):
-                yield from walk(node.annotation, bindings)
+                yield from descend(node.annotation, bindings)
             value = _folded_value(node.value, bindings) if node.value is not None else _UNFOLDED
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
-                yield from walk(target, bindings)
+                yield from descend(target, bindings)
                 forget(target, bindings)
                 if isinstance(target, ast.Name) and value is not _UNFOLDED:
                     bindings[target.id] = value
             return
         if isinstance(node, (ast.AugAssign, ast.Delete)):
             for child in ast.iter_child_nodes(node):
-                yield from walk(child, bindings)
+                yield from descend(child, bindings)
             for target in node.targets if isinstance(node, ast.Delete) else [node.target]:
                 forget(target, bindings)
             return
@@ -178,46 +185,54 @@ def _nodes_with_bindings(tree):
             for alias in node.names:
                 bindings.pop(alias.asname or alias.name.split(".")[0], None)
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
-            # For iterables run once, before the target or body can rebind names.
+            changed = _bound_names(ast.iter_child_nodes(node))
+            # Only eager iterable parts run before the target/body can rebind names.
             if isinstance(node, (ast.For, ast.AsyncFor)):
-                yield from walk(node.iter, dict(bindings))
+                deferred = {name: value for name, value in bindings.items() if name not in changed}
+                yield from walk(node.iter, dict(bindings), deferred)
             # Any iteration may follow writes from a previous iteration.
             # Neither a while test nor the else suite can rely on entry literals.
-            for name in _bound_names(ast.iter_child_nodes(node)):
+            for name in changed:
                 bindings.pop(name, None)
             if isinstance(node, ast.While):
-                yield from walk(node.test, dict(bindings))
+                yield from descend(node.test, dict(bindings))
             else:
-                yield from walk(node.target, dict(bindings))
+                yield from descend(node.target, dict(bindings))
             for suite in (node.body, node.orelse):
                 local = dict(bindings)
                 for child in suite:
-                    yield from walk(child, local)
+                    yield from descend(child, local)
             return
         if isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
-                yield from walk(item.context_expr, bindings)
+                yield from descend(item.context_expr, bindings)
                 if item.optional_vars is not None:
                     forget(item.optional_vars, bindings)
-                    yield from walk(item.optional_vars, bindings)
+                    yield from descend(item.optional_vars, bindings)
             for child in node.body:
-                yield from walk(child, bindings)
+                yield from descend(child, bindings)
             return
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             local = dict(bindings)
-            for generator in node.generators:
-                yield from walk(generator.iter, local)
+            deferred_bindings = None if deferred_bindings is None else dict(deferred_bindings)
+            for index, generator in enumerate(node.generators):
+                yield from descend(generator.iter, local)
+                # A generator evaluates its first iterable now, all remaining parts on next().
+                if isinstance(node, ast.GeneratorExp) and index == 0 and deferred_bindings is not None:
+                    local = dict(deferred_bindings)
                 forget(generator.target, local)
-                yield from walk(generator.target, local)
+                if deferred_bindings is not None:
+                    forget(generator.target, deferred_bindings)
+                yield from descend(generator.target, local)
                 for condition in generator.ifs:
-                    yield from walk(condition, local)
+                    yield from descend(condition, local)
             for child in ([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]):
-                yield from walk(child, local)
+                yield from descend(child, local)
             return
         if isinstance(node, (ast.If, ast.Try)):
             # Branch-dependent writes cannot establish constants after a join.
             if hasattr(node, "test"):
-                yield from walk(node.test, bindings)
+                yield from descend(node.test, bindings)
             for field in ("body", "orelse", "handlers", "finalbody"):
                 local = dict(bindings)
                 if isinstance(node, ast.Try) and field != "body":
@@ -230,14 +245,14 @@ def _nodes_with_bindings(tree):
                     for name in _bound_names(changed):
                         local.pop(name, None)
                 for child in getattr(node, field, ()):
-                    yield from walk(child, local)
+                    yield from descend(child, local)
             for name in _bound_names(ast.iter_child_nodes(node)):
                 bindings.pop(name, None)
             return
         if isinstance(node, ast.ExceptHandler) and node.name:
             bindings.pop(node.name, None)
         for child in ast.iter_child_nodes(node):
-            yield from walk(child, bindings)
+            yield from descend(child, bindings)
 
     yield from walk(tree, {})
 
@@ -529,3 +544,42 @@ def test_runner_boundary_async_for_iterable_uses_entry_bindings():
               "    async for item in result[A + '_id']:\n"
               "        A = dynamic()\n")
     assert _violations(source) == ["line 3: literal 'node" + "_id' (folded)"]
+
+
+@pytest.mark.parametrize("expression,reported", [
+    pytest.param("(getattr(obj, A) for value in values)", True, id="generator-element"),
+    pytest.param("(value for value in values if getattr(obj, A))", True, id="generator-filter"),
+    pytest.param("(later for value in values for later in getattr(obj, A))", True, id="generator-later-iterable"),
+    pytest.param("[getattr(obj, A) for value in values]", False, id="eager-list"),
+    pytest.param("{getattr(obj, A) for value in values}", False, id="eager-set"),
+    pytest.param("{value: getattr(obj, A) for value in values}", False, id="eager-dict"),
+    pytest.param("map(lambda value: getattr(obj, A), values)", True, id="lambda-body"),
+    pytest.param("map(lambda A: getattr(obj, A), values)", True, id="lambda-shadow"),
+    pytest.param("map(lambda value=getattr(obj, A): value, values)", False, id="lambda-default"),
+    pytest.param("iter([getattr(obj, A) for value in values])", False, id="nested-eager-list"),
+    pytest.param("iter((getattr(obj, A) for value in values))", True, id="nested-generator"),
+])
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["for", "async-for"])
+def test_runner_boundary_iterable_defers_only_lazy_parts(expression, reported, asynchronous):
+    if asynchronous:
+        source = ("async def run():\n    A = 'status'\n"
+                  f"    async for item in {expression}:\n        A = dynamic()\n")
+        line = 3
+    else:
+        source = f"A = 'status'\nfor item in {expression}:\n    A = dynamic()\n"
+        line = 2
+    assert _violations(source) == (
+        [f"line {line}: getattr attribute argument does not fold to a literal"] if reported else []
+    )
+
+
+def test_runner_boundary_generator_first_iterable_keeps_entry_binding():
+    source = "A = 'node'\nfor item in (value for value in result[A + '_id']):\n    A = dynamic()\n"
+    assert _violations(source) == ["line 2: literal 'node" + "_id' (folded)"]
+
+
+def test_runner_boundary_iterable_lazy_parts_keep_unchanged_names():
+    source = ("A = 'status'\nB = 'status'\n"
+              "for item in ((lambda: getattr(obj, B)) for value in values if getattr(obj, B)):\n"
+              "    A = dynamic()\n")
+    assert _violations(source) == []
