@@ -233,7 +233,7 @@ edit handler parses standard fields such as:
 It then mutates the selected ComfyUI workflow for image upload, prompt, size,
 seed/background behavior, and adaptive batching. The current gateway now has a
 typed workflow-extension contract for manifest-backed controls. For
-`image.edit.flux2-klein-4b`, that includes `denoise`, `steps`, and `guidance`.
+`image.edit.krea2-turbo`, that includes `steps`, `cfg`, and `seed`.
 It still does not include ControlNet because the local workflow and model
 inventory do not contain a real ControlNet path.
 
