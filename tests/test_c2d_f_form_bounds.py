@@ -205,6 +205,65 @@ def test_chunk_straddling_body_budget_is_refused_before_parts() -> None:
     assert taken[0] == before_last_data + len(data[-1])
 
 
+def test_straddling_body_budget_closes_spills_without_staging(monkeypatch) -> None:
+    spills: list[list[Any]] = []
+    staged: list[str] = []
+    original_close = _wire._close_spills
+
+    def record_close(parser) -> None:
+        spills.append(list(parser._files_to_close_on_error))
+        original_close(parser)
+
+    def forbidden_stage(*args, **kwargs):
+        staged.append("FileRequestSpool.stage")
+        raise AssertionError("A refused multipart body must not reach the request spool")
+
+    def forbidden_uploads(*args, **kwargs):
+        staged.append("stage_uploads")
+        raise AssertionError("A refused multipart body must not stage uploads")
+
+    monkeypatch.setattr(_wire, "_close_spills", record_close)
+    monkeypatch.setattr(FileRequestSpool, "stage", forbidden_stage)
+    monkeypatch.setattr(_wire, "stage_uploads", forbidden_uploads)
+
+    budget = int(LIMITS.body_budget)
+    head = _head("image", "a.png")
+    tail = b"\r\n" + f"--{BOUNDARY}--\r\n".encode()
+    framing = len(head) + len(tail)
+    size = budget - framing + 100
+    assert size > 0
+    data = [b"x" * min(BLOCK, size - at) for at in range(0, size, BLOCK)]
+    pieces = [head, *data, tail]
+    assert sum(map(len, pieces)) == budget + 100
+    before_last_data = len(head) + sum(map(len, data[:-1]))
+    assert before_last_data < budget < before_last_data + len(data[-1])
+
+    taken = [0]
+    queue = iter(pieces)
+
+    async def receive() -> dict[str, Any]:
+        piece = next(queue, None)
+        if piece is None:
+            return {"type": "http.disconnect"}
+        taken[0] += len(piece)
+        return {"type": "http.request", "body": piece, "more_body": piece is not pieces[-1]}
+
+    scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "headers": [
+        (b"content-type", f"multipart/form-data; boundary={BOUNDARY}".encode())]}
+    request = Request(scope, receive)
+    result = _split(request, LIMITS)
+    assert isinstance(result, Response) and result.status_code == 413
+    error = json.loads(result.body)["error"]
+    assert error["code"] == "payload_too_large"
+    assert error["message"] == "The request body is larger than this route accepts"
+    assert budget < taken[0] <= budget + BLOCK + len(tail)
+    assert taken[0] == before_last_data + len(data[-1])
+    assert len(spills) == 1
+    assert spills[0], "The parser must have opened a file-part spill before refusal"
+    assert all(handle.closed for handle in spills[0])
+    assert staged == []
+
+
 def test_body_budget_crossed_inside_part_head_is_refused() -> None:
     budget = int(LIMITS.body_budget)
     head = _head("x" * (budget + 10))
