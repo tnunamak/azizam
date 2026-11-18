@@ -797,7 +797,15 @@ def submit_without_checking(route: str, body: Mapping[str, Any]) -> tuple[Any, l
 
 
 
-def test_closed_image_job_is_refused_when_manifest_lookup_misses(jobs_db):
+def test_closed_image_job_is_refused_when_manifest_lookup_misses(jobs_db, monkeypatch):
+    from dataclasses import replace
+    provider = proxy.GATEWAY_REGISTRY_PROVIDER
+    snapshot = provider.current()
+    workflow_id = "image.generate.krea2-turbo"
+    entry = replace(snapshot.get(workflow_id), state="disabled")
+    snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
+    monkeypatch.setattr(type(provider), "current", lambda self: snapshot)
+    monkeypatch.setattr(proxy, "WORKFLOW_SNAPSHOTS", provider)
     with patch.object(proxy, "_find_image_manifest", return_value=None):
         response, scheduled = submit_without_checking("image", {"model": "krea2-turbo", "prompt": "a lighthouse"})
     assert response.status_code == 409

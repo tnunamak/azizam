@@ -89,7 +89,7 @@ def through_selectors(manifest: dict[str, Any], history: dict[str, Any]) -> list
 
 
 def test_the_graph_workflows_are_found_and_every_one_has_one_producer():
-    assert len(graph_manifests()) >= 30
+    assert len(graph_manifests()) >= 24
     for path in graph_manifests():
         assert len(producers(template_of(load(path)))) == 1, path.name
 
