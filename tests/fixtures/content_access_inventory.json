@@ -168,7 +168,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_video_media_job",
-      "source_sha256": "789b2c12843880f189d7dff4415002245669ea1e238681b4e5ca91d955849cfa",
+      "source_sha256": "a32887daaf7949826b333e0d454f789dddfe1c62d8bb6c1e04ecc863cd10075b",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"

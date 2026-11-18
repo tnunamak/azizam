@@ -12362,38 +12362,20 @@ async def _proxy_graph_video_create(
                 code="model_not_found",
             )
         )
-    # Some models ship separate text-to-video and image-to-video graphs (LTX-2.5,
-    # MiniMax H3). `i2v_workflow` on the t2v entry names the image variant; it
-    # is selected when the request carries input_reference.
-    i2v_workflow_name = workflow_cfg.get("i2v_workflow")
-    if input_reference and i2v_workflow_name:
-        i2v_cfg = _video_workflow_table().get(i2v_workflow_name)
-        if i2v_cfg:
-            workflow_name, workflow_cfg = i2v_workflow_name, i2v_cfg
+    workflow_name, workflow_cfg, chain_name, chain_cfg, unsupported_chain = _select_video_workflows(
+        str(requested_model), workflow_name, workflow_cfg, body)
     if workflow_cfg.get("requires_input_reference") and not input_reference:
         return _gateway_input_error(
             f"Model {workflow_name} is image-to-video and requires input_reference", param="input_reference",
             job_message="This model is image-to-video and requires input_reference")
-    # Long video: `shots`, or `seconds` past the model's native length when the
-    # model names a chain workflow, or a chain workflow itself (video-long).
-    chain_name = chain_cfg = None
-    if video_extend.engine_for(workflow_cfg.get("builder")):
-        chain_name, chain_cfg = workflow_name, workflow_cfg
-    else:
-        try:
-            beyond_native = seconds is not None and float(seconds) > float(workflow_cfg.get("max_seconds", 8))
-        except (TypeError, ValueError):
-            beyond_native = False
-        if body.get("shots") is not None or (beyond_native and workflow_cfg.get("chain_workflow")):
-            chain_name, chain_cfg = _chain_workflow_for(requested_model)
-            if chain_cfg is None:
-                return _gateway_input_error(
-                    gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
-                        model=workflow_name, max_seconds=f"{workflow_cfg.get('max_seconds', 8):g}"),
-                    param="shots" if body.get("shots") is not None else "seconds",
-                    code="long_video_not_supported",
-                    job_message=f"This model cannot render shots or clips longer than "
-                                f"{workflow_cfg.get('max_seconds', 8):g} s")
+    if unsupported_chain:
+        return _gateway_input_error(
+            gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                model=workflow_name, max_seconds=f"{workflow_cfg.get('max_seconds', 8):g}"),
+            param="shots" if body.get("shots") is not None else "seconds",
+            code="long_video_not_supported",
+            job_message=f"This model cannot render shots or clips longer than "
+                        f"{workflow_cfg.get('max_seconds', 8):g} s")
     if chain_cfg is not None:
         return await _submit_video_chain(
             request, auth_context, body=body, workflow_name=str(chain_name),
@@ -12907,6 +12889,26 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     if target and target in workflows and video_extend.engine_for(workflows[target].get("builder")):
         return str(target), workflows[target]
     return None, None
+
+
+def _select_video_workflows(requested: str, name: str, config: Mapping[str, Any], body: Mapping[str, Any]):
+    """Select the reference variant and any chain used by the video request."""
+    variant = config.get("i2v_workflow")
+    if body.get("input_reference") and variant:
+        variant_config = _video_workflow_table().get(variant)
+        if variant_config:
+            name, config = variant, variant_config
+    if video_extend.engine_for(config.get("builder")):
+        return name, config, name, config, False
+    seconds = body.get("seconds")
+    try:
+        beyond_native = seconds is not None and float(seconds) > float(config.get("max_seconds", 8))
+    except (TypeError, ValueError):
+        beyond_native = False
+    if body.get("shots") is not None or (beyond_native and config.get("chain_workflow")):
+        chain_name, chain_config = _chain_workflow_for(requested)
+        return name, config, chain_name, chain_config, chain_config is None
+    return name, config, None, None, False
 
 
 def _video_closure_workflow_ids(name: str) -> tuple[str, ...]:
@@ -26328,7 +26330,11 @@ async def _submit_video_media_job(
         return error_response
     assert workflow_name is not None
     requested_model = body.get("model") or _video_default_workflow()
-    workflow_ids = _video_closure_workflow_ids(workflow_name)
+    config = _video_workflow_table().get(workflow_name) or {}
+    selected_name, _, chain_name, chain_config, _ = _select_video_workflows(workflow_name, workflow_name, config, body)
+    actual_name = chain_name if chain_config is not None else selected_name
+    workflow_ids = tuple(sorted({workflow_id for name in (workflow_name, actual_name)
+                                 for workflow_id in _video_closure_workflow_ids(name)}))
     policy_decision = _video_job_policy_decision(auth_context, requested_model, workflow_name, workflow_ids=workflow_ids)
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
