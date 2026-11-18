@@ -49,8 +49,8 @@ describe("model names never expose a path on the gateway host", () => {
     );
     expect(modelDisplayName("/m/x/Llama-3-00001-of-00003.gguf")).toBe("Llama 3");
     expect(modelDisplayName("gemma-3-12b-it-IQ4_XS.gguf")).toBe("gemma 3 12b it");
-    expect(modelDisplayName("flux2_klein_4b_fp8_scaled.safetensors")).toBe(
-      "flux2 klein 4b",
+    expect(modelDisplayName("krea2_turbo_fp8_scaled.safetensors")).toBe(
+      "krea2 turbo",
     );
   });
 

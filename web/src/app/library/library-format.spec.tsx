@@ -97,7 +97,7 @@ describe("model display names", () => {
   test("prefers the catalog title, then a capability's recommended name, then the prettified id", () => {
     const catalog = {
       aliases: [],
-      models: [{ id: "flux2-klein-4b", title: "Flux2 Klein 4B", display_name: "flux2-klein-4b" }],
+      models: [{ id: "krea2-turbo", title: "Krea 2 Turbo", display_name: "krea2-turbo" }],
     };
     const capabilities = [
       {
@@ -106,8 +106,8 @@ describe("model display names", () => {
         use_names: ["song"],
       },
     ];
-    expect(modelDisplayName("flux2-klein-4b", catalog, capabilities)).toBe(
-      "Flux2 Klein 4B",
+    expect(modelDisplayName("krea2-turbo", catalog, capabilities)).toBe(
+      "Krea 2 Turbo",
     );
     expect(modelDisplayName("song", catalog, capabilities)).toBe("Song");
     expect(modelDisplayName("music", catalog, capabilities)).toBe(

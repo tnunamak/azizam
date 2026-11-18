@@ -57,21 +57,15 @@ const catalog = {
   models: [
     row("krea2-turbo", "Krea 2 Turbo", "image.generate", ["text"]),
     row("anima-turbo", "Anima Turbo (anime)", "image.generate", ["text"]),
-    row("flux2-klein-4b", "Flux2 Klein 4B", "image.generate", ["text"]),
     row("moss-image", "MOSS Image", "image.generate", ["text"]),
     row("moss-image-fast", "MOSS Image Fast", "image.generate", ["text"]),
     row("moss-image-quality", "MOSS Image Quality", "image.generate", ["text"]),
     row("qwen-image-2.1-edit", "Qwen-Image 2.1 Edit", "image.edit", ["text", "image"]),
-    row("flux2-klein-4b-edit", "Flux2 Klein 4B Edit", "image.edit", ["text", "image"]),
-    row("flux2-klein-4b-inpaint", "Flux2 Klein 4B Inpaint", "image.edit", ["text", "image"]),
     row("qwen-image-2.1-inpaint", "Qwen-Image 2.1 Inpaint (LanPaint)", "image.edit", ["text", "image"]),
     row("qwen-image-2.1-edit-multiref", "Qwen-Image 2.1 Multi-Reference Edit", "image.edit", ["text", "image"]),
     row("seedvr2-upscale", "SeedVR2 7B Sharp Upscale", "image.edit", ["image"]),
     row("face-likeness", "Face Likeness Check", "image.analyze", ["image"]),
     row("sdxl-seamless-tile", "SDXL Seamless Tile", "image.generate", ["text"], {
-      task: "texture-tile",
-    }),
-    row("flux2-klein-4b-seamless-tile", "Flux2 Klein 4B Seamless Tile", "image.generate", ["text"], {
       task: "texture-tile",
     }),
     {
@@ -135,17 +129,14 @@ async function optionNames() {
 describe("Make a picture lists only models that make a picture from a prompt", () => {
   it("leaves out edit, inpaint, upscale, tile and check models", async () => {
     const names = await optionNames();
-    expect(names).toEqual(["Krea 2 Turbo", "Anima Turbo (anime)", "Flux2 Klein 4B", "MOSS Image", "MOSS Image Fast", "MOSS Image Quality"]);
+    expect(names).toEqual(["Krea 2 Turbo", "Anima Turbo (anime)", "MOSS Image", "MOSS Image Fast", "MOSS Image Quality"]);
     for (const hidden of [
       "Qwen-Image 2.1 Edit",
-      "Flux2 Klein 4B Edit",
-      "Flux2 Klein 4B Inpaint",
       "Qwen-Image 2.1 Inpaint (LanPaint)",
       "Qwen-Image 2.1 Multi-Reference Edit",
       "SeedVR2 7B Sharp Upscale",
       "Face Likeness Check",
       "SDXL Seamless Tile",
-      "Flux2 Klein 4B Seamless Tile",
     ])
       expect(names.join("|")).not.toContain(hidden);
   });

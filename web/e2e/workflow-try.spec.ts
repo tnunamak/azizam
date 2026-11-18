@@ -369,7 +369,7 @@ const composedCatalog = {
     },
     {
       ...composedBase,
-      id: "image.generate.flux2-klein-4b-seamless-tile",
+      id: "image.generate.sdxl-seamless-tile",
       title: "Seamless Tile",
       availability: { status: "unavailable", reason_code: "unavailable", available: false,
                       reason: "ComfyUI is down.", engine: "comfyui", evidence: composedEvidence },
