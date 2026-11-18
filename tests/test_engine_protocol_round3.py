@@ -903,11 +903,14 @@ def test_remote_header_limits_and_cancellation_close_socket(monkeypatch, tmp_pat
             await task
         assert recorder.closed
         registry, factory, _, runtime, recorder, _ = socket_case(monkeypatch)
-        registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = {'total_s': 0.03}
+        # The deadline runs from admission, so it must outlast the work before the socket opens on a loaded host; the
+        # read then waits until the deadline ends it, so the expiry always lands mid-read.
+        registry['services']['remote-box']['config']['connection']['remote_dispatch']['limits'] = {'total_s': 1.0}
         runtime = dispatch.Runtime(runtime.target, remote_factory=factory, remote_capability=factory.admit('remote-box'))
-        recorder.read_delay, recorder.fragment_size = 0.005, 1
+        recorder.block_read = asyncio.Event()
         with pytest.raises((ProtocolError, TimeoutError, asyncio.CancelledError)):
             await runtime.invoke('state', {})
+        assert recorder.connections
         assert recorder.closed
     asyncio.run(check())
     async def capacity():
