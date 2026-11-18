@@ -305,8 +305,9 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
 
 
 def _path_main(scratch: Path, path: str, state: str, preloaded: list[str]) -> int:
-    # main installed the guards before importing this branch's application modules.
-    report = asyncio.run(asyncio.wait_for(_path_case(scratch, path, state), timeout=10))
+    # main installed the guards before importing this branch's application modules. The deadline only stops a hang:
+    # the chunked speech path plans its segments in a worker thread, which took over 10 s on a loaded gate host.
+    report = asyncio.run(asyncio.wait_for(_path_case(scratch, path, state), timeout=60))
     report.update(attempts=ATTEMPTS, preloaded_at_guard=preloaded)
     print(json.dumps(report))
     return 0
