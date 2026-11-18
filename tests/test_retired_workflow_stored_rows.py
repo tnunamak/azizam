@@ -66,3 +66,51 @@ def test_retired_stored_rows_do_not_reappear_or_run(monkeypatch, tmp_path):
     assert not ids & (run_control_ids | {wid.rsplit(".", 1)[-1] for wid in run_control_ids} | {owner_id, "retired-example"})
     assert job.status_code == 409, job.text
     assert job.json()["error"]["code"] == "workflow_disabled"
+
+
+def test_orphan_merge_patch_is_excluded_at_startup_and_in_owner_api(monkeypatch, tmp_path):
+    from tests.test_registry_apply_failure import _owner_client
+
+    db = use_admin_db(monkeypatch, tmp_path)
+    wid = "image.generate.retired-patch"
+    row = {"id": wid, "state": "disabled", "policy": {"exposure": "disabled"}}
+    stored = {**registry_layers.empty_stored(service_registry.SERVICE_REGISTRY_SCHEMA_VERSION), "workflows": {wid: row}}
+    write_legacy_registry_for_test(stored, path=db)
+    admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=db)
+    admin_store.record_migration_step(service_registry.WORKFLOW_SCHEMA_2_STEP, path=db)
+    effective = service_registry.ensure_service_registry(path=db)
+    assert wid not in effective["workflows"]
+    snapshot = build(effective, bundled_release(), generation=1)
+    assert wid not in snapshot.workflows
+    assert admin_store.get_service_registry_with_generation(path=db)["value"]["workflows"][wid] == row
+    excluded = service_registry.load_service_registry_exclusions(path=db)
+    assert any(item.id == wid and "base" in item.error.lower() for item in excluded)
+    monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+    monkeypatch.setattr(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+    monkeypatch.setattr(proxy, "_litellm_models_payload", AsyncMock(return_value={"object": "list", "data": []}))
+
+    async def models():
+        with authenticated(identity(everything())):
+            async with gateway_client(client=("203.0.113.28", 1234)) as client:
+                return await client.get("/v1/models")
+
+    response = asyncio.run(models())
+    assert response.status_code == 200
+    assert wid not in {item["id"] for item in response.json()["data"]}
+    response = _owner_client(monkeypatch).get("/admin/api/operator/service-registry")
+    assert response.status_code == 200, response.text
+    assert any(item["id"] == wid for item in response.json()["excluded"])
+
+
+def test_startup_rejects_malformed_stored_section_and_mismatched_id(tmp_path):
+    import pytest
+
+    for workflows in ([], {"one": {"id": "two", "state": "disabled"}}):
+        db = tmp_path / ("section.db" if isinstance(workflows, list) else "id.db")
+        admin_store.init_db(db)
+        stored = {**registry_layers.empty_stored(service_registry.SERVICE_REGISTRY_SCHEMA_VERSION), "workflows": workflows}
+        write_legacy_registry_for_test(stored, path=db)
+        admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=db)
+        admin_store.record_migration_step(service_registry.WORKFLOW_SCHEMA_2_STEP, path=db)
+        with pytest.raises(ValueError):
+            service_registry.ensure_service_registry(path=db)
