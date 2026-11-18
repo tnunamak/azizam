@@ -21,9 +21,10 @@ inputs:
     required: true
   multiplier:
     label: frame multiplier
-    help: 2 doubles the frames. 3 and 4 are less tested.
+    help: How many times more frames the video gets.
     type: integer
     enum: [2, 3, 4]
+    choice_labels: {"2": "Twice the frames", "3": "Three times the frames (less tested)", "4": "Four times the frames (less tested)"}
     default: 2
     description: Frame-count/fps multiplier. Only 2x is verified; higher values are supported by the RIFE VFI node but untested here.
 outputs:

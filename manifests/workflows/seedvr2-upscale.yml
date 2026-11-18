@@ -21,16 +21,18 @@ inputs:
     required: true
   scale:
     label: enlargement factor
-    help: Choose 2 or 4 to multiply the picture's width and height before sharpening.
+    help: How much larger the picture gets before sharpening.
     type: number
     enum: [2, 4]
+    choice_labels: {"2": "Twice as large", "4": "Four times as large"}
     default: 2
   color_correction_method:
     label: color matching method
-    help: Choose how to match colors to the original picture, or none to skip color matching.
+    help: How colors are matched to the original picture.
     choices_from: {node_type: SeedVR2PostProcessing, input: color_correction_method}
     type: string
     enum: ["none", "lab", "wavelet", "adain"]
+    choice_labels: {"none": "No color matching", "lab": "Most faithful colors", "wavelet": "Keep fine detail", "adain": "Fastest, roughest"}
     default: "none"
     description: Optional color match back to the original (pre-upscale) image. lab is most faithful, wavelet keeps upscaled high-frequency detail, adain is fastest/roughest, none skips color transfer.
   seed:
