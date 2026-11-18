@@ -79,3 +79,17 @@ def test_failure_retains_snapshot(tmp_path, monkeypatch):
         while choices._tasks:
             await asyncio.gather(*tuple(choices._tasks.values()))
     asyncio.run(scenario())
+
+
+def test_identity_failure_keeps_previous_creation_failure(tmp_path, monkeypatch):
+    choices, store, core, snap = setup_run(tmp_path, monkeypatch)
+    calls = []
+    def fail(*args):
+        calls.append(1)
+        raise ValueError('binding_unavailable')
+    monkeypatch.setattr(core._port, 'adapter_identity', fail)
+    with pytest.raises(ValueError, match='binding_unavailable'):
+        asyncio.run(submit(core, snap, 'fallback', 'identity'))
+    assert len(calls) == 2
+    assert not choices._tasks
+    assert not store.path.exists()

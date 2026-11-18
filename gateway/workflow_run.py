@@ -745,14 +745,13 @@ class WorkflowRunCore:
                 drawn = {name: item["value"] for name, item in generated.items() if "value" in item}
                 record.metadata[REQUEST_FACTS_KEY] = request_facts_record(
                     resolve_fact_refs(req.facts, req.fact_refs, job_id=record.job_id, generated=drawn))
-            if identity is None:
-                raise ValueError(BINDING_UNAVAILABLE)
+            resolved_identity = identity if identity is not None else port.adapter_identity(entry, binding_key, binding)
             envelope = build_job_envelope(
                 source_kind="workflow", source_id=entry.id, contract=execution_contract(contract),
                 binding=plain(binding.binding), template=port.template_bytes(binding),
-                protocol_id=identity.protocol_id, protocol_revision=identity.protocol_revision,
-                adapter_id=identity.adapter_id, interface_version=identity.interface_version,
-                service_id=identity.service_id, origin=identity.origin, generated=generated,
+                protocol_id=resolved_identity.protocol_id, protocol_revision=resolved_identity.protocol_revision,
+                adapter_id=resolved_identity.adapter_id, interface_version=resolved_identity.interface_version,
+                service_id=resolved_identity.service_id, origin=resolved_identity.origin, generated=generated,
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
             adopted_sources.update(self._spool.adopt(record.job_id, dict(req.sources)))
