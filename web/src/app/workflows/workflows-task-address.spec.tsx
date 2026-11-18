@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import WorkflowsPage from "./page";
 
-vi.mock("@/components/shell/session", () => ({ useViewer: () => ({ role: "member", admin: false }) }));
+const viewer = vi.hoisted(() => ({ role: "member", admin: false }));
+vi.mock("@/components/shell/session", () => ({ useViewer: () => viewer }));
 vi.mock("./owner-view", () => ({ OwnerView: () => null }));
 
 const workflow = (id: string, capability: string, title: string) => ({
@@ -38,7 +39,19 @@ async function selected(value: string) {
     expect(desktop.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true");
   });
 }
+// The catalog's shape for a workflow whose engine setup is not finished: no reason
+// names a down engine, so the shared mapping calls it setup.
+const setupOnly = { status: "not_configured", reason_code: "unavailable_unconfigured", available: false };
+function stubCatalogWithSetupVideo() {
+  const withSetup = {
+    ...catalog,
+    workflows: [catalog.workflows[0], { ...catalog.workflows[1], availability: setupOnly }],
+  };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(withSetup), { status: 200 })));
+}
 afterEach(() => {
+  viewer.role = "member";
+  viewer.admin = false;
   cleanup();
   for (const client of clients.splice(0)) client.clear();
   vi.unstubAllGlobals();
@@ -82,5 +95,23 @@ describe("workflow task address", () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Workflow task" })).getByRole("button", { name: "All" }));
     await selected("all");
     expect(window.location.search).toBe("?capability=video&other=keep");
+  });
+
+  it("leaves All selected for a member when the addressed task is setup-only", async () => {
+    window.history.replaceState(null, "", "/workflows/?capability=video");
+    stubCatalogWithSetupVideo();
+    mount();
+    expect(await screen.findByRole("button", { name: "Details for Picture sample" })).toBeTruthy();
+    await selected("all");
+    expect(screen.queryByRole("button", { name: "Details for Video sample" })).toBeNull();
+  });
+
+  it("selects a setup-only addressed task for an owner", async () => {
+    viewer.role = "owner";
+    viewer.admin = true;
+    window.history.replaceState(null, "", "/workflows/?capability=video");
+    stubCatalogWithSetupVideo();
+    mount();
+    await selected("video");
   });
 });
