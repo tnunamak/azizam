@@ -214,9 +214,18 @@ def test_active_default_image_reaches_engine(tmp_path):
 @pytest.mark.parametrize("dependency_manifest_missing", [False, True])
 def test_composed_workflow_refuses_a_closed_dependency_before_engine(tmp_path, dependency_manifest_missing):
     import copy
+    from dataclasses import replace
 
     def setup(rig):
         _closed_route_setup(rig)
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "image.edit.flux2-klein-4b-inpaint"
+        entry = snapshot.get(workflow_id)
+        entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
+        rig.monkeypatch.setattr(type(provider), "current", lambda self: replace(
+            snapshot, workflows={**snapshot.workflows, workflow_id: entry}))
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", provider)
         find = proxy._find_image_manifest
         composite = copy.deepcopy(find(GEN_INTENT, "flux2-klein-4b-seamless-tile"))
         composite["id"] = "image.generate.sdxl-seamless-tile"
