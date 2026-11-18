@@ -45,6 +45,7 @@ inputs:
     help: Choose the number of beats in each bar.
     type: string
     enum: ["2", "3", "4", "6"]
+    choice_labels: {"2": "2 beats per bar", "3": "3 beats per bar", "4": "4 beats per bar", "6": "6 beats per bar"}
   language:
     choices_from: {node_type: TextEncodeAceStepAudio1.5, input: language}
     label: language
