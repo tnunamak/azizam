@@ -100,43 +100,21 @@ class TestWorkflowManifestBindings(unittest.TestCase):
             },
         )
 
-    def test_sample_flux_manifest_binds_to_committed_workflow_shape(self) -> None:
-        manifest = load_workflow_manifest(
-            ROOT / "manifests/workflows/flux2-klein-4b-edit.yml"
-        )
+    def test_sample_edit_manifest_binds_to_committed_workflow_shape(self) -> None:
+        manifest = load_workflow_manifest(ROOT / "manifests/workflows/qwen-image-2.1-edit.yml")
         identity = manifest_identity(manifest, BUNDLED_PROVENANCE)
-        self.assertEqual(identity.id, "image.edit.flux2-klein-4b")
-        self.assertEqual(identity.version, "0.3.0")
+        self.assertEqual(identity.id, "image.edit.qwen-image-2.1-edit")
+        self.assertEqual(identity.version, "0.1.0")
         self.assertTrue(identity.trusted)
         self.assertEqual(len(identity.manifest_hash), 64)
-        workflow = json.loads(
-            (ROOT / "workflows/images/flux2-klein-4b-edit.json").read_text(encoding="utf-8")
-        )
-
-        result = validate_inputs(
-            manifest,
-            {
-                "prompt": "matte watercolor rock arch",
-                "source_image": "api-input.png",
-                "width": 896,
-                "height": 768,
-                "steps": 8,
-                "guidance": 3.5,
-                "denoise": 0.42,
-            },
-        )
+        workflow = json.loads((ROOT / "workflows/images/qwen-image-2.1-edit.json").read_text(encoding="utf-8"))
+        result = validate_inputs(manifest, {"prompt": "matte watercolor rock arch", "source_image": "api-input.png", "steps": 8, "cfg": 3.5})
         self.assertTrue(result.ok)
-
         mutated = apply_backend_binding(manifest, "comfyui", workflow, result.accepted)
         self.assertEqual(mutated["6"]["inputs"]["text"], "matte watercolor rock arch")
-        self.assertEqual(mutated["10"]["inputs"]["image"], "api-input.png")
-        self.assertEqual(mutated["48"]["inputs"]["width"], 896)
-        self.assertEqual(mutated["47"]["inputs"]["width"], 896)
-        self.assertEqual(mutated["48"]["inputs"]["height"], 768)
-        self.assertEqual(mutated["47"]["inputs"]["height"], 768)
-        self.assertEqual(mutated["48"]["inputs"]["steps"], 8)
-        self.assertEqual(mutated["26"]["inputs"]["guidance"], 3.5)
-        self.assertEqual(mutated["49"]["inputs"]["denoise"], 0.42)
+        self.assertEqual(mutated["4"]["inputs"]["image"], "api-input.png")
+        self.assertEqual(mutated["8"]["inputs"]["steps"], 8)
+        self.assertEqual(mutated["8"]["inputs"]["cfg"], 3.5)
 
     def test_missing_binding_target_fails_fast(self) -> None:
         result = validate_inputs(
@@ -417,7 +395,6 @@ class TestShippedWorkflowOutputMediaTypes(unittest.TestCase):
         ("mesh.edit.retopo.yml", "http-multipart", "mesh", "<no graph workflow>"),
         ("mesh.generate.pixal3d.yml", "http-multipart", "mesh", "<no graph workflow>"),
         ("face-likeness.yml", "gateway", "report", "<no graph workflow>"),
-        ("flux2-klein-4b-seamless-tile.yml", "gateway", "image", "<no graph workflow>"),
         ("mesh.generate.trellis-2.yml", "http-multipart", "mesh", "<no graph workflow>"),
         ("rife-interpolate.yml", "comfyui", "video", "SaveVideo"),
         ("tangoflux.yml", "comfyui", "audio", "TangoFluxVAEDecodeAndPlay"),
