@@ -37,20 +37,13 @@ def scenario_path(tmp_path):
     return path
 
 
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 @contextmanager
-def running(script, scenario_path, problems_path, port=None, stopped=False):
+def running(script, scenario_path, problems_path, port=0, stopped=False):
     stop = threading.Event()
     if stopped:
         stop.set()
     out = io.StringIO()
     results, errors = [], []
-    port = free_port() if port is None else port
 
     def target():
         try:
@@ -61,7 +54,7 @@ def running(script, scenario_path, problems_path, port=None, stopped=False):
     thread = threading.Thread(target=target, daemon=True)
     thread.start()
     try:
-        yield stop, out, results, errors, thread, port
+        yield stop, out, results, errors, thread
     finally:
         stop.set()
         thread.join(timeout=10)
@@ -70,9 +63,14 @@ def running(script, scenario_path, problems_path, port=None, stopped=False):
             raise errors[0]
 
 
-def await_port(out, thread, port):
+def await_port(out, thread):
     deadline = time.monotonic() + 10
-    while f"PORT {port}\n" not in out.getvalue():
+    while True:
+        for line in out.getvalue().splitlines(keepends=True):
+            if line.startswith("PORT ") and line.endswith("\n"):
+                port = int(line.removeprefix("PORT ").strip())
+                assert 0 < port <= 65535, "PORT line must report the bound port"
+                return port
         assert thread.is_alive(), "run exited before announcing its port"
         assert time.monotonic() < deadline, "no PORT line within 10 seconds"
         time.sleep(0.01)
@@ -85,7 +83,7 @@ def test_bind_failure_has_no_port_line(script, scenario_path, tmp_path, capsys):
         held.bind(("127.0.0.1", 0))
         held.listen()
         with running(script, scenario_path, problems, held.getsockname()[1], stopped=True) as state:
-            _, out, results, _, thread, _ = state
+            _, out, results, _, thread = state
             thread.join(timeout=10)
         assert results == [1]
         assert "PORT " not in out.getvalue()
@@ -97,16 +95,18 @@ def test_stale_problems_removed_before_port(script, scenario_path, tmp_path):
     problems = tmp_path / "problems.json"
     problems.write_text("[]", encoding="utf-8")
     with running(script, scenario_path, problems) as state:
-        _, out, _, _, thread, port = state
-        await_port(out, thread, port)
+        _, out, _, _, thread = state
+        port = await_port(out, thread)
+        assert f"PORT {port}\n" in out.getvalue()
         assert not problems.exists()
 
 
 def test_stop_writes_valid_problem_list(script, scenario_path, tmp_path):
     problems = tmp_path / "problems.json"
     with running(script, scenario_path, problems) as state:
-        stop, out, results, _, thread, port = state
-        await_port(out, thread, port)
+        stop, out, results, _, thread = state
+        port = await_port(out, thread)
+        assert f"PORT {port}\n" in out.getvalue()
         stop.set()
     assert results == [0]
     assert isinstance(json.loads(problems.read_text(encoding="utf-8")), list)
@@ -128,8 +128,9 @@ def test_problem_write_uses_same_directory_replace(script, scenario_path, tmp_pa
 
     monkeypatch.setattr(script.os, "replace", record_replace)
     with running(script, scenario_path, problems) as state:
-        _, out, results, _, thread, port = state
-        await_port(out, thread, port)
+        _, out, results, _, thread = state
+        port = await_port(out, thread)
+        assert f"PORT {port}\n" in out.getvalue()
     assert results == [0]
     assert len(replacements) == 1
     assert replacements[0][1] == problems
