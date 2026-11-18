@@ -1068,9 +1068,12 @@ function isUnsupportedValue(value: unknown) {
   return value !== null && typeof value === "object";
 }
 
-// The manifest's readable name for one choice; the gateway keys each name by String(value).
+// The manifest's readable name for one choice; the gateway keys each name by String(value). Only the map's own entries
+// count: a choice such as "constructor" must not read a built-in object property as its name.
 function choiceName(input: WorkflowInput, option: unknown): string | undefined {
-  return input.choice_labels?.[String(option)] || undefined;
+  const labels = input.choice_labels, key = String(option);
+  const name = labels && Object.hasOwn(labels, key) ? labels[key] : undefined;
+  return typeof name === "string" && name ? name : undefined;
 }
 
 function enumValue(input: WorkflowInput, value: string) {

@@ -21,8 +21,8 @@ def test_rife_multiplier_choice_labels():
         _input("rife-interpolate.yml", "multiplier"),
         {
             "2": "Twice the frames",
-            "3": "Three times the frames (less tested)",
-            "4": "Four times the frames (less tested)",
+            "3": "Three times the frames (not tested here)",
+            "4": "Four times the frames (not tested here)",
         },
     )
 
@@ -31,7 +31,7 @@ def test_seedvr2_scale_choice_labels():
     scale = _input("seedvr2-upscale.yml", "scale")
     assert scale["enum"] == [2, 4]
     assert all(type(value) is int for value in scale["enum"])
-    _assert_labels(scale, {"2": "Twice as large", "4": "Four times as large"})
+    _assert_labels(scale, {"2": "2× width and height", "4": "4× width and height"})
 
 
 def test_seedvr2_color_correction_choice_labels():

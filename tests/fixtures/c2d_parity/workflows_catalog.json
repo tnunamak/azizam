@@ -2887,7 +2887,7 @@
         "sha256": "d6200d82d29277a15923ab20440ebf9093bd32cd8edcda0cd52419c0f972f2a4"
       },
       "row": {
-        "bytes": 10489,
+        "bytes": 10496,
         "full": {
           "aliases": [],
           "availability": {
@@ -3000,8 +3000,8 @@
               "accepted": true,
               "applies": "Workflow extension",
               "choice_labels": {
-                "2": "Twice as large",
-                "4": "Four times as large"
+                "2": "2× width and height",
+                "4": "4× width and height"
               },
               "default": 2,
               "description": "How much larger the picture gets before sharpening.",
@@ -3156,7 +3156,7 @@
           "try_url": "/try/?workflow=image.edit.seedvr2-upscale",
           "typical_seconds": 3
         },
-        "sha256": "554eb859fc730456c91d3e04799a77328e558f933e762f6289844eead92a7787"
+        "sha256": "aaa455045a25eaaad6b80683f1c920e7070bf60d4b3b3617be67f59c81d92226"
       }
     },
     "image.generate.anima-turbo": {
@@ -7508,8 +7508,8 @@
         "sha256": "7bb998190989a5c8515b1359397faff2ce7db3cebb592edaa9eab0a9f683e85b"
       },
       "row": {
-        "bytes": 21380,
-        "sha256": "6c5a65e71345b5237e0287e4f7ce2643c5379e572a034dff49f1b7860729fce0"
+        "bytes": 21388,
+        "sha256": "cb0fe49c1a7a027bb642f3ae3cd1f70312302f84497a04fd8f5a0774df99f1ba"
       }
     },
     "video.edit.scail-2-replace": {

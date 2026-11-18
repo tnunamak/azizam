@@ -126,7 +126,8 @@ function timeLabel(value: number | null): string | undefined {
 }
 
 function choiceName(input: WorkflowInput, value: unknown): string {
-  const name = input.choice_labels?.[String(value)];
+  const labels = input.choice_labels, key = String(value);
+  const name = labels && Object.hasOwn(labels, key) ? labels[key] : undefined;
   return typeof name === "string" && name.length > 0 ? name : String(value);
 }
 

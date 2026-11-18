@@ -24,7 +24,7 @@ inputs:
     help: How much larger the picture gets before sharpening.
     type: number
     enum: [2, 4]
-    choice_labels: {"2": "Twice as large", "4": "Four times as large"}
+    choice_labels: {"2": "2× width and height", "4": "4× width and height"}
     default: 2
   color_correction_method:
     label: color matching method

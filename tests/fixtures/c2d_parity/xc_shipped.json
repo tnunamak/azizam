@@ -919,7 +919,7 @@
         },
         "identity": {
           "id": "video.edit.rife-interpolate",
-          "manifest_hash": "cf501c211043e6cef1428b66f993b5104ee39daf7eed562e275aedb83494deaa",
+          "manifest_hash": "1d9693c525f6362b374b1f39c3936736bc6e46cb02bf0ddf3daa293221936577",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1125,7 +1125,7 @@
         },
         "identity": {
           "id": "image.edit.seedvr2-upscale",
-          "manifest_hash": "bdac483a4798ccf81c98221000af29201373296ff91ff212f35c733480379b52",
+          "manifest_hash": "0af18e88b95fb3ebfa49c49986281814e53699cbbb000e1754346db2c0c44ff3",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
