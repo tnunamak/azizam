@@ -33,6 +33,19 @@ def main() -> None:
         cap = capability_from_workflow_record(record, backend="comfyui")
         print("WEB_IMAGE_EDIT_JSON=" + json.dumps(build_workflows_catalog(records=[record], capabilities=[cap]), sort_keys=True))
         return
+    if sys.argv[1:] == ["--request-maps"]:
+        from tests.test_workflow_request_map_rows import registry, MODES, request_mapping
+        data = {f"{record.id} {mode}": [[name, placement] for name, placement in request_mapping(record, mode).items()]
+                for record in registry().records() for mode in MODES}
+        print("REQUEST_MAPS_JSON=" + json.dumps(data, sort_keys=True))
+        return
+    if sys.argv[1:] == ["--xc-shipped"]:
+        import pytest
+        from tests.test_xc_shipped_golden import capture
+        with pytest.MonkeyPatch.context() as patch:
+            data = capture(patch)
+        print("XC_SHIPPED_JSON=" + json.dumps(data, sort_keys=True))
+        return
     if sys.argv[1:] == ["--legacy-wire"]:
         import pytest
         from gateway.litellm_content import profile
