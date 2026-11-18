@@ -1,6 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -106,7 +108,8 @@ def test_aliases_hide_closed_targets_and_refuse_closed_run(tmp_path):
         assert not rig.recorder.engine
 
 
-def test_disabled_audio_is_absent_and_both_routes_refuse_before_engine(tmp_path):
+@pytest.mark.parametrize("manifest_missing", [False, True])
+def test_disabled_audio_is_absent_and_both_routes_refuse_before_engine(tmp_path, manifest_missing):
     from tests.support.adapter_differential_rig import GatewayRig
     from tests.support.fake_upstream import StreamingASGITransport
     from tests.test_s7_parity_audio import _ok, BODY, JOB_BODY
@@ -121,6 +124,8 @@ def test_disabled_audio_is_absent_and_both_routes_refuse_before_engine(tmp_path)
         rig.monkeypatch.setattr(proxy.GATEWAY_REGISTRY_PROVIDER, "_snapshot", replace(
             snapshot, workflows={**snapshot.workflows, wid: closed}))
         rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+        if manifest_missing:
+            rig.set(proxy, "_load_audio_workflow_manifest", lambda _name: None)
 
         async def exercise():
             listing = await rig.call("GET", "/v1/audio/models")
