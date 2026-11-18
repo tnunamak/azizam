@@ -509,7 +509,8 @@ def collect_manifest_errors(
             for key in ("label", "help"):
                 if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
                     errors.add(("inputs", name, key), "value_empty", f"input {name} {key} must be a non-empty string")
-            if "choice_labels" in spec:
+            if "choice_labels" in spec and not _enum_is_broken(spec):
+                # Names are judged against a well-formed enum only; a broken enum is the contract check's report.
                 labels, enum = spec["choice_labels"], spec.get("enum")
                 if (not isinstance(labels, Mapping) or not labels or not isinstance(enum, list) or not enum
                         or any(not isinstance(value, str) or not value.strip() for value in labels.values())
@@ -572,6 +573,14 @@ def _cardinalities(bindings: Any, binding_descriptors: Mapping[str, Any] | None)
         if hook is not None:
             found[form] = hook
     return found
+
+
+def _enum_is_broken(spec: Mapping[str, Any]) -> bool:
+    """An enum the contract check refuses: not a list, empty, or holding a value of another type than its input's."""
+    if "enum" not in spec:
+        return False
+    enum, bare = spec["enum"], {"type": spec.get("type")}
+    return not isinstance(enum, list) or not enum or any(validate_input_value("enum", option, bare) is not None for option in enum)
 
 
 def _holds(value: Any, name: str) -> bool:
