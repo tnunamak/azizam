@@ -373,6 +373,9 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/engines/domains/{domain}/gate` | owner-bearer | denied | `gateway.transition_admin.get_gate`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/workflows` | owner-bearer | denied | `gateway.workflow_owner_api.list_workflows`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/workflows` | owner-bearer | denied | `gateway.workflow_owner_api.create_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/workflow-choices` | owner-bearer | denied | `gateway.workflow_owner_api.list_choices`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflow-choices/refresh` | owner-bearer | denied | `gateway.workflow_owner_api.refresh_choices`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflows/{workflow_id}/choices/refresh` | owner-bearer | denied | `gateway.workflow_owner_api.refresh_choices`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/workflows/check` | owner-bearer | denied | `gateway.workflow_owner_api.check_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/workflows/{workflow_id}` | owner-bearer | denied | `gateway.workflow_owner_api.get_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/workflows/{workflow_id}` | owner-bearer | denied | `gateway.workflow_owner_api.update_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

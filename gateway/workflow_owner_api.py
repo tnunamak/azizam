@@ -122,7 +122,7 @@ def entry_view(entry: WorkflowEntry, problems: list[dict[str, Any]]) -> dict[str
 
 def register_workflow_owner_routes(
     router: APIRouter, *, store: WorkflowRegistryStore, guard: Callable[[Request], Any],
-    read_json: Callable[[Request], Any], entry_problems: EntryProblems | None = None,
+    read_json: Callable[[Request], Any], resolve_identity: Callable[..., Any], entry_problems: EntryProblems | None = None,
     listing_scope: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
 ) -> None:
     """``entry_problems(entry)`` is the projection layer's list of what keeps an entry from running (I3); without it an
@@ -228,6 +228,31 @@ def register_workflow_owner_routes(
                                          snapshot=snapshot)
         return _plain({"report": {"ok": report.ok, "errors": [_with_clean(e.as_dict()) for e in report.errors]}},
                       etag=snapshot.revision)
+
+    @router.get("/workflow-choices", include_in_schema=False)
+    async def list_choices(request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        from gateway.engine_protocol.choice_lists import owner_choices
+        snapshot = await asyncio.to_thread(store.snapshot)
+        return _plain({"choices": await owner_choices(snapshot.workflows.values(), resolve_identity)})
+
+    @router.post("/workflow-choices/refresh", include_in_schema=False)
+    @router.post("/workflows/{workflow_id}/choices/refresh", include_in_schema=False)
+    async def refresh_choices(request: Request, workflow_id: str | None = None) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        from gateway.engine_protocol.choice_lists import owner_choices
+        snapshot = await asyncio.to_thread(store.snapshot)
+        entries = snapshot.workflows.values()
+        if workflow_id is not None:
+            entry = snapshot.get(workflow_id)
+            if entry is None:
+                return _error(status.HTTP_404_NOT_FOUND, "workflow_not_found", "there is no workflow with this id")
+            entries = [entry]
+        return _plain({"choices": await owner_choices(entries, resolve_identity, refresh=True)})
 
     @router.get("/workflows/{workflow_id}")
     async def get_workflow(workflow_id: str, request: Request) -> JSONResponse:

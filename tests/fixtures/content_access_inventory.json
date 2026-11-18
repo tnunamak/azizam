@@ -3649,6 +3649,24 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.list_choices",
+      "method": "GET",
+      "path": "/admin/api/workflow-choices",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.refresh_choices",
+      "method": "POST",
+      "path": "/admin/api/workflow-choices/refresh",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.refresh_choices",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/choices/refresh",
+      "access": "operational"
+    },
+    {
       "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.get_workflow",
       "method": "GET",
       "path": "/admin/api/workflows/{workflow_id}",
