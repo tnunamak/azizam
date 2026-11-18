@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -1204,4 +1205,28 @@ test("keeps the complete capabilityTryHelp map byte-identical", async () => {
     "embed": "Turn text into numbers that search tools can use.",
     "mesh": "Turn a picture into a 3D model you can turn around and download."
   });
+});
+
+test("an embedding result shows its count, a short preview, and copy and download, not summary statistics", async () => {
+  mocks.params = new URLSearchParams("capability=embed");
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url.endsWith("/embeddings"))
+      return tryJson({ model: "embed-a", data: [{ embedding: [0.1, -0.2, 0.4] }] });
+    return response({
+      aliases: [],
+      models: [{ id: "embed-a", name: "Embed A", capabilities: ["embeddings"] }],
+    });
+  });
+  render(<TryPage />);
+  await takeExampleIfEmpty();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  expect(await screen.findByText("Numbers per input")).toBeVisible();
+  expect(screen.getAllByRole("heading", { name: "Embedding" })).toHaveLength(1);
+  expect(screen.getByText("0.1000, -0.2000, 0.4000")).toBeVisible();
+  const panel = within(screen.getByText(/Apps compare these numbers/).closest("section")!);
+  expect(panel.getByRole("button", { name: "Copy" })).toBeVisible();
+  expect(panel.getByRole("button", { name: "Download" })).toBeVisible();
+  expect(screen.queryByText("Mean")).toBeNull();
 });

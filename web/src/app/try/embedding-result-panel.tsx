@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { summarizeEmbedding } from "@/app/try/embedding-result";
 
+/** The body of an embedding result; the result card above it carries the heading. */
 export function EmbeddingResultPanel({ payload }: { payload: unknown }) {
   const summary = summarizeEmbedding(payload);
   if (summary === null) return <p>No numbers came back.</p>;
@@ -26,7 +27,6 @@ export function EmbeddingResultPanel({ payload }: { payload: unknown }) {
 
   return (
     <section className="grid gap-3">
-      <h2>Embedding</h2>
       <p>Apps compare these numbers to find similar text or to search documents.</p>
       <dl className="grid gap-2">
         <div><dt>Model</dt><dd>{summary.model ?? "Not reported"}</dd></div>

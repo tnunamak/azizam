@@ -17,7 +17,8 @@ afterEach(() => {
 describe("EmbeddingResultPanel", () => {
   it("renders the explanation, three facts and eight-number preview with four more", () => {
     const { container } = render(<EmbeddingResultPanel payload={payload} />);
-    expect(screen.getByRole("heading", { name: "Embedding" })).toBeTruthy();
+    // The Try result card carries the heading; the panel adds none of its own.
+    expect(screen.queryByRole("heading")).toBeNull();
     expect(screen.getByText("Apps compare these numbers to find similar text or to search documents.")).toBeTruthy();
     expect([...container.querySelectorAll("dt")].map(node => node.textContent)).toEqual(["Model", "Inputs", "Numbers per input"]);
     expect([...container.querySelectorAll("dd")].map(node => node.textContent)).toEqual(["example-model", "2", "12"]);
@@ -55,16 +56,14 @@ describe("EmbeddingResultPanel", () => {
 
   it("downloads exact JSON in a Blob and removes the anchor before delayed URL revocation", async () => {
     vi.useFakeTimers();
-    const createObjectURL = vi.fn((_blob: Blob | MediaSource) => "blob:embedding-test");
+    const createObjectURL = vi.fn((blob: Blob | MediaSource) => (blob ? "blob:embedding-test" : ""));
     const revokeObjectURL = vi.fn();
     const NativeURL = URL;
     vi.stubGlobal("URL", class extends NativeURL {
       static createObjectURL = createObjectURL;
       static revokeObjectURL = revokeObjectURL;
     });
-    let anchor: HTMLAnchorElement | undefined;
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
-      anchor = this;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       expect(this.isConnected).toBe(true);
       expect(this.download).toBe("embedding.json");
       expect(this.getAttribute("href")).toBe("blob:embedding-test");
@@ -75,8 +74,9 @@ describe("EmbeddingResultPanel", () => {
     const blob = createObjectURL.mock.calls[0]?.[0] as unknown as Blob;
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.type).toBe("application/json");
-    expect(anchor).toBeDefined();
-    expect(anchor!.isConnected).toBe(false);
+    expect(click).toHaveBeenCalledTimes(1);
+    const anchor = click.mock.contexts[0] as HTMLAnchorElement;
+    expect(anchor.isConnected).toBe(false);
     expect(revokeObjectURL).not.toHaveBeenCalled();
     vi.runAllTimers();
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
