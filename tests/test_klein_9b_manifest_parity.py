@@ -88,3 +88,18 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                     ("model", "flux2-klein-edit"), ("prompt", "make it blue"),
                     ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255))))])
                 await self.submitted(proxy.proxy_graph_image_edit_request, request, with_manifest=with_manifest)
+
+    async def test_closed_selected_inpaint_is_refused_when_manifest_lookup_misses(self):
+        from dataclasses import replace
+
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "image.edit.qwen-image-2.1-inpaint"
+        entry = replace(snapshot.get(workflow_id), state="disabled")
+        snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
+        request = _MultipartRequest([
+            ("model", "qwen-image-2.1-edit"), ("prompt", "make it blue"),
+            ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))),
+            ("mask", _MultipartUpload("mask.png", _png_bytes((1, 2, 3, 0))))])
+        with patch.object(type(provider), "current", lambda self: snapshot), patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider):
+            await self.submitted(proxy.proxy_graph_image_edit_request, request, with_manifest=False)
