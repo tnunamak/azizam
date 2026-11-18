@@ -246,9 +246,18 @@ def test_imported_tables_are_read_only():
 
 
 def test_builders_do_not_reload_rows(monkeypatch):
-    def unexpected_read(*args, **kwargs):
-        raise AssertionError("a capability builder re-read the rows file")
-    monkeypatch.setattr(Path, "read_text", unexpected_read)
+    # Guard only the two row files. Other package data (the engine protocol registry) sits
+    # behind its own caches, which other tests may clear, so it can be read here legitimately.
+    rows_files = {ROWS.resolve(), ROWS.with_name("operations.yml").resolve()}
+    real_read_text = Path.read_text
+
+    def guarded_read(path, *args, **kwargs):
+        if Path(path).resolve() in rows_files:
+            raise AssertionError("a capability builder re-read the rows file")
+        return real_read_text(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", guarded_read)
+    with pytest.raises(AssertionError, match="re-read the rows file"):
+        local.load_local_capability_rows()
     assert len(local.build_alias_capabilities({
         "chat": {"stable": [{"alias": "chat-default", "resolves_to": "model"}]},
     })) == 1
