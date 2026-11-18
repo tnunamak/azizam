@@ -524,7 +524,9 @@ class NodeGraphAdapter:
         """Wait until the host has room for the models ``payload`` makes the engine load. Raises ``HostMemoryBusy`` when
         it has not in time. Call it before any submit marker is written: a refusal here sent nothing."""
         prompt = payload.get("prompt") if isinstance(payload, Mapping) else None
-        await self.admission.admit(prompt if isinstance(prompt, Mapping) else {}, ask)
+        if self._admission is None and not self.admission.policy.configured:
+            return None
+        return await self.admission.admit(prompt if isinstance(prompt, Mapping) else {}, ask)
 
     async def admit(self, conn: Connection, op: str, request: CanonicalRequest,
                     ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> None:
@@ -532,7 +534,7 @@ class NodeGraphAdapter:
         if self._admission is None and not self.admission.policy.configured:
             return
         payload = request.body if op == GRAPH_SUBMIT else self._workflow_payload(op, request)
-        await self.admit_prompt(payload if isinstance(payload, Mapping) else {}, ask)
+        return await self.admit_prompt(payload if isinstance(payload, Mapping) else {}, ask)
 
     def embed_workflow_with(self, derive_ui: Callable[[Mapping[str, Any]], dict | None]) -> None:
         """Set the source of the UI-format graph the outputs of this adapter embed (the adapter was built without one)."""

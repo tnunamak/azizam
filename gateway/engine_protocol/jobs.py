@@ -191,15 +191,15 @@ async def _commit_authorized_bundle(runtime, job_id, bundle, **kwargs):
     return _commit_bundle(runtime, job_id, bundle, **kwargs)
 
 
-async def run(runtime, op, body, *, job_id, follow_events: bool = False):
+async def run(runtime, op, body, *, job_id, follow_events: bool = False, caller=None):
     bound = getattr(runtime, '_transport', None)
     if getattr(runtime, '_remote_capability', None) is not None:
         async with bound.operation():
-            return await _run(runtime, op, body, job_id=job_id, follow_events=follow_events)
-    return await _run(runtime, op, body, job_id=job_id, follow_events=follow_events)
+            return await _run(runtime, op, body, job_id=job_id, follow_events=follow_events, caller=caller)
+    return await _run(runtime, op, body, job_id=job_id, follow_events=follow_events, caller=caller)
 
 
-async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
+async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller=None):
     require_egress = getattr(runtime, 'require_egress', None)
     if require_egress is not None:
         require_egress()
@@ -213,111 +213,126 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False):
     interval_s, max_wait_s = runtime.poll_timing(op)
     record_lifecycle = getattr(runtime, 'record_lifecycle', True)
     metadata = (current or {}).get('metadata') or {}
-    request = None
-    saved = metadata.get('protocol_job')
-    if saved:
-        ref = JobRef(op, saved)
-    else:
-        if metadata.get('protocol_submitting'):
-            # Submit is not automatically retryable after an ambiguous reply.
-            raise ProtocolError('Submission was interrupted before its job id was saved. Inspect the upstream before retrying.',
-                                code='submission_unknown')
-        request = runtime.request(op, body)
-        # Local checks run before the marker: a request the gateway refuses to send leaves no sign it was sent.
-        validate = getattr(adapter, 'validate', None)
-        if validate is not None:
-            validate(conn, op, request)
-        admit = getattr(adapter, 'admit', None)
-        if admit is not None:
-            # The host must have room for the models first. A refusal here sent nothing, so it leaves no marker.
-            await admit(conn, op, request, host_memory_admission.Ask(bounded=False, on_wait=lambda state: media_jobs.append_event(
-                job_id, 'attempt', host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)))
-        if record_lifecycle:
-            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
-                                     metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)
-        try:
-            outcome = await adapter.start(conn, op, request) if v2 else await adapter.submit(conn, op, request)
-        except TransportFailure as exc:
-            # The engine may have started the job and its reply was lost: the marker stays, and no later run resubmits.
-            raise ProtocolError('The engine did not answer the submission, so it may have started the job. Inspect the upstream before retrying.',
-                                code='submission_unknown') from exc
-        except UpstreamError as exc:
-            if 400 <= exc.status < 500:
-                # A 4xx refusal is definite: the engine did not start the job, so the marker is cleared. A 5xx keeps it.
-                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
-                                         metadata_patch={'protocol_submitting': False}, path=media_jobs.DB_PATH)
-            raise
-        if isinstance(outcome, Completed):
-            # The whole answer is in hand. It is staged and committed before the marker is cleared; a crash before the
-            # commit leaves the marker, which a restart reads as submission_unknown (D3).
-            return await _commit_authorized_bundle(runtime, job_id, outcome.bundle)
-        ref = _job_ref(outcome, v2)
-        if record_lifecycle:
-            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
-                                     metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
-    progress = _Progress(job_id, _saved_state(metadata.get('protocol_state')))
-    wake = asyncio.Event()
-    follower_stopped = asyncio.Event()
-    follower = asyncio.ensure_future(_follow(adapter, conn, ref, progress, wake, follower_stopped)) if follow_events else None
-    last_error = None
+    lease = None
+    succeeded = False
+
+    def cancelled():
+        job = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH) or {}
+        return bool((job.get('metadata') or {}).get('cancel_requested_at'))
+
     try:
-        async with asyncio.timeout(max_wait_s):
-            while True:
-                current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH) or {}
-                if (current.get('metadata') or {}).get('cancel_requested_at'):
-                    raise _PersistedCancel()
-                try:
-                    status = await adapter.poll(conn, ref)
-                except (TransportFailure, UpstreamError) as exc:
-                    if not retryable_poll_failure(exc):
-                        raise
-                    last_error = str(exc)
-                else:
-                    if record_lifecycle:
-                        progress.observe(status.state)
-                    if status.state == JobState.succeeded:
-                        results = getattr(adapter, 'results', None) if v2 else None
-                        if results is None:
-                            return await adapter.fetch_assets(conn, ref, status)
-                        # After a restart no request was built yet: build it now, so the pin is read and checked again.
-                        request = request if request is not None else runtime.request(op, body)
-                        bundle = await results(conn, ref, status, request, _result_context(runtime))
-                        return await _commit_authorized_bundle(runtime, job_id, bundle, clear_marker=False)
-                    if status.state in (JobState.failed, JobState.cancelled):
-                        # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
-                        raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
-                await _pause(wake, interval_s)
-    except _PersistedCancel:
-        # Outside the wait budget's block, so a slow or stubborn upstream stop gets one bounded attempt, not two.
-        cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
-        raise media_jobs.CancellationPending('' if cleaned else _CLEANUP_UNKNOWN) from None
-    except TimeoutError:
-        cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
-        detail = 'The upstream job exceeded its wait limit.'
-        if not cleaned:
-            detail += f' {_CLEANUP_UNKNOWN}'
-        raise BudgetExceeded('max_wait_s', detail + (f' Last poll failure: {last_error}' if last_error else '')) from None
-    except asyncio.CancelledError:
-        # A disconnected caller gets a bounded cleanup attempt, never an assertion that upstream stopped.
-        try:
-            cleaned = await asyncio.shield(_cancel_with_deadline(adapter, conn, ref, max_wait_s))
-        except asyncio.CancelledError as exc:
-            raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from exc
-        if not cleaned:
-            raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from None
-        raise
-    finally:
-        follower_stopped.set()
-        if follower is not None:
-            follower.cancel()
+        request = None
+        saved = metadata.get('protocol_job')
+        if saved:
+            ref = JobRef(op, saved)
+        else:
+            if metadata.get('protocol_submitting'):
+                # Submit is not automatically retryable after an ambiguous reply.
+                raise ProtocolError('Submission was interrupted before its job id was saved. Inspect the upstream before retrying.',
+                                    code='submission_unknown')
+            request = runtime.request(op, body)
+            # Local checks run before the marker: a request the gateway refuses to send leaves no sign it was sent.
+            validate = getattr(adapter, 'validate', None)
+            if validate is not None:
+                validate(conn, op, request)
+            admit = getattr(adapter, 'admit', None)
+            if admit is not None:
+                # The host must have room for the models first. A refusal here sent nothing, so it leaves no marker.
+                lease = await admit(conn, op, request, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(caller), bounded=False, cancelled=cancelled, on_wait=lambda state: media_jobs.append_event(
+                    job_id, 'attempt', host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)))
+            if cancelled():
+                raise host_memory_admission.HostMemoryCancelled()
+            if record_lifecycle:
+                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                                         metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)
             try:
-                # wait_for would wait for a resistant iterator to acknowledge
-                # cancellation. wait bounds the join without that acknowledgement.
-                await asyncio.wait({follower}, timeout=max_wait_s)
-            finally:
-                if follower.done():
-                    _consume_cancel_result(follower)
-                else:
-                    # Also observe completion if a second caller cancel interrupts
-                    # this bounded join. Late events are fenced by follower_stopped.
-                    follower.add_done_callback(_consume_cancel_result)
+                outcome = await adapter.start(conn, op, request) if v2 else await adapter.submit(conn, op, request)
+            except TransportFailure as exc:
+                # The engine may have started the job and its reply was lost: the marker stays, and no later run resubmits.
+                raise ProtocolError('The engine did not answer the submission, so it may have started the job. Inspect the upstream before retrying.',
+                                    code='submission_unknown') from exc
+            except UpstreamError as exc:
+                if 400 <= exc.status < 500:
+                    # A 4xx refusal is definite: the engine did not start the job, so the marker is cleared. A 5xx keeps it.
+                    media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                                             metadata_patch={'protocol_submitting': False}, path=media_jobs.DB_PATH)
+                raise
+            if isinstance(outcome, Completed):
+                succeeded = True
+                # The whole answer is in hand. It is staged and committed before the marker is cleared; a crash before the
+                # commit leaves the marker, which a restart reads as submission_unknown (D3).
+                return await _commit_authorized_bundle(runtime, job_id, outcome.bundle)
+            ref = _job_ref(outcome, v2)
+            if record_lifecycle:
+                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                                         metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
+        progress = _Progress(job_id, _saved_state(metadata.get('protocol_state')))
+        wake = asyncio.Event()
+        follower_stopped = asyncio.Event()
+        follower = asyncio.ensure_future(_follow(adapter, conn, ref, progress, wake, follower_stopped)) if follow_events else None
+        last_error = None
+        try:
+            async with asyncio.timeout(max_wait_s):
+                while True:
+                    current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH) or {}
+                    if (current.get('metadata') or {}).get('cancel_requested_at'):
+                        raise _PersistedCancel()
+                    try:
+                        status = await adapter.poll(conn, ref)
+                    except (TransportFailure, UpstreamError) as exc:
+                        if not retryable_poll_failure(exc):
+                            raise
+                        last_error = str(exc)
+                    else:
+                        if record_lifecycle:
+                            progress.observe(status.state)
+                        if status.state == JobState.succeeded:
+                            succeeded = True
+                            results = getattr(adapter, 'results', None) if v2 else None
+                            if results is None:
+                                return await adapter.fetch_assets(conn, ref, status)
+                            # After a restart no request was built yet: build it now, so the pin is read and checked again.
+                            request = request if request is not None else runtime.request(op, body)
+                            bundle = await results(conn, ref, status, request, _result_context(runtime))
+                            return await _commit_authorized_bundle(runtime, job_id, bundle, clear_marker=False)
+                        if status.state in (JobState.failed, JobState.cancelled):
+                            # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
+                            raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
+                    await _pause(wake, interval_s)
+        except _PersistedCancel:
+            # Outside the wait budget's block, so a slow or stubborn upstream stop gets one bounded attempt, not two.
+            cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+            raise media_jobs.CancellationPending('' if cleaned else _CLEANUP_UNKNOWN) from None
+        except TimeoutError:
+            cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+            detail = 'The upstream job exceeded its wait limit.'
+            if not cleaned:
+                detail += f' {_CLEANUP_UNKNOWN}'
+            raise BudgetExceeded('max_wait_s', detail + (f' Last poll failure: {last_error}' if last_error else '')) from None
+        except asyncio.CancelledError:
+            # A disconnected caller gets a bounded cleanup attempt, never an assertion that upstream stopped.
+            try:
+                cleaned = await asyncio.shield(_cancel_with_deadline(adapter, conn, ref, max_wait_s))
+            except asyncio.CancelledError as exc:
+                raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from exc
+            if not cleaned:
+                raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from None
+            raise
+        finally:
+            follower_stopped.set()
+            if follower is not None:
+                follower.cancel()
+                try:
+                    # wait_for would wait for a resistant iterator to acknowledge
+                    # cancellation. wait bounds the join without that acknowledgement.
+                    await asyncio.wait({follower}, timeout=max_wait_s)
+                finally:
+                    if follower.done():
+                        _consume_cancel_result(follower)
+                    else:
+                        # Also observe completion if a second caller cancel interrupts
+                        # this bounded join. Late events are fenced by follower_stopped.
+                        follower.add_done_callback(_consume_cancel_result)
+    finally:
+        if lease is not None:
+            lease.finish(succeeded)

@@ -8581,15 +8581,17 @@ async def _graph_run_round(
     graph = _graph(client, capability)
     engine = adapter.label
     submit_payload = _build_graph_submit_payload(workflow, capability)
+    lease = None
     try:
         # A synchronous caller waits a bounded time for the host's memory, then gets the retryable busy answer.
         admit = getattr(adapter, "admit_prompt", None)
         if admit is not None:
-            await admit(submit_payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(
+            lease = await admit(submit_payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(
                 getattr(getattr(request, "state", None), "caller", None))))
     except host_memory_admission.HostMemoryBusy:
         await _finalize_probe()
         return host_memory_admission.busy_response(), []
+    succeeded = False
     try:
         result = await graph_round.run_round(
             adapter, graph, submit_payload, headers,
@@ -8600,9 +8602,12 @@ async def _graph_run_round(
             limits=result_bundle.limits_from_config(runtime().config),
             cadence=adapter.poll_for(intent or _image_admission_intent("images.generate")),
             say=lambda text: print(f"[proxy] {text}", flush=True))
+        succeeded = True
     except graph_round.RoundFailure as failed:
         return _round_failure_response(failed, adapter, graph), []
     finally:
+        if lease is not None:
+            lease.finish(succeeded)
         await _finalize_probe()
     # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6 limits.
     images = _SelectedImages(raw for files in result.files.values() for raw in files)
@@ -27514,7 +27519,7 @@ class _WorkflowRunPort:
         body = {**dict(ctx.inputs), **dict(ctx.generated)}
         if ctx.media:
             body.update(await self._stage_media(ctx, adapter, connection))
-        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id, caller=ctx.caller)
 
     async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
         """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with

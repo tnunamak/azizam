@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 
-from gateway import admin_store, client_errors
+from gateway import admin_store, client_errors, media_jobs
 from gateway.strict_yaml import safe_load_strict
 
 LOG = logging.getLogger("azizam.host_memory")
@@ -220,7 +220,7 @@ class Ask:
 
 
 
-class HostMemoryCancelled(Exception):
+class HostMemoryCancelled(media_jobs.CancellationPending):
     """The job was cancelled before its prompt was submitted."""
 
 
