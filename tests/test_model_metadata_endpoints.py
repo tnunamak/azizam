@@ -1147,7 +1147,7 @@ class MemberCatalogRowTests(unittest.TestCase):
 
 
 class SnapshotFixtureTests(unittest.TestCase):
-    """The 71-entry live snapshot: every entry is classifiable and keeps its fields."""
+    """The 67-entry model snapshot: every entry is classifiable and keeps its fields."""
 
     def test_every_snapshot_entry_gets_a_type_and_keeps_existing_fields(self) -> None:
         entries = copy.deepcopy(SNAPSHOT["data"])
@@ -1156,7 +1156,7 @@ class SnapshotFixtureTests(unittest.TestCase):
             **{e["id"]: mm.ORIGIN_DECISION for e in entries if isinstance(e.get("capabilities"), dict)},
         }
         mm.annotate_entries(entries, proxy._model_metadata_sources(origins))
-        self.assertEqual(len(entries), 71)
+        self.assertEqual(len(entries), 67)
         for before, after in zip(SNAPSHOT["data"], entries):
             with self.subTest(model=before["id"]):
                 self.assertIn(after.get("type"), mm.MODEL_TYPES)

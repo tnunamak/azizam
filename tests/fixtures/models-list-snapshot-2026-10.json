@@ -121,30 +121,6 @@
    "azizam_workflow_id": "image.generate.krea2-turbo"
   },
   {
-   "created": 1778933169,
-   "description": "Gateway-composed seamless texture generation. The proxy generates with Flux2, circularly offsets the image, masks the centered seam cross, repairs it with the Flux2 inpaint workflow, then offsets the result back.",
-   "id": "flux2-klein-4b-seamless-tile",
-   "object": "model",
-   "owned_by": "azizam",
-   "azizam_backend": "gateway",
-   "azizam_intent": "image.generate",
-   "azizam_manifest_version": "0.1.0",
-   "azizam_workflow": true,
-   "azizam_workflow_id": "image.generate.flux2-klein-4b-seamless-tile"
-  },
-  {
-   "created": 1778702346,
-   "description": "Portable image generation contract bound to the FLUX.2 Klein 4B txt2img ComfyUI workflow.",
-   "id": "flux2-klein-4b",
-   "object": "model",
-   "owned_by": "azizam",
-   "azizam_backend": "comfyui",
-   "azizam_intent": "image.generate",
-   "azizam_manifest_version": "0.1.0",
-   "azizam_workflow": true,
-   "azizam_workflow_id": "image.generate.flux2-klein-4b"
-  },
-  {
    "created": 1791010009,
    "description": "Local anime T2I workflow bound to Anima Turbo v1.1 (2B). Fast (about 3.5 s warm at 1024x1024 on a 3090). Accepts booru tags plus prose. CFG fixed at 1.0. Only depict adults.",
    "id": "anima-turbo",
@@ -194,7 +170,7 @@
   },
   {
    "created": 1790965962,
-   "description": "Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 text encoder + madebyollin texture-fix VAE. Community consensus (Sep 2026, r/StableDiffusion) ranks this the best local editor available, ahead of Flux.2 Klein 9B, especially for edits needing world knowledge. Output resolution tracks the input image. License: Qwen research license (disputed scope on Reddit re: output rights) -- flagged for legal review before commercial-use reliance per research-image.md.",
+   "description": "Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 text encoder + madebyollin texture-fix VAE. Community consensus (Sep 2026, r/StableDiffusion) ranks this the best local editor available, especially for edits needing world knowledge. Output resolution tracks the input image. License: Qwen research license (disputed scope on Reddit re: output rights) -- flagged for legal review before commercial-use reliance per research-image.md.",
    "id": "qwen-image-2.1-edit",
    "object": "model",
    "owned_by": "azizam",
@@ -219,30 +195,6 @@
    },
    "azizam_workflow": true,
    "azizam_workflow_id": "image.edit.image-identity"
-  },
-  {
-   "created": 1778901193,
-   "description": "Mask-bound FLUX.2 Klein edit workflow. The OpenAI image edit mask is normalized by the gateway and applied inside ComfyUI with SetLatentNoiseMask.",
-   "id": "flux2-klein-4b-inpaint",
-   "object": "model",
-   "owned_by": "azizam",
-   "azizam_backend": "comfyui",
-   "azizam_intent": "image.edit",
-   "azizam_manifest_version": "0.1.1",
-   "azizam_workflow": true,
-   "azizam_workflow_id": "image.edit.flux2-klein-4b-inpaint"
-  },
-  {
-   "created": 1778884916,
-   "description": "Portable image edit contract bound to the existing ComfyUI workflow.",
-   "id": "flux2-klein-4b-edit",
-   "object": "model",
-   "owned_by": "azizam",
-   "azizam_backend": "comfyui",
-   "azizam_intent": "image.edit",
-   "azizam_manifest_version": "0.3.0",
-   "azizam_workflow": true,
-   "azizam_workflow_id": "image.edit.flux2-klein-4b"
   },
   {
    "created": 1790968047,
@@ -463,8 +415,8 @@
    "owned_by": "azizam",
    "azizam_alias": true,
    "azizam_resolves_to": {
-    "image_edits": "flux2-klein-4b-edit",
-    "images": "flux2-klein-4b"
+    "image_edits": "fibo-2-edit-turbo",
+    "images": "moss-image-fast"
    }
   },
   {
@@ -504,7 +456,7 @@
    "owned_by": "azizam",
    "azizam_alias": true,
    "azizam_resolves_to": {
-    "image_edits": "flux2-klein-4b-edit"
+    "image_edits": "fibo-2-edit-turbo"
    }
   },
   {
