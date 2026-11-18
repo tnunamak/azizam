@@ -398,12 +398,21 @@ export function CommandPalette({
                       (d.group === "Gateway" &&
                         !["People", "Activity"].includes(d.title))),
                 )
-                .map((d) => {
-                  const Icon = icons[d.title];
+                // A destination with several views (Discover) lists each view,
+                // so "Workflows" still jumps straight to its page.
+                .flatMap((d) =>
+                  d.views.map((view) => ({ ...view, destination: d.title })),
+                )
+                .map((view) => {
+                  const Icon = icons[view.title];
                   return (
-                    <CommandItem key={d.href} onSelect={() => go(d.href)}>
+                    <CommandItem
+                      key={view.href}
+                      keywords={[view.destination]}
+                      onSelect={() => go(view.href)}
+                    >
                       <Icon />
-                      {d.title}
+                      {view.title}
                     </CommandItem>
                   );
                 })}

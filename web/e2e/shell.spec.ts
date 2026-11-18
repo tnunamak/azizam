@@ -17,8 +17,9 @@ const ownerPages = [
 ];
 
 // DESIGN.md "Shell": You is ordered by how often a household member needs
-// each place (Home, Library, Try first); Workflows stays right after Models.
-test("You navigation keeps Workflows right after Models", async ({ page }) => {
+// each place (Home, Library, Try first); Discover holds Models and Workflows
+// as two peer views.
+test("You navigation has one Discover entry for Models and Workflows", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
@@ -29,19 +30,24 @@ test("You navigation keeps Workflows right after Models", async ({ page }) => {
     "History",
     "Apps & keys",
     "Connect",
-    "Models",
-    "Workflows",
+    "Discover",
     "Usage",
     "Status",
     ...ownerPages,
   ]);
-  await navigation
+  const discover = navigation.getByRole("link", { name: "Discover", exact: true });
+  await discover.click();
+  await expect(page).toHaveURL(/\/models\/?$/);
+  await expect(discover).toHaveAttribute("aria-current", "page");
+  await page
+    .getByRole("navigation", { name: "Discovery" })
     .getByRole("link", { name: "Workflows", exact: true })
     .click();
   await expect(page).toHaveURL(/\/workflows\/?$/);
   await expect(
     page.getByRole("heading", { level: 1, name: /^Workflows( \d+)?$/ }),
   ).toBeVisible();
+  await expect(discover).toHaveAttribute("aria-current", "page");
   await page.keyboard.press("Control+k");
   await page.getByRole("combobox", { name: "Go to" }).fill("Workflows");
   await expect(
@@ -230,7 +236,7 @@ test("theme toggle persists after navigation and reload", async ({ page }) => {
   await expect(page.locator("html")).toHaveClass(/light/);
   await page.getByRole("button", { name: "Switch to dark" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await page.getByRole("link", { name: "Models", exact: true }).first().click();
+  await page.getByRole("link", { name: "Discover", exact: true }).first().click();
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/dark/);
 });
@@ -343,7 +349,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   await page.getByRole("button", { name: "More", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
   await expect(
-    sheet.getByRole("link", { name: "Workflows", exact: true }),
+    sheet.getByRole("link", { name: "Discover", exact: true }),
   ).toBeVisible();
   await expect(
     sheet.getByRole("link", { name: "Try", exact: true }),

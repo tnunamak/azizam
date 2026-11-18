@@ -35,10 +35,13 @@ export function canonicalDestinationPath(path: string): string {
   return normalized === "" ? "/" : normalized;
 }
 
+type View = { title: string; href: string };
 type Destination = {
   title: string;
   href: string;
   answer: string;
+  /** Pages that are views of this destination; it is current on each. */
+  views?: readonly View[];
 };
 
 // Status is a member page, but it describes the gateway, so it sits in the
@@ -80,14 +83,15 @@ const destinationList = [
     answer: "How do I use this gateway from another app?",
   },
   {
-    title: "Models",
+    // One destination with two peer views (walkthrough B5); the pages switch
+    // between them with their own tabs.
+    title: "Discover",
     href: "/models",
-    answer: "What can I use, and which one should I pick?",
-  },
-  {
-    title: "Workflows",
-    href: "/workflows",
-    answer: "What can I create with a named workflow?",
+    answer: "Which models and workflows can I use?",
+    views: [
+      { title: "Models", href: "/models" },
+      { title: "Workflows", href: "/workflows" },
+    ],
   },
   {
     title: "Usage",
@@ -133,5 +137,19 @@ const destinationList = [
 
 export const destinations = destinationList.map((destination) => ({
   ...destination,
+  views: ("views" in destination
+    ? destination.views
+    : [{ title: destination.title, href: destination.href }]) as readonly View[],
   group: navGroup(destination.href),
 }));
+
+/** Whether a page path is one of the destination's views. */
+export function isCurrentDestination(
+  destination: { views: readonly View[] },
+  path: string,
+): boolean {
+  const current = canonicalDestinationPath(path);
+  return destination.views.some(
+    (view) => canonicalDestinationPath(view.href) === current,
+  );
+}
