@@ -2355,6 +2355,16 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
                                 (candidate.intent, candidate.backend, candidate.model, candidate.workflow)
                                 for candidate in seen) for cap in result))
 
+    def test_capability_projection_check_rejects_a_truncated_listing(self) -> None:
+        original = proxy._gateway_capabilities_provider
+
+        async def truncated(*args, **kwargs):
+            return (await original(*args, **kwargs))[:1]
+
+        with patch.object(proxy, "_gateway_capabilities_provider", truncated):
+            with self.assertRaises(AssertionError):
+                self.test_provider_still_policy_projects_capabilities()
+
 
 class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
     """A client must never be told it may use what its profile denies."""

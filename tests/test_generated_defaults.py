@@ -797,6 +797,16 @@ def submit_without_checking(route: str, body: Mapping[str, Any]) -> tuple[Any, l
     return response, scheduled
 
 
+
+def test_closed_image_job_is_refused_when_manifest_lookup_misses(jobs_db):
+    with patch.object(proxy, "_find_image_manifest", return_value=None):
+        response, scheduled = submit_without_checking("image", {"model": "flux2-klein", "prompt": "a lighthouse"})
+    assert response.status_code == 409
+    assert json.loads(response.body)["error"]["code"] == "workflow_disabled"
+    assert scheduled == []
+    assert job_rows(jobs_db) == []
+
+
 ROUTE_BODIES = {"image": IMAGE_BODY, "audio": AUDIO_BODY}
 
 
