@@ -10,6 +10,7 @@ export interface WorkflowInput {
   minimum?: number;
   maximum?: number;
   enum?: unknown[];
+  choice_labels?: Record<string, string>;
   required?: boolean;
   accepted: boolean;
   description?: string;
@@ -91,7 +92,8 @@ function input(value: unknown): boolean {
     optionalString(value.description) && optionalString(value.media_type) &&
     (value.accepted_media_types == null || strings(value.accepted_media_types)) &&
     optionalNumber(value.minimum) && optionalNumber(value.maximum) &&
-    (value.enum == null || Array.isArray(value.enum));
+    (value.enum == null || Array.isArray(value.enum)) &&
+    (value.choice_labels == null || (record(value.choice_labels) && Object.values(value.choice_labels).every(string)));
 }
 function output(value: unknown): boolean {
   return record(value) && string(value.name) && optionalString(value.label) &&
