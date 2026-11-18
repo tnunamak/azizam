@@ -16,7 +16,6 @@ import socket
 import ssl
 import statistics
 import inspect
-import math
 import re
 from datetime import date, datetime
 from pathlib import Path
@@ -676,8 +675,7 @@ def _catalog_fact_valid(key: str, value: Any) -> bool:
             return parsed.scheme in ("http", "https") and bool(parsed.hostname) and parsed.port != 0
         except ValueError:
             return False
-    if type(value) in (int, float):
-        return math.isfinite(value)
+    # Dates are ISO strings only: a manifest author writes them by hand, and a bare number carries no unit.
     if not isinstance(value, str):
         return False
     try:

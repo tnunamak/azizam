@@ -90,9 +90,9 @@ class ModelsCatalogSeedLabelsTests(unittest.TestCase):
 class ModelsCatalogBuildTests(unittest.TestCase):
     def test_catalog_declared_dates_and_source(self) -> None:
         facts = {"released_at": "2024-01-02", "added_at": "2024-03-04T12:30+01:00",
-                 "updated_at": 1710000000, "source_url": "https://example.org/model"}
+                 "updated_at": "2024-03-09T16:00:00Z", "source_url": "https://example.org/model"}
         entries = [{"id": "declared", **facts}, {"id": "empty"},
-                   {"id": "invalid", "released_at": "2024-01-02T12:00:00",
+                   {"id": "invalid", "released_at": "2024-01-02T12:00:00", "updated_at": 1710000000,
                     "source_url": "javascript:alert(1)"}]
         catalog = build_models_catalog(
             capabilities=[Capability(intent="text.generate", model=e["id"], backend="local") for e in entries],

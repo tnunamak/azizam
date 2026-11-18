@@ -20,11 +20,8 @@ describe("modelDates", () => {
       { label: "Updated", iso: "2026-03-03T00:00:00.000Z" },
     ]);
   });
-  it("parses epoch seconds and milliseconds to the same ISO day", () => {
-    expect(modelDates({ released_at: 1704067200, added_at: 1704067200000 })).toEqual([
-      { label: "Released", iso: "2024-01-01T00:00:00.000Z" },
-      { label: "Added here", iso: "2024-01-01T00:00:00.000Z" },
-    ]);
+  it("ignores numbers, which carry no unit", () => {
+    expect(modelDates({ released_at: 1704067200, added_at: 1704067200000, updated_at: 0 })).toEqual([]);
   });
   it("skips missing fields and non-date values without coercion", () => {
     expect(modelDates({})).toEqual([]);
@@ -32,10 +29,9 @@ describe("modelDates", () => {
       expect(modelDates({ released_at: value })).toEqual([]);
     }
   });
-  it("normalizes explicit ISO offsets and preserves epoch zero", () => {
-    expect(modelDates({ released_at: "2024-01-01T01:00:00+01:00", added_at: 0 })).toEqual([
+  it("normalizes explicit ISO offsets", () => {
+    expect(modelDates({ released_at: "2024-01-01T01:00:00+01:00" })).toEqual([
       { label: "Released", iso: "2024-01-01T00:00:00.000Z" },
-      { label: "Added here", iso: "1970-01-01T00:00:00.000Z" },
     ]);
   });
   it("accepts a typed CatalogRow without new API fields", () => {
