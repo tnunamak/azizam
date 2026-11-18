@@ -529,7 +529,7 @@ class NodeGraphAdapter:
     async def admit(self, conn: Connection, op: str, request: CanonicalRequest,
                     ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> None:
         """``admit_prompt`` for the prompt ``request`` is about to send."""
-        if not self.admission.policy.model_roots:
+        if self._admission is None and not self.admission.policy.configured:
             return
         payload = request.body if op == GRAPH_SUBMIT else self._workflow_payload(op, request)
         await self.admit_prompt(payload if isinstance(payload, Mapping) else {}, ask)

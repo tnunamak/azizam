@@ -58,6 +58,7 @@ class HostMemoryPolicy:
     retry_after_s: int = 30
     model_extensions: tuple[str, ...] = (".safetensors",)
     model_roots: tuple[str, ...] = ()
+    configured: bool = False
 
 
 def app_kind_of(auth_kind: str | None) -> str:
@@ -107,7 +108,7 @@ def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
         wait_s=float(env.get(ENV_WAIT) or document["wait_s"]), job_wait_s=float(document["job_wait_s"]),
         poll_s=float(document["poll_s"]), report_s=float(document["report_s"]), settle_s=float(document["settle_s"]),
         resident_ttl_s=float(document["resident_ttl_s"]), retry_after_s=int(document["retry_after_s"]),
-        model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots))
+        model_extensions=tuple(str(e).lower() for e in document["model_extensions"]), model_roots=tuple(roots), configured=bool(engine_dir or roots))
 
 
 # -- the owner's setting (admin.db) over the shipped defaults ------------------------------------------------------------
