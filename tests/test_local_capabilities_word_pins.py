@@ -194,8 +194,8 @@ def test_workflow_families_keep_default_backend_models_and_resource_tiers():
         for cap in caps
         if cap.intent in ("image.generate", "image.edit", "video.generate", "audio.generate")
     ] == [
-        ("image.generate", "comfyui", "flux2-klein-4b", "batch", True),
-        ("image.edit", "comfyui", "flux2-klein-4b-edit", "batch", True),
+        ("image.generate", "comfyui", "krea2-turbo", "batch", True),
+        ("image.edit", "comfyui", "qwen-image-2.1-edit", "batch", True),
         ("video.generate", "comfyui", "video-ltx-2.5-t2v", "expensive", True),
         ("video.generate", "comfyui", "video-ltx-2.5-i2v", "expensive", True),
         ("audio.generate", "comfyui", "ace-step-1.5-xl-turbo", "batch", True),
