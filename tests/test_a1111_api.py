@@ -40,7 +40,7 @@ KREA = _gen("krea", ["image"], {
     "prompt": {"type": "string"}, "width": {"type": "integer", "minimum": 64, "maximum": 2048},
     "height": {"type": "integer", "minimum": 64, "maximum": 2048}, "steps": {"type": "integer", "minimum": 1, "maximum": 20},
     "seed": {"type": "integer", "minimum": 0}})
-KLEIN = _gen("klein", ["image-fast"], {
+MOSS = _gen("moss", ["image-fast"], {
     "prompt": {"type": "string"}, "width": {"type": "integer", "minimum": 64, "maximum": 2048},
     "height": {"type": "integer", "minimum": 64, "maximum": 2048}, "steps": {"type": "integer", "minimum": 1, "maximum": 100},
     "guidance": {"type": "number", "minimum": 0, "maximum": 20}, "negative_prompt": {"type": "string"},
@@ -69,7 +69,7 @@ def env():
             return JSONResponse({"error": {"message": "Invalid API key."}}, status_code=401)
         return SimpleNamespace(owner="k1", identity=IDENTITY)
 
-    deps = A1111Deps(authenticate=authenticate, call=core.call, catalog=lambda: [KREA, KLEIN, TILE, EDIT],
+    deps = A1111Deps(authenticate=authenticate, call=core.call, catalog=lambda: [KREA, MOSS, TILE, EDIT],
                      aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
     app = FastAPI()
     a1111_api.register_a1111_routes(app, deps)
@@ -119,7 +119,7 @@ def test_options_reports_model_and_is_not_forge(env):
 
 def test_sd_models_lists_aliases_first_then_sync_image_workflows_only(env):
     models = env.client.get("/sdapi/v1/sd-models", headers=H).json()
-    assert [m["title"] for m in models] == ["image", "image-fast", "krea", "klein"]
+    assert [m["title"] for m in models] == ["image", "image-fast", "krea", "moss"]
     assert all({"title", "model_name", "hash", "filename"} <= set(m) for m in models)
 
 
@@ -180,7 +180,7 @@ def test_sd_models_does_not_refresh_catalog_between_titles(monkeypatch):
 
     def catalog():
         catalog_calls.append(True)
-        return [KREA, KLEIN] if len(catalog_calls) == 1 else []
+        return [KREA, MOSS] if len(catalog_calls) == 1 else []
 
     deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY), call=Core().call,
                      catalog=catalog, aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
@@ -188,13 +188,13 @@ def test_sd_models_does_not_refresh_catalog_between_titles(monkeypatch):
     a1111_api.register_a1111_routes(app, deps)
     response = TestClient(app).get("/sdapi/v1/sd-models")
     assert response.status_code == 200, response.text
-    assert [row["title"] for row in response.json()] == ["image", "image-fast", "krea", "klein"]
+    assert [row["title"] for row in response.json()] == ["image", "image-fast", "krea", "moss"]
     assert len(catalog_calls) == 1
 
 
 def test_set_model_is_remembered_per_key_and_validated(env):
-    assert env.client.post("/sdapi/v1/options", json={"sd_model_checkpoint": "klein"}, headers=H).status_code == 200
-    assert env.client.get("/sdapi/v1/options", headers=H).json()["sd_model_checkpoint"] == "klein"
+    assert env.client.post("/sdapi/v1/options", json={"sd_model_checkpoint": "moss"}, headers=H).status_code == 200
+    assert env.client.get("/sdapi/v1/options", headers=H).json()["sd_model_checkpoint"] == "moss"
     bad = env.client.post("/sdapi/v1/options", json={"sd_model_checkpoint": "sd15"}, headers=H)
     assert bad.status_code == 422 and "unknown model" in bad.json()["detail"][0]["msg"]
     other = env.client.post("/sdapi/v1/options", json={"samples_format": "jpg"}, headers=H)
@@ -328,8 +328,8 @@ def test_a_core_reply_without_inline_images_is_a_502(env):
 
 
 def test_model_field_and_override_pick_the_model_for_one_request(env):
-    env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "model": "klein"}, headers=H)
-    assert env.core.calls[0][2]["json"]["model"] == "klein"
+    env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "model": "moss"}, headers=H)
+    assert env.core.calls[0][2]["json"]["model"] == "moss"
     env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "override_settings": {"sd_model_checkpoint": "krea"}}, headers=H)
     assert env.core.calls[1][2]["json"]["model"] == "krea"
 
