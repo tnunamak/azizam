@@ -100,6 +100,25 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         assert private_payload is not None
         self.assertEqual(private_payload["body"]["prompt"], "private video prompt")
 
+    async def test_native_job_keeps_ids_for_selected_reference_and_chain_workflows(self) -> None:
+        cases = [
+            ({}, {"video.generate.ltx-2.5-t2v"}),
+            ({"input_reference": "data:image/png;base64,AA=="},
+             {"video.generate.ltx-2.5-t2v", "video.generate.ltx-2.5-i2v"}),
+            ({"seconds": 20}, {"video.generate.ltx-2.5-t2v", "video.generate.ltx-2.5-long"}),
+            ({"seconds": 20, "input_reference": "data:image/png;base64,AA=="},
+             {"video.generate.ltx-2.5-t2v", "video.generate.ltx-2.5-long"}),
+        ]
+        with patch.object(proxy, "_schedule_video_media_job", return_value=True), \
+                patch.object(proxy, "_video_job_envelope", return_value=None):
+            for controls, expected in cases:
+                with self.subTest(controls=controls):
+                    body = {"model": "video-ltx-2.5-t2v", "prompt": "a", **controls}
+                    response = await proxy._submit_video_media_job(request=_StubJsonRequest(body), body=body)
+                    self.assertEqual(response.status_code, 202, response.body)
+                    job = media_jobs.get(json.loads(response.body)["job_id"], audience="internal", path=self.db)
+                    self.assertEqual(set(job["metadata"]["accepted_workflow_ids"]), expected)
+
     async def test_direct_video_submit_uses_resource_admission(self) -> None:
         body = {
             "model": "ltx-2.3",
