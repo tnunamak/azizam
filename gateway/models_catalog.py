@@ -684,7 +684,7 @@ def _catalog_fact_valid(key: str, value: Any) -> bool:
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
             date.fromisoformat(value)
             return True
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})", value):
             return False
         return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
     except ValueError:

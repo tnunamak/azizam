@@ -89,7 +89,7 @@ class ModelsCatalogSeedLabelsTests(unittest.TestCase):
 
 class ModelsCatalogBuildTests(unittest.TestCase):
     def test_catalog_declared_dates_and_source(self) -> None:
-        facts = {"released_at": "2024-01-02", "added_at": "2024-03-04T12:30:00Z",
+        facts = {"released_at": "2024-01-02", "added_at": "2024-03-04T12:30+01:00",
                  "updated_at": 1710000000, "source_url": "https://example.org/model"}
         entries = [{"id": "declared", **facts}, {"id": "empty"},
                    {"id": "invalid", "released_at": "2024-01-02T12:00:00",
