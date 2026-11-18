@@ -125,8 +125,16 @@ function timeLabel(value: number | null): string | undefined {
   return `~${value.toFixed(value >= 10 ? 0 : 1)} s`;
 }
 
+function choiceName(input: WorkflowInput, value: unknown): string {
+  const name = input.choice_labels?.[String(value)];
+  return typeof name === "string" && name.length > 0 ? name : String(value);
+}
+
 function rangeLabel(input: WorkflowInput) {
-  if (input.enum?.length) return input.enum.map(String).join(", ");
+  if (input.enum?.length) return input.enum.map(value => {
+    const raw = String(value), name = choiceName(input, value);
+    return name === raw ? raw : `${name} (${raw})`;
+  }).join(", ");
   if (input.minimum != null && input.maximum != null) {
     return `${input.minimum} to ${input.maximum}`;
   }
@@ -135,19 +143,20 @@ function rangeLabel(input: WorkflowInput) {
   return "";
 }
 
-function valueLabel(value: unknown) {
+function valueLabel(value: unknown, input?: WorkflowInput) {
   if (value === undefined || value === null) return "";
   if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  const raw = String(value), name = input ? choiceName(input, value) : raw;
+  return name === raw ? raw : `${name} (${raw})`;
 }
 
 
-function plainValue(value: unknown): string {
+function plainValue(value: unknown, input?: WorkflowInput): string {
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+  return typeof value === "string" || typeof value === "number" ? (input ? choiceName(input, value) : String(value)) : "";
 }
 function plainRange(input: WorkflowInput): string {
-  return input.enum?.length ? input.enum.map(plainValue).filter(Boolean).join(", ") : rangeLabel(input);
+  return input.enum?.length ? input.enum.map(value => plainValue(value, input)).filter(Boolean).join(", ") : rangeLabel(input);
 }
 function acceptedFiles(input: WorkflowInput): string {
   const types = declaredMediaTypes(input);
@@ -596,13 +605,13 @@ function DetailSheet({
                             </p>
                           )}
                           <dl className="space-y-2 text-meta">
-                            {(owner ? input.default != null : plainValue(input.default) !== "") && (
+                            {(owner ? input.default != null : plainValue(input.default, input) !== "") && (
                               <div>
                                 <dt className="text-muted-foreground text-label">
                                   Default
                                 </dt>
                                 <dd className="break-words">
-                                  {owner ? valueLabel(input.default) : plainValue(input.default)}
+                                  {owner ? valueLabel(input.default, input) : plainValue(input.default, input)}
                                 </dd>
                               </div>
                             )}
@@ -650,7 +659,7 @@ function DetailSheet({
                               </TableCell>
                               <TableCell>{owner ? input.type : inputNoun(input)}</TableCell>
                               <TableCell className="max-w-48 break-words !whitespace-normal">
-                                {owner ? valueLabel(input.default) : plainValue(input.default)}
+                                {owner ? valueLabel(input.default, input) : plainValue(input.default, input)}
                               </TableCell>
                               <TableCell className="max-w-48 break-words !whitespace-normal">
                                 {owner ? rangeLabel(input) : plainRange(input)}

@@ -1755,6 +1755,28 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     expect(screen.getByRole("dialog")).not.toHaveTextContent("[object Object]");
   });
 
+  test.each([
+    ["member", "Automatic, sync, Return a job to check later", "Automatic"],
+    ["owner", "Automatic (auto), sync, Return a job to check later (async)", "Automatic (auto)"],
+  ])("G14 %s workflow choices show readable labels with role-appropriate values", async (role, range, defaultName) => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      inputs: [{ name: "mode", type: "string", accepted: true,
+        enum: ["auto", "sync", "async"], default: "auto",
+        choice_labels: { auto: "Automatic", async: "Return a job to check later" },
+      }],
+    })])));
+    gapMount(role === "owner" ? owner : undefined);
+    const sheet = await gapOpen(user);
+    await user.click(sheet.getByText(role === "owner" ? "Technical details" : "Input details", { exact: true }));
+    const table = within(sheet.getByLabelText("Scrollable inputs"));
+    expect(table.getByRole("cell", { name: range, exact: true })).toBeInTheDocument();
+    expect(table.getByRole("cell", { name: defaultName, exact: true })).toBeInTheDocument();
+    const summaries = within(sheet.getByRole("list", { name: "Input summaries" }));
+    expect(summaries.getByText(range, { exact: true })).toBeInTheDocument();
+    expect(summaries.getByText(defaultName, { exact: true })).toBeInTheDocument();
+  });
+
   // Protects page.tsx:716 at f1cac8a.
   // Mutant: Remove limit: "5" from the recent-creations URL parameters.
   test("G15 recent creations load independently with exact workflow, limit and credentials", async () => {
@@ -2042,6 +2064,7 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     ["required", "true"], ["asset", 1], ["label", {}], ["description", []],
     ["media_type", 4], ["accepted_media_types", "image/png"], ["accepted_media_types", ["image/png", null]],
     ["minimum", "0"], ["maximum", "1"], ["minimum", Infinity], ["maximum", NaN], ["enum", {}],
+    ["choice_labels", "Automatic"], ["choice_labels", []], ["choice_labels", { auto: 1 }],
   ] as Array<[string, unknown]>) {
     badCatalogs.push(["input " + key + " " + String(value), gapCatalog([
       gapRow({ inputs: [{ ...validInput, [key]: value }] }),
