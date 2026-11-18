@@ -10,6 +10,7 @@ EXPECTED = {
     ("audio.generate.ace-step-1.5-xl-turbo", "timesignature"),
     ("audio.generate.ace-step-1.5-xl-turbo", "language"),
     ("audio.generate.ace-step-1.5-xl-turbo", "keyscale"),
+    ("image.edit.qwen-image-2.1-inpaint", "prompt_mode"),
 }
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = ROOT / "manifests" / "workflows"
