@@ -11,7 +11,6 @@ short for everything else (suites, browsers, agents) until the engine's models a
 
 ## Prior art
 
-`~/code/divan/llm-serving/cloud-serverless-uses-idle-timers-because-idle-memory-is-billed-while-os-browser-and-gpu-memory-managers-keep-resident-until-pressure-and-evict-by-class-then-recency-or-reload-cost-so-a-household-desktop-should-evict-on-pressure-not-on-a-timer.md`
 
 - Idle timers come from billing, not from performance (claim A3, Shahrad et al.). A household host owns its memory, so a
   timer frees memory nobody wanted.
