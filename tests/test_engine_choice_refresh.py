@@ -279,3 +279,43 @@ def test_freshness_keeps_failure_older_than_snapshot(tmp_path, monkeypatch):
     assert row['failure_reason'] == 'previous refresh failed'
     assert row['failed_at'] == 50
     assert calls == [('svc', 'node', 'pick')]
+
+
+def test_freshness_reads_each_snapshot_once_during_replacement(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    declarations = [
+        {'node_type': 'node', 'input': 'pick'},
+        {'node_type': 'other', 'input': 'select'},
+    ]
+    old, fresh = {}, {}
+    for index, declaration in enumerate(declarations):
+        key = ('svc', declaration['node_type'], declaration['input'])
+        store.write(*key, [f'old-{n}' for n in range(index + 1)], fetched_at=100 + index)
+        old[key] = store.read(*key)
+        store.write(*key, [f'new-{n}' for n in range(index + 3)], fetched_at=199)
+        fresh[key] = store.read(*key)
+
+    class ReplacingStore:
+        def __init__(self):
+            self.calls = []
+
+        def read(self, service, node_type, input_name):
+            key = (service, node_type, input_name)
+            self.calls.append(key)
+            return old[key] if self.calls.count(key) == 1 else fresh[key]
+
+        def read_failure(self, service, node_type, input_name):
+            return store.read_failure(service, node_type, input_name)
+
+    replacing = ReplacingStore()
+    rows = freshness(replacing, 'svc', declarations, now=200, max_age=50)
+    assert rows == [
+        {
+            'node_type': declaration['node_type'], 'input': declaration['input'],
+            'fetched_at': 100 + index, 'age_s': 100 - index,
+            'stale': True, 'choices_count': index + 1,
+            'failure_reason': None, 'failed_at': None,
+        }
+        for index, declaration in enumerate(declarations)
+    ]
+    assert replacing.calls == [('svc', 'node', 'pick'), ('svc', 'other', 'select')]

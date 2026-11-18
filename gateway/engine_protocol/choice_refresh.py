@@ -25,9 +25,7 @@ def freshness(store: ChoiceStore, service, declarations, *, now: float, max_age:
             'input': input_name,
             'fetched_at': snapshot.fetched_at if snapshot is not None else None,
             'age_s': max(0, now - snapshot.fetched_at) if snapshot is not None else None,
-            'stale': snapshot is None or is_due(
-                store, service, node_type, input_name, now=now, max_age=max_age,
-            ),
+            'stale': snapshot is None or snapshot.stale(now=now, max_age=max_age),
             'choices_count': len(snapshot.choices) if snapshot is not None else None,
             'failure_reason': failure['reason'] if failure is not None else None,
             'failed_at': failure['at'] if failure is not None else None,
