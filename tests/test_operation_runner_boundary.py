@@ -131,7 +131,7 @@ def _nodes_with_bindings(tree):
             if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
                 bindings.pop(child.id, None)
 
-    def walk(node, bindings, deferred_bindings=None):
+    def walk(node, bindings, deferred_bindings=None, whole_iterable=False):
         def descend(child, local):
             yield from walk(child, local, deferred_bindings)
 
@@ -143,11 +143,7 @@ def _nodes_with_bindings(tree):
                     yield from descend(child, bindings)
             # Deferred bodies cannot assume enclosing values at call time.
             # Methods also do not resolve bare names through class locals.
-            local = dict(deferred_bindings) if isinstance(node, ast.Lambda) and deferred_bindings is not None else {}
-            if isinstance(node, ast.Lambda):
-                for argument in ast.walk(node.args):
-                    if isinstance(argument, ast.arg):
-                        local.pop(argument.arg, None)
+            local = {}
             body = [node.body] if isinstance(node, ast.Lambda) else node.body
             if not isinstance(node, ast.Lambda):
                 bindings.pop(node.name, None)
@@ -189,7 +185,7 @@ def _nodes_with_bindings(tree):
             # Only eager iterable parts run before the target/body can rebind names.
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 deferred = {name: value for name, value in bindings.items() if name not in changed}
-                yield from walk(node.iter, dict(bindings), deferred)
+                yield from walk(node.iter, dict(bindings), deferred, whole_iterable=True)
             # Any iteration may follow writes from a previous iteration.
             # Neither a while test nor the else suite can rely on entry literals.
             for name in changed:
@@ -219,7 +215,9 @@ def _nodes_with_bindings(tree):
                 yield from descend(generator.iter, local)
                 # A generator evaluates its first iterable now, all remaining parts on next().
                 if isinstance(node, ast.GeneratorExp) and index == 0 and deferred_bindings is not None:
-                    local = dict(deferred_bindings)
+                    # Only the whole iterable is consumed exclusively by this loop.
+                    # Nested generators can escape and resume after later rebindings.
+                    local = dict(deferred_bindings) if whole_iterable else {}
                 forget(generator.target, local)
                 if deferred_bindings is not None:
                     forget(generator.target, deferred_bindings)
@@ -578,8 +576,47 @@ def test_runner_boundary_generator_first_iterable_keeps_entry_binding():
     assert _violations(source) == ["line 2: literal 'node" + "_id' (folded)"]
 
 
-def test_runner_boundary_iterable_lazy_parts_keep_unchanged_names():
+def test_runner_boundary_iterable_lambda_cannot_keep_unchanged_names():
     source = ("A = 'status'\nB = 'status'\n"
               "for item in ((lambda: getattr(obj, B)) for value in values if getattr(obj, B)):\n"
               "    A = dynamic()\n")
+    assert _violations(source) == [
+        "line 3: getattr attribute argument does not fold to a literal"
+    ]
+
+
+@pytest.mark.parametrize("expression", [
+    pytest.param("[lambda: getattr(obj, A)]", id="lambda-body"),
+    pytest.param("[(getattr(obj, A) for value in values)]", id="generator-element"),
+    pytest.param("[(value for value in values if getattr(obj, A))]", id="generator-filter"),
+    pytest.param("[(later for value in values for later in getattr(obj, A))]", id="generator-later-iterable"),
+])
+def test_runner_boundary_iterable_deferred_values_can_escape(expression):
+    source = ("A = 'status'\n"
+              f"for item in {expression}:\n"
+              "    saved = item\n"
+              "A = dynamic()\n"
+              "saved() if callable(saved) else list(saved)\n")
+    assert _violations(source) == [
+        "line 2: getattr attribute argument does not fold to a literal"
+    ]
+
+
+def test_runner_boundary_whole_iterable_generator_keeps_unchanged_names():
+    source = ("A = 'status'\nB = 'status'\n"
+              "for item in (getattr(obj, B) for value in values if getattr(obj, B)):\n"
+              "    A = dynamic()\n")
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("expression", [
+    pytest.param("[lambda value=getattr(obj, A): value]", id="lambda-default"),
+    pytest.param("[(value for value in getattr(obj, A))]", id="generator-first-iterable"),
+])
+def test_runner_boundary_escaping_values_keep_eager_entry_bindings(expression):
+    source = ("A = 'status'\n"
+              f"for item in {expression}:\n"
+              "    saved = item\n"
+              "A = dynamic()\n"
+              "saved() if callable(saved) else list(saved)\n")
     assert _violations(source) == []
