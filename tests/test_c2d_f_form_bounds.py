@@ -101,6 +101,32 @@ def test_the_shape_takes_its_file_limit_from_the_spool(tmp_path) -> None:
     assert taken[0] < BLOCK * 100
 
 
+def test_the_shape_refuses_an_oversized_body_without_staging(tmp_path, monkeypatch) -> None:
+    """A shape must return the parser's 413 before either staging entry point is reached."""
+    spool = FileRequestSpool(tmp_path, max_bytes=BLOCK * 4)
+    request, _ = chunked_form([("prompt", None, 5), ("image", "a.png", BLOCK * 400)])
+    snap = snapshot("moss-image-fast", "qwen-image-2.1-edit")
+    shape = shape_of("images-edits")
+    staged: list[str] = []
+
+    def forbidden_stage(*args, **kwargs):
+        staged.append("FileRequestSpool.stage")
+        raise AssertionError("A refused multipart body must not reach the request spool")
+
+    def forbidden_uploads(*args, **kwargs):
+        staged.append("stage_uploads")
+        raise AssertionError("A refused multipart body must not stage uploads")
+
+    monkeypatch.setattr(FileRequestSpool, "stage", forbidden_stage)
+    monkeypatch.setattr(_wire, "stage_uploads", forbidden_uploads)
+
+    response = asyncio.run(shape.to_run_request(request, ROWS["images-edits"], snap, spool=spool))
+    assert isinstance(response, Response) and response.status_code == 413
+    assert json.loads(response.body)["error"]["code"] == "payload_too_large"
+    assert staged == []
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_exact_body_budget_is_accepted() -> None:
     budget = int(LIMITS.body_budget)
     head = _head("image", "a.png")
@@ -206,12 +232,13 @@ def test_chunk_straddling_body_budget_is_refused_before_parts() -> None:
 
 
 def test_straddling_body_budget_closes_spills_without_staging(monkeypatch) -> None:
-    spills: list[list[Any]] = []
+    """Refusal closes the file-part handles registered by the parser; disk rollover is not asserted."""
+    file_part_handles: list[list[Any]] = []
     staged: list[str] = []
     original_close = _wire._close_spills
 
     def record_close(parser) -> None:
-        spills.append(list(parser._files_to_close_on_error))
+        file_part_handles.append(list(parser._files_to_close_on_error))
         original_close(parser)
 
     def forbidden_stage(*args, **kwargs):
@@ -258,9 +285,9 @@ def test_straddling_body_budget_closes_spills_without_staging(monkeypatch) -> No
     assert error["message"] == "The request body is larger than this route accepts"
     assert budget < taken[0] <= budget + BLOCK + len(tail)
     assert taken[0] == before_last_data + len(data[-1])
-    assert len(spills) == 1
-    assert spills[0], "The parser must have opened a file-part spill before refusal"
-    assert all(handle.closed for handle in spills[0])
+    assert len(file_part_handles) == 1
+    assert file_part_handles[0], "The parser must have opened a file-part handle before refusal"
+    assert all(handle.closed for handle in file_part_handles[0])
     assert staged == []
 
 
