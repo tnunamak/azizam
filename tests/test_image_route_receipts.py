@@ -2065,7 +2065,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             (root / "outside.json").write_text(json.dumps(graph), encoding="utf-8")
             manifest = {"id": "image.edit.shadowed", "intent": "image.edit", "inputs": {}, "outputs": {},
                         "bindings": {proxy.DERIVED._GRAPH_BINDING: {"workflow": "package://../outside.json"}}}
-            record = SimpleNamespace(source_path=package, manifest=manifest)
+            record = SimpleNamespace(id=manifest["id"], source_path=package, manifest=manifest)
             registry = SimpleNamespace(records=lambda: [record], get=lambda wid: record if wid == manifest["id"] else None)
             request = _MultipartRequest(
                 [
@@ -2636,7 +2636,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["base_workflow"]["49"]["inputs"]["denoise"], 1.0)
 
     async def test_configured_default_workflow_is_honored(self) -> None:
-        with patch.object(proxy, "_image_variations_default_workflow", lambda: "fibo-2-edit-turbo"):
+        with patch.object(proxy, "_image_variations_default_workflow", lambda: "qwen-image-2.1-inpaint"):
             receipt, response, _ = await self._run(
                 fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
                 manifest=self._edit_manifest(with_denoise=False),
@@ -2644,7 +2644,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(receipt.requested_model)
         self.assertEqual(
-            receipt.metadata["variations_delegated_workflow"], "fibo-2-edit-turbo"
+            receipt.metadata["variations_delegated_workflow"], "qwen-image-2.1-inpaint"
         )
 
     async def test_openai_model_alias_routes_to_configured_default(self) -> None:

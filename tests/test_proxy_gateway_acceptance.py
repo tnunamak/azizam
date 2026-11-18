@@ -2351,7 +2351,9 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
         self.assertTrue(result)
-        self.assertTrue(all(cap in seen for cap in result))
+        self.assertTrue(all(any((cap.intent, cap.backend, cap.model, cap.workflow) ==
+                                (candidate.intent, candidate.backend, candidate.model, candidate.workflow)
+                                for candidate in seen) for cap in result))
 
 
 class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):

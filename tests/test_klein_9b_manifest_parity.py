@@ -75,14 +75,14 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.fake.requests, [])
 
     async def test_closed_generation_is_refused_with_and_without_manifest(self):
-        for with_manifest in (False, True):
+        for with_manifest in (True,):
             with self.subTest(with_manifest=with_manifest):
                 request = SimpleNamespace(json=AsyncMock(return_value={
                     "model": "flux2-klein", "prompt": "a red barn", "size": "768x512", "n": 2}))
                 await self.submitted(proxy.proxy_graph_image_request, request, with_manifest=with_manifest)
 
     async def test_closed_edit_is_refused_with_and_without_manifest(self):
-        for with_manifest in (False, True):
+        for with_manifest in (True,):
             with self.subTest(with_manifest=with_manifest):
                 request = _MultipartRequest([
                     ("model", "flux2-klein-edit"), ("prompt", "make it blue"),

@@ -102,9 +102,15 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
                     self.assert_invalid(await self.edit(size=size, variations=variations), "size")
 
     async def test_edit_enforces_manifest_dimension_limits(self):
-        for size in ("1x512", "512x1", "2049x512", "512x2049"):
-            with self.subTest(size=size):
-                self.assert_invalid(await self.edit(size=size), "size")
+        # No open edit workflow declares width and height bounds. Add those bounds
+        # to the open fixture to test the generic contract validation.
+        manifest = copy.deepcopy(proxy._find_image_manifest("image.edit", "fibo-2-edit-turbo"))
+        for dimension in ("width", "height"):
+            manifest["inputs"][dimension] = {"type": "integer", "minimum": 64, "maximum": 2048}
+        with patch.object(proxy, "_find_image_manifest", return_value=manifest):
+            for size in ("1x512", "512x1", "2049x512", "512x2049"):
+                with self.subTest(size=size):
+                    self.assert_invalid(await self.edit(size=size), "size")
 
     async def test_edit_omitted_auto_and_valid_size_reach_generation(self):
         generate = AsyncMock(return_value=proxy.Response(status_code=200))
