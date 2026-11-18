@@ -134,7 +134,8 @@ def test_threads_writing_different_keys_keep_both(tmp_path, monkeypatch):
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=10)
+        assert not thread.is_alive(), "choice-store writer did not finish"
     monkeypatch.setattr(ChoiceStore, '_load', real_load)
     store = ChoiceStore(path)
     assert all(store.read('s', 'node', key) for key in keys)
@@ -230,12 +231,17 @@ def test_other_process_lock_blocks_write(tmp_path):
 
 
 def test_failed_write_releases_lock_for_other_process(tmp_path, monkeypatch):
+    import fcntl
     import multiprocessing
 
     path = tmp_path / 'choices.json'
     store = ChoiceStore(path)
 
     def fail_load():
+        # A separate open must conflict with the store's held lock.
+        with path.with_name(path.name + '.lock').open('r+b') as lock:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         raise RuntimeError('injected locked load failure')
 
     # Patch this instance only; spawn imports a fresh module in the writer.
