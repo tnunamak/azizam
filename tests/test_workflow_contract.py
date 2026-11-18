@@ -516,6 +516,9 @@ def test_the_bundled_files_are_schema_two_and_the_frozen_copies_are_schema_one()
 def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but_for_the_named_edits():
     named = {"ace-step-1.5-xl-turbo"}
     staged = {"flux2-klein-4b-edit", "flux2-klein-edit"}     # each lists the one result stage that applies its mask
+    # Later edits to a released document (help text, a superseded status, engine-derived choices) are listed once, in the
+    # same named edits the release migration applies; each must start from the frozen value and end at the bundled one.
+    edits = json.loads((ROOT / "tests/fixtures/workflow_post_schema_edits.json").read_text())
     for path in V1_FIXTURES:
         converted, _ = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / path.name).read_text(encoding="utf-8"))
@@ -533,20 +536,15 @@ def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but
             for name, spec in bundled["inputs"].items():
                 cap = spec.pop("max_bytes", None)
                 assert cap is None or (isinstance(cap, int) and cap > 0 and "max_bytes" not in converted["inputs"][name])
-        if path.stem == "yue2-song":                    # the measured length and instrumental help (film agent memo M7, M10)
-            # Pin the shortened help and full description through the same named edits as the release migration.
-            edits = json.loads((ROOT / "tests/fixtures/workflow_post_schema_edits.json").read_text())
-            for change in edits[bundled["id"]]:
-                original, current = converted, bundled
-                for key in change["path"][:-1]:
-                    original, current = original[key], current[key]
-                key = change["path"][-1]
-                assert (key in original) is change["before_present"], change["path"]
-                assert original.get(key) == change["before"], change["path"]
-                assert current[key] == change["after"], change["path"]
-                original[key] = current[key]
-        if path.stem == "tangoflux":                    # replaced by the sound-effect default (film agent memo M5)
-            assert (bundled.pop("status"), bundled.pop("superseded_by")) == ("superseded", "audio.generate.sa3-small-sfx")
+        for change in edits.get(bundled["id"], []):
+            original, current = converted, bundled
+            for key in change["path"][:-1]:
+                original, current = original[key], current[key]
+            key = change["path"][-1]
+            assert (key in original) is change["before_present"], (path.name, change["path"])
+            assert original.get(key) == change["before"], (path.name, change["path"])
+            assert current[key] == change["after"], (path.name, change["path"])
+            original[key] = current[key]
         if path.stem not in named:
             assert without_section_additions(bundled, converted) == converted, path.name
     ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))
