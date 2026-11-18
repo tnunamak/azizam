@@ -699,6 +699,18 @@ class ClosedVideoRouteTests(RemixReplaceBase):
         assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
         assert not self.comfy.uploads and not self.comfy.submitted
 
+    def test_closed_chain_is_refused_when_key_and_manifest_lookups_miss(self):
+        from tests.support.access import access_context
+        self.close_chain()
+        with patch.object(proxy, "workflow_id_for_video_key", return_value=None), \
+                patch.object(proxy, "_find_video_manifest", return_value=None):
+            response = proxy._chain_policy_denial(access_context(), "video-ltx-2.5-long", "video-ltx-2.5-long")
+            job = proxy._video_job_policy_decision(access_context(), "video-ltx-2.5-long", "video-ltx-2.5-long")
+        assert response is not None and response.status_code == 409
+        assert b'"workflow_disabled"' in response.body
+        assert job.code == "workflow_disabled"
+        assert not self.comfy.uploads and not self.comfy.submitted
+
     def test_chain_manifest_id_is_checked_without_a_shipped_key_mapping(self):
         from tests.support.access import access_context
         self.close_chain()
