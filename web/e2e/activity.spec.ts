@@ -3,7 +3,7 @@ import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
-test("requests refresh visible content on focus and keep metadata on one line", async ({ page }) => {
+test("followed requests refresh visible content and keep metadata on one line", async ({ page }) => {
   let refreshed = false;
   let loads = 0;
   await page.clock.setFixedTime(new Date("2026-10-12T12:00:00Z"));
@@ -40,6 +40,9 @@ test("requests refresh visible content on focus and keep metadata on one line", 
 
   const before = loads;
   refreshed = true;
+  // The list starts paused (paused-state checks live in the jsdom specs); following refreshes it, and so does a focus.
+  await page.getByRole("button", { name: "Follow live", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   const freshRow = page.getByRole("button", { name: "Request details: Chat by After focus", exact: true });
   await expect(freshRow).toBeVisible();

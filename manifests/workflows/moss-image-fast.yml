@@ -89,3 +89,4 @@ bindings:
         - role: lora
           path: loras/kromoss-8steps-dmd-lora.safetensors
 license: Apache-2.0
+source_url: https://huggingface.co/lodestones/Kromoss

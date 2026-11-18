@@ -14,25 +14,37 @@ prompt_hint: Describe the picture you want
 description: Portable image generation contract for SDXL texture tiles with manifest-backed seamless postprocessing controls.
 inputs:
   prompt:
+    label: What to make
+    help: Describe the picture you want.
     type: string
     required: true
   width:
+    label: Width
+    help: Picture width in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   height:
+    label: Height
+    help: Picture height in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   steps:
+    label: Refinement steps
+    help: More steps add detail but take longer.
     type: integer
     minimum: 1
     maximum: 100
   guidance:
+    label: Prompt strength
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 20
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
     generate:
@@ -40,12 +52,18 @@ inputs:
       minimum: 0
       maximum: 4294967295
   batch_size:
+    label: Number of pictures
+    help: How many pictures to make at once.
     type: integer
     minimum: 1
     maximum: 8
   negative_prompt:
+    label: What to avoid
+    help: Describe anything you want left out.
     type: string
   sampler:
+    label: Generation method
+    help: The method the model uses to build the result. Keep the default unless you are comparing methods.
     choices_from: {node_type: KSampler, input: sampler_name}
     type: string
     enum:
@@ -56,6 +74,8 @@ inputs:
       - dpmpp_sde
       - uni_pc
   scheduler:
+    label: Step timing
+    help: How the refinement steps are spaced. Keep the default unless you are comparing results.
     choices_from: {node_type: KSampler, input: scheduler}
     type: string
     enum:
@@ -65,6 +85,8 @@ inputs:
       - sgm_uniform
       - beta
   seam_blending:
+    label: Seam blending
+    help: Sets the blending value used when making the picture seamless.
     type: number
     minimum: 0
     maximum: 0.5
@@ -114,3 +136,4 @@ bindings:
       seam_blending:
         - node: "45"
           input: blending
+source_url: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0

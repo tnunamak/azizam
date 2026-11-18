@@ -200,6 +200,7 @@
       "step": 0
     }
   ],
+  "job_prefixes": [],
   "media_jobs": {
     "media_jobs_schema_version": [
       {
@@ -469,7 +470,7 @@
           "intent": "image.generate",
           "job_id": null,
           "latency_ms": "<duration>",
-          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
+          "manifest_hash": "d1067511c92271a87b6884944d58da1407de9d748d79d4e4067cc2214540ae8c",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {},

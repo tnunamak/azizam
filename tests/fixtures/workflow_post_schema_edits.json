@@ -160,6 +160,202 @@
         "keyscale",
         "choices_from"
       ]
+    },
+    {
+      "after": "Choose the number of beats in each bar.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose the language for the lyrics.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose the musical key for the piece.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "keyscale",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg_scale",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning variety value from 0 to 2.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "temperature",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning choice range from 0 to 1.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "top_p",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning choice limit from 0 to 1000.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "top_k",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the minimum planning choice likelihood from 0 to 1.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "min_p",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "help"
+      ]
+    },
+    {
+      "after": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-04-02",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/ACE-Step/acestep-v15-xl-turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "audio.generate.sa3-small-sfx": [
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the sound you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Length in seconds.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
     }
   ],
   "audio.generate.tangoflux": [
@@ -177,6 +373,134 @@
       "before_present": false,
       "path": [
         "superseded_by"
+      ]
+    },
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the sound you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Length in seconds.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "Prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "Number of clips",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "label"
+      ]
+    },
+    {
+      "after": "Makes this many clips, but only the first one comes back.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/declare-lab/TangoFlux",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -220,6 +544,418 @@
         "tags",
         "description"
       ]
+    },
+    {
+      "after": "https://huggingface.co/m-a-p/YuE2-3B",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.edit.fibo-2-edit-turbo": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/briaai/Fibo-2.0-edit-turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.edit.image-identity": [
+    {
+      "after": "Sets the number of attempts to make the scene.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "attempts",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher values give each reference photo a larger pixel budget.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "resolution",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose whether to use your photo as the canvas.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "photo_as_canvas",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose whether to include only the people you listed.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "only_listed_people",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose whether to stop attempts after a good match.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "stop_when_pass",
+        "help"
+      ]
+    },
+    {
+      "after": "Chooses how multiple reference photos of one person are scored.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "pooling",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher values allow more reference photos per person to be sent to the generator.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "max_refs_per_person",
+        "help"
+      ]
+    },
+    {
+      "after": "Chooses whether face refinement is off, automatic, or applied to everyone.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "refine",
+        "help"
+      ]
+    },
+    {
+      "after": "Sets the number of attempts to refine faces.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "refine_attempts",
+        "help"
+      ]
+    },
+    {
+      "after": "Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "pose_policy",
+        "help"
+      ]
+    },
+    {
+      "after": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mode",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.edit.qwen-image-2.1-edit": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.edit.qwen-image-2.1-edit-multiref": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "reference picture resolution",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "reference_resolution",
+        "label"
+      ]
+    },
+    {
+      "after": "Sets the resolution value used when processing the two reference pictures.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "reference_resolution",
+        "help"
+      ]
+    },
+    {
+      "after": "refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
     }
   ],
   "image.edit.qwen-image-2.1-inpaint": [
@@ -235,6 +971,202 @@
         "prompt_mode",
         "choices_from"
       ]
+    },
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "edit area size",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_expand",
+        "label"
+      ]
+    },
+    {
+      "after": "Positive values expand the edit area in pixels; negative values shrink it.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_expand",
+        "help"
+      ]
+    },
+    {
+      "after": "edit edge softness",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_feather",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher values soften edit edges but reduce precision near the boundary.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mask_feather",
+        "help"
+      ]
+    },
+    {
+      "after": "edge refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "lanpaint_steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps improve consistency at the edit boundary but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "lanpaint_steps",
+        "help"
+      ]
+    },
+    {
+      "after": "edit priority",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt_mode",
+        "label"
+      ]
+    },
+    {
+      "after": "Image First favors seamless blending, while Prompt First follows the edit instruction more literally.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt_mode",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
     }
   ],
   "image.edit.seedvr2-upscale": [
@@ -249,6 +1181,198 @@
         "inputs",
         "color_correction_method",
         "choices_from"
+      ]
+    },
+    {
+      "after": "enlargement factor",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "label"
+      ]
+    },
+    {
+      "after": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "help"
+      ]
+    },
+    {
+      "after": "color matching method",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "label"
+      ]
+    },
+    {
+      "after": "Choose how to match colors to the original picture, or none to skip color matching.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    }
+  ],
+  "image.generate.anima-turbo": [
+    {
+      "after": "https://huggingface.co/circlestone-labs/Anima",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.krea2-turbo": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the picture you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-06-22",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/krea/Krea-2-Turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.krea2-turbo-snofs": [
+    {
+      "after": "2026-06-22",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/krea/Krea-2-Turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.moss-image": [
+    {
+      "after": "2026-10-16",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.moss-image-fast": [
+    {
+      "after": "https://huggingface.co/lodestones/Kromoss",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.generate.moss-image-quality": [
+    {
+      "after": "2026-10-16",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ],
@@ -277,6 +1401,414 @@
         "inputs",
         "scheduler",
         "choices_from"
+      ]
+    },
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the picture you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Width",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "width",
+        "label"
+      ]
+    },
+    {
+      "after": "Picture width in pixels.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "width",
+        "help"
+      ]
+    },
+    {
+      "after": "Height",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "height",
+        "label"
+      ]
+    },
+    {
+      "after": "Picture height in pixels.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "height",
+        "help"
+      ]
+    },
+    {
+      "after": "Refinement steps",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "label"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": "Prompt strength",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "label"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "Number of pictures",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "label"
+      ]
+    },
+    {
+      "after": "How many pictures to make at once.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "batch_size",
+        "help"
+      ]
+    },
+    {
+      "after": "What to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Generation method",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "label"
+      ]
+    },
+    {
+      "after": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "help"
+      ]
+    },
+    {
+      "after": "Step timing",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "label"
+      ]
+    },
+    {
+      "after": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "help"
+      ]
+    },
+    {
+      "after": "Seam blending",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seam_blending",
+        "label"
+      ]
+    },
+    {
+      "after": "Sets the blending value used when making the picture seamless.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seam_blending",
+        "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "mesh.edit.rig-auto": [
+    {
+      "after": "https://github.com/vltrx/UniRig",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "mesh.edit.texture-refine": [
+    {
+      "after": "https://github.com/yiboz2001/UltraTex",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "mesh.generate.pixal3d": [
+    {
+      "after": "https://huggingface.co/TencentARC/Pixal3D",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.edit.scail-2-replace": [
+    {
+      "after": "https://huggingface.co/zai-org/SCAIL-2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-i2v": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-keyframes": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-keyframes-mid": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-long": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-t2v": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-i2v": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-keyframes": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-keyframes-mid": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-long": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-t2v": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
       ]
     }
   ]

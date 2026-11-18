@@ -14,6 +14,8 @@ description: Make a realistic photo-style picture from a description.
 typical_seconds: 9
 inputs:
   prompt:
+    label: what to make
+    help: Describe the picture you want.
     type: string
     required: true
   width:
@@ -38,6 +40,8 @@ inputs:
     maximum: 20
     default: 8
   seed:
+    label: variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
     generate:
@@ -88,3 +92,5 @@ bindings:
           path: text_encoders/qwen3vl_4b_fp8_scaled.safetensors
         - role: vae
           path: vae/qwen_image_vae.safetensors
+released_at: "2026-06-22"
+source_url: https://huggingface.co/krea/Krea-2-Turbo

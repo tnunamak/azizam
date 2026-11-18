@@ -88,6 +88,21 @@ class ModelsCatalogSeedLabelsTests(unittest.TestCase):
 
 
 class ModelsCatalogBuildTests(unittest.TestCase):
+    def test_catalog_declared_dates_and_source(self) -> None:
+        facts = {"released_at": "2024-01-02", "added_at": "2024-03-04T12:30+01:00",
+                 "updated_at": "2024-03-09T16:00:00Z", "source_url": "https://example.org/model"}
+        entries = [{"id": "declared", **facts}, {"id": "empty"},
+                   {"id": "invalid", "released_at": "2024-01-02T12:00:00", "updated_at": 1710000000,
+                    "source_url": "javascript:alert(1)"}]
+        catalog = build_models_catalog(
+            capabilities=[Capability(intent="text.generate", model=e["id"], backend="local") for e in entries],
+            model_entries=entries,
+        )
+        rows = {row["id"]: row for row in catalog["models"]}
+        self.assertEqual({key: rows["declared"][key] for key in facts}, facts)
+        for model in ("empty", "invalid"):
+            self.assertTrue(set(facts).isdisjoint(rows[model]))
+
     def test_catalog_titles_are_data_driven_and_override_repeated_capability_titles(self) -> None:
         model_ids = (
             ("chatterbox-turbo", "speech.synthesis"),

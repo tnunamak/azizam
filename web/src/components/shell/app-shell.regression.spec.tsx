@@ -306,7 +306,7 @@ describe("AppShell navigation tooltips", () => {
     }
     const user = userEvent.setup();
     await user.hover(within(nav).getByRole("link", { name: "Usage" }));
-    act(() => within(nav).getByRole("link", { name: "Workflows" }).focus());
+    act(() => within(nav).getByRole("link", { name: "Discover" }).focus());
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(within(nav).getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "Go to" }).querySelector("kbd")).toHaveTextContent(/Ctrl K|⌘K/);
@@ -336,8 +336,8 @@ describe("AppShell navigation tooltips", () => {
     await user.unhover(usage);
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
-    act(() => within(nav).getByRole("link", { name: "Workflows" }).focus());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Workflows");
+    act(() => within(nav).getByRole("link", { name: "Discover" }).focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Discover");
   });
 
   it.each(["Expand navigation", "More"])("omits redundant tooltips in the labeled %s sheet", async (name) => {
@@ -352,7 +352,7 @@ describe("AppShell navigation tooltips", () => {
       expect(link).not.toHaveAttribute("data-slot", "tooltip-trigger");
     }
     await user.hover(within(nav).getByRole("link", { name: "Usage" }));
-    act(() => within(nav).getByRole("link", { name: "Workflows" }).focus());
+    act(() => within(nav).getByRole("link", { name: "Discover" }).focus());
     expect(screen.queryByRole("tooltip")).toBeNull();
     await user.click(within(nav).getByRole("link", { name: "Home" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -373,6 +373,29 @@ describe("AppShell navigation tooltips", () => {
     expect(usage()).toHaveAttribute("data-slot", "tooltip-trigger");
     act(() => usage().focus());
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Usage");
+  });
+});
+
+describe("Discover destination", () => {
+  it.each(["/models", "/workflows/"])("is the one current nav entry for both views on %s", async (path) => {
+    pathname = path;
+    render(<AppShell><h1>Catalog</h1></AppShell>);
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    const discover = within(nav).getByRole("link", { name: "Discover" });
+    expect(discover).toHaveAttribute("href", "/models");
+    expect(discover).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page")).toHaveLength(1);
+    expect(within(nav).queryByRole("link", { name: "Models" })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: "Workflows" })).toBeNull();
+  });
+
+  it("keeps a Go to jump for each view", async () => {
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Go to" }));
+    expect(await screen.findByRole("option", { name: "Models" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Workflows" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Discover" })).toBeNull();
   });
 });
 
@@ -405,7 +428,8 @@ describe("Member session", () => {
 });
 
 describe("Service admin session", () => {
-  it("shows an honest state on person-only pages without rendering their API consumers", async () => {
+  it.each(["/", "/workflows"])("shows an honest state on person-only pages (%s) without rendering their API consumers", async (path) => {
+    pathname = path;
     const originalFetch = fetch;
     vi.stubGlobal(
       "fetch",

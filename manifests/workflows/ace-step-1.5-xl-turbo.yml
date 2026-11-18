@@ -42,40 +42,48 @@ inputs:
   timesignature:
     choices_from: {node_type: TextEncodeAceStepAudio1.5, input: timesignature}
     label: time signature
+    help: Choose the number of beats in each bar.
     type: string
     enum: ["2", "3", "4", "6"]
   language:
     choices_from: {node_type: TextEncodeAceStepAudio1.5, input: language}
     label: language
+    help: Choose the language for the lyrics.
     type: string
     enum: ["ar", "az", "bg", "bn", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr", "he", "hi", "hr", "ht", "hu", "id", "is", "it", "ja", "ko", "la", "lt", "ms", "ne", "nl", "no", "pa", "pl", "pt", "ro", "ru", "sa", "sk", "sr", "sv", "sw", "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "yue", "zh", "unknown"]
   keyscale:
     choices_from: {node_type: TextEncodeAceStepAudio1.5, input: keyscale}
     label: musical key
+    help: Choose the musical key for the piece.
     type: string
     enum: ["C major", "C# major", "Db major", "D major", "D# major", "Eb major", "E major", "F major", "F# major", "Gb major", "G major", "G# major", "Ab major", "A major", "A# major", "Bb major", "B major", "C minor", "C# minor", "Db minor", "D minor", "D# minor", "Eb minor", "E minor", "F minor", "F# minor", "Gb minor", "G minor", "G# minor", "Ab minor", "A minor", "A# minor", "Bb minor", "B minor"]
   cfg_scale:
     label: planning guidance
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 20
   temperature:
     label: variety
+    help: Set the planning variety value from 0 to 2.
     type: number
     minimum: 0
     maximum: 2
   top_p:
     label: choice range
+    help: Set the planning choice range from 0 to 1.
     type: number
     minimum: 0
     maximum: 1
   top_k:
     label: choice limit
+    help: Set the planning choice limit from 0 to 1000.
     type: integer
     minimum: 0
     maximum: 1000
   min_p:
     label: minimum choice likelihood
+    help: Set the minimum planning choice likelihood from 0 to 1.
     type: number
     minimum: 0
     maximum: 1
@@ -87,14 +95,17 @@ inputs:
     maximum: 200
   cfg:
     label: prompt guidance
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 20
   sampler:
     label: generation method
+    help: The method the model uses to build the result. Keep the default unless you are comparing methods.
     type: string
   scheduler:
     label: step timing
+    help: How the refinement steps are spaced. Keep the default unless you are comparing results.
     type: string
 outputs:
   audio:
@@ -158,3 +169,5 @@ bindings:
       scheduler:
         - node: "20"
           input: scheduler
+released_at: "2026-04-02"
+source_url: https://huggingface.co/ACE-Step/acestep-v15-xl-turbo

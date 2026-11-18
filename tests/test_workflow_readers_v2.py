@@ -15,6 +15,8 @@ For a reviewed additive workflow, capture with
 Save WORKFLOW_READERS_JSON as sorted, two-space JSON with a final newline, compressed with gzip mtime=0.
 Review every existing entry that changes before replacing it.
 
+Re-captured 2026-11-18 for train 76 (walkthrough B8 and B9): input labels, help and the descriptions that mirror help,
+and the manifest hashes those edits and the cited release facts move; no other value changed.
 Re-captured for the six added model workflows: existing entries change only the mesh generator’s rank:2 tag
 in capabilities, member catalog, projection and the three audience summaries.
 Re-captured when the seven FLUX.2 Klein workflows were retired: only their exposure changes, default to disabled,

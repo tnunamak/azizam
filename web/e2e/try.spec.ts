@@ -370,7 +370,8 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   );
   await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Dimensions")).toBeVisible();
+  await expect(page.getByText("Numbers per input")).toBeVisible();
+  await expect(page.getByText("0.1000, -0.2000, 0.4000")).toBeVisible();
   await expect(page.getByText("3", { exact: true })).toBeVisible();
   await expect(page.getByText("$0.002500")).toBeVisible();
   await expect(page.getByRole("link", { name: "req_embed_try" })).toHaveCount(

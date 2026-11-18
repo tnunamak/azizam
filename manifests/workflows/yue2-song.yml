@@ -62,3 +62,4 @@ bindings:
       models:
         - role: checkpoint
           path: checkpoints/yue2_3b_int8_convrot.safetensors
+source_url: https://huggingface.co/m-a-p/YuE2-3B

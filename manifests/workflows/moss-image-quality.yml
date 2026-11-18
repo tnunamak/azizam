@@ -96,3 +96,5 @@ bindings:
         - role: vae
           path: vae/flux2-vae.safetensors
 license: Apache-2.0
+released_at: "2026-10-16"
+source_url: https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT

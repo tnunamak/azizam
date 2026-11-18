@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Check,
@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { modelDates, modelSource } from "./model-facts";
 import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
 import { accountApi } from "@/lib/account-api";
 import { preferredTerms } from "@/lib/terms";
@@ -22,6 +23,7 @@ import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { copyText } from "@/components/ui/copy-button";
 import { useViewer } from "@/components/shell/session";
@@ -570,10 +572,12 @@ function ModelRow({
 function TaskSection({
   task,
   rows,
+  hiddenUnavailable,
   onDetail,
 }: {
   task: Task;
   rows: CatalogRow[];
+  hiddenUnavailable: number;
   onDetail: (row: CatalogRow) => void;
 }) {
   const counts = new Map<string, number>();
@@ -598,6 +602,9 @@ function TaskSection({
         <p className="text-muted-foreground text-meta min-w-0">
           {taskExplainers[task]}
         </p>
+        {hiddenUnavailable > 0 && (
+          <p className="text-muted-foreground text-meta">{hiddenUnavailable} unavailable hidden</p>
+        )}
       </div>
       <ul role="list" aria-labelledby={headingId} className="divide-y border-b last:border-b-0">
         {rows.map((row) => (
@@ -623,7 +630,7 @@ function LoadingCatalog() {
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-4">
       <dt className="text-muted-foreground text-meta sm:w-36 sm:shrink-0">{label}</dt>
@@ -671,9 +678,19 @@ function DetailSheet({
     ? [...new Set(Object.values(row.resolves_to))].filter((target) => viewerAdmin || knownNames.has(target))
     : [];
   const sameModelAs = row ? (row.same_model_as ?? []) : [];
+  const dates = row ? modelDates(row) : [];
+  const source = row ? modelSource(row) : null;
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
+      <SheetContent
+        className="w-[92vw] overflow-y-auto sm:max-w-xl"
+        // Focus the panel itself so it opens at its name and facts, not
+        // scrolled down to the first control in the code samples.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          (event.currentTarget as HTMLElement).focus({ preventScroll: true });
+        }}
+      >
         {row && (
           <>
             <SheetHeader className="border-b pr-12">
@@ -699,6 +716,24 @@ function DetailSheet({
                   <Fact
                     label="What you send and receive"
                     value={`${row.io.input.join(", ") || "—"} to ${row.io.output.join(", ") || "—"}`}
+                  />
+                )}
+                {dates.map(({ label, iso, calendarDay }) => (
+                  <Fact
+                    key={label}
+                    label={label}
+                    value={new Date(iso).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                      ...(calendarDay ? { timeZone: "UTC" } : {}),
+                    })}
+                  />
+                ))}
+                {source && (
+                  <Fact
+                    label="Source"
+                    value={<a href={source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">{new URL(source).hostname}</a>}
                   />
                 )}
               </dl>
@@ -865,6 +900,7 @@ const priceFilterLabels: Record<PriceFilter, string> = {
 export default function ModelsClient() {
   const viewer = useViewer();
   const [query, setQuery] = useState("");
+  const [showUnavailable, setShowUnavailable] = useState(false);
   const [price, setPrice] = useState<PriceFilter>("all");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -920,6 +956,7 @@ export default function ModelsClient() {
     if (!catalogData || appliedDeepLink.current) return;
     appliedDeepLink.current = true;
     const params = new URLSearchParams(window.location.search);
+    setShowUnavailable(params.get("unavailable") === "1");
     const model = allRows.find((row) => row.id === params.get("model"));
     if (model) setDetailId(model.id);
     const task = taskOrder.find((value) => value === params.get("capability"));
@@ -931,33 +968,42 @@ export default function ModelsClient() {
   );
   const tasksPresent = taskOrder.filter((task) => allRows.some((row) => rowTask(row) === task));
   // Facet counts respect search and the other filter, not their own selection.
-  const searched = allRows.filter((row) => itemMatches(row, query.trim()));
+  const searched = allRows.filter((row) =>
+    itemMatches(row, query.trim()) && (showUnavailable || availabilityState(row) !== "unavailable"),
+  );
   const taskCandidates = searched.filter((row) => price === "all" || costKind(row) === price);
   const priceCandidates = searched.filter((row) => taskFilter === "all" || rowTask(row) === taskFilter);
   const taskCount = (task: TaskFilter) =>
     task === "all" ? taskCandidates.length : taskCandidates.filter((row) => rowTask(row) === task).length;
   const priceCount = (kind: PriceFilter) =>
     kind === "all" ? priceCandidates.length : priceCandidates.filter((row) => costKind(row) === kind).length;
-  const visible = allRows.filter(
+  const matching = allRows.filter(
     (row) =>
       itemMatches(row, query.trim()) &&
       (price === "all" || costKind(row) === price) &&
       (taskFilter === "all" || rowTask(row) === taskFilter),
   );
-  // Within a task: the recommended name, other names, then exact models.
+  const visible = matching.filter((row) => showUnavailable || availabilityState(row) !== "unavailable");
+  // Unavailable last; preserve recommended/alias/exact order within each partition.
   const rank = (row: CatalogRow) =>
     row.recommended ? 0 : row.alias && !row.secondary_profile ? 1 : row.alias ? 2 : 3;
   const groups = taskOrder
     .map((task) => ({
       task,
+      hiddenUnavailable: showUnavailable ? 0 : matching.filter((row) =>
+        rowTask(row) === task && availabilityState(row) === "unavailable",
+      ).length,
       rows: visible
         .filter((row) => rowTask(row) === task)
         .map((row, index) => ({ row, index }))
-        .sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index)
+        .sort((a, b) =>
+          Number(availabilityState(a.row) === "unavailable") - Number(availabilityState(b.row) === "unavailable") ||
+          rank(a.row) - rank(b.row) || a.index - b.index,
+        )
         .map(({ row }) => row),
     }))
-    .filter((group) => group.rows.length > 0);
-  const filtered = Boolean(query.trim()) || price !== "all" || taskFilter !== "all";
+    .filter((group) => group.rows.length > 0 || group.hiddenUnavailable > 0);
+  const filtered = Boolean(query.trim()) || price !== "all" || taskFilter !== "all" || visible.length !== allRows.length;
 
   return (
     <div>
@@ -1040,6 +1086,10 @@ export default function ModelsClient() {
                 </SelectContent>
               </Select>
             )}
+            <label className="text-meta flex items-center gap-2">
+              <Switch checked={showUnavailable} onCheckedChange={setShowUnavailable} aria-label="Show unavailable" />
+              Show unavailable
+            </label>
             {address && (
               <div className="sm:ml-auto max-sm:w-full">
                 <GatewayAddress address={address} />
@@ -1083,6 +1133,7 @@ export default function ModelsClient() {
                   key={group.task}
                   task={group.task}
                   rows={group.rows}
+                  hiddenUnavailable={group.hiddenUnavailable}
                   onDetail={selectDetail}
                 />
               ))}
@@ -1090,7 +1141,9 @@ export default function ModelsClient() {
           )}
           <p className="text-muted-foreground text-meta">
             <span role="status" aria-live="polite" aria-atomic="true">
-              {visible.length === 0
+              {visible.length === 0 && matching.length > 0
+                ? `${matching.length} matching ${matching.length === 1 ? "model is" : "models are"} unavailable and hidden. Turn on Show unavailable to see ${matching.length === 1 ? "it" : "them"}.`
+                : visible.length === 0
                 ? `No models match. 0 of ${allRows.length} model names.`
                 : filtered
                   ? `${visible.length} of ${allRows.length} model names.`

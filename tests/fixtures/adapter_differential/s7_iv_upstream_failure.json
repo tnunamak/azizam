@@ -208,6 +208,7 @@
     }
   ],
   "gateway_sleeps": [],
+  "job_prefixes": [],
   "media_jobs": {
     "media_jobs_schema_version": [
       {
@@ -476,7 +477,7 @@
           "intent": "image.variation",
           "job_id": null,
           "latency_ms": "<duration>",
-          "manifest_hash": "523129a6f2a3003ff9302f5e1eca8be93b07bb85043a1fd7da532232faa08931",
+          "manifest_hash": "36c71f707cfe34bab9e65c003724b2237cab33e710aacfd6b1001d1d75ac7ed5",
           "manifest_id": "image.edit.qwen-image-2.1-edit",
           "manifest_version": "0.1.0",
           "metadata": {

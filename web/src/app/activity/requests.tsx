@@ -21,6 +21,8 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { Money } from "@/components/product/money";
+import { receiptCost, costCopy } from "@/app/usage/receipt-cost";
 import { EmptyState } from "@/components/product/empty-state";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
@@ -32,6 +34,8 @@ import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
 import { technicalModelDetails } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
+import { FollowLive, useFollowLive } from "./follow-live";
+import { staleWords } from "./request-staleness";
 
 /** The workflow a job-submission receipt ran; those receipts carry no model. */
 export function receiptWorkflow(receipt: Pick<Receipt, "requested_workflow" | "resolved_workflow">): string | null {
@@ -67,6 +71,10 @@ type RequestPage = {
   people: { id: string; label: string }[];
   sources?: { id: string; label: string }[];
 };
+
+/** The receipt's own last-update stamp (milliseconds), which the gateway refreshes while work goes on; never its creation time. */
+const lastUpdate = (receipt: Receipt): number | null =>
+  typeof receipt.updated_at_ms === "number" && Number.isFinite(receipt.updated_at_ms) ? receipt.updated_at_ms : null;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -205,6 +213,13 @@ function duration(ms?: number | null) {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
+function requestCost(receipt: Receipt) {
+  const cost = receiptCost(receipt);
+  if (cost.kind === "amount") return <Money amount={cost.usd} precise />;
+  if (cost.kind === "local") return <Money amount={null} local />;
+  return <span title={costCopy[cost.kind].help}>{costCopy[cost.kind].label}</span>;
+}
+
 export function Requests() {
   const rowId = useId();
   const filterRef = useRef<HTMLButtonElement>(null);
@@ -215,8 +230,18 @@ export function Requests() {
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
+  // The record as it was when opened: a refresh that pushes it out of the loaded pages must not close its sheet.
+  const [openedRecord, setOpenedRecord] = useState<RequestRecord | null>(null);
+  const [following, setFollowing] = useFollowLive();
+  // A paused list still ages: this clock lets a running request turn stale without another fetch.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const {
     data,
+    dataUpdatedAt,
     isPending,
     isFetching,
     isError,
@@ -227,7 +252,11 @@ export function Requests() {
     refetch,
   } = useInfiniteQuery({
     queryKey: ["activity", "requests", person, source],
-    refetchOnWindowFocus: "always",
+    refetchInterval: following ? 5000 : false,
+    refetchIntervalInBackground: false,
+    // Paused means paused: no automatic refresh of any kind until the person follows again or changes a filter.
+    refetchOnWindowFocus: following ? "always" : false,
+    refetchOnReconnect: following,
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }): Promise<RequestPage> => {
       const params = new URLSearchParams({ limit: "50" });
@@ -247,10 +276,11 @@ export function Requests() {
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
   useEffect(() => {
+    if (!following) return;
     const refresh = () => void refetch();
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, [refetch]);
+  }, [following, refetch]);
   const rows = (data?.pages.flatMap((page) => page.records) ?? [])
     .sort((a, b) => b.created_at - a.created_at);
   const keys = receiptSelectionKeys(
@@ -263,10 +293,23 @@ export function Requests() {
     })),
   );
   const people = data?.pages[0]?.people ?? [];
-  const record = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
+  const liveRecord = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
+  // Keep the newest version seen, so a request that leaves the loaded rows keeps its latest outcome, not its opening one.
   useEffect(() => {
-    if (selectedReceiptKey !== null && record === null) setSelectedReceiptKey(null);
-  }, [selectedReceiptKey, record]);
+    if (selectedReceiptKey !== null && liveRecord) setOpenedRecord(liveRecord);
+  }, [selectedReceiptKey, liveRecord]);
+  // Newer requests pushed the open one past the loaded rows: every loaded row is newer and an older page remains. Any
+  // other absence means the receipt is gone (deleted or pruned), and its sheet closes.
+  const oldestLoaded = rows.length > 0 ? rows[rows.length - 1].created_at : null;
+  const pushedOut = liveRecord === null && openedRecord !== null && hasNextPage &&
+    oldestLoaded !== null && openedRecord.created_at <= oldestLoaded;
+  useEffect(() => {
+    if (data && selectedReceiptKey !== null && liveRecord === null && !pushedOut) {
+      setSelectedReceiptKey(null);
+      setOpenedRecord(null);
+    }
+  }, [data, selectedReceiptKey, liveRecord, pushedOut]);
+  const record = selectedReceiptKey === null ? null : liveRecord ?? (pushedOut ? openedRecord : null);
   useEffect(() => {
     if (isFetchingNextPage || !pageButtonRef.current) return;
     const button = pageButtonRef.current;
@@ -292,6 +335,7 @@ export function Requests() {
   return (
     <div className="space-y-6 motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none">
       <ResultsStatus message={status} label="Request updates" />
+      <FollowLive following={following} onChange={setFollowing} updatedAt={dataUpdatedAt || null} />
       <p className="text-muted-foreground text-meta">
         Receipts show the outcome, model and time. They do not include what was asked.
       </p>
@@ -451,6 +495,7 @@ export function Requests() {
                         className={`${requestRowLayout} focus-visible:outline-ring hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2`}
                         onClick={(event) => {
                           openerRef.current = event.currentTarget;
+                          setOpenedRecord(row);
                           setSelectedReceiptKey(keys[index]);
                         }}
                       >
@@ -493,10 +538,18 @@ export function Requests() {
                           ) : (
                             <StateBadge state="unknown" word={outcome(row.receipt.status)} />
                           )}
+                          {staleWords(row.receipt.status, lastUpdate(row.receipt), now) && (
+                            <span className="text-muted-foreground text-meta">
+                              {staleWords(row.receipt.status, lastUpdate(row.receipt), now)}
+                            </span>
+                          )}
                           <p className="text-muted-foreground figures max-w-full truncate text-meta">
                             <time {...formatTimestamp(row.created_at || null)} />
                             {" · "}
                             {duration(row.receipt.latency_ms) || "Duration not recorded"}
+                          </p>
+                          <p className="max-w-full break-words text-right text-meta">
+                            <span className="sr-only">Cost: </span>{requestCost(row.receipt)}
                           </p>
                         </div>
                         <ArrowRight
@@ -547,10 +600,13 @@ export function Requests() {
           </div>
         </>
       )}
-      <RequestReceiptSheet record={record} returnFocus={() => {
+      <RequestReceiptSheet record={record} cost={record ? requestCost(record.receipt) : undefined} returnFocus={() => {
         (openerRef.current?.isConnected ? openerRef.current : filterRef.current)?.focus();
       }} onOpenChange={(open) => {
-        if (!open) setSelectedReceiptKey(null);
+        if (!open) {
+          setSelectedReceiptKey(null);
+          setOpenedRecord(null);
+        }
       }} />
     </div>
   );

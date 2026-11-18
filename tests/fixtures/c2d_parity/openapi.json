@@ -1448,7 +1448,7 @@
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
-      "bytes": 9604,
+      "bytes": 10481,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1673,11 +1673,13 @@
                 "type": "integer"
               },
               "cfg": {
+                "description": "Higher follows your words more closely.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "number"
               },
               "cfg_scale": {
+                "description": "Higher follows your words more closely.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "number"
@@ -1689,6 +1691,7 @@
                 "type": "number"
               },
               "keyscale": {
+                "description": "Choose the musical key for the piece.",
                 "enum": [
                   "C major",
                   "C# major",
@@ -1728,6 +1731,7 @@
                 "type": "string"
               },
               "language": {
+                "description": "Choose the language for the lyrics.",
                 "enum": [
                   "ar",
                   "az",
@@ -1788,14 +1792,17 @@
                 "type": "string"
               },
               "min_p": {
+                "description": "Set the minimum planning choice likelihood from 0 to 1.",
                 "maximum": 1,
                 "minimum": 0,
                 "type": "number"
               },
               "sampler": {
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
                 "type": "string"
               },
               "scheduler": {
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
                 "type": "string"
               },
               "seed": {
@@ -1814,11 +1821,13 @@
                 "type": "string"
               },
               "temperature": {
+                "description": "Set the planning variety value from 0 to 2.",
                 "maximum": 2,
                 "minimum": 0,
                 "type": "number"
               },
               "timesignature": {
+                "description": "Choose the number of beats in each bar.",
                 "enum": [
                   "2",
                   "3",
@@ -1828,11 +1837,13 @@
                 "type": "string"
               },
               "top_k": {
+                "description": "Set the planning choice limit from 0 to 1000.",
                 "maximum": 1000,
                 "minimum": 0,
                 "type": "integer"
               },
               "top_p": {
+                "description": "Set the planning choice range from 0 to 1.",
                 "maximum": 1,
                 "minimum": 0,
                 "type": "number"
@@ -1854,10 +1865,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo",
         "run_path": null
       },
-      "sha256": "e499ebf85942a31215103b784d7e9f36aba369f7d2bc85730e6368822b9cc9cf"
+      "sha256": "d8cff8f02e0ec2fd7a134155791e639af67976dd6d850b20dfbffc657873d297"
     },
     "audio.generate.sa3-small-sfx": {
-      "bytes": 3419,
+      "bytes": 3617,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1965,14 +1976,17 @@
             "properties": {
               "duration": {
                 "default": 10,
+                "description": "Length in seconds.",
                 "maximum": 120,
                 "minimum": 1,
                 "type": "number"
               },
               "prompt": {
+                "description": "Describe the sound you want.",
                 "type": "string"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               }
@@ -1996,10 +2010,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx",
         "run_path": null
       },
-      "sha256": "992dd625fd034b719ef115e56a67788f48d2fa54eae09a7425c67801bdad9455"
+      "sha256": "4c9b746afb4101a955b435cded1de8b7eaa9963a98d2fae9f111e6b8b47bd3a6"
     },
     "audio.generate.tangoflux": {
-      "bytes": 4326,
+      "bytes": 4745,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -2132,28 +2146,34 @@
             "description": "Create a sound effect from a text prompt.",
             "properties": {
               "batch_size": {
+                "description": "Makes this many clips, but only the first one comes back.",
                 "maximum": 4,
                 "minimum": 1,
                 "type": "integer"
               },
               "duration": {
+                "description": "Length in seconds.",
                 "maximum": 30,
                 "minimum": 1,
                 "type": "number"
               },
               "guidance": {
+                "description": "Higher follows your words more closely.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "number"
               },
               "prompt": {
+                "description": "Describe the sound you want.",
                 "type": "string"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
               "steps": {
+                "description": "More steps add detail but take longer.",
                 "maximum": 200,
                 "minimum": 1,
                 "type": "integer"
@@ -2178,7 +2198,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux",
         "run_path": null
       },
-      "sha256": "b262cdf713686ebc1cad293b7b9860d35c3c58a1d1d06cd361dcd6ba0be2d610"
+      "sha256": "d8dc713e546bd1388431974e588e01a4c16bcfb48c78e24d335edf6074535147"
     },
     "audio.generate.yue2-song": {
       "bytes": 4009,
@@ -2432,7 +2452,7 @@
       "sha256": "25107acf9802ecf939e1e52fb3fd7e81175885dd85190e94c85dead8267834a0"
     },
     "image.edit.fibo-2-edit-turbo": {
-      "bytes": 3324,
+      "bytes": 3476,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -2514,9 +2534,11 @@
             "description": "Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.",
             "properties": {
               "prompt": {
+                "description": "Describe the change you want.",
                 "type": "string"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -2546,10 +2568,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_fibo_2_edit_turbo",
         "run_path": null
       },
-      "sha256": "5f245ea175e8d7f39d987752ddd449386677811514aec6ba29fdc927129ec900"
+      "sha256": "fdb681e6fc2ee48a85a49bb425c587cc044a201a6abcb12c53d2340019503e6a"
     },
     "image.edit.image-identity": {
-      "bytes": 7270,
+      "bytes": 7661,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2676,12 +2698,14 @@
             "properties": {
               "attempts": {
                 "default": 3,
+                "description": "Sets the number of attempts to make the scene.",
                 "maximum": 8,
                 "minimum": 1,
                 "type": "integer"
               },
               "cfg": {
                 "default": 1.0,
+                "description": "Higher follows your words more closely.",
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
@@ -2693,14 +2717,14 @@
               },
               "max_refs_per_person": {
                 "default": 3,
-                "description": "Reference heads sent to the generator per person. Every photo is used for scoring.",
+                "description": "Higher values allow more reference photos per person to be sent to the generator.",
                 "maximum": 5,
                 "minimum": 1,
                 "type": "integer"
               },
               "mode": {
                 "default": "auto",
-                "description": "async returns a media job (poll_url, content_url). auto is async unless attempts=1 and refine=off.",
+                "description": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
                 "enum": [
                   "auto",
                   "sync",
@@ -2710,6 +2734,7 @@
               },
               "only_listed_people": {
                 "default": true,
+                "description": "Choose whether to include only the people you listed.",
                 "type": "boolean"
               },
               "people": {
@@ -2718,11 +2743,12 @@
               },
               "photo_as_canvas": {
                 "default": true,
+                "description": "Choose whether to use your photo as the canvas.",
                 "type": "boolean"
               },
               "pooling": {
                 "default": "best",
-                "description": "How several reference photos of one person are scored.",
+                "description": "Chooses how multiple reference photos of one person are scored.",
                 "enum": [
                   "best",
                   "mean"
@@ -2731,7 +2757,7 @@
               },
               "pose_policy": {
                 "default": "likeness",
-                "description": "likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.",
+                "description": "Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.",
                 "enum": [
                   "likeness",
                   "as_written"
@@ -2744,7 +2770,7 @@
               },
               "refine": {
                 "default": "auto",
-                "description": "Per-person head refinement after composing. A pass is kept only if it helps that person and hurts nobody.",
+                "description": "Chooses whether face refinement is off, automatic, or applied to everyone.",
                 "enum": [
                   "off",
                   "auto",
@@ -2754,12 +2780,13 @@
               },
               "refine_attempts": {
                 "default": 2,
+                "description": "Sets the number of attempts to refine faces.",
                 "maximum": 4,
                 "minimum": 1,
                 "type": "integer"
               },
               "resolution": {
-                "description": "Per-reference pixel budget. Default 1536 for up to 3 images, 1280 up to 5, 1024 beyond.",
+                "description": "Higher values give each reference photo a larger pixel budget.",
                 "maximum": 2048,
                 "minimum": 512,
                 "type": "integer"
@@ -2783,6 +2810,7 @@
               },
               "stop_when_pass": {
                 "default": true,
+                "description": "Choose whether to stop attempts after a good match.",
                 "type": "boolean"
               },
               "thresholds": {
@@ -2803,10 +2831,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_image_identity",
         "run_path": null
       },
-      "sha256": "a52cf5de60b9d07205cc6909e7b28ee06a76df062c342dbeb4daccd3d50caa7d"
+      "sha256": "47c1bd60d3044e63520f3531ce36a12a2bc395786ed2349110b8be99e60786a7"
     },
     "image.edit.qwen-image-2.1-edit": {
-      "bytes": 3943,
+      "bytes": 4160,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2906,9 +2934,11 @@
               },
               "negative_prompt": {
                 "default": "",
+                "description": "Describe anything you want left out.",
                 "type": "string"
               },
               "prompt": {
+                "description": "Describe the change you want.",
                 "type": "string"
               },
               "reference_resolution": {
@@ -2919,6 +2949,7 @@
                 "type": "integer"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -2948,10 +2979,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit",
         "run_path": null
       },
-      "sha256": "9b408aa1a509a2b45c03cb22d10b29cb7ef2c77a96806ef59c28e97b586d0e7d"
+      "sha256": "5eee6f7cf3ad7ad56165a12fb2fd8ef2681729f597d8def270d19de0bb68eb66"
     },
     "image.edit.qwen-image-2.1-edit-multiref": {
-      "bytes": 4241,
+      "bytes": 4599,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3048,16 +3079,18 @@
             "properties": {
               "cfg": {
                 "default": 1.0,
+                "description": "Higher follows your words more closely.",
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
               },
               "negative_prompt": {
                 "default": "",
+                "description": "Describe anything you want left out.",
                 "type": "string"
               },
               "prompt": {
-                "description": "Reference each image explicitly, e.g. \"<image1> ... <image2> ...\".",
+                "description": "Describe the change you want.",
                 "type": "string"
               },
               "reference_image_2": {
@@ -3067,11 +3100,13 @@
               },
               "reference_resolution": {
                 "default": 1024,
+                "description": "Sets the resolution value used when processing the two reference pictures.",
                 "maximum": 2048,
                 "minimum": 256,
                 "type": "integer"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -3082,6 +3117,7 @@
               },
               "steps": {
                 "default": 25,
+                "description": "More steps add detail but take longer.",
                 "maximum": 60,
                 "minimum": 1,
                 "type": "integer"
@@ -3101,10 +3137,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit_multiref",
         "run_path": null
       },
-      "sha256": "c3bb168b435ba233d5420e9dc96071cb8fcdb825bf2abf35a3ab3a7f0213958c"
+      "sha256": "8574937ac4527df770d3a640fec4156165ae11d1fe5853773f10a7161b824865"
     },
     "image.edit.qwen-image-2.1-inpaint": {
-      "bytes": 5174,
+      "bytes": 5270,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3209,40 +3245,43 @@
             "properties": {
               "cfg": {
                 "default": 1.0,
+                "description": "Higher follows your words more closely.",
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
               },
               "lanpaint_steps": {
                 "default": 5,
-                "description": "LanPaint's internal Langevin refinement steps per sampler step (\"turns of thinking\"). Higher = better boundary consistency, slower.",
+                "description": "More steps improve consistency at the edit boundary but take longer.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "integer"
               },
               "mask_expand": {
                 "default": 0,
-                "description": "Pixels to grow (positive) or shrink (negative) the edit mask before sampling.",
+                "description": "Positive values expand the edit area in pixels; negative values shrink it.",
                 "maximum": 256,
                 "minimum": -256,
                 "type": "integer"
               },
               "mask_feather": {
-                "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
+                "description": "Higher values soften edit edges but reduce precision near the boundary.",
                 "maximum": 256,
                 "minimum": 0,
                 "type": "integer"
               },
               "negative_prompt": {
                 "default": "",
+                "description": "Describe anything you want left out.",
                 "type": "string"
               },
               "prompt": {
+                "description": "Describe the change you want.",
                 "type": "string"
               },
               "prompt_mode": {
                 "default": "Image First",
-                "description": "Image First favors seamless blending; Prompt First favors literal adherence to the edit instruction.",
+                "description": "Image First favors seamless blending, while Prompt First follows the edit instruction more literally.",
                 "enum": [
                   "Image First",
                   "Prompt First"
@@ -3250,6 +3289,7 @@
                 "type": "string"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -3260,6 +3300,7 @@
               },
               "steps": {
                 "default": 25,
+                "description": "More steps add detail but take longer.",
                 "maximum": 60,
                 "minimum": 1,
                 "type": "integer"
@@ -3278,10 +3319,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_inpaint",
         "run_path": null
       },
-      "sha256": "9331670520161f267ec89df80010e4ba7cb441bd75d15ed9daeec5936868c669"
+      "sha256": "b66fc1eb82c4d92964f74f277b97ea4cc7de6cc68ba1a127570a7f4bd393049b"
     },
     "image.edit.seedvr2-upscale": {
-      "bytes": 3292,
+      "bytes": 3389,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3362,7 +3403,7 @@
             "properties": {
               "color_correction_method": {
                 "default": "none",
-                "description": "Optional color match back to the original (pre-upscale) image. lab is most faithful, wavelet keeps upscaled high-frequency detail, adain is fastest/roughest, none skips color transfer.",
+                "description": "Choose how to match colors to the original picture, or none to skip color matching.",
                 "enum": [
                   "none",
                   "lab",
@@ -3373,6 +3414,7 @@
               },
               "scale": {
                 "default": 2,
+                "description": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
                 "enum": [
                   2,
                   4
@@ -3380,6 +3422,7 @@
                 "type": "number"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -3401,7 +3444,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_seedvr2_upscale",
         "run_path": null
       },
-      "sha256": "a4e99bf28018d10038e4c2ca2abaaba75993969995c63e364b67d4666c291f13"
+      "sha256": "6f35982929484963716a27777fc25165b5b675059be74f5fcd410bb8d7f69bc3"
     },
     "image.generate.anima-turbo": {
       "bytes": 5278,
@@ -3614,7 +3657,7 @@
       "sha256": "39b13162eb6882c6f1003f4751009464c79f5f92026ceec0553db1b9cfcbc977"
     },
     "image.generate.krea2-turbo": {
-      "bytes": 5114,
+      "bytes": 5267,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -3788,9 +3831,11 @@
                 "type": "integer"
               },
               "prompt": {
+                "description": "Describe the picture you want.",
                 "type": "string"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -3821,7 +3866,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo",
         "run_path": null
       },
-      "sha256": "05ccef5517c50092464b2e32ba977686166868c7b1a601ba698d12e9c75c7e94"
+      "sha256": "530c22dc3f47c9add8282a378077dc6144a318c40f9fd1e7e60660ae1764302a"
     },
     "image.generate.krea2-turbo-snofs": {
       "bytes": 5898,
@@ -4651,7 +4696,7 @@
       "sha256": "6c7f5d943ee3121b1503547ee3267b93728da98d0609fa5f8afbcd855b835539"
     },
     "image.generate.sdxl-seamless-tile": {
-      "bytes": 6683,
+      "bytes": 7539,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4849,27 +4894,33 @@
             "description": "Portable image generation contract for SDXL texture tiles with manifest-backed seamless postprocessing controls.",
             "properties": {
               "batch_size": {
+                "description": "How many pictures to make at once.",
                 "maximum": 8,
                 "minimum": 1,
                 "type": "integer"
               },
               "guidance": {
+                "description": "Higher follows your words more closely.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "number"
               },
               "height": {
+                "description": "Picture height in pixels.",
                 "maximum": 2048,
                 "minimum": 64,
                 "type": "integer"
               },
               "negative_prompt": {
+                "description": "Describe anything you want left out.",
                 "type": "string"
               },
               "prompt": {
+                "description": "Describe the picture you want.",
                 "type": "string"
               },
               "sampler": {
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
                 "enum": [
                   "euler",
                   "euler_ancestral",
@@ -4881,6 +4932,7 @@
                 "type": "string"
               },
               "scheduler": {
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
                 "enum": [
                   "karras",
                   "normal",
@@ -4891,20 +4943,24 @@
                 "type": "string"
               },
               "seam_blending": {
+                "description": "Sets the blending value used when making the picture seamless.",
                 "maximum": 0.5,
                 "minimum": 0,
                 "type": "number"
               },
               "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
               },
               "steps": {
+                "description": "More steps add detail but take longer.",
                 "maximum": 100,
                 "minimum": 1,
                 "type": "integer"
               },
               "width": {
+                "description": "Picture width in pixels.",
                 "maximum": 2048,
                 "minimum": 64,
                 "type": "integer"
@@ -4922,7 +4978,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_sdxl_seamless_tile",
         "run_path": null
       },
-      "sha256": "9c058769db65554d9b8aabc6c5caac0e9e8272dacc4c26c0b066e0f3f63dd242"
+      "sha256": "f430bc832c33da88c7be392c3a054ddec5b78f01cfb66fb6959952f5ed012942"
     },
     "mesh.edit.retopo": {
       "bytes": 5101,

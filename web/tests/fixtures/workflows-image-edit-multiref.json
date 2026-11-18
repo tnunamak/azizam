@@ -20,7 +20,9 @@
      "ignored": false,
      "applies": "Multipart form",
      "request_field": "prompt",
-     "description": "Reference each image explicitly, e.g. \"<image1> ... <image2> ...\"."
+     "description": "Describe the change you want.",
+     "label": "what to make",
+     "help": "Describe the change you want."
     },
     {
      "name": "source_image",
@@ -58,7 +60,10 @@
      "ignored": false,
      "applies": "Workflow extension",
      "request_field": "negative_prompt",
-     "default": ""
+     "default": "",
+     "label": "what to avoid",
+     "help": "Describe anything you want left out.",
+     "description": "Describe anything you want left out."
     },
     {
      "name": "reference_resolution",
@@ -70,7 +75,10 @@
      "request_field": "reference_resolution",
      "default": 1024,
      "minimum": 256,
-     "maximum": 2048
+     "maximum": 2048,
+     "label": "reference picture resolution",
+     "help": "Sets the resolution value used when processing the two reference pictures.",
+     "description": "Sets the resolution value used when processing the two reference pictures."
     },
     {
      "name": "steps",
@@ -82,7 +90,10 @@
      "request_field": "steps",
      "default": 25,
      "minimum": 1,
-     "maximum": 60
+     "maximum": 60,
+     "label": "refinement steps",
+     "help": "More steps add detail but take longer.",
+     "description": "More steps add detail but take longer."
     },
     {
      "name": "cfg",
@@ -94,7 +105,10 @@
      "request_field": "cfg",
      "default": 1.0,
      "minimum": 0,
-     "maximum": 10
+     "maximum": 10,
+     "label": "prompt strength",
+     "help": "Higher follows your words more closely.",
+     "description": "Higher follows your words more closely."
     },
     {
      "name": "seed",
@@ -104,7 +118,10 @@
      "ignored": false,
      "applies": "Workflow extension",
      "request_field": "seed",
-     "minimum": 0
+     "minimum": 0,
+     "label": "variation number",
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "description": "Use the same number to repeat a variation with the same settings."
     },
     {
      "name": "n",
@@ -302,7 +319,7 @@
       "extensions_field": "extensions (JSON string)",
       "output": "data[].b64_json or data[].url",
       "response": {
-        "kind": "json"
+       "kind": "json"
       }
      },
      "async": null

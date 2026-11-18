@@ -159,7 +159,7 @@ test("phone: a picture picked from the Library is shown and reaches the picture-
     .toBeGreaterThan(0);
   await page.screenshot({ path: "test-results/screens/library-pick-chosen-390.png" });
 
-  await page.getByRole("textbox", { name: /Describe the picture/ }).fill("Make it a painting");
+  await page.getByRole("textbox", { name: /^What to make/ }).fill("Make it a painting");
   const sent = page.waitForResponse(
     (response) =>
       response.url().includes("/v1/images/edits") && response.request().method() === "POST",

@@ -56,7 +56,7 @@
         },
         "identity": {
           "id": "audio.generate.ace-step-1.5-xl-turbo",
-          "manifest_hash": "39427f34a224966846dac58ceac19e2a65a674d7ae7fbe83b9ea918be8efda2d",
+          "manifest_hash": "4e25aa23259df20cf842beae1e12922d9a1e41229d12c8d18b0955a385859a80",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -143,7 +143,7 @@
         },
         "identity": {
           "id": "image.generate.anima-turbo",
-          "manifest_hash": "617f3a08532e36ead7826fb381e524b58a5d11d2f70d491007026341f4a89cf5",
+          "manifest_hash": "b2ee6abdf49912e19ff15659c4aea4b9db6dfb0db085adfd14d375aa990e9748",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -216,7 +216,7 @@
         },
         "identity": {
           "id": "image.edit.fibo-2-edit-turbo",
-          "manifest_hash": "f362106d058f174d33bcb438236b86f383d51820493c2f4f2f32a616d07019b2",
+          "manifest_hash": "47ad4d29cf6811a5a9b728bbafc3e4394dba48621c53139b3021e23643a8a637",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -286,7 +286,7 @@
         },
         "identity": {
           "id": "image.generate.krea2-turbo-snofs",
-          "manifest_hash": "59fda5d52ecbd9b7cea1cac38dbc3738f59ed7f342cf963d50e4c6f49781e500",
+          "manifest_hash": "677bfcda18a7034a6436f551345a424d0dd3a9c22eedd8d9c9f7d93d0623141a",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -356,7 +356,7 @@
         },
         "identity": {
           "id": "image.generate.krea2-turbo",
-          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
+          "manifest_hash": "d1067511c92271a87b6884944d58da1407de9d748d79d4e4067cc2214540ae8c",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -482,7 +482,7 @@
         },
         "identity": {
           "id": "image.generate.moss-image-fast",
-          "manifest_hash": "4dd0cdc6c76a3e5768543d80f9d516e9afe9755ab305975618906ff78648c3c4",
+          "manifest_hash": "48cd5f825a3e5c023eb6189d58b0554088f3441758c4954ae254064c496bc2ae",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -544,7 +544,7 @@
         },
         "identity": {
           "id": "image.generate.moss-image-quality",
-          "manifest_hash": "2bf4dcecfbe01ae0c86f7f38fc6adf5c8aee52f9e39059d4f3fa36e1ed2b5912",
+          "manifest_hash": "76c9834454b007baa1491e29dd6893b3c46631798ad5f0e64f7664abd2dba23f",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -611,7 +611,7 @@
         },
         "identity": {
           "id": "image.generate.moss-image",
-          "manifest_hash": "2af4686bf61b08cd1e00a18517510ea2ef18aa06fc03669db56a7c4495773110",
+          "manifest_hash": "f1bf3be8d872adfd63caa302757296e3b965d327837d4ee952d15ef5e9eb25f8",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -678,7 +678,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-edit-multiref",
-          "manifest_hash": "3e9232bc5b9cdadf424e7fce9cbef47d0408043de30b7790293195b1a02c0d50",
+          "manifest_hash": "7b156d344fb83abd3ca79d6210af36772370e798566833f3fd67294512d01c57",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -756,7 +756,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-edit",
-          "manifest_hash": "523129a6f2a3003ff9302f5e1eca8be93b07bb85043a1fd7da532232faa08931",
+          "manifest_hash": "36c71f707cfe34bab9e65c003724b2237cab33e710aacfd6b1001d1d75ac7ed5",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -832,7 +832,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-inpaint",
-          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
+          "manifest_hash": "3b225a6d6bf318223d1d751c3ad9f631d5820fd22b74becab48faf23fafec3b7",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -975,7 +975,7 @@
         },
         "identity": {
           "id": "audio.generate.sa3-small-sfx",
-          "manifest_hash": "66dcdc02f1d8ced3b4f32ae3fb9fd8328be09012e7ce9c470253cb289e6e6234",
+          "manifest_hash": "bba3278b79cbc67e8bc16ee1fc4664d3b19ae63253d21f9c5d1dad9da3389ca0",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1036,7 +1036,7 @@
         },
         "identity": {
           "id": "image.generate.sdxl-seamless-tile",
-          "manifest_hash": "a70cb797416546b9c1c13e314d62e9ef693922b3045ebb4a5ed60f750a41bb24",
+          "manifest_hash": "09060607081ccea8961a085ab886e9917cca997f1db8b91c8a99726b3f893cdd",
           "source": null,
           "trusted": false,
           "version": "0.1.1"
@@ -1125,7 +1125,7 @@
         },
         "identity": {
           "id": "image.edit.seedvr2-upscale",
-          "manifest_hash": "c0bed3b5781a6edaf5f5dbdbc4e9bf714864665e809ed32b02ff4c803d0355c0",
+          "manifest_hash": "8419080f1dc98a4dbc00ffb19e19364e8a51eae5c38d647aa662e603d2a134a2",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1191,7 +1191,7 @@
         },
         "identity": {
           "id": "audio.generate.tangoflux",
-          "manifest_hash": "836bb24c7c722657d75951242d00c4d0782ce5b2f6e06206d63299f773b41798",
+          "manifest_hash": "6e19965ac5579cc2f3328c5a44de1a4e1f77dc58317d425863c7ba602ca1958e",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1244,7 +1244,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-i2v",
-          "manifest_hash": "69b1ca96f7d274e04702e27f8d3453fac7f1f99ed6538311ee1144a8765b649a",
+          "manifest_hash": "b0050e3efce675b3ff481cd7c10e5f2079d1732a096b50f955e7bb51b218ac7b",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1351,7 +1351,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-keyframes-mid",
-          "manifest_hash": "9bfbd73989fff2fe941ac6c22261d2ceb00989ffe7dec5c1795264c8c4f1cab7",
+          "manifest_hash": "ed46b201333e0dd5e00206f73556b0ab1f4a2351e5477cb0d67d20b36a1c4c14",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1522,7 +1522,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-keyframes",
-          "manifest_hash": "bcd81f4e118bf9bed94d35a2bb88ce63866af6ab91ebcd6270b8402f25be174c",
+          "manifest_hash": "930043a4e033fa6d681f286e26dd51f756c2236dcb0e95b354048cce13e1a605",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1656,7 +1656,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-long",
-          "manifest_hash": "eace076e279d79873b2903e229e984f02bf95f297ab27b6ca13409fc8e7ca1c9",
+          "manifest_hash": "1411fa15f897aae1e881b325044836c1d5de7eb45e5e855db17717a1fad8e4c0",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1718,7 +1718,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-t2v",
-          "manifest_hash": "ee7c0ed604edb75959e8ceec7a0ff0fc9c22f83bbcf122f6ba9a4116385bb9bc",
+          "manifest_hash": "d68cfe3beaf3b15aa7b7297efad3aa430ae174e2b251937d5d1fd1d4c52db082",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1808,7 +1808,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-i2v",
-          "manifest_hash": "67c1a8191c3e8f2dd850f06871b074fb10d510930d9f2c83e828e586a437c6c0",
+          "manifest_hash": "47ee639f0b7306b299c35956fde99ba979a308ede8ef8459ae7dc345fcc313a3",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1898,7 +1898,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-keyframes-mid",
-          "manifest_hash": "20d1a52a4208c42f04a5c8f9e525469997ec45d04efe12f1cbb9de05cab50471",
+          "manifest_hash": "609f2a0dc6417f13564107b8f485c93e3da3a1793662d4aef993d30d94df0bea",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -2004,7 +2004,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-keyframes",
-          "manifest_hash": "a592e2474eb2a7718de371c1d4ac13e2c54c7fcec86b0982ac71554aafd22871",
+          "manifest_hash": "9606375d58f7a17f5bd102110aba87e1ba82483640a40cc6a89663e3f1816f01",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -2095,7 +2095,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-long",
-          "manifest_hash": "ea01fe9aac7de3377add3fda98437595ecc5b353ffbe47b2555900e37a035f91",
+          "manifest_hash": "504b5bed73cae687562db9a77c69dcc52fb424b7ee29c06b8e492dc33aedff10",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -2149,7 +2149,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-t2v",
-          "manifest_hash": "bce35d19887a88c7481b2a4c88b38c6b60fa97ad68773263629626755de2d038",
+          "manifest_hash": "9a3f9ced516e772ac434997d8115d053c8c47797f63ba18419fac01988b8810f",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -2291,7 +2291,7 @@
         },
         "identity": {
           "id": "video.edit.scail-2-replace",
-          "manifest_hash": "77515708442677c690c768b333222709bf24ad2e41a174e8409fae2ea0c20188",
+          "manifest_hash": "60c9cef46c9ba6c94d4b180cafbfb4477cad7f2d9cec865a6c8e2ce2ec04f869",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -2406,7 +2406,7 @@
         },
         "identity": {
           "id": "audio.generate.yue2-song",
-          "manifest_hash": "963a05281c37a51022069941fef76f4fd4a0c1ea03d3390df169b791a408baf8",
+          "manifest_hash": "fbae7fc68a17107111707551df591ad625be6ab6f4e890c0707167ee7fcdf1ed",
           "source": null,
           "trusted": false,
           "version": "0.1.0"

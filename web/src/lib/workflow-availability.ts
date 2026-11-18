@@ -138,7 +138,15 @@ export function workflowAvailabilityView(
       text: reason ?? WAIT_NOTE[status],
       fix: null,
     };
-  if (reason)
+  // A setup code decides the state; the gateway's prose only explains it.
+  const code = availability?.reason_code;
+  const needsSetup =
+    code === "unavailable_disabled" ||
+    code === "unavailable_unconfigured" ||
+    code === "not_available" ||
+    status === "not_configured" ||
+    status === "not_available";
+  if (reason && !needsSetup)
     return {
       readiness: "down",
       runnable: false,
@@ -159,12 +167,12 @@ export function workflowAvailabilityView(
       text: MEMBER_SETUP_NOTE,
       fix: null,
     };
-  const help = ownerSetupHelp(availability ?? {}, engineBinding);
+  const help = ownerSetupHelp(availability ?? {}, availability?.engine ?? engineBinding);
   return {
     readiness: "setup",
     runnable: false,
     pickerNote: "Unavailable",
-    text: help.text,
+    text: reason ?? help.text,
     fix: help.fix,
   };
 }

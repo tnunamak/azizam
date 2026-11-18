@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { DiscoveryTabs } from "@/components/product/discovery-tabs";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -846,6 +847,17 @@ export default function WorkflowsPage() {
     () => (owner ? allRows : allRows.filter((row) => readiness(row) !== "setup")),
     [allRows, owner],
   );
+  // Match Models: apply a shared task once the catalog is available. Later
+  // choices and refreshes must not reapply the original address parameter.
+  const appliedDeepLink = useRef(false);
+  useEffect(() => {
+    if (!data || appliedDeepLink.current) return;
+    appliedDeepLink.current = true;
+    const task = new URLSearchParams(window.location.search).get("capability");
+    if (task && rows.some((row) => row.capability === task)) {
+      setCapability(task);
+    }
+  }, [data, rows]);
   // Read the open workflow from the latest catalog so a refresh reaches it.
   const detail = rows.find((row) => row.id === detailId) ?? null;
   // A workflow that left the catalog stays dismissed if it comes back.
@@ -892,6 +904,7 @@ export default function WorkflowsPage() {
 
   return (
     <div className="space-y-(--space-section)">
+      <DiscoveryTabs current="workflows" />
       <PageHeader
         title="Workflows"
         count={data ? rows.length : undefined}

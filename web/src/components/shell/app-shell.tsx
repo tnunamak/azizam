@@ -10,6 +10,7 @@ import { ThemeProvider, useTheme } from "next-themes";
 import {
   Activity,
   Box,
+  Compass,
   ChartColumn,
   ChevronDown,
   ChevronRight,
@@ -36,6 +37,7 @@ import { createQueryClient } from "@/lib/api";
 import {
   canonicalDestinationPath,
   destinations,
+  isCurrentDestination,
   pageAccess,
   pageNameFor,
   PRODUCT_NAME,
@@ -118,7 +120,8 @@ function usePreloadShellExtras() {
   }, []);
 }
 
-// One icon per destination; no two destinations share a glyph (ban-list 19).
+// One icon per destination and per view (the palette lists Discover's two
+// views); no two share a glyph (ban-list 19).
 const icons: Record<string, LucideIcon> = {
   Home: House,
   Library: Images,
@@ -126,6 +129,7 @@ const icons: Record<string, LucideIcon> = {
   History: History,
   "Apps & keys": KeyRound,
   Connect: Plug,
+  Discover: Compass,
   Models: Box,
   Workflows: GitBranch,
   Usage: ChartColumn,
@@ -614,9 +618,7 @@ function Nav({
               )
               .map((item) => {
                 const Icon = icons[item.title];
-                const active =
-                  canonicalDestinationPath(pathname) ===
-                  canonicalDestinationPath(item.href);
+                const active = isCurrentDestination(item, pathname);
                 const link = (
                   <Link prefetch={false}
                     key={item.href}
@@ -811,9 +813,10 @@ function Shell({ children }: { children: React.ReactNode }) {
     <>
       <PageHeader
         title={
-          destinations.find(
-            (d) => currentPath === canonicalDestinationPath(d.href),
-          )?.title ?? "Your gateway"
+          destinations
+            .flatMap((d) => d.views)
+            .find((v) => currentPath === canonicalDestinationPath(v.href))
+            ?.title ?? "Your gateway"
         }
       />
       <ErrorState
@@ -835,7 +838,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   ) : viewer?.serviceAdmin &&
     destinations.some(
       (d) =>
-        currentPath === canonicalDestinationPath(d.href) &&
+        isCurrentDestination(d, currentPath) &&
         (d.group === "You" || ["People", "Activity"].includes(d.title)),
     ) ? (
     <>
@@ -852,9 +855,10 @@ function Shell({ children }: { children: React.ReactNode }) {
     <>
       <PageHeader
         title={
-          destinations.find(
-            (d) => currentPath === canonicalDestinationPath(d.href),
-          )?.title ?? "Your gateway"
+          destinations
+            .flatMap((d) => d.views)
+            .find((v) => currentPath === canonicalDestinationPath(v.href))
+            ?.title ?? "Your gateway"
         }
       />
       <ErrorState
@@ -1027,8 +1031,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                         href={d.href}
                         className="mobile-tab"
                         aria-current={
-                          canonicalDestinationPath(pathname) ===
-                          canonicalDestinationPath(d.href)
+                          isCurrentDestination(d, pathname)
                             ? "page"
                             : undefined
                         }

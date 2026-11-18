@@ -93,7 +93,7 @@ async function openTry() {
 }
 
 const combobox = () => screen.getByRole("combobox", { name: "Model" });
-const description = () => screen.getByRole("textbox", { name: /Describe the picture|^Description/ });
+const description = () => screen.getByRole("textbox", { name: /^What to make/ });
 const picturePlace = () => screen.getByRole("group", { name: /Picture to change/ });
 
 async function switchTo(user: ReturnType<typeof userEvent.setup>, title: string) {

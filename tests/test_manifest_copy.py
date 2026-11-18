@@ -159,14 +159,14 @@ class ManifestCopyTest(unittest.TestCase):
                     self.assertLessEqual(len(help_text.split()), 20)
                     self.assertNotIn("_", help_text)
 
-    def test_every_picture_input_has_plain_words(self) -> None:
+    def test_every_input_has_plain_words(self) -> None:
+        # Walkthrough B9: a form field shows the manifest's label and help, never a bare field name.
         for file, manifest in self.manifests.items():
             for name, spec in (manifest.get("inputs") or {}).items():
-                if not isinstance(spec, dict) or spec.get("type") != "asset":
-                    continue
                 with self.subTest(file=file, input=name):
-                    self.assertTrue(spec.get("label"), "an asset input needs a label")
-                    self.assertTrue(spec.get("help"), "an asset input needs help")
+                    self.assertIsInstance(spec, dict)
+                    self.assertTrue(spec.get("label"), "every input needs a label")
+                    self.assertTrue(spec.get("help"), "every input needs help")
 
     def test_notes_files_name_a_manifest(self) -> None:
         ids = {manifest["id"] for manifest in self.manifests.values()}

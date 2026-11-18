@@ -42,3 +42,4 @@ bindings:
       resolution: resolution
     service: pixal3d
     path: /generate
+source_url: https://huggingface.co/TencentARC/Pixal3D

@@ -67,6 +67,17 @@
     "license": {
       "$ref": "#/$defs/shortText"
     },
+    "released_at": {
+      "description": "The day the publisher released the model, as YYYY-MM-DD, from the source the document cites.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "source_url": {
+      "description": "The publisher page that states the model's facts.",
+      "type": "string",
+      "pattern": "^https://[^\\s]+$",
+      "maxLength": 512
+    },
     "task": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_-]{0,63}$"

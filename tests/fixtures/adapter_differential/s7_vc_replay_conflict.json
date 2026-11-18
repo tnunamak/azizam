@@ -242,12 +242,12 @@
       {
         "body": {
           "kind": "binary",
-          "len": 3255,
+          "len": 3339,
           "magic": "7b2262696e64696e",
-          "sha256": "f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e"
+          "sha256": "cb1e79f18642668a4262f5414eb5a0305e971eaeb36e2de64f8be05a5a02eb56"
         },
         "created": "<time>",
-        "sha": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e"
+        "sha": "sha256:cb1e79f18642668a4262f5414eb5a0305e971eaeb36e2de64f8be05a5a02eb56"
       },
       {
         "body": {
@@ -282,7 +282,7 @@
         "job_id": "<job:1>"
       },
       {
-        "blob_sha": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+        "blob_sha": "sha256:cb1e79f18642668a4262f5414eb5a0305e971eaeb36e2de64f8be05a5a02eb56",
         "holder_kind": "job",
         "job_id": "<job:1>"
       }
@@ -293,7 +293,7 @@
         "envelope_json": {
           "definitions": {
             "binding": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
-            "contract": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+            "contract": "sha256:cb1e79f18642668a4262f5414eb5a0305e971eaeb36e2de64f8be05a5a02eb56",
             "protocol": {
               "id": "node-graph",
               "revision": "sha256:2b05c8f50205f607e0b95167dc36251c1668d447a10aa005cb8917fd06804216"
@@ -320,7 +320,7 @@
             "incarnation": "bundled",
             "kind": "workflow",
             "record_revision": 1,
-            "revision": "sha256:394d2fcb011fa3927e0c88a512a9dd1fe527463dcad19b1e161a9e7a056c9f4f"
+            "revision": "sha256:c4ba4c7487f9d413ee832d278ff6276e0f8f53367bcd24f2fbfb0c3364f51062"
           },
           "upstream": {
             "origin_digest": "sha256:fd47323ed65e7a4a38a5ae6b27f4f882b131e0ffe3ca43e6496ad9650efcd371",
@@ -533,11 +533,11 @@
           "envelope": {
             "adapter_id": "node-graph",
             "binding": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
-            "contract": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+            "contract": "sha256:cb1e79f18642668a4262f5414eb5a0305e971eaeb36e2de64f8be05a5a02eb56",
             "interface_version": 2,
             "source_id": "video.generate.ltx-2.5-t2v",
             "source_kind": "workflow",
-            "source_revision": "sha256:394d2fcb011fa3927e0c88a512a9dd1fe527463dcad19b1e161a9e7a056c9f4f",
+            "source_revision": "sha256:c4ba4c7487f9d413ee832d278ff6276e0f8f53367bcd24f2fbfb0c3364f51062",
             "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
           },
           "results": [
@@ -851,11 +851,11 @@
               "envelope": {
                 "adapter_id": "node-graph",
                 "binding": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
-                "contract": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+                "contract": "sha256:cb1e79f18642668a4262f5414eb5a0305e971eaeb36e2de64f8be05a5a02eb56",
                 "interface_version": 2,
                 "source_id": "video.generate.ltx-2.5-t2v",
                 "source_kind": "workflow",
-                "source_revision": "sha256:394d2fcb011fa3927e0c88a512a9dd1fe527463dcad19b1e161a9e7a056c9f4f",
+                "source_revision": "sha256:c4ba4c7487f9d413ee832d278ff6276e0f8f53367bcd24f2fbfb0c3364f51062",
                 "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
               },
               "results": [

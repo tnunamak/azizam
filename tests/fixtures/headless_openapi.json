@@ -1574,11 +1574,13 @@
             "type": "integer"
           },
           "cfg": {
+            "description": "Higher follows your words more closely.",
             "maximum": 20,
             "minimum": 0,
             "type": "number"
           },
           "cfg_scale": {
+            "description": "Higher follows your words more closely.",
             "maximum": 20,
             "minimum": 0,
             "type": "number"
@@ -1590,6 +1592,7 @@
             "type": "number"
           },
           "keyscale": {
+            "description": "Choose the musical key for the piece.",
             "enum": [
               "C major",
               "C# major",
@@ -1629,6 +1632,7 @@
             "type": "string"
           },
           "language": {
+            "description": "Choose the language for the lyrics.",
             "enum": [
               "ar",
               "az",
@@ -1689,14 +1693,17 @@
             "type": "string"
           },
           "min_p": {
+            "description": "Set the minimum planning choice likelihood from 0 to 1.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"
           },
           "sampler": {
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
             "type": "string"
           },
           "scheduler": {
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
             "type": "string"
           },
           "seed": {
@@ -1715,11 +1722,13 @@
             "type": "string"
           },
           "temperature": {
+            "description": "Set the planning variety value from 0 to 2.",
             "maximum": 2,
             "minimum": 0,
             "type": "number"
           },
           "timesignature": {
+            "description": "Choose the number of beats in each bar.",
             "enum": [
               "2",
               "3",
@@ -1729,11 +1738,13 @@
             "type": "string"
           },
           "top_k": {
+            "description": "Set the planning choice limit from 0 to 1000.",
             "maximum": 1000,
             "minimum": 0,
             "type": "integer"
           },
           "top_p": {
+            "description": "Set the planning choice range from 0 to 1.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"
@@ -1749,14 +1760,17 @@
         "properties": {
           "duration": {
             "default": 10,
+            "description": "Length in seconds.",
             "maximum": 120,
             "minimum": 1,
             "type": "number"
           },
           "prompt": {
+            "description": "Describe the sound you want.",
             "type": "string"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           }
@@ -1773,28 +1787,34 @@
         "description": "Create a sound effect from a text prompt.",
         "properties": {
           "batch_size": {
+            "description": "Makes this many clips, but only the first one comes back.",
             "maximum": 4,
             "minimum": 1,
             "type": "integer"
           },
           "duration": {
+            "description": "Length in seconds.",
             "maximum": 30,
             "minimum": 1,
             "type": "number"
           },
           "guidance": {
+            "description": "Higher follows your words more closely.",
             "maximum": 20,
             "minimum": 0,
             "type": "number"
           },
           "prompt": {
+            "description": "Describe the sound you want.",
             "type": "string"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
           "steps": {
+            "description": "More steps add detail but take longer.",
             "maximum": 200,
             "minimum": 1,
             "type": "integer"
@@ -1875,9 +1895,11 @@
         "description": "Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.",
         "properties": {
           "prompt": {
+            "description": "Describe the change you want.",
             "type": "string"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
@@ -1908,12 +1930,14 @@
         "properties": {
           "attempts": {
             "default": 3,
+            "description": "Sets the number of attempts to make the scene.",
             "maximum": 8,
             "minimum": 1,
             "type": "integer"
           },
           "cfg": {
             "default": 1.0,
+            "description": "Higher follows your words more closely.",
             "maximum": 10,
             "minimum": 0,
             "type": "number"
@@ -1925,14 +1949,14 @@
           },
           "max_refs_per_person": {
             "default": 3,
-            "description": "Reference heads sent to the generator per person. Every photo is used for scoring.",
+            "description": "Higher values allow more reference photos per person to be sent to the generator.",
             "maximum": 5,
             "minimum": 1,
             "type": "integer"
           },
           "mode": {
             "default": "auto",
-            "description": "async returns a media job (poll_url, content_url). auto is async unless attempts=1 and refine=off.",
+            "description": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
             "enum": [
               "auto",
               "sync",
@@ -1942,6 +1966,7 @@
           },
           "only_listed_people": {
             "default": true,
+            "description": "Choose whether to include only the people you listed.",
             "type": "boolean"
           },
           "people": {
@@ -1950,11 +1975,12 @@
           },
           "photo_as_canvas": {
             "default": true,
+            "description": "Choose whether to use your photo as the canvas.",
             "type": "boolean"
           },
           "pooling": {
             "default": "best",
-            "description": "How several reference photos of one person are scored.",
+            "description": "Chooses how multiple reference photos of one person are scored.",
             "enum": [
               "best",
               "mean"
@@ -1963,7 +1989,7 @@
           },
           "pose_policy": {
             "default": "likeness",
-            "description": "likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.",
+            "description": "Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.",
             "enum": [
               "likeness",
               "as_written"
@@ -1976,7 +2002,7 @@
           },
           "refine": {
             "default": "auto",
-            "description": "Per-person head refinement after composing. A pass is kept only if it helps that person and hurts nobody.",
+            "description": "Chooses whether face refinement is off, automatic, or applied to everyone.",
             "enum": [
               "off",
               "auto",
@@ -1986,12 +2012,13 @@
           },
           "refine_attempts": {
             "default": 2,
+            "description": "Sets the number of attempts to refine faces.",
             "maximum": 4,
             "minimum": 1,
             "type": "integer"
           },
           "resolution": {
-            "description": "Per-reference pixel budget. Default 1536 for up to 3 images, 1280 up to 5, 1024 beyond.",
+            "description": "Higher values give each reference photo a larger pixel budget.",
             "maximum": 2048,
             "minimum": 512,
             "type": "integer"
@@ -2015,6 +2042,7 @@
           },
           "stop_when_pass": {
             "default": true,
+            "description": "Choose whether to stop attempts after a good match.",
             "type": "boolean"
           },
           "thresholds": {
@@ -2043,9 +2071,11 @@
           },
           "negative_prompt": {
             "default": "",
+            "description": "Describe anything you want left out.",
             "type": "string"
           },
           "prompt": {
+            "description": "Describe the change you want.",
             "type": "string"
           },
           "reference_resolution": {
@@ -2056,6 +2086,7 @@
             "type": "integer"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
@@ -2086,16 +2117,18 @@
         "properties": {
           "cfg": {
             "default": 1.0,
+            "description": "Higher follows your words more closely.",
             "maximum": 10,
             "minimum": 0,
             "type": "number"
           },
           "negative_prompt": {
             "default": "",
+            "description": "Describe anything you want left out.",
             "type": "string"
           },
           "prompt": {
-            "description": "Reference each image explicitly, e.g. \"<image1> ... <image2> ...\".",
+            "description": "Describe the change you want.",
             "type": "string"
           },
           "reference_image_2": {
@@ -2105,11 +2138,13 @@
           },
           "reference_resolution": {
             "default": 1024,
+            "description": "Sets the resolution value used when processing the two reference pictures.",
             "maximum": 2048,
             "minimum": 256,
             "type": "integer"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
@@ -2120,6 +2155,7 @@
           },
           "steps": {
             "default": 25,
+            "description": "More steps add detail but take longer.",
             "maximum": 60,
             "minimum": 1,
             "type": "integer"
@@ -2140,40 +2176,43 @@
         "properties": {
           "cfg": {
             "default": 1.0,
+            "description": "Higher follows your words more closely.",
             "maximum": 10,
             "minimum": 0,
             "type": "number"
           },
           "lanpaint_steps": {
             "default": 5,
-            "description": "LanPaint's internal Langevin refinement steps per sampler step (\"turns of thinking\"). Higher = better boundary consistency, slower.",
+            "description": "More steps improve consistency at the edit boundary but take longer.",
             "maximum": 20,
             "minimum": 0,
             "type": "integer"
           },
           "mask_expand": {
             "default": 0,
-            "description": "Pixels to grow (positive) or shrink (negative) the edit mask before sampling.",
+            "description": "Positive values expand the edit area in pixels; negative values shrink it.",
             "maximum": 256,
             "minimum": -256,
             "type": "integer"
           },
           "mask_feather": {
-            "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
+            "description": "Higher values soften edit edges but reduce precision near the boundary.",
             "maximum": 256,
             "minimum": 0,
             "type": "integer"
           },
           "negative_prompt": {
             "default": "",
+            "description": "Describe anything you want left out.",
             "type": "string"
           },
           "prompt": {
+            "description": "Describe the change you want.",
             "type": "string"
           },
           "prompt_mode": {
             "default": "Image First",
-            "description": "Image First favors seamless blending; Prompt First favors literal adherence to the edit instruction.",
+            "description": "Image First favors seamless blending, while Prompt First follows the edit instruction more literally.",
             "enum": [
               "Image First",
               "Prompt First"
@@ -2181,6 +2220,7 @@
             "type": "string"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
@@ -2191,6 +2231,7 @@
           },
           "steps": {
             "default": 25,
+            "description": "More steps add detail but take longer.",
             "maximum": 60,
             "minimum": 1,
             "type": "integer"
@@ -2210,7 +2251,7 @@
         "properties": {
           "color_correction_method": {
             "default": "none",
-            "description": "Optional color match back to the original (pre-upscale) image. lab is most faithful, wavelet keeps upscaled high-frequency detail, adain is fastest/roughest, none skips color transfer.",
+            "description": "Choose how to match colors to the original picture, or none to skip color matching.",
             "enum": [
               "none",
               "lab",
@@ -2221,6 +2262,7 @@
           },
           "scale": {
             "default": 2,
+            "description": "Choose 2 or 4 to multiply the picture's width and height before sharpening.",
             "enum": [
               2,
               4
@@ -2228,6 +2270,7 @@
             "type": "number"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
@@ -2312,9 +2355,11 @@
             "type": "integer"
           },
           "prompt": {
+            "description": "Describe the picture you want.",
             "type": "string"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
@@ -2534,27 +2579,33 @@
         "description": "Portable image generation contract for SDXL texture tiles with manifest-backed seamless postprocessing controls.",
         "properties": {
           "batch_size": {
+            "description": "How many pictures to make at once.",
             "maximum": 8,
             "minimum": 1,
             "type": "integer"
           },
           "guidance": {
+            "description": "Higher follows your words more closely.",
             "maximum": 20,
             "minimum": 0,
             "type": "number"
           },
           "height": {
+            "description": "Picture height in pixels.",
             "maximum": 2048,
             "minimum": 64,
             "type": "integer"
           },
           "negative_prompt": {
+            "description": "Describe anything you want left out.",
             "type": "string"
           },
           "prompt": {
+            "description": "Describe the picture you want.",
             "type": "string"
           },
           "sampler": {
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
             "enum": [
               "euler",
               "euler_ancestral",
@@ -2566,6 +2617,7 @@
             "type": "string"
           },
           "scheduler": {
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
             "enum": [
               "karras",
               "normal",
@@ -2576,20 +2628,24 @@
             "type": "string"
           },
           "seam_blending": {
+            "description": "Sets the blending value used when making the picture seamless.",
             "maximum": 0.5,
             "minimum": 0,
             "type": "number"
           },
           "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
           },
           "steps": {
+            "description": "More steps add detail but take longer.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
           "width": {
+            "description": "Picture width in pixels.",
             "maximum": 2048,
             "minimum": 64,
             "type": "integer"

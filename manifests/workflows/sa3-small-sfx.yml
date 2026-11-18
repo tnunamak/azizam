@@ -13,14 +13,20 @@ technical_description: 'Stable Audio 3 small-sfx text-to-sound-effect, stereo 44
 typical_seconds: 1
 inputs:
   prompt:
+    label: What to make
+    help: Describe the sound you want.
     type: string
     required: true
   duration:
+    label: Length
+    help: Length in seconds.
     type: number
     minimum: 1
     maximum: 120
     default: 10
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
     generate:
@@ -51,3 +57,4 @@ bindings:
           path: checkpoints/stable_audio_3_small_sfx.safetensors
         - role: text_encoder
           path: text_encoders/t5gemma_b_b_ul2.safetensors
+source_url: https://huggingface.co/stabilityai/stable-audio-3-small-sfx

@@ -22,6 +22,7 @@ import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, usageCsv, type UsageSource } from "./source-options";
 import { normalizeCapability, type UsageCapability } from "./usage-capability";
+import { costState, costCopy, receiptCost, receiptCostUsd, type CostCounts, type CostState } from "@/app/usage/receipt-cost";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -750,41 +751,6 @@ function ModelTable({
   );
 }
 
-/**
- * What a spend cell says, from the counts the gateway sends. `usd` is the sum of
- * reported costs, or null when none was reported. `unknownPaid` counts remote requests
- * with no reported cost, and `local` counts requests whose receipts show they were served
- * on this machine. A null count means the gateway did not say, so the cell claims nothing
- * about where those requests ran.
- */
-type CostState =
-  | { kind: "amount"; usd: number; excluded: number; local: number }
-  | { kind: "not-reported"; excluded: number; local: number }
-  | { kind: "local"; local: number }
-  | { kind: "unrecorded"; local: number };
-
-interface CostCounts {
-  usd: number | null;
-  unknownPaid: number | null;
-  local: number | null;
-  requests: number | null;
-}
-
-/**
- * One rule for a receipt and for a group of them. A group where every request was served
- * here and nothing was charged says Local · no charge. Otherwise it shows the reported
- * amount, or why there is none. A local request never makes a remote one look free.
- */
-function costState({ usd, unknownPaid, local, requests }: CostCounts): CostState {
-  const excluded = unknownPaid ?? 0;
-  const localCount = local ?? 0;
-  if (usd !== null && usd > 0) return { kind: "amount", usd, excluded, local: localCount };
-  if (requests !== null && requests > 0 && localCount === requests && excluded === 0)
-    return { kind: "local", local: localCount };
-  if (usd !== null) return { kind: "amount", usd, excluded, local: localCount };
-  if (excluded > 0) return { kind: "not-reported", excluded, local: localCount };
-  return { kind: "unrecorded", local: localCount };
-}
 
 /** Adds up a group of model rows. A count that any row lacks stays unknown. */
 function sumCosts(rows: UsageModel[]): CostCounts {
@@ -813,34 +779,6 @@ function summarySpend(summary: UsageSummary): CostState {
   });
 }
 
-/** A receipt's cost: one request, read by the same rule as a total. */
-function receiptCostState(receipt: UsageReceipt): CostState {
-  const raw = object(receipt.raw);
-  const cost = object(raw.cost);
-  const reported = receipt.costUsd ?? nullableNumber(cost.usd);
-  const unreported = reported === null && (raw.remote === true || cost.cost_class === "paid-remote");
-  return costState({
-    usd: reported,
-    unknownPaid: unreported ? 1 : 0,
-    local: receipt.servedLocally ? 1 : 0,
-    requests: 1,
-  });
-}
-
-const costCopy: Record<Exclude<CostState["kind"], "amount">, { label: string; help: string }> = {
-  local: {
-    label: "Local · no charge",
-    help: "Didn’t go to a paid provider, so nothing was charged.",
-  },
-  "not-reported": {
-    label: "Cost not reported by the provider",
-    help: "A paid provider handled this request but didn’t report what it cost, so it isn’t in the total.",
-  },
-  unrecorded: {
-    label: "Cost not recorded",
-    help: "Azizam didn’t record where this request ran, so it can’t say whether it cost money.",
-  },
-};
 
 function excludedCopy(count: number) {
   return `Total excludes ${formatNumber(count)} ${count === 1 ? "request" : "requests"} without a reported cost`;
@@ -1331,12 +1269,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
   const durationMs = nullableNumber(
     data.duration_ms ?? data.latency_ms ?? data.latencyMs,
   );
-  const costUsd = nullableNumber(
-    data.remote_spend ??
-      data.cost_usd ??
-      data.remote_cost_usd ??
-      metadata.cost_usd,
-  );
+  const costUsd = receiptCostUsd(raw);
   return {
     selectionKey,
     requestId,
@@ -1506,7 +1439,7 @@ function ReceiptCost({
   receipt: UsageReceipt;
   summary?: boolean;
 }) {
-  const state = receiptCostState(receipt);
+  const state = receiptCost(receipt.raw);
   if (state.kind === "amount")
     return <Money amount={state.usd} summary={summary} precise={summary} />;
   const copy = costCopy[state.kind];

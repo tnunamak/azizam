@@ -49,6 +49,8 @@ import { TRANSCRIBE_FILE_SLOTS } from "./transcribe-mode";
 import { costFrom } from "./result-cost";
 import { chatDefaultChoice } from "./chat-default";
 import { runImageJob } from "./image-job";
+import { EmbeddingResultPanel } from "@/app/try/embedding-result-panel";
+import { summarizeEmbedding } from "@/app/try/embedding-result";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { sessionIsClosed } from "@/lib/session-end";
 import { ReceiptLink } from "./receipt-link";
@@ -213,7 +215,8 @@ type Result = {
   audioUrl?: string;
   downloadUrl?: string;
   downloadName?: string;
-  vector?: { dimensions: number; min: number; max: number; mean: number };
+  /** An embeddings answer the result panel can summarize. */
+  embedding?: unknown;
   media?: WorkflowMedia[];
   job?: WorkflowJob;
   technical?: string;
@@ -911,19 +914,6 @@ function imageFrom(payload: unknown) {
   if (item?.url) return item.url;
   if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
   return undefined;
-}
-
-function embeddingStats(payload: unknown) {
-  const values = (payload as { data?: Array<{ embedding?: number[] }> })
-    ?.data?.[0]?.embedding;
-  if (!Array.isArray(values) || !values.length) return null;
-  const sum = values.reduce((total, value) => total + value, 0);
-  return {
-    dimensions: values.length,
-    min: Math.min(...values),
-    max: Math.max(...values),
-    mean: sum / values.length,
-  };
 }
 
 function decisionRows(payload: unknown, options: string[]) {
@@ -2785,10 +2775,9 @@ export default function TryPage() {
         ...common,
       };
     }
-    const vector = embeddingStats(payload);
-    return vector
-      ? { title: "Document search result", body: "Vector created.", vector, ...common }
-      : nothing("Document search result", "result");
+    return summarizeEmbedding(payload)
+      ? { title: "Embedding", body: "", embedding: payload, ...common }
+      : nothing("Embedding", "numbers");
   }
 
   return (
@@ -2952,7 +2941,9 @@ export default function TryPage() {
                     <p className="text-muted-foreground text-sm">{tab.help}</p>
                   )}
                   <label className="block space-y-2">
-                    <span className="text-sm font-medium">Model name</span>
+                    <span className="text-sm font-medium">
+                      {tab.value === "workflow" ? "Which workflow" : "Model name"}
+                    </span>
                     <ModelSelect
                       loading={["idle", "loading"].includes(catalogState[section])}
                       value={model[tab.value]}
@@ -3404,13 +3395,8 @@ function ResultView({
             Download result
           </a>
         )}
-        {result.vector && (
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            <Fact label="Dimensions" value={String(result.vector.dimensions)} />
-            <Fact label="Min" value={result.vector.min.toFixed(3)} />
-            <Fact label="Max" value={result.vector.max.toFixed(3)} />
-            <Fact label="Mean" value={result.vector.mean.toFixed(3)} />
-          </dl>
+        {result.embedding !== undefined && (
+          <EmbeddingResultPanel payload={result.embedding} />
         )}
         {result.probabilities && !probabilityRows?.length ? (
           <p className="text-sm">No answer was returned.</p>
@@ -3486,7 +3472,7 @@ function ResultView({
           !result.audioUrl &&
           !result.media?.length &&
           !job &&
-          !result.vector &&
+          result.embedding === undefined &&
           !result.probabilities &&
           !result.missing && (
             <pre className="bg-muted overflow-x-auto rounded-lg p-3 font-mono text-sm whitespace-pre-wrap">

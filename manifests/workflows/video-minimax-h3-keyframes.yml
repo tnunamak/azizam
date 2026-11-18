@@ -136,3 +136,4 @@ bindings:
           path: vae/minimax_h3_audio_vae_fp32.safetensors
         - role: lora
           path: loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors
+source_url: https://huggingface.co/MiniMaxAI/MiniMax-H3

@@ -900,6 +900,11 @@
     }
   ],
   "gateway_sleeps": [],
+  "job_prefixes": [
+    "mj",
+    "mj",
+    "mj"
+  ],
   "media_jobs": {
     "media_job_asset_origins": [
       {
@@ -1547,7 +1552,7 @@
           "intent": "image.edit",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
+          "manifest_hash": "3b225a6d6bf318223d1d751c3ad9f631d5820fd22b74becab48faf23fafec3b7",
           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
           "manifest_version": "0.1.0",
           "metadata": {},
@@ -1642,7 +1647,7 @@
           "intent": "image.edit",
           "job_id": "<job:2>",
           "latency_ms": "<duration>",
-          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
+          "manifest_hash": "3b225a6d6bf318223d1d751c3ad9f631d5820fd22b74becab48faf23fafec3b7",
           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
           "manifest_version": "0.1.0",
           "metadata": {},
@@ -1737,7 +1742,7 @@
           "intent": "image.edit",
           "job_id": "<job:3>",
           "latency_ms": "<duration>",
-          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
+          "manifest_hash": "3b225a6d6bf318223d1d751c3ad9f631d5820fd22b74becab48faf23fafec3b7",
           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
           "manifest_version": "0.1.0",
           "metadata": {},

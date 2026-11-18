@@ -61,3 +61,4 @@ bindings:
       steps: steps
     service: local3d-stages
     path: /refine
+source_url: https://github.com/yiboz2001/UltraTex

@@ -33,6 +33,7 @@ inputs:
     description: JSON array of {label, image | images[], box [x1,y1,x2,y2], description, infant}. Several photos of one person go in images[]. Omit to auto-detect.
   attempts:
     label: number of attempts
+    help: Sets the number of attempts to make the scene.
     type: integer
     minimum: 1
     maximum: 8
@@ -44,6 +45,7 @@ inputs:
     minimum: 0
   resolution:
     label: reference picture size
+    help: Higher values give each reference photo a larger pixel budget.
     type: integer
     minimum: 512
     maximum: 2048
@@ -57,20 +59,24 @@ inputs:
     default: 25
   cfg:
     label: prompt guidance
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 10
     default: 1.0
   photo_as_canvas:
     label: use photo as canvas
+    help: Choose whether to use your photo as the canvas.
     type: boolean
     default: true
   only_listed_people:
     label: only named people
+    help: Choose whether to include only the people you listed.
     type: boolean
     default: true
   stop_when_pass:
     label: stop after good match
+    help: Choose whether to stop attempts after a good match.
     type: boolean
     default: true
   facing_each_other:
@@ -81,12 +87,14 @@ inputs:
     description: Two people only. Prefer and stop early on results where both heads are turned toward each other (head turn from landmarks, not gaze).
   pooling:
     label: photo comparison method
+    help: Chooses how multiple reference photos of one person are scored.
     type: string
     enum: ["best", "mean"]
     default: best
     description: How several reference photos of one person are scored.
   max_refs_per_person:
     label: photos per person
+    help: Higher values allow more reference photos per person to be sent to the generator.
     type: integer
     minimum: 1
     maximum: 5
@@ -94,24 +102,28 @@ inputs:
     description: Reference heads sent to the generator per person. Every photo is used for scoring.
   refine:
     label: face refinement
+    help: Chooses whether face refinement is off, automatic, or applied to everyone.
     type: string
     enum: ["off", "auto", "all"]
     default: auto
     description: Per-person head refinement after composing. A pass is kept only if it helps that person and hurts nobody.
   refine_attempts:
     label: face refinement attempts
+    help: Sets the number of attempts to refine faces.
     type: integer
     minimum: 1
     maximum: 4
     default: 2
   pose_policy:
     label: pose preference
+    help: Turn side views to three-quarter to keep the likeness, or keep the pose you asked for.
     type: string
     enum: ["likeness", "as_written"]
     default: likeness
     description: likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.
   mode:
     label: waiting mode
+    help: Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.
     type: string
     enum: ["auto", "sync", "async"]
     default: auto
@@ -147,3 +159,5 @@ bindings:
           path: text_encoders/qwen3vl_8b_w4a8.safetensors
         - role: vae
           path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors
+released_at: "2026-09-20"
+source_url: https://huggingface.co/Qwen/Qwen-Image-2.1

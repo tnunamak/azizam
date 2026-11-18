@@ -294,7 +294,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-18 (train 70): the four FLUX.2 Klein 4B workflows are closed (exposure disabled), so they leave
         # the document as well (tests/fixtures/headless_openapi.json shows the same removal and nothing else). Before it the
         # digest was f49f734f7c0bd271fc41a6ebc4919e4a2d4802ebab1198c0f0875ebe2b8cec9c.
-        assert route_graph.openapi_digest(proxy.app) == "409ef81edfc5e53b44ebbb84f26b388923014c3334f4d53630ef94ba45679010"
+        # Re-captured 2026-11-18 (train 76, walkthrough B8): the tangoflux batch_size and image-identity mode help changed;
+        # only those two input schemas moved (tests/fixtures/headless_openapi.json shows the same). Before it the digest was
+        # 409ef81edfc5e53b44ebbb84f26b388923014c3334f4d53630ef94ba45679010.
+        assert route_graph.openapi_digest(proxy.app) == "a329207e10d25d7fcb7f790c98c2d33ba8282677769b4dd649fd97709b90d551"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -362,4 +365,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # tests/fixtures/headless_openapi.json). Before it the digest was
     # d7e0437870855d58d23f4ae152924b66d86be604c0e435f501fcfbd9f02f1b15.
     # Fast aliases now name the open FIBO and MOSS workflows; the projected document adds only those aliases.
+    # Re-captured 2026-11-18 for input help in eleven workflows; only their input descriptions changed.
+    # Before it the digest was 18f06639e13f8d1bd9c0e2511cbf10fe34ce745b2675b84e50294f1f474c9217.
+    # Re-captured 2026-11-18 (train 76, walkthrough B8): the tangoflux batch_size and image-identity mode help; only those
+    # two input descriptions moved. Before it the digest was 57f9e8dcf1526131f539f066354d14bf5d979283a8387b1e8b725e694bef34e4.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

@@ -14,6 +14,8 @@ description: Change a photo by telling it what to do, such as swapping the backg
 typical_seconds: 20
 inputs:
   prompt:
+    label: what to make
+    help: Describe the change you want.
     type: string
     required: true
   source_image:
@@ -24,6 +26,8 @@ inputs:
       - image/*
     required: true
   negative_prompt:
+    label: what to avoid
+    help: Describe anything you want left out.
     type: string
     default: ""
   reference_resolution:
@@ -48,6 +52,8 @@ inputs:
     maximum: 10
     default: 1.0
   seed:
+    label: variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
     generate:
@@ -94,3 +100,5 @@ bindings:
           path: text_encoders/qwen3vl_8b_w4a8.safetensors
         - role: vae
           path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors
+released_at: "2026-09-20"
+source_url: https://huggingface.co/Qwen/Qwen-Image-2.1
