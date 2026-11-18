@@ -22,7 +22,7 @@ describe("summarizeEmbedding", () => {
   });
 
   it("uses null for a missing or non-string model without guessing", () => {
-    for (const model of [undefined, null, 12, {}]) {
+    for (const model of [undefined, null, 12, {}, "", "   "]) {
       expect(summarizeEmbedding({ model, data: [{ embedding: [0] }] })?.model).toBeNull();
     }
     expect(summarizeEmbedding({ data: [{ embedding: [0] }] })?.model).toBeNull();

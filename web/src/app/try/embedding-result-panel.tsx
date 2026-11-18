@@ -31,8 +31,9 @@ export function EmbeddingResultPanel({ payload }: { payload: unknown }) {
       <dl className="grid gap-2">
         <div><dt>Model</dt><dd>{summary.model ?? "Not reported"}</dd></div>
         <div><dt>Inputs</dt><dd>{summary.inputs}</dd></div>
-        <div><dt>Numbers per input</dt><dd>{summary.dimensions}</dd></div>
+        <div><dt>{summary.inputs > 1 ? "Numbers in the first result" : "Numbers per input"}</dt><dd>{summary.dimensions}</dd></div>
       </dl>
+      {summary.inputs > 1 && <p>Preview, Copy and Download use only the first result.</p>}
       <p className="break-words font-mono">
         {summary.preview.map(number => number.toFixed(4)).join(", ")}
         {summary.more > 0 ? ` and ${summary.more} more` : ""}

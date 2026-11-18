@@ -28,7 +28,7 @@ export function summarizeEmbedding(payload: unknown): EmbeddingSummary | null {
   }
   const preview = embedding.slice(0, 8);
   return {
-    model: typeof payload.model === "string" ? payload.model : null,
+    model: typeof payload.model === "string" && payload.model.trim() ? payload.model : null,
     inputs: payload.data.length,
     dimensions: embedding.length,
     preview,

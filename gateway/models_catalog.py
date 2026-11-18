@@ -9,13 +9,15 @@ Callers supply already-loaded data and an already-authenticated policy view.
 from __future__ import annotations
 
 import asyncio
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 import copy
 import json
 import socket
 import ssl
 import statistics
 import inspect
+import re
+from datetime import date, datetime
 from pathlib import Path
 import time
 from dataclasses import replace
@@ -664,6 +666,29 @@ def _model_rows(
     return sorted(rows, key=lambda r: (not r["availability"]["available"], r["id"]))
 
 
+def _catalog_fact_valid(key: str, value: Any) -> bool:
+    if key == "source_url":
+        if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
+            return False
+        try:
+            parsed = urlsplit(value)
+            return parsed.scheme in ("http", "https") and bool(parsed.hostname) and parsed.port != 0
+        except ValueError:
+            return False
+    # Dates are ISO strings only: a manifest author writes them by hand, and a bare number carries no unit.
+    if not isinstance(value, str):
+        return False
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            date.fromisoformat(value)
+            return True
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})", value):
+            return False
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
 def _base_row(
     *,
     row_id: str,
@@ -736,6 +761,8 @@ def _base_row(
         summary["price"] = cost["price"]
     return {
         "id": row_id,
+        **{key: presentation_metadata[key] for key in ("released_at", "added_at", "updated_at", "source_url")
+           if key in presentation_metadata and _catalog_fact_valid(key, presentation_metadata[key])},
         "workflow": workflow_id or None,
         "object": "model_catalog.alias" if is_alias else "model_catalog.model",
         "display_name": presentation.get("title", display_name),

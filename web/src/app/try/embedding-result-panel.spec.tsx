@@ -20,8 +20,9 @@ describe("EmbeddingResultPanel", () => {
     // The Try result card carries the heading; the panel adds none of its own.
     expect(screen.queryByRole("heading")).toBeNull();
     expect(screen.getByText("Apps compare these numbers to find similar text or to search documents.")).toBeTruthy();
-    expect([...container.querySelectorAll("dt")].map(node => node.textContent)).toEqual(["Model", "Inputs", "Numbers per input"]);
+    expect([...container.querySelectorAll("dt")].map(node => node.textContent)).toEqual(["Model", "Inputs", "Numbers in the first result"]);
     expect([...container.querySelectorAll("dd")].map(node => node.textContent)).toEqual(["example-model", "2", "12"]);
+    expect(screen.getByText("Preview, Copy and Download use only the first result.")).toBeTruthy();
     expect(screen.getByText("0.0000, 0.1000, 0.2000, 0.3000, 0.4000, 0.5000, 0.6000, 0.7000 and 4 more")).toBeTruthy();
   });
 
@@ -30,6 +31,8 @@ describe("EmbeddingResultPanel", () => {
     expect(screen.getByText("Not reported")).toBeTruthy();
     expect(screen.getByText("1.2500")).toBeTruthy();
     expect(screen.queryByText(/and 0 more/)).toBeNull();
+    expect(screen.getByText("Numbers per input")).toBeTruthy();
+    expect(screen.queryByText(/use only the first result/)).toBeNull();
   });
 
   it("renders only the empty sentence for a null summary", () => {

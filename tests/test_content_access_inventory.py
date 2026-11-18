@@ -103,7 +103,7 @@ _REVIEWED_WRITER_BODIES = {('proxy.py', '_run_identity_job'): ('_run_identity_jo
  ('proxy.py', '_submit_audio_media_job'): ('_submit_audio_media_job',
                                          'b9e0992031df95c0c1e7f72c72501f3e773e528da16974b48d839bb3bf640e29'),
  ('proxy.py', 'gateway_image_generations_media_job'): ('gateway_image_generations_media_job',
-                                                      '3f540d28ccc60d1f130bc42dc6bb6924575a1a7ac85f2e33ea51901f9608e307'),
+                                                      '7684ef5e25f703a1715e3f545572ea03256a80b88ae07e9a7aeff04462cecec6'),
  ('gateway/declared_operation_job.py', 'run'): ('_complete',
                                                 '461de5adfcb2aee581c0de0f1c65c49f2b7ff79846fca935cdbdfbd1dd0b6a43'),
  ('proxy.py', '_run_audio_media_job'): ('_run_audio_media_job',
