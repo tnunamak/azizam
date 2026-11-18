@@ -4,7 +4,7 @@ import pytest
 from gateway.engine_protocol.node_info import lookup as _real_lookup
 
 from gateway.engine_protocol.choice_store import ChoiceStore
-from gateway.engine_protocol.choice_refresh import is_due, refresh_service
+from gateway.engine_protocol.choice_refresh import DEFAULT_MAX_AGE, freshness, is_due, refresh_service
 
 DECLS = [{'node_type': 'node', 'input': 'pick'}]
 
@@ -196,3 +196,86 @@ def test_fetch_fresh_missing_definition_raises(monkeypatch, payload):
     node_info = fake_node_client(monkeypatch, 200, payload)
     with pytest.raises(ValueError):
         node_info.fetch_fresh('http://engine', 'node')
+
+
+def test_freshness_fresh_snapshot_at_fetch_time(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    store.write('svc', 'node', 'pick', ['a', 'b'], fetched_at=100)
+    before = (tmp_path / 'c.json').read_bytes()
+    assert freshness(store, 'svc', DECLS, now=100) == [{
+        'node_type': 'node', 'input': 'pick', 'fetched_at': 100,
+        'age_s': 0, 'stale': False, 'choices_count': 2,
+        'failure_reason': None, 'failed_at': None,
+    }]
+    assert (tmp_path / 'c.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('max_age', [50, DEFAULT_MAX_AGE], ids=['custom', 'default'])
+def test_freshness_stale_at_exact_max_age(tmp_path, max_age):
+    store = ChoiceStore(tmp_path / 'c.json')
+    store.write('svc', 'node', 'pick', ['a'], fetched_at=100)
+    now = 100 + max_age
+    row = freshness(store, 'svc', DECLS, now=now, max_age=max_age)[0]
+    assert row['stale'] is True
+    assert row['stale'] == is_due(store, 'svc', 'node', 'pick', now=now, max_age=max_age)
+    assert row['age_s'] == max_age
+    assert row['fetched_at'] == 100
+    assert row['choices_count'] == 1
+
+
+def test_freshness_missing_snapshot_shows_failure(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    store.record_failure('svc', 'node', 'pick', 'refresh unavailable', at=90)
+    assert freshness(store, 'svc', DECLS, now=100) == [{
+        'node_type': 'node', 'input': 'pick', 'fetched_at': None,
+        'age_s': None, 'stale': True, 'choices_count': None,
+        'failure_reason': 'refresh unavailable', 'failed_at': 90,
+    }]
+
+
+def test_freshness_keeps_declaration_order_and_service(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    store.write('svc', 'z', 'second', ['a', 'b'], fetched_at=20)
+    store.write('other', 'a', 'first', ['foreign'], fetched_at=30)
+    declarations = [
+        {'node_type': 'z', 'input': 'second'},
+        {'node_type': 'a', 'input': 'first'},
+        {'node_type': 'z', 'input': 'second'},
+    ]
+    rows = freshness(store, 'svc', declarations, now=20)
+    assert [(row['node_type'], row['input']) for row in rows] == [
+        ('z', 'second'), ('a', 'first'), ('z', 'second'),
+    ]
+    assert [row['choices_count'] for row in rows] == [2, None, 2]
+    assert rows[1] == {
+        'node_type': 'a', 'input': 'first', 'fetched_at': None,
+        'age_s': None, 'stale': True, 'choices_count': None,
+        'failure_reason': None, 'failed_at': None,
+    }
+    assert rows[0] == rows[2]
+    assert freshness(store, 'svc', [], now=20) == []
+
+
+def test_freshness_clamps_age_for_earlier_clock(tmp_path):
+    store = ChoiceStore(tmp_path / 'c.json')
+    store.write('svc', 'node', 'pick', ['a'], fetched_at=100)
+    row = freshness(store, 'svc', DECLS, now=99)[0]
+    assert row['fetched_at'] == 100
+    assert row['age_s'] == 0
+    assert row['stale'] == is_due(store, 'svc', 'node', 'pick', now=99)
+
+
+def test_freshness_keeps_failure_older_than_snapshot(tmp_path, monkeypatch):
+    store = ChoiceStore(tmp_path / 'c.json')
+    store.write('svc', 'node', 'pick', ['a'], fetched_at=100)
+    calls = []
+    # A public reader can expose historical failure evidence alongside a newer snapshot.
+    def read_failure(service, node_type, input_name):
+        calls.append((service, node_type, input_name))
+        return {'reason': 'previous refresh failed', 'at': 50}
+    monkeypatch.setattr(store, 'read_failure', read_failure)
+    row = freshness(store, 'svc', DECLS, now=100)[0]
+    assert row['stale'] is False
+    assert row['failure_reason'] == 'previous refresh failed'
+    assert row['failed_at'] == 50
+    assert calls == [('svc', 'node', 'pick')]

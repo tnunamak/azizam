@@ -13,6 +13,28 @@ def is_due(store: ChoiceStore, service, node_type, input, *, now: float, max_age
     return snapshot is None or snapshot.stale(now=now, max_age=max_age)
 
 
+def freshness(store: ChoiceStore, service, declarations, *, now: float, max_age: float = DEFAULT_MAX_AGE) -> list[dict]:
+    """Project snapshot age and retained failure evidence without changing the store."""
+    rows = []
+    for declaration in declarations:
+        node_type, input_name = declaration['node_type'], declaration['input']
+        snapshot = store.read(service, node_type, input_name)
+        failure = store.read_failure(service, node_type, input_name)
+        rows.append({
+            'node_type': node_type,
+            'input': input_name,
+            'fetched_at': snapshot.fetched_at if snapshot is not None else None,
+            'age_s': max(0, now - snapshot.fetched_at) if snapshot is not None else None,
+            'stale': snapshot is None or is_due(
+                store, service, node_type, input_name, now=now, max_age=max_age,
+            ),
+            'choices_count': len(snapshot.choices) if snapshot is not None else None,
+            'failure_reason': failure['reason'] if failure is not None else None,
+            'failed_at': failure['at'] if failure is not None else None,
+        })
+    return rows
+
+
 def _reason(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"[:200]
 
