@@ -160,7 +160,7 @@ def edit_rig(rig):
 
 
 def run_edit(images: list[tuple[str, bytes]], *, plan_or_access=None):
-    items = [("model", "flux2-klein-4b-edit"), ("prompt", "a tree")]
+    items = [("model", "fibo-2-edit-turbo"), ("prompt", "a tree")]
     items.extend(("image[]", _MultipartUpload(name, data)) for name, data in images)
     auth = access_context(plan_or_access, app_id=OWNER_APP["app_id"], key_hash=OWNER_APP["key_hash"])
     return asyncio.run(proxy.proxy_graph_image_edit_request(_MultipartRequest(items), auth))

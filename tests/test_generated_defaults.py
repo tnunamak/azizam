@@ -595,7 +595,7 @@ def submit_audio(body: Mapping[str, Any]) -> str:
     return json.loads(response.body)["job_id"]
 
 
-IMAGE_BODY = {"model": "flux2-klein-4b", "prompt": "a lighthouse"}
+IMAGE_BODY = {"model": "moss-image-fast", "prompt": "a lighthouse"}
 TILE_BODY = {"model": "flux2-klein-4b-seamless-tile", "prompt": "moss on stone"}
 AUDIO_BODY = {"model": "tangoflux", "prompt": "rain on a tin roof", "duration": 8}
 
@@ -648,8 +648,8 @@ def test_a_restart_reads_the_stored_value_and_never_draws_again(jobs_db):
     token = proxy._JOB_GENERATED.set(stored)
     try:
         with patch.object(generated_defaults, "secure_source", refuse_a_draw):
-            first = proxy._image_generated_values(proxy._find_image_manifest("image.generate", "flux2-klein-4b"), IMAGE_BODY)
-            retry = proxy._image_generated_values(proxy._find_image_manifest("image.generate", "flux2-klein-4b"), IMAGE_BODY)
+            first = proxy._image_generated_values(proxy._find_image_manifest("image.generate", "moss-image-fast"), IMAGE_BODY)
+            retry = proxy._image_generated_values(proxy._find_image_manifest("image.generate", "moss-image-fast"), IMAGE_BODY)
     finally:
         proxy._JOB_GENERATED.reset(token)
     assert first == retry == {"seed": 2468}
@@ -825,7 +825,7 @@ def test_a_generator_fault_at_accept_is_a_500_that_creates_and_submits_nothing(j
 @pytest.mark.parametrize("fault", ["value-outside-the-input", "generator-fault"])
 def test_a_generator_fault_on_the_synchronous_image_routes_is_a_500(fault):
     broken = generated_defaults.ReviewedGenerator("value", empty_range_generator)
-    manifest = proxy._find_image_manifest("image.generate", "flux2-klein-4b")
+    manifest = proxy._find_image_manifest("image.generate", "moss-image-fast")
     with patch.object(generated_defaults, "secure_source", lambda low, high: -5), \
             patch.dict(generated_defaults.REVIEWED, {"random_integer": broken} if fault == "generator-fault" else {}):
         with pytest.raises(ManifestError) as raised:
@@ -870,7 +870,7 @@ def test_a_job_whose_caller_gave_every_value_needs_no_envelope(jobs_db):
 
 def read_with_context(job_id: str, manifest_inputs_source=refuse_a_draw):
     """What the job runner does: read the stored block, set it, and ask the image route for the job's values."""
-    manifest = proxy._find_image_manifest("image.generate", "flux2-klein-4b")
+    manifest = proxy._find_image_manifest("image.generate", "moss-image-fast")
     token = proxy._JOB_GENERATED.set(proxy._stored_generated(job_id))
     try:
         with patch.object(generated_defaults, "secure_source", manifest_inputs_source):
@@ -881,11 +881,11 @@ def read_with_context(job_id: str, manifest_inputs_source=refuse_a_draw):
 
 def test_a_job_made_before_values_were_kept_still_draws(jobs_db):
     """(a) legacy: its envelope has an empty block, or it has no envelope at all."""
-    manifest = proxy._find_image_manifest("image.generate", "flux2-klein-4b")
+    manifest = proxy._find_image_manifest("image.generate", "moss-image-fast")
     with_empty_block = submit_image({**IMAGE_BODY, "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"seed": 9}}})
     assert kept(jobs_db, with_empty_block) == {}
     without_envelope = media_jobs.create(
-        media_jobs.MediaJob(intent="image.generate", workflow="image.generate.flux2-klein-4b", request_id="legacy-none"),
+        media_jobs.MediaJob(intent="image.generate", workflow="image.generate.moss-image-fast", request_id="legacy-none"),
         path=jobs_db, maker_from_request=False).job_id
     assert proxy._stored_generated(without_envelope) == {}
     for job_id in (with_empty_block, without_envelope):

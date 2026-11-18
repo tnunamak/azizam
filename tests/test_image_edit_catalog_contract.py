@@ -124,6 +124,10 @@ def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fak
         Image.new("RGBA", (1280, 960), colors[name]).save(content, format="PNG")
         items.append((field, _MultipartUpload(f"{name}.png", content.getvalue())))
     response = asyncio.run(proxy.proxy_graph_image_edit_request(_MultipartRequest(items), proxy.NO_AUTH_CONTEXT))
+    if record.facts and record.facts.exposure == "disabled":
+        assert response.status_code == 409 and json.loads(response.body)["error"]["code"] == "workflow_disabled"
+        assert not fake.requests and not image_round
+        return
     assert response.status_code == 200, response.body.decode()
     assert len(image_round) == 1
     graph = image_round[0]

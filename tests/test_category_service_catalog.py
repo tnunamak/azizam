@@ -67,8 +67,8 @@ def test_catalog_stems_match_real_image_and_aliased_chat_requests(gateway, monke
     assert response.status_code == 200, response.text
     catalog = {entry["stem"]: entry for entry in response.json()["services"]}
     for path, body, intent, expected in [
-        ("/v1/images/generations", {"model": "flux2-klein-4b", "prompt": "test"},
-         "image.generate", "image.generate.flux2-klein-4b"),
+        ("/v1/images/generations", {"model": "moss-image-fast", "prompt": "test"},
+         "image.generate", "image.generate.moss-image-fast"),
         ("/v1/chat/completions", {"model": "friendly-chat", "messages": [{"role": "user", "content": "test"}]},
          "chat.completions", "catalog-chat"),
     ]:
@@ -80,7 +80,7 @@ def test_catalog_stems_match_real_image_and_aliased_chat_requests(gateway, monke
         assert expected in catalog
         assert intent in catalog[expected]["capabilities"]
     assert catalog["catalog-chat"]["kind"] == "model"
-    assert catalog["image.generate.flux2-klein-4b"]["kind"] == "workflow"
+    assert catalog["image.generate.moss-image-fast"]["kind"] == "workflow"
     assert "friendly-chat" not in catalog
     assert gateway.calls == []
 

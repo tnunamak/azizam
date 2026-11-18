@@ -306,7 +306,7 @@ class ImageVideoJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         return self.failed(job.job_id)
 
     async def test_an_image_job_refused_by_gateway_validation_keeps_the_sentence(self) -> None:
-        job = await self.run_image_job({"model": "flux2-klein-4b", "prompt": PROMPT, "n": 11})
+        job = await self.run_image_job({"model": "moss-image-fast", "prompt": PROMPT, "n": 11})
         self.assertEqual(job["error"], "n must be between 1 and 10")
         self.assertEqual(job["error_category"], "invalid_input")
         self.assertNotIn(PROMPT, json.dumps(job))
