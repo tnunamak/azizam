@@ -9857,6 +9857,9 @@ async def proxy_graph_image_edit_request(
         image_count=len(image_files),
         has_mask=bool(mask_file),
     )
+    closed_reason_text = _closed_alias_target("image_edits", str(model))
+    if closed_reason_text:
+        return _workflow_run_response(RunRefused(409, "workflow_disabled", closed_reason_text))
 
     if receipt is not None:
         receipt.resolved_model = str(model) if model is not None else None
