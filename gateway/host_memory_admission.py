@@ -325,18 +325,24 @@ class HostMemoryAdmission:
     def _first(self, waiter: _Waiter) -> bool:
         return min(self._waiting, key=lambda w: (w.background, w.seq)) is waiter
 
-    async def _saved_setting(self) -> Mapping[str, Any] | None:
-        """The owner's saved setting, read off the event loop. An unreadable store counts as none, so admission stays off."""
+    def _read_saved(self) -> Mapping[str, Any] | None:
+        """The owner's saved setting. An unreadable store counts as none, so admission stays off."""
         if self._saved is None:
             return None
         try:
-            return await asyncio.to_thread(self._saved)
+            return self._saved()
         except Exception:
             LOG.warning("host memory: the saved setting is unreadable; admission stays off", exc_info=True)
             return None
 
+    async def _saved_setting(self) -> Mapping[str, Any] | None:
+        """``_read_saved`` off the event loop, for the admission path."""
+        return None if self._saved is None else await asyncio.to_thread(self._read_saved)
+
     async def is_enabled(self) -> bool:
-        return effective(self.policy, await self._saved_setting()).enabled
+        # Read on the calling task: when admission is off, a graph job must not yield here, so the off switch keeps
+        # the order of events a job had before admission existed.
+        return effective(self.policy, self._read_saved()).enabled
 
     async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease | None:
         policy = effective(self.policy, await self._saved_setting())
