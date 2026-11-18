@@ -151,7 +151,7 @@ def test_an_image_job_naming_a_generate_model_is_still_accepted(tmp_path):
 
 def test_unknown_image_job_refusal_is_recorded_like_wrong_kind(tmp_path):
     unknown = observe(tmp_path / "unknown", JOB, job_body(model="no-such-image-model-probe"), job_setup(), row=False)
-    wrong_kind = observe(tmp_path / "wrong-kind", JOB, job_body(model="flux2-klein-4b-edit"), job_setup(), row=False)
+    wrong_kind = observe(tmp_path / "wrong-kind", JOB, job_body(model="qwen-image-2.1-edit"), job_setup(), row=False)
     for obs in (unknown, wrong_kind):
         assert obs.status == 404, obs.body
         assert '"code": "model_not_found"' in obs.body["text"]
