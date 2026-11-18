@@ -211,7 +211,8 @@ def test_active_default_image_reaches_engine(tmp_path):
     assert any(path == "/prompt" for _, path in obs.engine)
 
 
-def test_composed_workflow_refuses_a_closed_dependency_before_engine(tmp_path):
+@pytest.mark.parametrize("dependency_manifest_missing", [False, True])
+def test_composed_workflow_refuses_a_closed_dependency_before_engine(tmp_path, dependency_manifest_missing):
     import copy
 
     def setup(rig):
@@ -220,8 +221,14 @@ def test_composed_workflow_refuses_a_closed_dependency_before_engine(tmp_path):
         composite = copy.deepcopy(find(GEN_INTENT, "flux2-klein-4b-seamless-tile"))
         composite["id"] = "image.generate.sdxl-seamless-tile"
         composite["bindings"]["gateway"]["model_id"] = "sdxl-seamless-tile"
-        rig.set(proxy, "_find_image_manifest", lambda intent, model: composite
-                if intent == GEN_INTENT and model == "sdxl-seamless-tile" else find(intent, model))
+        def lookup(intent, model):
+            if intent == GEN_INTENT and model == "sdxl-seamless-tile":
+                return composite
+            if dependency_manifest_missing and model == "flux2-klein-4b":
+                return None
+            return find(intent, model)
+
+        rig.set(proxy, "_find_image_manifest", lookup)
 
     obs = observe(tmp_path, GEN, body(model="sdxl-seamless-tile"), setup, row=False, name="closed-dependency")
     assert obs.status == 409, obs.body
