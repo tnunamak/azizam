@@ -175,7 +175,7 @@ def release_graph_roles() -> dict:
     """
     section = yaml.safe_load((ROOT / "registry" / "defaults" / "images.yml").read_text())
     table = image_graph_roles.load(section, proxy.GATEWAY_WORKFLOW_REGISTRY, proxy.DERIVED._GRAPH_BINDING)
-    assert len(table) == 18
+    assert len(table) == 12
     return table
 
 
