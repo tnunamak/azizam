@@ -102,7 +102,7 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             if registry_layers.is_layered(stored):
                 if not admin_store.migration_step_recorded(registry_layers.LAYERING_STEP, path=path):
                     admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=path)
-                return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
+                return _startup_registry(_with_workflow_schema_2(stored, path, actor, release), release)
             from gateway import registry_migration
 
             plan = registry_migration.plan_layering(
@@ -135,7 +135,7 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             )
         except admin_store.OperatorSettingsGenerationConflict:
             continue
-        return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
+        return _startup_registry(_with_workflow_schema_2(stored, path, actor, release), release)
 
     raise RuntimeError("service registry changed during bounded startup retry")
 
@@ -147,7 +147,7 @@ def _with_workflow_schema_2(stored: dict[str, Any], path: Path, actor: str, rele
 
     migrated = workflow_schema_migration.ensure(path=path, actor=actor, release=release)
     stored = stored if migrated is None else migrated
-    stepped = ensure_workflow_record_step(path=path, actor=actor)
+    stepped = ensure_workflow_record_step(path=path, actor=actor, release=release)
     return stored if stepped is None else stepped
 
 
@@ -211,13 +211,44 @@ def release_digest() -> str:
     return _release_digest(*_release_key(None))
 
 
+def _orphan_workflow_patches(stored: Mapping[str, Any], release: Mapping[str, Any], excluded: list["ExcludedRecord"]) -> set[str]:
+    workflows = stored.get("workflows")
+    if not isinstance(workflows, Mapping):
+        return set()
+    bases = release.get("workflows") or {}
+    return {
+        item.key for item in excluded
+        if item.section == "workflows" and item.key not in bases
+        and isinstance(workflows.get(item.key), Mapping)
+        and normalize_id(item.key) == item.id and item.id
+        and "manifest" not in workflows[item.key]
+        and registry_layers.REPLACE_KEY not in workflows[item.key]
+        and registry_layers.RUN_CONTROL_PATCH_KEY not in workflows[item.key]
+    }
+
+
+def _startup_registry(stored: Mapping[str, Any], release: Mapping[str, Any]) -> dict[str, Any]:
+    for section, _kind in _SECTIONS:
+        if section in stored and not isinstance(stored[section], Mapping):
+            raise ValueError(f"registry {section} must be an object")
+    layered = registry_layers.layer(stored, release)
+    _, excluded = read_registry(layered)
+    for key in _orphan_workflow_patches(stored, release, excluded):
+        del layered["workflows"][key]
+    return normalize_service_registry(layered)
+
+
 def effective_registry(stored: Mapping[str, Any]) -> tuple[dict[str, Any], list["ExcludedRecord"]]:
     """The registry in use: a stored document (the owner's patches) layered over the release records, then read.
 
     Every reader of the stored row goes through this. The row alone holds only the owner's changes, so a
     service patched there can lack fields, such as ``base_url``, that its release record supplies.
     """
-    return read_registry(registry_layers.layer(stored, release_registry()))
+    release = release_registry()
+    registry, excluded = read_registry(registry_layers.layer(stored, release))
+    orphans = _orphan_workflow_patches(stored, release, excluded)
+    return registry, [replace(item, error=f"Missing base workflow {item.id!r}; {item.error}")
+                      if item.key in orphans and item.section == "workflows" else item for item in excluded]
 
 
 def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any] | None:
@@ -2969,7 +3000,7 @@ def plan_workflow_record_step(stored: Mapping[str, Any], *, new_incarnation: Any
     return out
 
 
-def ensure_workflow_record_step(*, path: Path, actor: str = "system") -> dict[str, Any] | None:
+def ensure_workflow_record_step(*, path: Path, actor: str = "system", release: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     """Run the step once: the stored registry after it, or None when there is no stored registry. The step is recorded in
     the same transaction as the registry revision it writes. Bounded retry on a concurrent write, as the other steps."""
     import secrets
@@ -2986,6 +3017,10 @@ def ensure_workflow_record_step(*, path: Path, actor: str = "system") -> dict[st
             continue
         generation = int(record["operator_settings_generation"])
         planned = plan_workflow_record_step(stored, new_incarnation=lambda: secrets.token_hex(8))
+        base = release if release is not None else release_registry()
+        _, excluded = read_registry(registry_layers.layer(stored, base))
+        for key in _orphan_workflow_patches(stored, base, excluded):
+            planned["workflows"][key] = copy.deepcopy(stored["workflows"][key])
         if planned == stored:
             try:
                 admin_store.record_migration_step_at_registry_generation(
