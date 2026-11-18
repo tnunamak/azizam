@@ -438,17 +438,7 @@ reason = "needs the audio job route on the run core: the base audio branch ignor
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_V07_offset_inpaint_needs_its_workflows"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_V08_offset_inpaint_success_headers"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_s7_background_fallback_and_offset_inpaint_preserve_composition"
+case = "tests/test_s7_parity_images.py::test_s7_background_fallback_preserves_composition"
 reason = "row path pending: builder I steps 2-4"
 
 # Video run-core train (release 2026-11-09, 38): strict xfails for the known V5d item, each turned green when V5d lands.
