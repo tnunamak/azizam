@@ -850,4 +850,13 @@ describe("a choice input shows its readable names", () => {
       "Mode must be one of: auto (Automatic), sync, async (Return a job to check later).",
     );
   });
+
+  it("reads only the names the map itself holds, so a choice that shares a built-in object word shows as its value", () => {
+    const inherited: WorkflowInput[] = [
+      { name: "mode", type: "string", enum: ["constructor", "auto"], required: true, choice_labels: { auto: "Automatic" } },
+    ];
+    expect(() => parseWorkflowInputs(JSON.stringify({ mode: "later" }), inherited)).toThrow(
+      "Mode must be one of: constructor, auto (Automatic).",
+    );
+  });
 });
