@@ -107,3 +107,106 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
 
     assert images == []
     assert (error.status_code, json.loads(error.body)) == (502, {"error": {"message": f"ComfyUI unavailable at {refused}", "type": "api_error"}})
+
+
+class _Caller:
+    """A request whose caller (an auth context, as the routes store it) has the given credential kind; it never disconnects."""
+
+    def __init__(self, auth_kind: str) -> None:
+        identity = proxy.AuthIdentity(name="caller", key_hash="h", auth_kind=auth_kind)
+        self.state = type("State", (), {"caller": proxy.AuthContext(identity=identity)})()
+
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize(("request_", "kind"), [
+    (None, "personal"),
+    (_Caller("app_key"), "personal"),
+    (_Caller("service_key"), "service"),
+])
+def test_a_synchronous_round_asks_host_memory_admission_with_the_callers_app_kind(
+        fake_upstreams, monkeypatch, request_, kind) -> None:
+    """The synchronous round asks admission before it submits, bounded, as the App kind behind the caller's credential."""
+    from gateway import host_memory_admission
+
+    asks: list[host_memory_admission.Ask] = []
+    adapter = proxy._graph_adapter(proxy._GRAPH_CAPABILITY)
+
+    async def admit_prompt(self, payload, ask=host_memory_admission.Ask()):
+        asks.append(ask)
+
+    monkeypatch.setattr(type(adapter), "admit_prompt", admit_prompt)
+    scenario = load_scenario("comfyui/image-complete", text="poll test")
+    fake = fake_upstreams.asgi(scenario, host="comfy.fk.test")
+    set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
+
+    async def call():
+        async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", request=request_,
+                                                max_wait_s=2, capability=proxy._GRAPH_CAPABILITY, **IMAGE_AT_NODE_1)
+
+    with derived_patch("GRAPH_TIMEOUT", 100):
+        error, images = asyncio.run(call())
+
+    assert error is None
+    assert images == [bytes.fromhex("89504e470d0a1a0a")]
+    assert [(ask.app_kind, ask.bounded) for ask in asks] == [(kind, True)]
+
+
+def test_probe_is_stopped_when_submit_payload_build_raises(monkeypatch):
+    class Probe:
+        def __init__(self):
+            self.started = False
+            self.stopped = False
+        def start(self):
+            self.started = True
+        async def stop(self):
+            self.stopped = True
+    probe = Probe()
+    def fail(*_args):
+        raise ValueError("cannot build")
+    monkeypatch.setattr(proxy, "_build_graph_submit_payload", fail)
+    async def call():
+        async with httpx.AsyncClient() as client:
+            await proxy._graph_run_round(client, {}, {}, "probe", vram_probe=probe, capability=proxy._GRAPH_CAPABILITY)
+    with pytest.raises(ValueError, match="cannot build"):
+        asyncio.run(call())
+    assert probe.started and probe.stopped
+
+
+def test_protocol_image_job_receives_service_caller(monkeypatch):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import jobs
+    class Stop(Exception):
+        pass
+    caller = SimpleNamespace(identity=SimpleNamespace(auth_kind="service_key"))
+    seen = []
+    async def fake_run(*args, **kwargs):
+        seen.append(kwargs.get("caller"))
+        raise Stop()
+    monkeypatch.setattr(jobs, "run", fake_run)
+    runtime = SimpleNamespace(target=SimpleNamespace(description=SimpleNamespace(operations={"images": SimpleNamespace(job=True)})))
+    with pytest.raises(Stop):
+        asyncio.run(proxy._protocol_image_result(runtime, {}, None, caller, SimpleNamespace(job_id="job"), None))
+    assert seen == [caller]
+
+
+def test_identity_scene_passes_service_caller_to_graph_round(monkeypatch):
+    from types import SimpleNamespace
+    caller = SimpleNamespace(identity=SimpleNamespace(auth_kind="service_key"))
+    monkeypatch.setattr(proxy, "_graph_adapter", lambda *_: SimpleNamespace(label="graph"))
+    monkeypatch.setattr(proxy, "_graph_service", lambda *_: SimpleNamespace(enabled=True, timeout=10))
+    monkeypatch.setattr(proxy, "_graph_service_id", lambda *_: "graph")
+    monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *_: {})
+    monkeypatch.setattr(proxy, "_graph_media_admission", lambda *a, **k: None)
+    monkeypatch.setattr(proxy, "_identity_template", lambda: ({}, {}))
+    monkeypatch.setattr(proxy, "_identity_cfg", lambda: {})
+    monkeypatch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "get", lambda *_: SimpleNamespace(manifest={}))
+    seen = []
+    async def fake_round(*args, **kwargs):
+        seen.append(kwargs.get("caller"))
+        return None, [b"image"]
+    monkeypatch.setattr(proxy, "_graph_run_round", fake_round)
+    assert asyncio.run(proxy._identity_run_workflow(caller, {}, {})) == b"image"
+    assert seen == [caller]

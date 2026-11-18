@@ -256,7 +256,7 @@
     {
       "path": "proxy.py",
       "function": "_protocol_image_result",
-      "source_sha256": "20a8aa474c10a04645974fc6e48702262c81532bcb2da750460b201b829a006f",
+      "source_sha256": "35bcdf166b005dc0fed8cf464125571daadec541fcf82668ca1fcde8a37f3e8b",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -344,6 +344,22 @@
         "succeeded"
       ],
       "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/engine_protocol/jobs.py",
+      "function": "_run",
+      "source_sha256": "2fbd4332e88f6e9adb0b2349ef098fb797408721f940bb59a374245c5614a492",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/node_graph_runner.py",
+      "function": "report",
+      "source_sha256": "f40b453b609cf4647d4f50313819e8b1a48f80362b4822792ba0c97b97ecd6f4",
+      "call": "append_event",
+      "event": "'attempt'",
       "access": "content:job:read"
     }
   ],

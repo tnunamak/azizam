@@ -331,6 +331,7 @@ ALLOWED_RETRY_AFTER: dict[str, str] = {
     "gateway/engine_admin.py::slot": "the gateway's own rate limit, in seconds",
     "gateway/engine_admin.py::test": "the gateway's own gate retry delay (GATE_RETRY_AFTER_S)",
     "gateway/engine_switch.py::__init__": "the gateway's own wait, in seconds",
+    "gateway/host_memory_admission.py::busy_response": "an integer from the registry's retry_after_s, written through client_errors.retry_after",
     "gateway/me_make.py::_error": "an integer the gateway chose (PublicFailure.retry_after)",
     "gateway/resource_admission_http.py::admission_http_response": "an integer the admission decision computed",
     "gateway/voices_api.py::error_response": "an integer from a gate refusal (TransitionUnavailable.retry_after_s via _readiness_refusal)",

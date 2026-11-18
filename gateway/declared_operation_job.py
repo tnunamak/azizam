@@ -102,7 +102,7 @@ def model_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *, job_id: str,
-              deliver: Callable[[ResultBundle], Awaitable[Any]] | None = None) -> Any:
+              deliver: Callable[[ResultBundle], Awaitable[Any]] | None = None, caller=None) -> Any:
     """Run the job and keep each fetched file as its own asset. ``body`` is the caller's input object; the description's
     submit map decides which of its fields reach the engine.
 
@@ -110,7 +110,7 @@ async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *
     the client answer. Publication belongs to core: delivery failures propagate without undoing the succeeded job.
     A terminal replay that core has already settled performs no second delivery.
     """
-    refs = await protocol_jobs.run(runtime, intent, body, job_id=job_id)
+    refs = await protocol_jobs.run(runtime, intent, body, job_id=job_id, caller=caller)
     if refs is None:
         return
     deliver = deliver if deliver is not None else getattr(runtime, "deliver", None)

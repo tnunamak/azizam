@@ -146,6 +146,7 @@ async def run_round(
     on_progress: Callable[[int], None] = lambda _percent: None,
     resume_prompt_id: str | None = None,
     on_submitted: Callable[[str], None] = lambda _prompt_id: None,
+    on_completed: Callable[[], None] = lambda: None,
     observe: Callable[[Any], Any] = lambda status: status,
 ) -> RoundResult:
     """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first.
@@ -199,6 +200,7 @@ async def run_round(
             if status.state is JobState.failed:
                 raise RoundFailure(EXECUTION_FAILED, detail=str(status.detail or ""), prompt_id=prompt_id)
             if status.state is JobState.succeeded:
+                on_completed()
                 finished = status
                 break
             if status.state is JobState.running:
