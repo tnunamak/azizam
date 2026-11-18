@@ -33,11 +33,16 @@ def test_failure_older_than_snapshot_is_not_current(tmp_path, monkeypatch):
 
 
 def test_refresh_covers_second_runnable_binding(tmp_path, monkeypatch):
+    import ast
+    from pathlib import Path
     store = ChoiceStore(tmp_path / 'choices.json')
     monkeypatch.setattr(cl, 'STORE', store)
     entry = NS(id='demo', bindings={'first': 'svc-a', 'second': 'svc-b'}, contract={'inputs': {'pick': {'choices_from': {'node_type': 'N', 'input': 'pick'}}}})
-    def resolve(entry, binding_key=None):
-        return NS(service_id=entry.bindings[binding_key or 'first'], origin='http://203.0.113.10')
+    tree = ast.parse(Path('proxy.py').read_text())
+    expression = next(node.value for node in ast.walk(tree)
+                      if isinstance(node, ast.keyword) and node.arg == 'workflow_resolve_identity')
+    port = NS(adapter_identity=lambda entry, key, binding: NS(service_id=binding, origin='http://203.0.113.10'))
+    resolve = eval(compile(ast.Expression(expression), 'proxy.py', 'eval'), {'_WORKFLOW_RUN_PORT': port})
     monkeypatch.setattr(cl, 'fetch_fresh', lambda *a: {'input': {'required': {'pick': [['good']]}}})
     rows = asyncio.run(cl.owner_choices([entry], resolve, refresh=True))
     assert store.read('svc-a', 'N', 'pick') is not None
@@ -155,3 +160,29 @@ def test_concurrent_disjoint_refreshes_never_overlap(tmp_path, monkeypatch):
     assert max(overlap) == 1
     assert set(calls) == {'A', 'B', 'C'}
     assert not cl._tasks and not cl._task_declarations
+
+
+from tests.test_headless_access import principals
+
+
+@pytest.mark.parametrize('kind', ['member-key', 'scoped-key', 'no-key', 'other-principal'])
+@pytest.mark.parametrize('method,path', [('GET', '/admin/api/workflow-choices'), ('POST', '/admin/api/workflow-choices/refresh'), ('POST', '/admin/api/workflows/demo/choices/refresh')])
+def test_real_guard_precedes_choice_reads(principals, monkeypatch, kind, method, path):
+    import proxy
+    from gateway import admin_store
+    from gateway.runtime_auth import hash_api_key
+    principals.client.cookies.clear()
+    headers = {}
+    if kind == 'scoped-key':
+        headers = {'Authorization': 'Bearer ' + principals.app_key}
+    elif kind != 'no-key':
+        person = admin_store.upsert_oidc_user('https://idp.example', 'probe-' + kind, path=principals.db)
+        token = 'fixture-review-' + kind + method + path
+        admin_store.create_credential_hash(subject_kind='user', subject_id=person['id'], hash=hash_api_key(token), prefix='fixture', path=principals.db)
+        headers = {'Authorization': 'Bearer ' + token}
+    def forbidden(*args, **kwargs):
+        pytest.fail('unauthorized choice read or fetch')
+    monkeypatch.setattr(proxy.WORKFLOW_REGISTRY_STORE, 'snapshot', forbidden)
+    monkeypatch.setattr(cl, 'fetch_fresh', forbidden)
+    response = principals.client.request(method, path, headers=headers)
+    assert response.status_code in (401, 403)
