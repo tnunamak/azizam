@@ -490,6 +490,10 @@ class GatewayRig:
     def trace(self) -> dict[str, Any]:
         receipts = ad.dump_sqlite(self.receipts_db, self.norm, skip_tables=("receipt_history",))
         jobs = ad.dump_sqlite(self.media_jobs_db, self.norm)
+        # Accepted workflow identities are internal admission bookkeeping, not part of the captured wire contract.
+        for job in jobs.get("media_jobs", []):
+            metadata = (job.get("job_json") or {}).get("metadata") or {}
+            metadata.pop("accepted_workflow_ids", None)
         self.norm.problems.extend(ad.event_problems(jobs.get("media_job_events", [])))
         return ad.with_job_prefixes({
             "schema": ad.TRACE_SCHEMA,
