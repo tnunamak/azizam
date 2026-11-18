@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { modelDates, modelSource } from "./model-facts";
 import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
 import { accountApi } from "@/lib/account-api";
 import { preferredTerms } from "@/lib/terms";
@@ -671,6 +672,8 @@ function DetailSheet({
     ? [...new Set(Object.values(row.resolves_to))].filter((target) => viewerAdmin || knownNames.has(target))
     : [];
   const sameModelAs = row ? (row.same_model_as ?? []) : [];
+  const dates = row ? modelDates(row) : [];
+  const source = row ? modelSource(row) : null;
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
       <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
@@ -699,6 +702,23 @@ function DetailSheet({
                   <Fact
                     label="What you send and receive"
                     value={`${row.io.input.join(", ") || "—"} to ${row.io.output.join(", ") || "—"}`}
+                  />
+                )}
+                {dates.map(({ label, iso }) => (
+                  <Fact
+                    key={label}
+                    label={label}
+                    value={new Date(iso).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  />
+                ))}
+                {source && (
+                  <Fact
+                    label="Source"
+                    value={<a href={source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">Source</a>}
                   />
                 )}
               </dl>
