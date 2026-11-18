@@ -361,4 +361,5 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-18 (train 70): the seven closed FLUX.2 Klein workflows left the document (see
     # tests/fixtures/headless_openapi.json). Before it the digest was
     # d7e0437870855d58d23f4ae152924b66d86be604c0e435f501fcfbd9f02f1b15.
+    # Fast aliases now name the open FIBO and MOSS workflows; the projected document adds only those aliases.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
