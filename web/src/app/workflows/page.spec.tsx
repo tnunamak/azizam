@@ -2097,7 +2097,7 @@ describe("Workflows catalog, detail and API branch regressions", () => {
   ];
   const optionalInputFields = [
     "required", "asset", "label", "description", "media_type",
-    "accepted_media_types", "minimum", "maximum", "enum",
+    "accepted_media_types", "minimum", "maximum", "enum", "choice_labels",
   ];
   // Protects workflow-api.ts:84-86,109 at f1cac8a.
   // Mutant: Require optional values to have their scalar/array type even when null or absent.
