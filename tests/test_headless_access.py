@@ -539,6 +539,9 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     descriptor-owned com.azizam.video extension controls; nothing else moved.
     Re-captured 2026-11-12 (train 54, L3): WorkflowInputs_audio_generate_yue2_song holds the new help text and duration label;
     GET /gateway/v1/requests gained the optional ``tag`` filter, which this test strips like the other additive opt-ins.
+    Re-captured 2026-11-18 (train 70): the seven FLUX.2 Klein workflows are closed (exposure disabled), so their four input
+    schemas left this baseline and the two image generation paths and ImageGenerationRequest lost their extension
+    entries; nothing else moved.
     """
     # Re-captured 2026-11-12: the generic run schema lists the five additive mesh.edit forms.
     schema = proxy.app.openapi()
