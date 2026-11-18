@@ -103,10 +103,13 @@ async def owner_choices(entries, resolve_identity, *, refresh=False):
         snapshot = store.read(service, declaration['node_type'], declaration['input']) if store is not None and service else None
         if store is not None and service:
             data = freshness(store, service, [declaration], now=now)[0]
+            if not identity.origin and not data['failure_reason']:
+                data['failure_reason'] = 'no service address'
             state = 'failed' if data['failure_reason'] else 'missing' if snapshot is None else 'stale' if data['stale'] else 'fresh'
         else:
-            data = {'fetched_at': None, 'age_s': None, 'failure_reason': 'no bound service' if not service else None, 'failed_at': None}
-            state = 'failed' if not service else 'missing'
+            reason = 'no bound service' if not service else 'no service address' if not identity.origin else None
+            data = {'fetched_at': None, 'age_s': None, 'failure_reason': reason, 'failed_at': None}
+            state = 'failed' if reason else 'missing'
         result.append({'workflow_id': workflow_id, 'input': name, 'node_type': declaration['node_type'],
                        'service_id': service, 'choices': snapshot.choices if snapshot else None,
                        'fetched_at': data['fetched_at'], 'age_s': data['age_s'], 'state': state,
