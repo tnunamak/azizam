@@ -8592,12 +8592,17 @@ async def _graph_run_round(
         await _finalize_probe()
         return host_memory_admission.busy_response(), []
     succeeded = False
+
+    def completed() -> None:
+        nonlocal succeeded
+        succeeded = True
+
     try:
         result = await graph_round.run_round(
             adapter, graph, submit_payload, headers,
             graph=workflow, label=label, max_wait_s=float(max_wait_s or _graph_service(capability).timeout),
             control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=lambda: _graph_connection(capability=capability),
-            is_disconnected=lambda: _request_is_disconnected(request),
+            is_disconnected=lambda: _request_is_disconnected(request), on_completed=completed,
             binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
             cadence=adapter.poll_for(intent or _image_admission_intent("images.generate")),

@@ -520,7 +520,7 @@ class NodeGraphAdapter:
         """The host-memory admission in front of every prompt this adapter sends (the process's own unless one was given)."""
         return self._admission or host_memory_admission.shared()
 
-    async def admit_prompt(self, payload: Mapping[str, Any], ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> None:
+    async def admit_prompt(self, payload: Mapping[str, Any], ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> host_memory_admission.Lease | None:
         """Wait until the host has room for the models ``payload`` makes the engine load. Raises ``HostMemoryBusy`` when
         it has not in time. Call it before any submit marker is written: a refusal here sent nothing."""
         prompt = payload.get("prompt") if isinstance(payload, Mapping) else None
@@ -529,7 +529,7 @@ class NodeGraphAdapter:
         return await self.admission.admit(prompt if isinstance(prompt, Mapping) else {}, ask)
 
     async def admit(self, conn: Connection, op: str, request: CanonicalRequest,
-                    ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> None:
+                    ask: host_memory_admission.Ask = host_memory_admission.Ask()) -> host_memory_admission.Lease | None:
         """``admit_prompt`` for the prompt ``request`` is about to send."""
         if self._admission is None and not self.admission.policy.configured:
             return

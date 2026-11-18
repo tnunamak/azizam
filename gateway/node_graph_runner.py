@@ -461,6 +461,11 @@ class NodeGraphRunner:
                                          path=media_jobs.DB_PATH)
 
         succeeded = False
+
+        def completed() -> None:
+            nonlocal succeeded
+            succeeded = True
+
         try:
             if probe is not None:
                 probe.start()
@@ -469,7 +474,7 @@ class NodeGraphRunner:
                 control_timeout=host.control_timeout(), resume_prompt_id=resume, cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
                 on_progress=ctx.record_progress if job_metadata().get(ENGINE_PROGRESS_FLAG) else (lambda _percent: None),
-                on_submitted=lambda prompt_id: keep_prompt(prompt_id),
+                on_submitted=lambda prompt_id: keep_prompt(prompt_id), on_completed=completed,
                 observe=lambda status: host.observed(ctx, status, graph))
             succeeded = True
         except graph_round.RoundFailure as failed:
