@@ -470,7 +470,7 @@
           "intent": "image.variation",
           "job_id": null,
           "latency_ms": "<duration>",
-          "manifest_hash": "7d041326d500e5d0171ceee430a5e94f6164f9a369c388490a5c12badfa29ab7",
+          "manifest_hash": "36c71f707cfe34bab9e65c003724b2237cab33e710aacfd6b1001d1d75ac7ed5",
           "manifest_id": "image.edit.qwen-image-2.1-edit",
           "manifest_version": "0.1.0",
           "metadata": {},

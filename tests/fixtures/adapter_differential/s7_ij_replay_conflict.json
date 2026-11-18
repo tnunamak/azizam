@@ -970,7 +970,7 @@
           "intent": "image.generate",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "d46fb628ddaa1f350a9bb3c8efd657b40eea691032060bdd430a6dcb3243f8e4",
+          "manifest_hash": "d1067511c92271a87b6884944d58da1407de9d748d79d4e4067cc2214540ae8c",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {
@@ -1253,7 +1253,7 @@
           "intent": "image.generate",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "d46fb628ddaa1f350a9bb3c8efd657b40eea691032060bdd430a6dcb3243f8e4",
+          "manifest_hash": "d1067511c92271a87b6884944d58da1407de9d748d79d4e4067cc2214540ae8c",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {
