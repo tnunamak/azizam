@@ -472,6 +472,7 @@ def test_queued_chain_keeps_accepted_grid_size_and_segments(world):
         assert old.status_code == 200, old.body
         old_post = json.loads(old.body)
         expected_graph = copy.deepcopy(world.engine.prompts["p1"])
+        expected_units = copy.deepcopy(proxy._video_chain_units["p1"])
         assert old_post["segments"] == expected_segments
         old_status = await main_video.status(old_post["id"], auth)
         assert old_status.status_code == 200, old_status.body
@@ -508,6 +509,7 @@ def test_queued_chain_keeps_accepted_grid_size_and_segments(world):
         assert len(world.engine.prompts) == 2
         assert json.dumps(world.engine.prompts["p2"], sort_keys=True) == json.dumps(expected_graph, sort_keys=True)
         assert len(proxy._video_chain_units["p2"]) == expected_segments
+        assert proxy._video_chain_units["p2"] == expected_units
         status = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
         assert status.status_code == 200, status.text
         after = status.json()
@@ -848,8 +850,10 @@ def test_queued_chain_freezes_operator_facts_through_execution_and_polling(world
         assert proxy._video_chain_units["p2"] != expected_units
 
         gate = asyncio.Event()
+        history_entered = asyncio.Event()
         async def handle(request):
             if request.url.path == "/history/p3":
+                history_entered.set()
                 await gate.wait()
             return world.engine(request)
         world.rig.monkeypatch.setitem(world.rig.fakes.router._routes, HOST, HandlerTransport(handle))
@@ -869,8 +873,11 @@ def test_queued_chain_freezes_operator_facts_through_execution_and_polling(world
             plan_c["workflows"][name].update(
                 builder=builder_a, frame_rate=30, default_size="320x192", chain_segment_seconds=2)
             publish_section(world.rig.monkeypatch, "videos", plan_c)
+            await asyncio.wait_for(history_entered.wait(), timeout=5)
+            assert not runner.done()
             pending = await world.rig.call("GET", "/v1/videos/" + accepted["id"])
             assert pending.status_code == 200, pending.text
+            assert pending.json()["status"] in {"queued", "in_progress"}
             assert {key: pending.json()[key] for key in fields} == {key: accepted[key] for key in fields}
             gate.set()
             await asyncio.wait_for(runner, timeout=10)
