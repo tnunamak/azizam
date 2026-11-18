@@ -557,3 +557,21 @@ def test_finished_overlapping_leases_do_not_leave_a_reservation(tmp_path):
     assert clock.slept == []
     c.finish(False)
     assert not made._reserved
+
+
+def test_disabled_protocol_job_does_not_check_cancel_before_submit(monkeypatch):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import jobs
+    class Submitted(Exception):
+        pass
+    class Adapter:
+        async def admit(self, *args):
+            return None
+        async def submit(self, *args):
+            raise Submitted()
+    runtime = SimpleNamespace(adapter=Adapter(), connection_for=lambda op: None,
+                              poll_timing=lambda op: (1, 10), request=lambda op, body: body,
+                              record_lifecycle=False)
+    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: {"metadata": {"cancel_requested_at": "now"}})
+    with pytest.raises(Submitted):
+        run(jobs.run(runtime, "test", {}, job_id="job"))

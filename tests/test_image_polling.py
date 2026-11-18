@@ -173,3 +173,40 @@ def test_probe_is_stopped_when_submit_payload_build_raises(monkeypatch):
     with pytest.raises(ValueError, match="cannot build"):
         asyncio.run(call())
     assert probe.started and probe.stopped
+
+
+def test_protocol_image_job_receives_service_caller(monkeypatch):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import jobs
+    class Stop(Exception):
+        pass
+    caller = SimpleNamespace(identity=SimpleNamespace(auth_kind="service_key"))
+    seen = []
+    async def fake_run(*args, **kwargs):
+        seen.append(kwargs.get("caller"))
+        raise Stop()
+    monkeypatch.setattr(jobs, "run", fake_run)
+    runtime = SimpleNamespace(target=SimpleNamespace(description=SimpleNamespace(operations={"images": SimpleNamespace(job=True)})))
+    with pytest.raises(Stop):
+        asyncio.run(proxy._protocol_image_result(runtime, {}, None, caller, SimpleNamespace(job_id="job"), None))
+    assert seen == [caller]
+
+
+def test_identity_scene_passes_service_caller_to_graph_round(monkeypatch):
+    from types import SimpleNamespace
+    caller = SimpleNamespace(identity=SimpleNamespace(auth_kind="service_key"))
+    monkeypatch.setattr(proxy, "_graph_adapter", lambda *_: SimpleNamespace(label="graph"))
+    monkeypatch.setattr(proxy, "_graph_service", lambda *_: SimpleNamespace(enabled=True, timeout=10))
+    monkeypatch.setattr(proxy, "_graph_service_id", lambda *_: "graph")
+    monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *_: {})
+    monkeypatch.setattr(proxy, "_graph_media_admission", lambda *a, **k: None)
+    monkeypatch.setattr(proxy, "_identity_template", lambda: ({}, {}))
+    monkeypatch.setattr(proxy, "_identity_cfg", lambda: {})
+    monkeypatch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "get", lambda *_: SimpleNamespace(manifest={}))
+    seen = []
+    async def fake_round(*args, **kwargs):
+        seen.append(kwargs.get("caller"))
+        return None, [b"image"]
+    monkeypatch.setattr(proxy, "_graph_run_round", fake_round)
+    assert asyncio.run(proxy._identity_run_workflow(caller, {}, {})) == b"image"
+    assert seen == [caller]
