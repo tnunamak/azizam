@@ -543,6 +543,9 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     descriptor-owned com.azizam.video extension controls; nothing else moved.
     Re-captured 2026-11-12 (train 54, L3): WorkflowInputs_audio_generate_yue2_song holds the new help text and duration label;
     GET /gateway/v1/requests gained the optional ``tag`` filter, which this test strips like the other additive opt-ins.
+    Re-captured 2026-11-18 (train 70): the seven FLUX.2 Klein workflows are closed (exposure disabled), so their four input
+    schemas left this baseline and the two image generation paths and ImageGenerationRequest lost their extension
+    entries; nothing else moved.
     """
     # Re-captured 2026-11-12: the generic run schema lists the five additive mesh.edit forms.
     schema = proxy.app.openapi()
@@ -742,9 +745,11 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
     config_before = copy.deepcopy(proxy.config)
     # Config reload and global-cap deletion have no invalid-body/dry contract.
     # Stop at their first effect, after the route has completed authorization.
+    from gateway.engine_protocol import choice_lists
     effect = {
         ("POST", "/admin/api/config/reload"): (proxy, "reload_runtime_config"),
         ("DELETE", "/admin/api/providers/-/global-caps"): (proxy.ADMIN_STORE, "update_provider_admin_state"),
+        ("POST", "/admin/api/workflow-choices/refresh"): (choice_lists, "owner_choices"),
     }.get((row["method"], row["path"]))
     if effect:
         with patch.object(*effect, side_effect=OwnerOperationReached) as operation:

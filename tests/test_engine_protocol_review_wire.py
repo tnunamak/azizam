@@ -51,4 +51,8 @@ def test_rv_wire(monkeypatch, tmp_path):
     print('RVRECEIPT='+json.dumps([{k:v for k,v in r.items() if k not in ('request_id','queued_at_ms','started_at_ms','first_output_at_ms','finished_at_ms','accepted_at_ms','updated_at_ms','_stored_at','latency_ms')} for r in rows[:6]],sort_keys=True,default=str))
     print('RVWIRE=' + json.dumps(out, sort_keys=True))
 
-    assert out == json.loads((Path(__file__).parent / 'fixtures/engine_protocol/review-wire-main.json').read_text())
+    expected = json.loads((Path(__file__).parent / 'fixtures/engine_protocol/review-wire-main.json').read_text())
+    closed_models = {entry['id'] for entry in proxy._build_workflow_model_entries()
+                     if proxy._closed_workflow_reason(entry.get('azizam_workflow_id'))}
+    expected[-1]['ids'] = [model for model in expected[-1]['ids'] if model not in closed_models]
+    assert out == expected

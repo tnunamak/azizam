@@ -202,14 +202,14 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         return media_jobs.get(job_id, audience="internal", path=self.jobs)
 
     async def run_image(self, caller: str) -> dict[str, Any]:
-        fake = self.fakes.asgi(_comfy_scenario("image-job-succeeds", "images", "out.png", "image/png", _png()))
+        fake = self.fakes.asgi(_comfy_scenario("image-job-succeeds", "images", "out.png", "image/png", _png(), node="14"))
         auth = self.caller(caller)
         # "auto" background asks a chat model whether to cut out the subject; no chat backend here.
         no_cutout = AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))
         with derived_patch("GRAPH_HOST", fake.base_url), \
                 patch.object(proxy, "resolve_image_background_decision", no_cutout), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()):
-            job_id = await self.submit_as_mcp("image.generate.flux2-klein-4b", {"prompt": "a red fox"}, auth)
+            job_id = await self.submit_as_mcp("image.generate.moss-image-fast", {"prompt": "a red fox"}, auth)
             self.assertEqual(self.scheduled, [job_id])
             await asyncio.wait_for(proxy._run_image_media_job(job_id), HANG_BOUND_SECONDS)
         return media_jobs.get(job_id, audience="internal", path=self.jobs)

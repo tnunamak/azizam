@@ -298,6 +298,16 @@ def run_tile_route(proxy: Any, counts: dict[str, int]) -> Any:
     with pytest.MonkeyPatch.context() as mp, derived_patch("GRAPH_ENABLED", True), patch.object(
         proxy, "configured_downstream_headers", lambda _auth, _service: {}
     ), patch.object(proxy, "_graph_run_round", counting_round):
+        # This composition has no open bundled equivalent; exercise the generic role dispatcher.
+        from dataclasses import replace
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "image.generate.flux2-klein-4b-seamless-tile"
+        entry = snapshot.get(workflow_id)
+        entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
+        snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
+        mp.setattr(type(provider), "current", lambda self: snapshot)
+        mp.setattr(proxy, "WORKFLOW_SNAPSHOTS", provider)
         install_async_client_stub(mp, counting_post)
         return asyncio.run(proxy.proxy_graph_image_request(JsonRequest(tile_body()), access_context(), receipt=receipt))
 

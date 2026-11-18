@@ -403,6 +403,9 @@ def test_video_job_succeeds(tmp_path, record_testsuite_property):
                                 unordered_json=True)
         job_id = submit.json()["job_id"]
         await proxy._run_video_media_job(rig.scheduled[0])
+        from gateway import media_jobs
+        stored = media_jobs.get(job_id, audience="internal", path=rig.media_jobs_db)
+        assert stored["metadata"]["accepted_workflow_ids"] == ["video.generate.ltx-2.5-t2v"]
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label="poll the finished job")
         content = await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/content", label="job content")
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/events", label="job events")

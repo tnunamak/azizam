@@ -234,7 +234,7 @@ def test_capability_availability_failure_preserves_policy(monkeypatch, failure_s
         ),
     ]
     monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda req: object())
-    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth: caps)
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth, *, include_closed=False: caps)
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {})
     monkeypatch.setattr(proxy, "_workflow_availability_services", lambda reg: reg)
     monkeypatch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records", lambda: [])
@@ -260,7 +260,7 @@ def test_capability_availability_failure_preserves_policy(monkeypatch, failure_s
 
 def test_capability_availability_does_not_swallow_cancellation(monkeypatch):
     monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda req: object())
-    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth: [])
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth, *, include_closed=False: [])
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {})
     monkeypatch.setattr(proxy, "_workflow_availability_services", lambda reg: reg)
 

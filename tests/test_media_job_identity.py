@@ -28,7 +28,7 @@ from tests.support.config_snapshot import derived_patch
 from gateway import accounts, admin_store, mcp_oauth, media_jobs
 from tests.support.access import store_plan
 
-FLUX = "image.generate.flux2-klein-4b"
+IMAGE_WORKFLOW = "image.generate.moss-image-fast"
 ASSET_ID = "img_" + "c" * 64
 
 
@@ -62,7 +62,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         proxy.receipt_store.init_db(self.receipts_db)
         self.person = admin_store.upsert_oidc_user(
             "https://idp.test", "ann", email="ann@example.test", path=self.admin)
-        self.images = store_plan("Flux only", path=self.admin, caps=("image",), workflows=[FLUX])
+        self.images = store_plan("Moss only", path=self.admin, caps=("image",), workflows=[IMAGE_WORKFLOW])
         self.other = store_plan("Krea only", path=self.admin, caps=("image",),
                                 workflows=["image.generate.krea2-turbo"])
         accounts.change_person(self.person["id"], "test", path=self.admin, plan_id=self.images["id"])
@@ -127,7 +127,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(auth.identity.name, "ChatGPT (MCP)")
         return auth
 
-    async def submit(self, auth_context: proxy.AuthContext, model: str = "flux2-klein-4b") -> str:
+    async def submit(self, auth_context: proxy.AuthContext, model: str = "moss-image-fast") -> str:
         response = await proxy._dispatch_gateway_media_job_submission(
             request=_Request(auth_context),  # type: ignore[arg-type]
             payload={"intent": "image.generate", "request": {"model": model, "prompt": "a red fox"}},
@@ -182,7 +182,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_workflow_id_and_short_name_run_the_same(self) -> None:
         context = self.mcp_context()
         outcomes = []
-        for model in ("flux2-klein-4b", FLUX):
+        for model in ("moss-image-fast", IMAGE_WORKFLOW):
             job_id = await self.submit(context, model=model)
             await proxy._run_image_media_job(job_id)
             job = media_jobs.get(job_id, audience="internal", path=self.jobs)

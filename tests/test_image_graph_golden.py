@@ -189,6 +189,7 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
     posted: list[dict] = []
     vram_keys: list[list] = []
     statuses: list[int] = []
+    errors: list[str] = []
     with GatewayRig(f"image-graph-golden-{scenario}-{name}", tmp_path / f"run{run}") as rig:
         names = ("flux2-klein-4b", "flux2-klein-4b-inpaint") if scenario == "tile" else (name,)
         if scenario == "edit-mask":  # a mask moves an edit to the workflow's mask-bound sibling, whose output node may differ
@@ -235,9 +236,15 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
         async def drive():
             response = await rig.call("POST", path, label=f"{scenario} {name}", **call)
             statuses.append(response.status_code)
+            if response.status_code == 409:
+                errors.append(response.json()["error"]["code"])
 
         asyncio.run(drive())
-        receipts = rig.trace()["receipts"] or {}
+        trace = rig.trace()
+        receipts = trace["receipts"] or {}
+        engine_requests = trace["engine_requests"]
+    if name.startswith("flux2-klein") and statuses == [409]:
+        return {"status": statuses, "errors": errors, "graphs": posted, "engine_requests": engine_requests}
     if scenario == "generate-noseed":
         for graph in posted:
             _mask_seeds(graph, MANIFESTS[name])
@@ -255,6 +262,9 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
 def test_the_engine_receives_the_recorded_graph(tmp_path, record_testsuite_property, scenario, name, roles):
     first = observe(tmp_path, scenario, name, 0, roles)
     key = f"{scenario}/{name}"
+    if name.startswith("flux2-klein"):
+        assert first["status"] == [409] and first["errors"] == ["workflow_disabled"] and first["graphs"] == [] and first["engine_requests"] == []
+        return
     if roles == "release":
         record_testsuite_property(f"image_graph_golden.{key}", json.dumps(first, sort_keys=True))
     assert first["status"] == [200], f"{key}: the route did not answer 200, so the scenario proves nothing"
@@ -278,6 +288,9 @@ def test_the_fixture_covers_every_case_and_every_shipped_image_graph():
 @pytest.mark.parametrize("scenario,name", [("edit", MULTIREF), *[("edit-mask", name) for name in MASKED]])
 def test_multi_asset_golden_keeps_each_uploaded_asset_in_its_slot(tmp_path, scenario, name):
     actual = observe(tmp_path, scenario, name, 0, distinct_uploads=True)
+    if name.startswith("flux2-klein"):
+        assert actual["status"] == [409] and actual["errors"] == ["workflow_disabled"] and actual["graphs"] == [] and actual["engine_requests"] == []
+        return
     assert actual["status"] == [200]
     expected = json.loads(FIXTURE.read_text())[f"{scenario}/{name}"]
     import copy

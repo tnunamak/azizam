@@ -81,7 +81,7 @@ def post(body: dict, monkeypatch: pytest.MonkeyPatch) -> httpx.Response:
     monkeypatch.setattr(proxy.app.router, "routes", [Route("/__serve_row", endpoint, methods=["POST"]), *proxy.app.router.routes])
 
     async def go():
-        async with gateway_client() as client:
+        async with gateway_client(client=("203.0.113.21", 1234)) as client:
             return await client.post("/__serve_row", json=body)
     return asyncio.run(go())
 
@@ -98,9 +98,9 @@ def test_the_row_runs_the_deployment_default_on_the_engine_the_deployment_declar
 
 
 def test_a_model_the_caller_names_wins_over_the_default(served, monkeypatch):
-    response = post({"prompt": "a red fox", "model": "image.generate.flux2-klein"}, monkeypatch)
+    response = post({"prompt": "a red fox", "model": "image.generate.moss-image"}, monkeypatch)
     assert response.status_code == 200, response.text
-    assert [s.workflow for s in served.seen] == ["image.generate.flux2-klein"]
+    assert [s.workflow for s in served.seen] == ["image.generate.moss-image"]
 
 
 def test_a_deployment_that_declares_no_engine_refuses_before_a_job_exists(served, monkeypatch):

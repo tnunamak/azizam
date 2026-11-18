@@ -114,7 +114,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
     def test_seeded_requests_get_stable_hashed_request_id(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
             "extensions": {
                 proxy.WORKFLOW_EXTENSION_NAMESPACE: {
@@ -144,7 +144,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
         self.assertNotIn("private prompt", digest)
 
     def test_unseeded_requests_use_fallback_without_idempotency_key(self) -> None:
-        body = {"model": "flux2-klein-4b", "prompt": "private prompt"}
+        body = {"model": "krea2-turbo", "prompt": "private prompt"}
 
         request_id, digest, kind = proxy._image_media_job_request_id(
             body=body,
@@ -236,7 +236,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
     def _create_job(self, body: Mapping[str, Any]) -> str:
         job = media_jobs.MediaJob(
             intent="image.generate",
-            workflow="image.generate.flux2-klein-4b",
+            workflow="image.generate.krea2-turbo",
             backend="comfyui",
             request_id="req_job",
             metadata={
@@ -257,7 +257,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_executor_forces_url_response_and_persists_assets(self) -> None:
         job_id = self._create_job({
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
             "response_format": "b64_json",
         })
@@ -291,7 +291,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_executor_retries_transient_vram_error(self) -> None:
         job_id = self._create_job({
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         })
         calls = 0
@@ -335,7 +335,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_submit_route_creates_job_without_persisting_prompt_in_metadata(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
             "extensions": {
                 proxy.WORKFLOW_EXTENSION_NAMESPACE: {
@@ -379,7 +379,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(second.body.decode("utf-8"))["job_id"], job_id)
 
     async def test_deleted_image_request_is_refused_without_scheduling_again(self) -> None:
-        body = {"model": "flux2-klein-4b", "prompt": "private prompt"}
+        body = {"model": "krea2-turbo", "prompt": "private prompt"}
         headers = {"host": "gateway.test", "idempotency-key": "deleted-request"}
         with authenticated(), patch.object(proxy, "_schedule_image_media_job", return_value=True) as schedule:
             first = await proxy.gateway_image_generations_media_job(_StubJsonRequest(body, headers=headers))
@@ -395,7 +395,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_seeded_resubmission_after_replay_window_runs_again(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
             "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"seed": 7}},
         }
@@ -423,7 +423,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_generic_media_jobs_submit_delegates_image_generate_request(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         }
         scheduled: list[str] = []
@@ -449,7 +449,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_generic_media_jobs_rejects_when_comfy_resource_is_disabled(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         }
 
@@ -484,7 +484,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         media_jobs.create(existing, path=self.db)
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         }
 
@@ -511,7 +511,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_media_job_admission_uses_admin_runtime_overrides(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         }
         overrides = {
@@ -546,7 +546,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_media_job_admission_uses_admin_service_mode(self) -> None:
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         }
         overrides = {
@@ -591,7 +591,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
                 path=self.db,
             )
         body = {
-            "model": "flux2-klein-4b",
+            "model": "krea2-turbo",
             "prompt": "private prompt",
         }
 

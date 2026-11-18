@@ -15,9 +15,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from gateway import client_errors
+from gateway.workflow_closed import closed_reason
 from gateway.workflow_kernel import selector_matches
 from gateway.workflow_runtime_types import (
     MEDIA_PATH_UNSUPPORTED,
+    WORKFLOW_DISABLED,
     WORKFLOW_NOT_FOUND,
     FrontendRow,
     MediaRef,
@@ -266,13 +268,19 @@ async def stage_uploads(spool: RequestSpool, uploads: Sequence[tuple[str, Any]],
     return {name: tuple(items) for name, items in media.items()}
 
 
-def candidates(snapshot: RegistrySnapshot, row: FrontendRow, servable: Callable[[WorkflowEntry], bool] | None = None
-               ) -> list[WorkflowEntry]:
-    """The active, published workflows the row's selector selects (and ``servable`` accepts), in id order."""
+def candidates(snapshot: RegistrySnapshot, row: FrontendRow, servable: Callable[[WorkflowEntry], bool] | None = None,
+               *, include_closed: bool = False) -> list[WorkflowEntry]:
+    """Published workflows the row selects, excluding closed entries unless resolving a name."""
     return sorted((entry for entry in snapshot.workflows.values()
-                   if entry.state == "active" and entry.published and selector_matches(row.selects, entry.id, entry.contract)
+                   if (include_closed or not closed_reason(entry)) and entry.published
+                   and selector_matches(row.selects, entry.id, entry.contract)
                    and (servable is None or servable(entry))),
                   key=lambda entry: entry.id)
+
+
+def closed_response(entry: WorkflowEntry) -> Response | None:
+    reason = closed_reason(entry)
+    return refused_response(RunRefused(409, WORKFLOW_DISABLED, reason)) if reason else None
 
 
 def required_inputs(entry: WorkflowEntry) -> set[str]:
@@ -287,17 +295,17 @@ def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str
     alias) and must be one the row selects. With no target the row's selection narrows to the workflows whose
     required inputs the request supplies; exactly one must remain, or else ``prefer`` (the wire's first choice) settles it when
     it is one of them."""
-    pool = candidates(snapshot, row, servable)
+    pool = candidates(snapshot, row, servable, include_closed=bool(target))
     if target:
         for kind in ("workflow", "workflow_alias"):
             owner = snapshot.names.owner(kind, target)  # type: ignore[arg-type]
             if owner is not None:
                 chosen = next((entry for entry in pool if entry.id == owner.id), None)
                 if chosen is not None:
-                    return chosen
+                    return closed_response(chosen) or chosen
         short = [entry for entry in pool if entry.id == f"{entry.contract.get('intent')}.{target}"]
         if len(short) == 1:        # a workflow is also addressed by its id without the intent that starts it
-            return short[0]
+            return closed_response(short[0]) or short[0]
         return (not_found(target) if not_found is not None else None) or error_response(
             404, f"The model {target!r} does not exist or is not available on this route", code=WORKFLOW_NOT_FOUND, param="model")
     fitting = [entry for entry in pool if required_inputs(entry) <= set(supplied)]

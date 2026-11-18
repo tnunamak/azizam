@@ -511,3 +511,22 @@ def test_deleted_job_get_and_content_are_not_found(served, monkeypatch):
         assert response.status_code == 404, response.text
     assert media_jobs.get(job_id, include_deleted=True, path=served.media) is not None
     assert served.engine_calls == 1
+
+@pytest.mark.parametrize("closure", ["exposure", "state"])
+def test_closed_workflow_is_refused_before_engine(served, monkeypatch, closure):
+    from dataclasses import replace
+    from tests.workflow_runtime_fakes import FACTS
+
+    facts = replace(FACTS, exposure="disabled") if closure == "exposure" else FACTS
+    state = "disabled" if closure == "state" else "active"
+    snap = FakeSnapshot(1, MappingProxyType({"demo.run": entry(ROUTE_CONTRACT, facts=facts, state=state)}))
+    monkeypatch.setattr(proxy, "WORKFLOW_SNAPSHOTS", Provider(snap))
+    async def run():
+        async with gateway_client(client=("203.0.113.12", 1234)) as client:
+            return await client.post(ROUTE, json={"inputs": {"prompt": "hi"}}, headers={"Prefer": "wait=10"})
+
+    response = asyncio.run(run())
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "workflow_disabled"
+    assert response.json()["error"]["message"] == "workflow demo.run is disabled"
+    assert served.engine_calls == 0

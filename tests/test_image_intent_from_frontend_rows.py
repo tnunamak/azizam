@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from dataclasses import replace
 import json
 import sys
 from pathlib import Path
@@ -116,16 +117,26 @@ def test_shipped_rows_give_the_three_image_intents(path: str, intent: str) -> No
 
 def _tile(manifest, **kw):
     receipt = proxy.start_image_route_receipt("/v1/images/generations", access_context())
-    response = asyncio.run(proxy._proxy_offset_inpaint_tile_request(
-        request=None, body={}, auth_context=access_context(), receipt=receipt, manifest=manifest,
-        prompt="p", model=TILE_MODEL, size="64x64", n=1, response_format="b64_json", headers={}, **kw))
+    # No other bundled workflow uses this gateway composition.
+    provider = proxy.GATEWAY_REGISTRY_PROVIDER
+    snapshot = provider.current()
+    workflow_id = "image.generate.flux2-klein-4b-seamless-tile"
+    entry = snapshot.get(workflow_id)
+    entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
+    snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
+    with patch.object(type(provider), "current", lambda self: snapshot), patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider):
+        response = asyncio.run(proxy._proxy_offset_inpaint_tile_request(
+            request=None, body={}, auth_context=access_context(), receipt=receipt, manifest=manifest,
+            prompt="p", model=TILE_MODEL, size="64x64", n=1, response_format="b64_json", headers={}, **kw))
     return response, receipt
 
 
 def _tile_manifest() -> dict:
     manifest = proxy._find_image_manifest("image.generate", TILE_MODEL)
     assert manifest is not None
-    return copy.deepcopy(manifest)
+    manifest = copy.deepcopy(manifest)
+    manifest["bindings"]["gateway"].update(base_model="krea2-turbo", inpaint_model="qwen-image-2.1-inpaint")
+    return manifest
 
 
 @pytest.mark.parametrize("missing", ["base_model", "inpaint_model"])

@@ -1031,7 +1031,7 @@ def test_cold_capability_provider_measures_declared_services(monkeypatch, tmp_pa
     monkeypatch.setattr(proxy.receipt_store, "DB_PATH", receipts)
     registry = {"services": {"svc": {"enabled": True, "config": {"base_url": "http://fixture", "health_endpoint": "/health"}}}}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
-    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth: [Capability(intent="chat.completions", backend="svc", model="actual")])
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth, **kwargs: [Capability(intent="chat.completions", backend="svc", model="actual")])
     monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: None)
     monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", lambda: {})
     observed = []

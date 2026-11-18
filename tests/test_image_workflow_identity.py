@@ -112,23 +112,23 @@ def test_job_workflow_is_the_record_id_and_keeps_the_guess_without_a_record():
 
 def _plan_setup(workflow):
     def setup(rig):
-        # The flux2-klein-4b-edit graph publishes its image from node 9.
-        base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="9"), strict=False))
+        # The qwen-image-2.1-edit graph publishes its image from node 10.
+        base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="10"), strict=False))
         rig._exit.enter_context(authenticated(identity(plan_for(caps=("image",), workflows=[workflow]))))
     return setup
 
 
 def _edit(tmp_path, workflow):
-    return observe(tmp_path, EDIT, form(model="flux2-klein-4b-edit"), _plan_setup(workflow), row=False, name="plan")
+    return observe(tmp_path, EDIT, form(model="qwen-image-2.1-edit"), _plan_setup(workflow), row=False, name="plan")
 
 
 def test_a_plan_listing_the_record_id_admits_the_edit_model(tmp_path):
-    obs = _edit(tmp_path, "image.edit.flux2-klein-4b")
+    obs = _edit(tmp_path, "image.edit.qwen-image-2.1-edit")
     assert obs.status == 200, obs.body
 
 
-def test_a_plan_listing_only_the_old_fake_spelling_refuses_the_edit_model(tmp_path):
-    obs = _edit(tmp_path, "image.edit.flux2-klein-4b-edit")
+def test_a_plan_listing_a_different_workflow_refuses_the_edit_model(tmp_path):
+    obs = _edit(tmp_path, "image.edit.qwen-image-2.1-wrong")
     assert obs.status == 403, obs.body
     assert obs.engine == []
 
@@ -156,5 +156,91 @@ def test_an_image_job_naming_an_edit_model_is_refused_at_submit(tmp_path, model)
 
 
 def test_an_image_job_naming_a_generate_model_is_still_accepted(tmp_path):
-    obs = observe(tmp_path, JOB, job_body(model="flux2-klein-4b"), job_setup(), row=False, name="accept-job")
+    obs = observe(tmp_path, JOB, job_body(model="krea2-turbo"), job_setup(), row=False, name="accept-job")
     assert obs.status == 202, obs.body
+
+
+def _closed_route_setup(rig):
+    from tests.support.fake_upstream import StreamingASGITransport
+    ok(rig)
+    rig._client._transport = StreamingASGITransport(proxy.app, client=("203.0.113.13", 1234))
+
+
+def test_disabled_exposure_image_is_refused_before_engine(tmp_path):
+    obs = observe(tmp_path, GEN, body(model="flux2-klein-4b"), _closed_route_setup, row=False, name="closed")
+    assert obs.status == 409, obs.body
+    assert '"code": "workflow_disabled"' in obs.body["text"]
+    assert "workflow image.generate.flux2-klein-4b is disabled" in obs.body["text"]
+    assert obs.engine == []
+
+
+def test_disabled_run_state_image_is_refused_before_engine(tmp_path):
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        workflow_id = "image.generate.anima-turbo"
+        updated = {**current.workflows, workflow_id: replace(current.get(workflow_id), state="disabled")}
+        snapshot = replace(current, workflows=updated)
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+
+    obs = observe(tmp_path, GEN, body(model="anima-turbo"), setup, row=False, name="disabled-state")
+    assert obs.status == 409, obs.body
+    assert '"code": "workflow_disabled"' in obs.body["text"]
+    assert "workflow image.generate.anima-turbo is disabled" in obs.body["text"]
+    assert obs.engine == []
+
+
+def test_active_default_image_reaches_engine(tmp_path):
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        workflow_id = "image.generate.flux2-klein-4b"
+        original = current.get(workflow_id)
+        enabled = replace(original, state="active", facts=replace(original.facts, exposure="default"))
+        snapshot = replace(current, workflows={**current.workflows, workflow_id: enabled})
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+
+    obs = observe(tmp_path, GEN, body(model="flux2-klein-4b"), setup, row=False, name="active-control")
+    assert obs.status == 200, obs.body
+    assert any(path == "/prompt" for _, path in obs.engine)
+
+
+@pytest.mark.parametrize("dependency_manifest_missing", [False, True])
+def test_composed_workflow_refuses_a_closed_dependency_before_engine(tmp_path, dependency_manifest_missing):
+    import copy
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "image.edit.flux2-klein-4b-inpaint"
+        entry = snapshot.get(workflow_id)
+        entry = replace(entry, state="active", facts=replace(entry.facts, exposure="default"))
+        rig.monkeypatch.setattr(type(provider), "current", lambda self: replace(
+            snapshot, workflows={**snapshot.workflows, workflow_id: entry}))
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", provider)
+        find = proxy._find_image_manifest
+        composite = copy.deepcopy(find(GEN_INTENT, "flux2-klein-4b-seamless-tile"))
+        composite["id"] = "image.generate.sdxl-seamless-tile"
+        composite["bindings"]["gateway"]["model_id"] = "sdxl-seamless-tile"
+        def lookup(intent, model):
+            if intent == GEN_INTENT and model == "sdxl-seamless-tile":
+                return composite
+            if dependency_manifest_missing and model == "flux2-klein-4b":
+                return None
+            return find(intent, model)
+
+        rig.set(proxy, "_find_image_manifest", lookup)
+
+    obs = observe(tmp_path, GEN, body(model="sdxl-seamless-tile"), setup, row=False, name="closed-dependency")
+    assert obs.status == 409, obs.body
+    assert '"code": "workflow_disabled"' in obs.body["text"]
+    assert "workflow image.generate.flux2-klein-4b is disabled" in obs.body["text"]
+    assert obs.engine == []

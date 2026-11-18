@@ -23,6 +23,7 @@ documents what wiring is missing.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from collections import Counter
 
 import asyncio
 import copy
@@ -1832,13 +1833,10 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
     async def test_namespaced_extension_is_accepted_when_manifest_exists(
         self,
     ) -> None:
-        # The repo ships manifests/workflows/flux2-klein-4b-edit.yml (and the
-        # generate-side equivalent in the registry path). The exact name is
-        # asserted in TestAttachImageManifest — we re-use it here so we know
-        # a manifest *is* present for that model.
+        # Use an open workflow with a manifest that declares guidance.
         body = {
             "prompt": "x",
-            "model": "flux2-klein-4b",
+            "model": "sdxl-seamless-tile",
             "extensions": {"com.azizam.workflow": {"guidance": 3.5}},
         }
         receipt, response = await self._call(body)
@@ -2353,7 +2351,24 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
              fake_mesh_pool():
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
-        self.assertEqual(len(result), len(seen))
+        def key(cap):
+            return (cap.intent, cap.backend, cap.model, cap.workflow, cap.resolved_workflow)
+
+        expected = [cap for cap in seen
+                    if not proxy.category_enforcement.is_hidden(cap.policy_reasons)
+                    and not proxy._closed_workflow_reason(cap.resolved_workflow or cap.workflow)]
+        self.assertTrue(expected)
+        self.assertEqual(Counter(map(key, result)), Counter(map(key, expected)))
+
+    def test_capability_projection_check_rejects_a_truncated_listing(self) -> None:
+        original = proxy._gateway_capabilities_provider
+
+        async def truncated(*args, **kwargs):
+            return (await original(*args, **kwargs))[:1]
+
+        with patch.object(proxy, "_gateway_capabilities_provider", truncated):
+            with self.assertRaises(AssertionError):
+                self.test_provider_still_policy_projects_capabilities()
 
 
 class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):

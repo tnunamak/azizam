@@ -1,11 +1,5 @@
-"""The FLUX.2 Klein 9B pair submits the same graph with or without its manifest.
-
-Before the manifests existed, both workflows ran through the manifest-less path
-(metadata nodes). The handlers run for real here against the shipped graphs; only
-the ComfyUI round and image encoding are replaced. Run only with the hermetic runner.
-"""
+"""The closed Klein graph pair is refused before an engine call."""
 import copy
-import itertools
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -13,7 +7,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import proxy
 from tests.support.graph_service import set_derived
-from gateway import generated_defaults
 from tests.support.config_snapshot import derived_patch
 import pytest
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
@@ -26,12 +19,13 @@ NAMESPACE = "com.azizam.workflow"
 def _serve_upload(fake_upstreams, monkeypatch):
     fake = fake_upstreams.asgi(load_scenario("comfyui/upload-ok-any"))
     set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
+    return fake
 
 
 class KleinNineBParityTests(IsolatedAsyncioTestCase):
     @pytest.fixture(autouse=True)
     def _inject(self, _serve_upload):
-        pass
+        self.fake = _serve_upload
 
     def setUp(self):
         stack = ExitStack()
@@ -74,59 +68,38 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
             proxy, "_find_image_manifest", finder,
         ):
             response = await handler(request, proxy.NO_AUTH_CONTEXT)
-        self.assertEqual(response.status_code, 200, response.body)
-        if with_manifest:
-            # Without this, a missing manifest would compare the fallback with itself.
-            self.assertIn(manifest_id, found)
-        return seen
+        self.assertEqual(response.status_code, 409, response.body)
+        import json
+        self.assertEqual(json.loads(response.body)["error"]["code"], "workflow_disabled")
+        self.assertEqual(seen, [])
+        self.assertEqual(self.fake.requests, [])
 
-    async def test_generation_graph_is_identical_with_and_without_manifest(self):
-        for seed in (41, None):
-            with self.subTest(seed=seed):
-                results = []
-                for with_manifest in (False, True):
-                    body = {"model": "flux2-klein", "prompt": "a red barn", "size": "768x512", "n": 2}
-                    # Without a manifest the gateway rejects extensions, so the old path
-                    # can only draw seeds; make it draw the seeds the new path is given.
-                    if seed is not None and with_manifest:
-                        body["extensions"] = {NAMESPACE: {"seed": seed}}
-                    request = SimpleNamespace(json=AsyncMock(return_value=body))
-                    if seed is None:
-                        draws = iter([101, 102])
-                    elif with_manifest:
-                        # Draws that differ from the supplied seed: ignoring it would show.
-                        draws = itertools.count(901)
-                    else:
-                        draws = iter([seed, seed + 1])
-                    # The manifest path draws once for the request and offsets it per round; the contract-less path draws per round.
-                    with patch.object(proxy.random, "randint", side_effect=lambda *_: next(draws)), patch.object(
-                            generated_defaults, "secure_source", return_value=101 if seed is None else 901):
-                        results.append(await self.submitted(
-                            proxy.proxy_graph_image_request, request, with_manifest=with_manifest,
-                            manifest_id="image.generate.flux2-klein"))
-                self.assertEqual(results[0], results[1])
-                seeds = [g["31"]["inputs"]["seed"] for g in results[1]]
-                self.assertEqual(seeds, [41, 42] if seed is not None else [101, 102])
-                self.assertEqual(results[1][0]["6"]["inputs"]["text"], "a red barn")
-                self.assertEqual(results[1][0]["27"]["inputs"]["width"], 768)
+    async def test_closed_generation_is_refused_with_and_without_manifest(self):
+        for with_manifest in (True, False):
+            with self.subTest(with_manifest=with_manifest):
+                request = SimpleNamespace(json=AsyncMock(return_value={
+                    "model": "flux2-klein", "prompt": "a red barn", "size": "768x512", "n": 2}))
+                await self.submitted(proxy.proxy_graph_image_request, request, with_manifest=with_manifest)
 
-    async def test_edit_graph_is_identical_with_and_without_manifest(self):
-        # The edit manifest keeps seed route-owned, so callers never supply one.
-        for seed in (None,):
-            with self.subTest(seed=seed):
-                results = []
-                for with_manifest in (False, True):
-                    items = [
-                        ("model", "flux2-klein-edit"), ("prompt", "make it blue"), ("n", "2"),
-                        ("size", "768x512"),
-                        ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))),
-                    ]
-                    with patch.object(proxy.random, "randint", side_effect=[101, 102]), patch.object(
-                            generated_defaults, "secure_source", return_value=101):
-                        results.append(await self.submitted(
-                            proxy.proxy_graph_image_edit_request, _MultipartRequest(items),
-                            with_manifest=with_manifest, manifest_id="image.edit.flux2-klein"))
-                self.assertEqual(results[0], results[1])
-                seeds = [g["25"]["inputs"]["noise_seed"] for g in results[1]]
-                self.assertEqual(seeds, [101, 102])
-                self.assertEqual(results[1][0]["6"]["inputs"]["text"], "make it blue")
+    async def test_closed_edit_is_refused_with_and_without_manifest(self):
+        for with_manifest in (True, False):
+            with self.subTest(with_manifest=with_manifest):
+                request = _MultipartRequest([
+                    ("model", "flux2-klein-edit"), ("prompt", "make it blue"),
+                    ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255))))])
+                await self.submitted(proxy.proxy_graph_image_edit_request, request, with_manifest=with_manifest)
+
+    async def test_closed_selected_inpaint_is_refused_when_manifest_lookup_misses(self):
+        from dataclasses import replace
+
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "image.edit.qwen-image-2.1-inpaint"
+        entry = replace(snapshot.get(workflow_id), state="disabled")
+        snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
+        request = _MultipartRequest([
+            ("model", "qwen-image-2.1-edit"), ("prompt", "make it blue"),
+            ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))),
+            ("mask", _MultipartUpload("mask.png", _png_bytes((1, 2, 3, 0))))])
+        with patch.object(type(provider), "current", lambda self: snapshot), patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider):
+            await self.submitted(proxy.proxy_graph_image_edit_request, request, with_manifest=False)

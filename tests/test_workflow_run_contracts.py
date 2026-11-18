@@ -30,7 +30,7 @@ from tests.support.gateway import gateway_client, use_admin_db
 
 ENGINE_HOST = "engine.fk.test"
 ENGINE_PORT = 8188
-IMAGE_ID = "image.generate.flux2-klein-4b"
+IMAGE_ID = "image.generate.moss-image-fast"
 VIDEO_ID = "video.generate.ltx-2.5-t2v"
 
 
@@ -285,7 +285,7 @@ def discovery_manifests() -> dict:
     return discovery.bundled_workflow_manifests()
 
 
-EDIT_ID = "image.edit.flux2-klein-4b"
+EDIT_ID = "image.edit.fibo-2-edit-turbo"
 
 
 def library_asset(world, seed: int) -> tuple[str, bytes]:
