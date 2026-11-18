@@ -56,7 +56,7 @@
         },
         "identity": {
           "id": "audio.generate.ace-step-1.5-xl-turbo",
-          "manifest_hash": "b918fc170b9eaac04a23a7674e6fb90019bf411279c2720b414b7ae783ab1a45",
+          "manifest_hash": "39427f34a224966846dac58ceac19e2a65a674d7ae7fbe83b9ea918be8efda2d",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
