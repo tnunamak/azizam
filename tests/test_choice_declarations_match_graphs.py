@@ -12,6 +12,7 @@ EXPECTED = {
     ("audio.generate.ace-step-1.5-xl-turbo", "keyscale"),
     ("image.generate.sdxl-seamless-tile", "sampler"),
     ("image.generate.sdxl-seamless-tile", "scheduler"),
+    ("image.edit.qwen-image-2.1-inpaint", "prompt_mode"),
 }
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = ROOT / "manifests" / "workflows"
