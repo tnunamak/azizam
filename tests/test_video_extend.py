@@ -663,6 +663,47 @@ class ClosedVideoRouteTests(RemixReplaceBase):
         self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
         self.stack.enter_context(section_key_published("videos", "remix_workflow", "video-scail-2-replace"))
 
+    def close_custom_edit_without_manifest(self):
+        import copy
+        from dataclasses import replace
+        from gateway.workflow_projections import SnapshotRegistry
+
+        key = "review-custom-video-edit"
+        workflow_id = "video.edit." + key
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        original = snapshot.get("video.edit.scail-2-replace")
+        contract = proxy.workflow_run.plain(original.contract)
+        contract["id"] = workflow_id
+        contract["bindings"][proxy.DERIVED._GRAPH_BINDING]["workflow"] = "workflows/videos/" + key + ".json"
+        entry = replace(original, id=workflow_id, contract=contract,
+                        facts=replace(original.facts, exposure="disabled"))
+        snapshot = replace(snapshot, workflows={**snapshot.workflows, workflow_id: entry})
+        self.stack.enter_context(patch.object(provider, "_snapshot", snapshot))
+        self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
+        self.stack.enter_context(patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", SnapshotRegistry(snapshot)))
+        workflows = copy.deepcopy(dict(proxy._video_workflow_table()))
+        workflows[key] = copy.deepcopy(workflows["video-scail-2-replace"])
+        self.stack.enter_context(section_key_published("videos", "workflows", workflows))
+        self.stack.enter_context(section_key_published("videos", "remix_workflow", key))
+        self.stack.enter_context(patch.object(proxy, "_find_video_manifest", return_value=None))
+        return key
+
+    def test_closed_custom_edit_without_manifest_refuses_before_upload(self):
+        key = self.close_custom_edit_without_manifest()
+        response = self.client.post("/v1/videos/edits", json={"model": key, "prompt": "a",
+            "video": {"id": SOURCE_ID}, "extensions": {NS: {
+                "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_closed_custom_remix_without_manifest_refuses_before_upload(self):
+        key = self.close_custom_edit_without_manifest()
+        response = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"model": key, "prompt": "a",
+            "extensions": {NS: {"reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
     def test_disabled_remix_workflow_refuses_before_upload(self):
         self.close_remix()
         response = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"model": "character-replace", "prompt": "a",
