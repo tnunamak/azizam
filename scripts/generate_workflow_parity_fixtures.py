@@ -33,6 +33,14 @@ def main() -> None:
         cap = capability_from_workflow_record(record, backend="comfyui")
         print("WEB_IMAGE_EDIT_JSON=" + json.dumps(build_workflows_catalog(records=[record], capabilities=[cap]), sort_keys=True))
         return
+    if sys.argv[1:] == ["--config-homes"]:
+        import tempfile
+        import proxy
+        from tests.config_homes_golden import capture
+        with tempfile.TemporaryDirectory() as directory:
+            data = capture(proxy, Path(directory))
+        print("CONFIG_HOMES_JSON=" + json.dumps(data, sort_keys=True))
+        return
     if sys.argv[1:] == ["--request-maps"]:
         from tests.test_workflow_request_map_rows import registry, MODES, request_mapping
         data = {f"{record.id} {mode}": [[name, placement] for name, placement in request_mapping(record, mode).items()]
