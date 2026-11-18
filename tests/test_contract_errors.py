@@ -261,3 +261,26 @@ def test_validate_inputs_choice_snapshot(choices_manifest, declared, choices, al
         result = validate_inputs(choices_manifest, {"choice": "55"}, choices={"choice": ["55"]})
         assert result.rejected == {"choice": "choice must have at most 1 characters"}
         assert choices_manifest == original
+
+
+def test_choice_labels_name_only_the_inputs_own_choices():
+    def with_mode(**extra):
+        doc = base_manifest()
+        doc["inputs"]["mode"] = {"type": "string", "enum": ["auto", "sync"], **extra}
+        return doc
+
+    # Names for some or all of the choices are accepted; a choice without one shows as its value.
+    validate_manifest(with_mode(choice_labels={"sync": "Wait for the result"}), {"eng": descriptor()})
+    for bad in (
+        with_mode(choice_labels={"later": "Later"}),  # not one of the choices
+        with_mode(choice_labels={"auto": " "}),  # an empty name
+        with_mode(choice_labels=["auto"]),  # not a map
+    ):
+        with pytest.raises(ContractErrors) as caught:
+            validate_manifest(bad, {"eng": descriptor()})
+        assert listed(caught.value) == [(("inputs", "mode", "choice_labels"), "choice_labels_invalid")]
+    no_enum = base_manifest()
+    no_enum["inputs"]["mode"] = {"type": "string", "choice_labels": {"auto": "Automatic"}}
+    with pytest.raises(ContractErrors) as caught:
+        validate_manifest(no_enum, {"eng": descriptor()})
+    assert listed(caught.value) == [(("inputs", "mode", "choice_labels"), "choice_labels_invalid")]

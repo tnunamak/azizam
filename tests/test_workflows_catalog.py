@@ -553,6 +553,29 @@ class WorkflowsCatalogTests(unittest.TestCase):
         kinds = {row["name"]: row["media_type"] for row in scail["inputs"] if row.get("asset")}
         self.assertEqual(kinds, {"reference_image": "image/*", "source_video": "video/*"})
 
+    def test_choice_inputs_carry_readable_names_for_the_choices_the_row_offers(self) -> None:
+        manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        records = WorkflowRegistry.from_directory(manifest_root).records()
+        identity = next(record for record in records if record.id == "image.edit.image-identity")
+        import gateway.workflows_catalog as catalog
+        rows = {row["name"]: row for row in catalog._input_rows(identity, {"sync": {}})}
+        # The value stays what is sent; the name is what a person reads.
+        self.assertEqual(rows["mode"]["enum"], ["auto", "sync", "async"])
+        self.assertEqual(rows["mode"]["choice_labels"], {
+            "auto": "Automatic", "sync": "Wait for the result", "async": "Return a job to check later"})
+        self.assertNotIn("choice_labels", rows["attempts"])
+        # A row whose list is narrower than the manifest's names only the choices it offers.
+        real = catalog.workflow_inputs_schema
+
+        def narrowed(record):
+            schema = real(record)
+            schema["properties"]["mode"] = {**schema["properties"]["mode"], "enum": ["sync", "later"]}
+            return schema
+
+        with patch.object(catalog, "workflow_inputs_schema", narrowed):
+            rows = {row["name"]: row for row in catalog._input_rows(identity, {"sync": {}})}
+        self.assertEqual(rows["mode"]["choice_labels"], {"sync": "Wait for the result"})
+
     def test_catalog_description_uses_fallback_for_internal_tokens_files_and_license_notes(self) -> None:
         for description in (
             "Edit int8_convrot images for this request.",

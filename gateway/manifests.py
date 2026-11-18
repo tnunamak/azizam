@@ -494,6 +494,13 @@ def collect_manifest_errors(
             for key in ("label", "help"):
                 if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
                     errors.add(("inputs", name, key), "value_empty", f"input {name} {key} must be a non-empty string")
+            if "choice_labels" in spec:
+                labels, enum = spec["choice_labels"], spec.get("enum")
+                if (not isinstance(labels, Mapping) or not labels or not isinstance(enum, list) or not enum
+                        or any(not isinstance(value, str) or not value.strip() for value in labels.values())
+                        or any(not any(key == str(value) for value in enum) for key in labels)):
+                    errors.add(("inputs", name, "choice_labels"), "choice_labels_invalid",
+                               f"input {name} choice_labels requires a non-empty enum and non-empty labels for enum values")
             if "choices_from" in spec:
                 choices = spec["choices_from"]
                 enum = spec.get("enum")

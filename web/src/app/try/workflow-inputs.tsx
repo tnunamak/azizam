@@ -48,6 +48,7 @@ export type WorkflowInput = {
   label?: string;
   /** The manifest's one plain sentence about the input. */
   help?: string;
+  choice_labels?: Record<string, string>;
 };
 
 export type WorkflowInputsProps = {
@@ -535,7 +536,7 @@ function controlFor(
           {!input.required && <SelectItem value={UNSET}>Not set</SelectItem>}
           {input.enum.map((option) => (
             <SelectItem key={String(option)} value={String(option)}>
-              {String(option)}
+              {input.choice_labels?.[String(option)] ?? String(option)}
             </SelectItem>
           ))}
         </SelectContent>

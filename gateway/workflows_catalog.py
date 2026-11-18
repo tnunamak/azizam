@@ -270,6 +270,14 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
                 row["media_type"] = media_type
         if isinstance(declared.get("label"), str) and declared["label"].strip():
             row["label"] = declared["label"].strip()
+        # Readable names for the choices this row offers (an engine list can differ from the manifest's);
+        # a choice without a name shows as its value.
+        labels = declared.get("choice_labels")
+        if isinstance(labels, Mapping) and isinstance(row.get("enum"), list):
+            offered = {str(option) for option in row["enum"]}
+            named = {str(key): str(name) for key, name in labels.items() if str(key) in offered}
+            if named:
+                row["choice_labels"] = named
         rows.append(row)
     for extra in route_inputs(record):
         row = {
