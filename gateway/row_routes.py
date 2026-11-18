@@ -232,7 +232,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
                       request: Request, caller: Any, snapshot: RegistrySnapshot, spool: RequestSpool, owner: Any,
                       request_id: str, wants_async: bool, intent: str, backend: str | None) -> Response:
     """The steps after the receipt opens. Each exit reports the outcome, or hands the receipt to the core."""
-    if row.unconfigured is not None and not _wire.candidates(snapshot, row):
+    if row.unconfigured is not None and not _wire.candidates(snapshot, row, include_closed=True):
         # The deployment configures no workflow for this route: the row says what that is told.
         owner.report(status="failed", reason=str(row.unconfigured["code"]))
         return _wire.error_response(int(row.unconfigured["status"]), str(row.unconfigured["message"]),

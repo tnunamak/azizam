@@ -579,9 +579,131 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertEqual(allowed.status_code, 200, allowed.text)
 
     def test_progress_units_are_registered_for_the_job(self) -> None:
+        proxy._video_chain_units.pop(NEW_PROMPT_ID, None)
         self._create(model="video-long", prompt="x", seconds=20)
+        self.comfy.wait_for_graphs()
+        deadline = time.monotonic() + 5
+        while len(proxy._video_chain_units.get(NEW_PROMPT_ID, ())) != 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
         self.assertEqual(len(proxy._video_chain_units[NEW_PROMPT_ID]), 3)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClosedVideoRouteTests(RemixReplaceBase):
+    """A closed workflow is refused before the fake engine receives an upload or graph."""
+    probe = SOURCE_PROBE
+
+    def setUp(self):
+        super().setUp()
+        from fastapi.testclient import TestClient
+        portal = self.client.portal
+        self.client = TestClient(proxy.app, client=("203.0.113.20", 1234))
+        self.client.portal = portal
+
+    def close_chain(self, *, exposure=False):
+        from dataclasses import replace
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "video.generate.ltx-2.5-long"
+        original = snapshot.get(workflow_id)
+        closed = (replace(original, facts=replace(original.facts, exposure="disabled"))
+                  if exposure else replace(original, state="disabled"))
+        self.stack.enter_context(patch.object(provider, "_snapshot", replace(
+            snapshot, workflows={**snapshot.workflows, workflow_id: closed})))
+        self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
+        assert proxy._closed_workflow_reason(workflow_id) == f"workflow {workflow_id} is disabled"
+
+    def test_closed_chain_create_does_not_upload(self):
+        self.close_chain(exposure=True)
+        response = self.client.post("/v1/videos", json={"model": "video-long", "prompt": "a", "seconds": 4,
+            "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode()})
+        assert not self.comfy.uploads, (response.status_code, len(self.comfy.uploads), len(self.comfy.submitted), response.text)
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "workflow_disabled"
+        assert not self.comfy.submitted
+
+    def test_closed_chain_extension_does_not_run(self):
+        self.close_chain()
+        response = self.client.post("/v1/videos/extensions", json={"video": {"id": SOURCE_ID}, "model": "video-long",
+                                                                     "prompt": "a", "seconds": 4})
+        assert response.status_code == 409 and not self.comfy.uploads and not self.comfy.submitted, (
+            response.status_code, len(self.comfy.uploads), len(self.comfy.submitted), response.text)
+        assert response.json()["error"]["code"] == "workflow_disabled"
+
+    def test_state_disabled_named_video_returns_workflow_disabled(self):
+        self.close_chain()
+        response = self.client.post("/v1/videos", json={"model": "video-long", "prompt": "a", "seconds": 4})
+        assert not self.comfy.uploads and not self.comfy.submitted
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+
+    def test_closed_chain_selected_by_multiple_shots_does_not_upload(self):
+        self.close_chain(exposure=True)
+        response = self.client.post("/v1/videos", json={"model": "video-ltx-2.5-t2v",
+            "shots": [{"prompt": "first", "seconds": 4}, {"prompt": "second", "seconds": 4}],
+            "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode()})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_unknown_named_video_stays_not_found(self):
+        response = self.client.post("/v1/videos", json={"model": "no-such-workflow", "prompt": "a", "seconds": 4})
+        assert response.status_code == 404 and response.json()["error"]["code"] == "model_not_found", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def close_remix(self):
+        from dataclasses import replace
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "video.edit.scail-2-replace"
+        closed = replace(snapshot.get(workflow_id), state="disabled")
+        self.stack.enter_context(patch.object(provider, "_snapshot", replace(
+            snapshot, workflows={**snapshot.workflows, workflow_id: closed})))
+        self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
+        self.stack.enter_context(section_key_published("videos", "remix_workflow", "video-scail-2-replace"))
+
+    def test_disabled_remix_workflow_refuses_before_upload(self):
+        self.close_remix()
+        response = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"model": "character-replace", "prompt": "a",
+            "extensions": {NS: {"reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_disabled_video_edit_workflow_refuses_before_upload(self):
+        self.close_remix()
+        response = self.client.post("/v1/videos/edits", json={"model": "character-replace", "prompt": "a",
+            "video": {"id": SOURCE_ID}, "extensions": {NS: {
+                "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}}})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_closed_chain_selected_by_long_duration_does_not_upload(self):
+        self.close_chain(exposure=True)
+        response = self.client.post("/v1/videos", json={"model": "video-ltx-2.5-t2v", "prompt": "a", "seconds": 20,
+            "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode()})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_disabled_reference_variant_refuses_before_upload(self):
+        from dataclasses import replace
+        provider = proxy.GATEWAY_REGISTRY_PROVIDER
+        snapshot = provider.current()
+        workflow_id = "video.generate.ltx-2.5-i2v"
+        closed = replace(snapshot.get(workflow_id), state="disabled")
+        self.stack.enter_context(patch.object(provider, "_snapshot", replace(
+            snapshot, workflows={**snapshot.workflows, workflow_id: closed})))
+        self.stack.enter_context(patch.object(proxy, "WORKFLOW_SNAPSHOTS", provider))
+        response = self.client.post("/v1/videos", json={"model": "video-ltx-2.5-t2v", "prompt": "a", "seconds": 4,
+            "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode()})
+        assert response.status_code == 409 and response.json()["error"]["code"] == "workflow_disabled", response.text
+        assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_chain_manifest_id_is_checked_without_a_shipped_key_mapping(self):
+        from tests.support.access import access_context
+        self.close_chain()
+        with patch.object(proxy, "workflow_id_for_video_key", return_value=None):
+            response = proxy._chain_policy_denial(access_context(), "video-ltx-2.5-long", "video-ltx-2.5-long")
+        assert response is not None and response.status_code == 409
+        assert b'"workflow_disabled"' in response.body
+        assert not self.comfy.uploads and not self.comfy.submitted

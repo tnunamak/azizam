@@ -12391,6 +12391,12 @@ async def _proxy_graph_video_create(
             request, auth_context, body=body, workflow_name=str(chain_name),
             requested_model=requested_model, public_model=public_model, media_holder=media_holder,
             admission_intent=admission_intent)
+    for name in dict.fromkeys((_resolve_video_workflow(str(requested_model or ""))[0], workflow_name)):
+        closed = _video_workflow_closure(name) if name else None
+        if closed is not None:
+            if receipt is not None:
+                apply_policy_to_receipt(closed, receipt)
+            return _policy_denied_response(closed)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -12895,7 +12901,23 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     return None, None
 
 
+def _video_workflow_closure(name: str) -> PolicyDecision | None:
+    workflow_id = workflow_id_for_video_key(name)
+    if workflow_id is None:
+        config = _video_workflow_table().get(name)
+        manifest = _find_video_manifest(name, config) if config else None
+        workflow_id = str(manifest.get("id") or "") if manifest else None
+    return _closed_workflow_decision(workflow_id)
+
+
 def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str, *, receipt: RouteReceipt | None = None) -> Response | None:
+    requested_name, _ = _resolve_video_workflow(str(requested_model or ""))
+    for name in dict.fromkeys((requested_name, workflow_name)):
+        closed = _video_workflow_closure(name) if name else None
+        if closed is not None:
+            if receipt is not None:
+                apply_policy_to_receipt(closed, receipt)
+            return _policy_denied_response(closed)
     decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
