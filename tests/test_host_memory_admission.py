@@ -263,30 +263,31 @@ def test_a_service_key_request_waits_behind_a_person_and_uses_the_larger_margin(
     weights(tmp_path, "a.safetensors", 10_000)
     weights(tmp_path, "b.safetensors", 10_000)
     clock = Clock()
-    # 12 000 covers a person (10 000 + 1 000 margin) but not background work (10 000 + 5 000 margin).
-    host = Host(clock, [(0, 3_000), (4, 12_000), (40, 60_000)])
-
-    async def sleep(seconds):
-        clock.now += seconds
-        await asyncio.sleep(0)
-
-    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=host,
-                                   sleep=sleep, clock=clock)
+    available = {"bytes": 3_000}
+    made = hma.HostMemoryAdmission(policy(tmp_path), read_available=lambda: available["bytes"],
+                                   sleep=lambda _: asyncio.sleep(0.001), clock=clock)
     order = []
 
-    async def ask(label, model, auth_kind):
-        await made.admit(graph(model), hma.Ask(app_kind=hma.app_kind_of(auth_kind), bounded=False))
-        order.append((label, clock.now))
-
     async def go():
-        background = asyncio.ensure_future(ask("background", "b.safetensors", "service_key"))   # asked first
-        await asyncio.sleep(0)
-        person = asyncio.ensure_future(ask("person", "a.safetensors", "app_key"))
+        waiting = {name: asyncio.Event() for name in ("background", "person")}
+
+        async def ask(label, model, auth_kind):
+            lease = await made.admit(graph(model), hma.Ask(app_kind=hma.app_kind_of(auth_kind), bounded=False,
+                                                          on_wait=lambda state: waiting[label].set() if state else None))
+            order.append((label, available["bytes"]))
+            lease.finish(True)
+            if label == "person":
+                available["bytes"] = 60_000
+
+        background = asyncio.create_task(ask("background", "b.safetensors", "service_key"))
+        await waiting["background"].wait()
+        person = asyncio.create_task(ask("person", "a.safetensors", "app_key"))
+        await waiting["person"].wait()
+        available["bytes"] = 12_000
         await asyncio.gather(background, person)
 
     run(go())
-    assert [label for label, _ in order] == ["person", "background"]
-    assert 4 <= order[0][1] < 40 <= order[1][1]    # the person ran when 12 000 freed; background only when 60 000 did
+    assert order == [("person", 12_000), ("background", 60_000)]
 
 
 # -- the margins and waits are an owner setting over the shipped file ---------------------------------------------------
