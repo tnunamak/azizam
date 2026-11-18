@@ -118,3 +118,35 @@ def test_missing_address_records_failure(tmp_path, monkeypatch):
     entry = SimpleNamespace(id='demo', contract={'inputs': {'pick': {'choices_from': {'node_type': 'Node', 'input': 'pick'}}}})
     rows = asyncio.run(choice_lists.owner_choices([entry], lambda entry: SimpleNamespace(service_id='svc', origin=''), refresh=True))
     assert rows[0]['state'] == 'failed' and 'no service address' in rows[0]['failure_reason']
+
+
+def test_joined_refresh_also_fetches_other_declarations(tmp_path, monkeypatch):
+    import asyncio
+    store = ChoiceStore(tmp_path / 'choices.json')
+    monkeypatch.setattr(choice_lists, 'STORE', store)
+    entered, release = threading.Event(), threading.Event()
+    identity = SimpleNamespace(service_id='svc', origin='http://203.0.113.10:8188')
+    entry = SimpleNamespace(id='demo', contract={'inputs': {
+        'one': {'choices_from': {'node_type': 'One', 'input': 'one'}},
+        'two': {'choices_from': {'node_type': 'Two', 'input': 'two'}}}})
+    calls = []
+    def fetch(host, node):
+        calls.append(node)
+        if node == 'One':
+            entered.set()
+            assert release.wait(10)
+        return {'input': {'required': {node.lower(): [['new']]}}}
+    monkeypatch.setattr(choice_lists, 'fetch_fresh', fetch)
+    async def scenario():
+        choice_lists.choices_for_run(identity, {'one': entry.contract['inputs']['one']})
+        assert await asyncio.to_thread(entered.wait, 5)
+        task = asyncio.create_task(choice_lists.owner_choices([entry], lambda entry: identity, refresh=True))
+        try:
+            while not task.done() and len(asyncio.all_tasks()) < 3:
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+        await task
+    asyncio.run(scenario())
+    assert calls == ['One', 'Two']
+    assert store.read('svc', 'Two', 'two').choices == ['new']

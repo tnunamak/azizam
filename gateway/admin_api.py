@@ -1866,7 +1866,7 @@ def create_admin_router(
 
         register_workflow_owner_routes(router, store=workflow_registry, guard=_guard, read_json=_owner_read_json,
                                        entry_problems=workflow_entry_problems, listing_scope=workflow_listing_scope,
-                                       resolve_identity=workflow_resolve_identity or (lambda entry, binding_key=None: None))
+                                       resolve_identity=workflow_resolve_identity)
     from gateway.retention_fact_api import register_routes as register_retention_fact_routes
     register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)
     from gateway.engine_protocol_admin import register_engine_protocol_routes

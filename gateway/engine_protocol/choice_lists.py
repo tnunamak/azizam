@@ -11,6 +11,7 @@ from gateway.engine_protocol.node_info import fetch_fresh
 # startup, as it does the node info disk copy, so a test that never sets it neither reads nor writes a shared file.
 STORE: ChoiceStore | None = None
 _tasks = {}
+_task_declarations = {}
 _log = logging.getLogger(__name__)
 
 
@@ -40,7 +41,9 @@ def choices_for_run(identity, inputs):
                 _log.exception('Choice refresh failed for service %s', service)
             finally:
                 _tasks.pop(service, None)
+                _task_declarations.pop(service, None)
         _tasks[service] = asyncio.create_task(refresh())
+        _task_declarations[service] = declarations
     return choices
 
 
@@ -71,6 +74,13 @@ async def owner_choices(entries, resolve_identity, *, refresh=False):
     if refresh and store is not None:
         async def start(service, identity, declarations):
             task = _tasks.get(service)
+            if task is not None:
+                pending = [declaration for declaration in declarations
+                           if declaration not in _task_declarations.get(service, ())]
+                await asyncio.shield(task)
+                if pending:
+                    await start(service, identity, pending)
+                return
             if task is None:
                 def fetch(_service, node):
                     if not identity.origin:
@@ -81,7 +91,9 @@ async def owner_choices(entries, resolve_identity, *, refresh=False):
                         await asyncio.to_thread(refresh_service, store, service, declarations, fetch=fetch, now=time.time())
                     finally:
                         _tasks.pop(service, None)
+                        _task_declarations.pop(service, None)
                 task = _tasks[service] = asyncio.create_task(run())
+                _task_declarations[service] = declarations
             await asyncio.shield(task)
         await asyncio.gather(*(start(service, identity, declarations) for service, (identity, declarations) in groups.items()))
     result = []
