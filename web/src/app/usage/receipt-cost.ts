@@ -29,6 +29,7 @@ export function costState({ usd, unknownPaid, local, requests }: CostCounts): Co
   if (usd !== null && usd > 0) return { kind: "amount", usd, excluded, local: localCount };
   if (requests !== null && requests > 0 && localCount === requests && excluded === 0)
     return { kind: "local", local: localCount };
+  if (usd === 0 && excluded > 0) return { kind: "not-reported", excluded, local: localCount };
   if (usd !== null) return { kind: "amount", usd, excluded, local: localCount };
   if (excluded > 0) return { kind: "not-reported", excluded, local: localCount };
   return { kind: "unrecorded", local: localCount };
