@@ -46,6 +46,7 @@ inputs:
   negative_prompt:
     type: string
   sampler:
+    choices_from: {node_type: KSampler, input: sampler_name}
     type: string
     enum:
       - euler
@@ -55,6 +56,7 @@ inputs:
       - dpmpp_sde
       - uni_pc
   scheduler:
+    choices_from: {node_type: KSampler, input: scheduler}
     type: string
     enum:
       - karras

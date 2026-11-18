@@ -1364,7 +1364,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-inpaint",
-          "manifest_hash": "8b5c2cfdc8e7c4ee6160223074cde864124f70edccb79f2449c856e96f8ec0b7",
+          "manifest_hash": "c3c61f5675be4091f06c86618ef0f3ab534ac7dc9fd7b138d7fd755212f6660d",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1568,7 +1568,7 @@
         },
         "identity": {
           "id": "image.generate.sdxl-seamless-tile",
-          "manifest_hash": "b95c0acea29327404c52d48e1a93ec9f7934461b6a8bccff72d7000804f873cb",
+          "manifest_hash": "a70cb797416546b9c1c13e314d62e9ef693922b3045ebb4a5ed60f750a41bb24",
           "source": null,
           "trusted": false,
           "version": "0.1.1"
@@ -1657,7 +1657,7 @@
         },
         "identity": {
           "id": "image.edit.seedvr2-upscale",
-          "manifest_hash": "4b619255e0b04872fdaae891cb47f13241ca5b1d5edeeef23932a743bfb584ba",
+          "manifest_hash": "c0bed3b5781a6edaf5f5dbdbc4e9bf714864665e809ed32b02ff4c803d0355c0",
           "source": null,
           "trusted": false,
           "version": "0.1.0"

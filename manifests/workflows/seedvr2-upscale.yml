@@ -24,6 +24,7 @@ inputs:
     enum: [2, 4]
     default: 2
   color_correction_method:
+    choices_from: {node_type: SeedVR2PostProcessing, input: color_correction_method}
     type: string
     enum: ["none", "lab", "wavelet", "adain"]
     default: "none"

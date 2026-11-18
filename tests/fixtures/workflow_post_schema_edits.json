@@ -221,5 +221,63 @@
         "description"
       ]
     }
+  ],
+  "image.edit.qwen-image-2.1-inpaint": [
+    {
+      "after": {
+        "input": "LanPaint_PromptMode",
+        "node_type": "LanPaint_KSampler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt_mode",
+        "choices_from"
+      ]
+    }
+  ],
+  "image.edit.seedvr2-upscale": [
+    {
+      "after": {
+        "input": "color_correction_method",
+        "node_type": "SeedVR2PostProcessing"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "choices_from"
+      ]
+    }
+  ],
+  "image.generate.sdxl-seamless-tile": [
+    {
+      "after": {
+        "input": "sampler_name",
+        "node_type": "KSampler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "choices_from"
+      ]
+    },
+    {
+      "after": {
+        "input": "scheduler",
+        "node_type": "KSampler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "choices_from"
+      ]
+    }
   ]
 }
