@@ -153,9 +153,20 @@ class ReviewProbeTests(RemixReplaceBase):
 
     def test_ambiguous_stem_with_closed_record_is_refused(self):
         key = self.ambiguous(closed=True)
-        decision = proxy._video_job_policy_decision(access_context(), key, key)
-        assert decision.denied and decision.code == 'workflow_disabled'
+        registry = proxy.GATEWAY_WORKFLOW_REGISTRY
+        records = registry.records()
+        for ordered in (records, list(reversed(records))):
+            with patch.object(registry, 'records', return_value=ordered):
+                decision = proxy._video_job_policy_decision(access_context(), key, key)
+            assert decision.denied and decision.code == 'workflow_disabled'
         assert not self.comfy.uploads and not self.comfy.submitted
+
+    def test_shipped_mapping_wins_over_a_closed_ambiguous_stem(self):
+        key = self.ambiguous(closed=True)
+        mapped = 'video.generate.' + key
+        with patch.object(proxy, 'workflow_id_for_video_key', return_value=mapped):
+            decision = proxy._video_job_policy_decision(access_context(), key, key)
+        assert not decision.denied
 
     def test_ambiguous_stem_with_open_records_runs(self):
         key = self.ambiguous(closed=False)
