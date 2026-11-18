@@ -39,7 +39,7 @@ ALLOWED = (
     "tests/test_proxy_admin_integration.py", "tests/test_setup_render.py",  # assert the old path is gone
     "scripts/security/exposure_probe.py", "scripts/post-deploy-smoke",  # probe that /ui/home/ is a 404
     "docs/CORE_CONTRACTS.md", "docs/FIRST_RUN_SETUP.md", "docs/guides/OPERATOR.md",  # describe the move
-    "scripts/run-hermetic-pytest.sh", "tests/test_flux2_seamless_tile_composition.py",
+    "scripts/run-hermetic-pytest.sh", "tests/test_seamless_tile_helpers.py",
     "tests/test_sdxl_seamless_tile_manifest.py", "tests/test_mesh_pixal3d_record.py",
     "tests/test_local3d_stages_service.py",  # filesystem privacy assertions contain /home, not browser links
     "tests/test_pixal3d_comfy_service.py",  # /home is a file system path there
