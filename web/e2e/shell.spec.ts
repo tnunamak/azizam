@@ -255,8 +255,8 @@ test("phone More and tablet expansion expose every destination", async ({
   let sheet = page.getByRole("dialog", { name: "Explore your gateway" });
   for (const name of [
     "Home",
-    "Models",
-    "Workflows",
+    // One Discover entry leads to Models and Workflows (tabs on both pages).
+    "Discover",
     "Try",
     "Library",
     "Usage",
