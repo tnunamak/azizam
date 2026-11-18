@@ -25,6 +25,7 @@ from gateway.frontend_shapes.video_views import VideoViews
 from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
 from gateway import openai_model_families, registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
+from gateway.workflow_closed import closed_reason
 from gateway.workflow_identity import find_workflow_record, other_intent_owns_stem
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
@@ -9390,6 +9391,10 @@ async def proxy_graph_image_request(
     refusal = _generate_refusal_for_other_intent_stem(receipt, str(model), manifest, intents.require_admission())
     if refusal is not None:
         return refusal
+    if manifest is not None:
+        closed = _closed_workflow_decision(str(manifest.get("id") or ""))
+        if closed is not None:
+            return _policy_denied_response(closed)
     gateway_binding = _gateway_image_generate_binding(manifest)
     if gateway_binding is not None:
         # The description lists the roles and the role registry holds their code; a role missing from either never runs.
@@ -9631,6 +9636,9 @@ async def _identity_edit_alias(
     seed, ...) travel in ``extensions["com.azizam.workflow"]``. The response is
     the usual image payload plus ``likeness``, ``attempts`` and ``people``.
     """
+    closed = _closed_workflow_decision(IDENTITY_MANIFEST_ID)
+    if closed is not None:
+        return _policy_denied_response(closed)
     options = ((form_dict.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
     if not isinstance(options, Mapping):
         return identity_api.error(400, "invalid_extensions", "the workflow extension must be an object", param="extensions")
@@ -9827,6 +9835,9 @@ async def proxy_graph_image_edit_request(
         print(f"[proxy] Model alias {model} -> {model_resolution.effective_model} for image edit", flush=True)
         model = model_resolution.effective_model
 
+    closed_reason_text = _closed_alias_target("image_edits", str(model))
+    if closed_reason_text:
+        return _workflow_run_response(RunRefused(409, "workflow_disabled", closed_reason_text))
     if not image_file:
         _record_image_input(receipt, _IMAGE_FIELD, rejected_reason="missing")
         return Response(
@@ -10386,6 +10397,9 @@ async def proxy_graph_image_variations_request(
         except ModelCompatibilityError as e:
             _record_image_input(receipt, "model", rejected_reason="model_incompatible")
             return model_compatibility_error(e)
+        reason = _closed_alias_target("image_edits", model_resolution.effective_model)
+        if reason:
+            return _workflow_run_response(RunRefused(409, "workflow_disabled", reason))
         model = _image_variations_default_workflow() if model_resolution.is_openai_alias else requested_model
     else:
         model = _image_variations_default_workflow()
@@ -15102,8 +15116,41 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
     return category_enforcement.visible(auth_context.identity, policy_request)
 
 
+def _alias_target_workflow(operation: str, target: str) -> str | None:
+    intent = _DISCOVERY_OPERATION_INTENTS.get(operation)
+    if not intent or not target:
+        return None
+    record = _image_workflow_record(intent, target)
+    if record is not None:
+        return record.id
+    keyed = _configured_workflow_keys().get(intent)
+    if keyed is not None:
+        name, _ = keyed[0](target)
+        if name:
+            return keyed[1](name)
+    return None
+
+
+def _closed_alias_target(operation: str, target: str) -> str | None:
+    return _closed_workflow_reason(_alias_target_workflow(operation, target))
+
+
 def _gateway_discovery_visible(request: Request, entry: Mapping[str, Any]) -> bool:
-    return _category_entry_visible(_auth_context_from_scope(request), entry)
+    auth = _auth_context_from_scope(request)
+    workflow_id = entry.get("id") if entry.get("intent") else entry.get("azizam_workflow_id")
+    if not _WORKFLOW_RUN_PORT.is_owner(auth):
+        if workflow_id and _closed_workflow_reason(str(workflow_id)):
+            return False
+        operation = entry.get("operation")
+        if operation and entry.get("id"):
+            try:
+                resolved = resolve_model_for_operation(str(operation), str(entry["id"]))
+            except ModelCompatibilityError:
+                pass
+            else:
+                if _closed_alias_target(str(operation), resolved.effective_model):
+                    return False
+    return _category_entry_visible(auth, entry)
 
 
 async def _filter_model_list_for_profile(
@@ -15239,13 +15286,14 @@ def _capability_for_access(
     return viewed
 
 
-def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
+def _gateway_capabilities_for_auth_context(auth_context: AuthContext, *, include_closed: bool = False) -> list[Capability]:
     """Every capability, with this identity's policy view.
 
     A restricted category hides its items; they are not listed as unavailable.
     """
     return [capability for capability in _viewed_gateway_capabilities(auth_context)
-            if not category_enforcement.is_hidden(capability.policy_reasons)]
+            if not category_enforcement.is_hidden(capability.policy_reasons)
+            and (include_closed or not _closed_workflow_reason(capability.resolved_workflow or capability.workflow))]
 
 
 def _viewed_gateway_capabilities(auth_context: AuthContext) -> list[Capability]:
@@ -15469,7 +15517,9 @@ async def _status_payload_with_service_rows(
 
 
 async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
-    capabilities = (await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request)))
+    auth = _auth_context_from_scope(request)
+    capabilities = await asyncio.to_thread(
+        _gateway_capabilities_for_auth_context, auth, include_closed=_WORKFLOW_RUN_PORT.is_owner(auth))
     try:
         service_records = await asyncio.to_thread(
             lambda: _workflow_availability_services(ADMIN_STORE.get_service_registry()))
@@ -17334,6 +17384,10 @@ async def _run_identity_job(
     job_id: str, shim: Any, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
 ) -> None:
     async with _identity_job_semaphore:
+        reason = _closed_workflow_reason(IDENTITY_MANIFEST_ID)
+        if reason:
+            _identity_job_failed(job_id, reason)
+            return
         admission = _media_job_admission_response(
             domain_rows.IMAGE_EDIT, count_queue=False, auth_context=auth_context,
         )
@@ -17424,6 +17478,9 @@ def _identity_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _identity_admission(auth: AuthContext, path: str) -> Response | None:
+    closed = _closed_workflow_decision(IDENTITY_MANIFEST_ID)
+    if closed is not None:
+        return _policy_denied_response(closed)
     denied = _enforce_runtime_route_policy(auth, path, policy={"protocol": "openai.images", "intent": domain_rows.IMAGE_EDIT, "backend": _graph_service_id(_GRAPH_CAPABILITY)})
     if denied is not None:
         return denied
@@ -21564,6 +21621,22 @@ def _mark_backend_started(receipt: RouteReceipt | None) -> None:
         receipt.mark_phase("started_at_ms")
 
 
+def _closed_workflow_reason(workflow_id: str | None) -> str | None:
+    if not workflow_id:
+        return None
+    snapshot = WORKFLOW_SNAPSHOTS.current() if WORKFLOW_SNAPSHOTS is not None else None
+    entry = snapshot.get(workflow_id) if snapshot is not None else None
+    return closed_reason(entry or GATEWAY_WORKFLOW_REGISTRY.get(workflow_id))
+
+
+def _closed_workflow_decision(workflow_id: str | None) -> PolicyDecision | None:
+    reason = _closed_workflow_reason(workflow_id)
+    if reason is None:
+        return None
+    return PolicyDecision(decision=DENIED, sources=("policy:workflow-disabled",),
+                          reasons=(reason,), code="workflow_disabled")
+
+
 def _apply_image_route_policy(
     receipt: RouteReceipt,
     auth_context: AuthContext,
@@ -21572,6 +21645,11 @@ def _apply_image_route_policy(
     workflow: str | None = None,
     manifest: Mapping[str, Any] | None = None,
 ) -> PolicyDecision:
+    workflow_id = str(manifest.get("id")) if manifest and manifest.get("id") else workflow
+    decision = _closed_workflow_decision(workflow_id)
+    if decision is not None:
+        apply_policy_to_receipt(decision, receipt)
+        return decision
     try:
         metadata = _image_manifest_policy_metadata(manifest)
     except NeedsConfiguration:
@@ -21631,6 +21709,8 @@ def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:
 def _policy_denied_response(decision: PolicyDecision) -> Response:
     """403 in the OpenAI error shape with the design §3.3 access code."""
     reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+    if decision.code == "workflow_disabled":
+        return _workflow_run_response(RunRefused(409, decision.code, reason))
     error: dict[str, Any] = {"message": reason, "type": "access_error", "code": decision.code or "policy_denied"}
     if decision.side:
         error["details"] = {"side": decision.side, "plans": [s.split(":", 1)[1] for s in decision.sources
@@ -22255,6 +22335,11 @@ async def _proxy_offset_inpaint_tile_request(
         inpaint_workflow = load_graph_workflow(inpaint_model, intent=edit_intent)
         base_manifest = _find_image_manifest(generate_intent, base_model)
         inpaint_manifest = _find_image_manifest(edit_intent, inpaint_model)
+        for dependency in (base_manifest, inpaint_manifest):
+            if dependency is not None:
+                decision = _closed_workflow_decision(str(dependency.get("id") or ""))
+                if decision is not None:
+                    return _policy_denied_response(decision)
     if missing or not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
         if receipt is not None:
             receipt.add_fallback_reason("offset_inpaint_tile_prerequisite_missing")
@@ -25487,6 +25572,9 @@ async def _submit_audio_media_job(
                 code="model_not_found",
             )
         )
+    closed = _closed_workflow_decision(workflow_id)
+    if closed is not None:
+        return _policy_denied_response(closed)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -26105,6 +26193,9 @@ def _resume_pending_video_media_jobs() -> int:
 
 def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> PolicyDecision:
     """The plan check of a video job, at submit and before each later step."""
+    closed = _closed_workflow_decision(workflow_id_for_video_key(workflow_name))
+    if closed is not None:
+        return closed
     return evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -26514,8 +26605,14 @@ async def gateway_image_generations_media_job(request: Request):
     if protocol_target is not None:
         receipt.backend = protocol_target.engine_id
     model = str(body.get("model", _image_default_model()))
+    try:
+        resolved_model = resolve_model_for_operation("images", model).effective_model
+    except ModelCompatibilityError as error:
+        response = model_compatibility_error(error)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
     generate_intent = _image_admission_intent("images.generate")
-    manifest = _find_image_manifest(generate_intent, model)
+    manifest = _find_image_manifest(generate_intent, resolved_model)
     if receipt is not None:
         receipt.requested_workflow = model
         if manifest is not None:
@@ -29400,6 +29497,9 @@ async def proxy_audio_generate(
             media_type="application/json"
         )
 
+    closed = _closed_workflow_decision(workflow_id)
+    if closed is not None:
+        return _policy_denied_response(closed)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -29507,7 +29607,7 @@ def _audio_models_for_caller(auth_context: AuthContext) -> list[dict[str, Any]]:
     models = []
     for name, cfg in _audio_workflow_table().items():
         workflow_id = _audio_workflow_id(name)
-        if workflow_id is None or not discovery_allows(auth_context.identity, make_policy_request(
+        if workflow_id is None or _closed_workflow_reason(workflow_id) or not discovery_allows(auth_context.identity, make_policy_request(
             protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
             model=name, workflow=workflow_id,
         )):
@@ -30738,7 +30838,8 @@ async def list_models(request: Request):
     ]
 
     llm_catalog_ids = {item.get("id") for item in data if isinstance(item, dict) and item.get("id")}
-    workflow_entries = _build_workflow_model_entries()
+    workflow_entries = [entry for entry in _build_workflow_model_entries()
+                        if not _closed_workflow_reason(entry.get("azizam_workflow_id"))]
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
     for current_entry in reversed(_current_loaded_model_entries()):
         if current_entry["id"] not in existing_ids:
@@ -30750,7 +30851,14 @@ async def list_models(request: Request):
             existing_ids.add(entry["id"])
 
     by_id = {item.get("id"): item for item in data if isinstance(item, dict)}
+    closed_alias_ids: set[str] = set()
     for alias_entry in _stable_alias_model_entries():
+        workflow_targets = [wid for op, target in alias_entry["azizam_resolves_to"].items() if target
+                            if (wid := _alias_target_workflow(op, target))]
+        if workflow_targets and all(_closed_workflow_reason(wid) for wid in workflow_targets):
+            continue
+        if any(_closed_workflow_reason(wid) for wid in workflow_targets):
+            closed_alias_ids.add(alias_entry["id"])
         if "decisions" in alias_entry["azizam_resolves_to"]:
             continue  # Decision models use their own policy and runtime metadata below.
         existing = by_id.get(alias_entry["id"])
@@ -30885,6 +30993,8 @@ async def list_models(request: Request):
 
     # Per-target category checks read SQLite: keep them off the event loop.
     await asyncio.to_thread(hide_unseen_targets)
+    data = [item for item in data if not (isinstance(item, dict) and item.get("id") in closed_alias_ids
+            and isinstance(item.get("azizam_resolves_to"), Mapping) and not item["azizam_resolves_to"])]
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data

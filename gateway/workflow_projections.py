@@ -16,6 +16,7 @@ from gateway.manifests import Provenance, accepts_of, manifest_identity
 from gateway.output_selectors import effective_count
 from gateway.result_bundle import ResultLimits
 from gateway.workflow_policy import PolicyFacts
+from gateway.workflow_closed import closed_reason
 from gateway.workflow_kernel import _thaw, generated_names
 from gateway.workflow_openapi import workflow_inputs_schema
 from gateway.workflow_runtime_types import (
@@ -70,8 +71,9 @@ class SnapshotRegistry:
     workflows (5.9: an unpublished workflow is the owner's alone)."""
 
     def __init__(self, snapshot: RegistrySnapshot, *, published_only: bool = False) -> None:
+        self._entries = snapshot.workflows
         self._records = {wid: record_of(entry, getattr(snapshot, "source_paths", {}).get(wid, "")) for wid, entry in sorted(snapshot.workflows.items())
-                         if entry.published or not published_only}
+                         if not published_only or (entry.published and not closed_reason(entry))}
 
     def records(self) -> list[WorkflowRecord]:
         return list(self._records.values())
@@ -84,10 +86,19 @@ class SnapshotRegistry:
 
     def summarize_workflow(self, workflow_id: str, audience: str = "client") -> dict[str, Any] | None:
         record = self.get(workflow_id)
-        return None if record is None else summarize_workflow(record, audience)
+        if record is None:
+            return None
+        result = summarize_workflow(record, audience)
+        if audience != "client":
+            result["state"] = self._entries[workflow_id].state
+        return result
 
     def summarize_catalog(self, audience: str = "client") -> dict[str, Any]:
-        return summarize_catalog(self.records(), audience)
+        catalog = summarize_catalog(self.records(), audience)
+        if audience != "client":
+            for row in catalog["workflows"]:
+                row["state"] = self._entries[row["id"]].state
+        return catalog
 
 
 class _Projections:

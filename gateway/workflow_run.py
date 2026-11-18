@@ -35,6 +35,7 @@ from gateway.manifests import ContractError, ManifestError, validate_inputs
 from gateway.pinned_definitions import PinnedDefinitions, load_in
 from gateway.request_spool import JobSpool
 from gateway.result_bundle import Reader, ResultLimits, ResultRefused
+from gateway.workflow_closed import closed_reason
 from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
@@ -627,8 +628,9 @@ class WorkflowRunCore:
         entry = snapshot.get(workflow_id)
         if entry is None or (not entry.published and not port.is_owner(caller)):
             return RunRefused(404, WORKFLOW_NOT_FOUND, f"no workflow {workflow_id}")
-        if entry.state != "active":
-            return RunRefused(409, WORKFLOW_DISABLED, f"workflow {entry.id} is disabled")
+        reason = closed_reason(entry)
+        if reason:
+            return RunRefused(409, WORKFLOW_DISABLED, reason)
         refused = port.target_refusal(entry, caller)
         if refused is not None:
             return refused
@@ -1063,8 +1065,9 @@ class WorkflowRunCore:
         tracked = envelope.incarnation not in (None, UNTRACKED)
         if entry is None or (tracked and entry.incarnation != envelope.incarnation):   # 2. the same incarnation
             return WORKFLOW_DELETED, "invalid_input", "The workflow this job was made for was deleted."
-        if entry.state != "active":                                                    # 3. active
-            return WORKFLOW_DISABLED, "invalid_input", "The workflow this job was made for is disabled."
+        reason = closed_reason(entry)                                                   # 3. closure
+        if reason:
+            return WORKFLOW_DISABLED, "invalid_input", reason
         if entry.facts is None:                                                        # 4. policy, not ``published``
             return NEEDS_POLICY, "invalid_input", "The workflow has no policy facts."
         denied = port.dispatch_target_problem(entry, caller)

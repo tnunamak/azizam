@@ -49,7 +49,7 @@ def api(tmp_path, request):
 
     app = FastAPI()
     app.include_router(create_admin_router(AdminSQLiteStore(db), auth=auth, workflow_registry=registry))
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False, client=("203.0.113.14", 1234))
     client.db, client.config, client.roles, client.registry = db, config, roles, registry
     client.jobs_db = tmp_path / "jobs.db"
     return client
@@ -720,3 +720,13 @@ def test_selection_rank_set_through_the_owner_route_changes_the_model_an_unnamed
         assert proxy._mesh_default_workflow() == MESH_ID
     finally:
         proxy.GATEWAY_WORKFLOW_REGISTRY.restore(saved)
+
+
+def test_owner_listing_keeps_disabled_workflow_and_shows_exposure_and_state(api):
+    made = create(api, facts={**FACTS_BODY, "exposure": "disabled"})
+    assert made.status_code == 201, made.text
+    changed = api.post(f"/admin/api/workflows/{ID}/state", json={"state": "disabled"}, headers={"If-Match": os_n(api)})
+    assert changed.status_code == 200, changed.text
+    row = next(row for row in api.get("/admin/api/workflows").json()["workflows"] if row["id"] == ID)
+    assert row["state"] == "disabled"
+    assert row["exposure"] == "disabled"

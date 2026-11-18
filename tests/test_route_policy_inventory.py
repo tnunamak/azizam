@@ -408,7 +408,7 @@ def _request_kwargs(route, path, method, gateway=None):
     body = {"model": "inventory-placeholder"}
     if path.endswith("/images/generations"):
         # A real workflow, so the request reaches the check after resolution.
-        body["model"] = "flux2-klein-4b"
+        body["model"] = "krea2-turbo"
     if path.endswith(("/chat/completions", "/chat", "/messages")):
         body.update(messages=[{"role": "user", "content": "hi"}], max_tokens=1)
     elif path.endswith(("/embeddings", "/embed", "/responses", "/audio/speech")):
@@ -456,8 +456,8 @@ def _request_kwargs(route, path, method, gateway=None):
     elif path.endswith(("/images/edits", "/images/variations")):
         # Real workflows, so the request reaches the check after resolution.
         # Variations take no prompt.
-        data = ({"model": "flux2-klein-4b", "prompt": "hi"} if path.endswith("/edits")
-                else {"model": "flux2-klein-4b"})
+        data = ({"model": "qwen-image-2.1-edit", "prompt": "hi"} if path.endswith("/edits")
+                else {"model": "qwen-image-2.1-edit"})
         kwargs.update(data=data, files={"image": ("inventory.png", _PNG, "image/png")})
     else:
         kwargs["json"] = body
@@ -1237,7 +1237,7 @@ def _http_inventory(gateway, title=None, report=True):
 def test_image_workflow_refusal_precedes_upload(gateway, prefix, operation):
     """A valid image must never be uploaded before an ordinary workflow refusal."""
     path = f"{prefix}/v1/images/{operation}"
-    data = {"model": "flux2-klein-4b"}
+    data = {"model": "qwen-image-2.1-edit"}
     if operation == "edits":
         data["prompt"] = "hi"
     gateway.calls.clear()
@@ -1263,7 +1263,7 @@ def test_image_workflow_refusal_precedes_upload(gateway, prefix, operation):
     collect_reasons(response.json())
     error = response.json()["error"]
     assert error["code"] == "not_in_access_plan", f"{path}: {error}"
-    assert any("flux2-klein-4b" in reason for reason in reasons), (
+    assert any("qwen-image-2.1" in reason for reason in reasons), (
         f"{path}: the refusal does not name the workflow: {reasons!r}"
     )
     assert not any("category rules:" in reason for reason in reasons), reasons
@@ -1570,7 +1570,7 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
     _activate_discovery_grants(gateway, {
         "current": ("chat.completions", "chat.messages", "models.list"),
         "audio.generate.ace-step-1.5-xl-turbo": ("audio.generate",),
-        "image.generate.flux2-klein-4b": ("image.generate",),
+        "image.generate.krea2-turbo": ("image.generate",),
         "supertonic": ("speech.synthesis",),
     })
 
@@ -1583,22 +1583,22 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
 
     models = {item["id"] for item in get("/v1/models")["data"]}
     assert "current" in models and "current-fast" not in models
-    assert "flux2-klein-4b" in models and "krea2-turbo" not in models
-    assert "image-fast" in models and "image" not in models
+    assert "krea2-turbo" in models and "flux2-klein-4b" not in models
+    assert "image" in models and "image-fast" not in models
     assert {item["id"] for item in get("/anthropic/v1/models")["data"]} == {"current"}
     assert {item["model"] for item in get("/api/tags")["models"]} == {"current"}
     assert {item["id"] for item in get("/v1/audio/models")["data"]} == {"ace-step-1.5-xl-turbo"}
     assert {item["id"] for item in get("/gateway/v1/workflows")["workflows"]} == {
-        "image.generate.flux2-klein-4b", "audio.generate.ace-step-1.5-xl-turbo",
+        "image.generate.krea2-turbo", "audio.generate.ace-step-1.5-xl-turbo",
     }
     aliases = get("/gateway/v1/aliases")["operations"]
-    assert {item["alias"] for item in aliases["images"]["stable"]} == {"image-fast"}
+    assert {item["alias"] for item in aliases["images"]["stable"]} == {"image"}
     assert "image_edits" not in aliases
     assert all(set(item.get("candidates", [])) <= {"supertonic"} for item in aliases["speech"]["stable"])
     speech_aliases = [item for item in get("/v1/models")["data"] if item["id"] in {"tts", "tts-fast"}]
     assert speech_aliases
     assert all(set(item["azizam_engine_candidates"]["speech"]) == {"supertonic"} for item in speech_aliases)
-    assert {item["title"] for item in get("/sdapi/v1/sd-models")} == {"image-fast", "flux2-klein-4b"}
+    assert {item["title"] for item in get("/sdapi/v1/sd-models")} == {"image", "krea2-turbo"}
     voices = get("/v1/audio/voices")
     assert voices["voices"]
     assert set(voices["engines"]) == {"supertonic"}
@@ -1816,8 +1816,8 @@ def test_ungoverned_discovery_preserves_custom_voices_and_unresolved_aliases(gat
 @pytest.mark.parametrize("service,operation,intent,model,aliases", [
     ("video.generate.ltx-2.5-t2v", "videos", "video.generate",
      "video-ltx-2.5-t2v", {"video", "video-fast"}),
-    ("image.edit.flux2-klein-4b", "image_edits", "image.edit",
-     "flux2-klein-4b-edit", {"image-fast", "image-edit-fast"}),
+    ("image.edit.qwen-image-2.1-edit", "image_edits", "image.edit",
+     "qwen-image-2.1-edit", {"image", "image-edit"}),
 ])
 def test_media_discovery_uses_the_execution_workflow_target(gateway, service, operation, intent, model, aliases):
     _activate_discovery_grants(gateway, {service: (intent, "models.list")})

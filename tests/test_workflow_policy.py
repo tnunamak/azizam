@@ -209,7 +209,7 @@ def test_control_a_run_of_a_workflow_without_facts_makes_zero_engine_calls():
 def test_the_image_route_policy_denies_a_workflow_without_facts_with_the_needs_configuration_code():
     import proxy
 
-    record = proxy.GATEWAY_WORKFLOW_REGISTRY.get(TILE)
+    record = proxy.GATEWAY_WORKFLOW_REGISTRY.get("image.generate.moss-image")
     receipt = proxy.start_image_route_receipt("/v1/images/generations", access_context())
     decision = proxy._apply_image_route_policy(receipt, access_context(), workflow=TILE, manifest={"id": "no.such.facts"})
     assert decision.denied and decision.code == NEEDS_CONFIGURATION_CODE
