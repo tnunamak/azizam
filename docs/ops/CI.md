@@ -26,8 +26,9 @@ were still stored.
   `execution_started`, `execution_finished`, `cleanup_started`,
   `cleanup_finished`, `playwright_projects`, `playwright_case_projects`),
   `steps.tsv` (step, exit code, whole seconds, wall seconds, CPU seconds (user
-  plus system), peak RSS kB),
-  `cost.json` (totals,
+  plus system), peak RSS kB), `steps/<step>.load` (1-minute host load at the
+  step's start and end, and its scaled limit),
+  `cost.json` (totals, each step's load,
   the `journey` section, and the critical path: the longest chain of steps, each starting when the
   steps it waits for finish), `logs/`, `raw/` (framework reports and
   per-config case receipts), and `cases.jsonl`. Playwright writes failure
@@ -81,9 +82,14 @@ were still stored.
   its surviving jobs end; `fuser -v ~/.tmp/azizam-ci.lock` lists them. Do
   not wrap `ci-local` in `flock` on the same file: the inner lock would wait
   for the outer one forever.
-- Each step has a 1200-second wall-clock limit. Set
+- Each step has a 1200-second base wall-clock limit. Set
   `AZIZAM_CI_STEP_TIMEOUT_S` to a positive number of seconds for a test run;
-  values above 3600 are clamped to 3600. GNU `timeout` sends TERM at the
+  values above 3600 are clamped to 3600. Host load is a confound for every
+  step's wall time: other work shares the cores, and above load1 = cores the
+  hermetic runner halves its pytest workers. So when a step starts, its limit
+  becomes the base times 2 x load1 / cores if that factor is more than 1, at
+  most 3600 seconds. The cost table and `cost.json` show each step's load at
+  start and end; a timeout message names both. GNU `timeout` sends TERM at the
   limit and KILL 20 seconds later. On interruption, `ci-local` stops job
   supervisors before sweeping their recorded timeout process groups, so a
   multi-step job cannot start an unrecorded next step. It also sweeps remaining
