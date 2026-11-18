@@ -398,3 +398,40 @@ def test_graph_runner_uses_injected_admission_when_shared_is_off(tmp_path, monke
     run(runner._wait_for_host_memory(ctx, adapter, {"prompt": graph("big.safetensors")}))
     assert clock.slept == [2.0]
     assert made._reserved
+
+
+def test_lease_records_residency_only_on_success_and_finish_is_idempotent(tmp_path):
+    weights(tmp_path, "a.safetensors", 10000)
+    made, clock = admission(tmp_path, [11000], settle_s=0)
+    lease = run(made.admit(graph("a.safetensors")))
+    assert not made._loaded
+    lease.finish(False)
+    lease.finish(True)
+    assert not made._loaded and not made._reserved
+    lease = run(made.admit(graph("a.safetensors")))
+    clock.now = 4
+    lease.finish(True)
+    assert made._loaded == {"a.safetensors": 4}
+    assert not made._reserved
+
+
+def test_reservation_lasts_until_finish_or_owner_wait_ceiling(tmp_path):
+    weights(tmp_path, "a.safetensors", 10000)
+    weights(tmp_path, "b.safetensors", 10000)
+    made, clock = admission(tmp_path, [11000], settle_s=0, job_wait_s=6)
+    first = run(made.admit(graph("a.safetensors")))
+    second = run(made.admit(graph("b.safetensors")))
+    assert clock.slept == [2.0, 2.0, 2.0]
+    first.finish(False)
+    second.finish(False)
+    assert not made._reserved
+
+
+def test_cancel_before_and_during_memory_wait(tmp_path):
+    weights(tmp_path, "a.safetensors", 10000)
+    for cancel_after in (0, 2):
+        made, clock = admission(tmp_path, [1])
+        with pytest.raises(hma.HostMemoryCancelled):
+            run(made.admit(graph("a.safetensors"), hma.Ask(cancelled=lambda: clock.now >= cancel_after)))
+        assert clock.now == cancel_after
+        assert not made._reserved and not made._loaded
