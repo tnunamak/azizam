@@ -551,6 +551,8 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     qwen-image-2.1-edit-multiref, qwen-image-2.1-inpaint, seedvr2-upscale, krea2-turbo, sdxl-seamless-tile); no path moved.
     Re-captured 2026-11-18 (train 76, walkthrough B8): the tangoflux batch_size help says only the first clip comes back,
     and the image-identity mode help names the auto mode; only those two input schemas moved.
+    Re-captured 2026-11-18 (train 77, readable choice names): the image-identity mode help uses the shown names;
+    only that input schema moved. choice_labels never enters the API document.
     """
     # Re-captured 2026-11-12: the generic run schema lists the five additive mesh.edit forms.
     schema = proxy.app.openapi()

@@ -2571,7 +2571,7 @@
       "sha256": "fdb681e6fc2ee48a85a49bb425c587cc044a201a6abcb12c53d2340019503e6a"
     },
     "image.edit.image-identity": {
-      "bytes": 7661,
+      "bytes": 7656,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2724,7 +2724,7 @@
               },
               "mode": {
                 "default": "auto",
-                "description": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
+                "description": "Automatic waits only for one attempt without refinement and otherwise returns a job to check later.",
                 "enum": [
                   "auto",
                   "sync",
@@ -2831,7 +2831,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_image_identity",
         "run_path": null
       },
-      "sha256": "47c1bd60d3044e63520f3531ce36a12a2bc395786ed2349110b8be99e60786a7"
+      "sha256": "8f2a08c3e9627e41f0fc63eb02d9f3958f603a39954ba96cabd8d1bb05348272"
     },
     "image.edit.qwen-image-2.1-edit": {
       "bytes": 4160,

@@ -297,7 +297,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-18 (train 76, walkthrough B8): the tangoflux batch_size and image-identity mode help changed;
         # only those two input schemas moved (tests/fixtures/headless_openapi.json shows the same). Before it the digest was
         # 409ef81edfc5e53b44ebbb84f26b388923014c3334f4d53630ef94ba45679010.
-        assert route_graph.openapi_digest(proxy.app) == "a329207e10d25d7fcb7f790c98c2d33ba8282677769b4dd649fd97709b90d551"
+        # Re-captured 2026-11-18 (train 77, readable choice names): the image-identity mode help uses the shown names;
+        # only that input schema moved. Before it the digest was
+        # a329207e10d25d7fcb7f790c98c2d33ba8282677769b4dd649fd97709b90d551.
+        assert route_graph.openapi_digest(proxy.app) == "40470f3ba556610ade5e4b5affc39033b8662a2d08fe4a9cbcaefab37d3914cb"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -369,4 +372,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Before it the digest was 18f06639e13f8d1bd9c0e2511cbf10fe34ce745b2675b84e50294f1f474c9217.
     # Re-captured 2026-11-18 (train 76, walkthrough B8): the tangoflux batch_size and image-identity mode help; only those
     # two input descriptions moved. Before it the digest was 57f9e8dcf1526131f539f066354d14bf5d979283a8387b1e8b725e694bef34e4.
+    # Re-captured 2026-11-18 (train 77, readable choice names): the image-identity mode help; only that input description
+    # moved. Before it the digest was 61605247b4f318ced75ace73352a57b3e8612068a79407053c61b5dae4df6a91.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

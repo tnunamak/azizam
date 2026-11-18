@@ -226,8 +226,8 @@
         "sha256": "9c70945a333fc11373e3b5dbc000ce08e3dfff7d826e7d3f7c272fc9c661518f"
       },
       "row": {
-        "bytes": 20787,
-        "sha256": "95e89fec071ee296f3a02499af9d3ad986c62726b0d2d428e225926e882464c9"
+        "bytes": 22123,
+        "sha256": "bdec15495fa2f9ff549d2e481105a78d3ded49519746cf800f7dfb04f0c0fc1d"
       }
     },
     "audio.generate.sa3-small-sfx": {
@@ -1729,8 +1729,8 @@
         "sha256": "cb3019e61001436ee9ce1d379f464b649abcb0e3f22310153a2f76d3b82e0d3c"
       },
       "row": {
-        "bytes": 20534,
-        "sha256": "fb219fef61c03352864afed90dd232104d92ada83adcda0a8873d92d78c9418b"
+        "bytes": 21007,
+        "sha256": "13a2c5c187af7eac1c6aa6bb6572287be8f7ad6a639d5ac07e8a7c2735b1b98e"
       }
     },
     "image.edit.qwen-image-2.1-edit": {

@@ -1956,7 +1956,7 @@
           },
           "mode": {
             "default": "auto",
-            "description": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
+            "description": "Automatic waits only for one attempt without refinement and otherwise returns a job to check later.",
             "enum": [
               "auto",
               "sync",

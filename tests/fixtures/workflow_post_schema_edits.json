@@ -286,6 +286,68 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": {
+        "ar": "Arabic",
+        "az": "Azerbaijani",
+        "bg": "Bulgarian",
+        "bn": "Bengali",
+        "ca": "Catalan",
+        "cs": "Czech",
+        "da": "Danish",
+        "de": "German",
+        "el": "Greek",
+        "en": "English",
+        "es": "Spanish",
+        "fa": "Persian",
+        "fi": "Finnish",
+        "fr": "French",
+        "he": "Hebrew",
+        "hi": "Hindi",
+        "hr": "Croatian",
+        "ht": "Haitian Creole",
+        "hu": "Hungarian",
+        "id": "Indonesian",
+        "is": "Icelandic",
+        "it": "Italian",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "la": "Latin",
+        "lt": "Lithuanian",
+        "ms": "Malay",
+        "ne": "Nepali",
+        "nl": "Dutch",
+        "no": "Norwegian",
+        "pa": "Punjabi",
+        "pl": "Polish",
+        "pt": "Portuguese",
+        "ro": "Romanian",
+        "ru": "Russian",
+        "sa": "Sanskrit",
+        "sk": "Slovak",
+        "sr": "Serbian",
+        "sv": "Swedish",
+        "sw": "Swahili",
+        "ta": "Tamil",
+        "te": "Telugu",
+        "th": "Thai",
+        "tl": "Tagalog",
+        "tr": "Turkish",
+        "uk": "Ukrainian",
+        "unknown": "No specific language",
+        "ur": "Urdu",
+        "vi": "Vietnamese",
+        "yue": "Cantonese",
+        "zh": "Chinese"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "choice_labels"
+      ]
     }
   ],
   "audio.generate.sa3-small-sfx": [
@@ -716,7 +778,7 @@
       ]
     },
     {
-      "after": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
+      "after": "Automatic waits only for one attempt without refinement and otherwise returns a job to check later.",
       "before": null,
       "before_present": false,
       "path": [
@@ -739,6 +801,60 @@
       "before_present": false,
       "path": [
         "source_url"
+      ]
+    },
+    {
+      "after": {
+        "best": "Best photo",
+        "mean": "Average of all photos"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "pooling",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "all": "Every person",
+        "auto": "Automatic",
+        "off": "Off"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "refine",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "as_written": "Pose as written",
+        "likeness": "Keep the likeness"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "pose_policy",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "async": "Return a job to check later",
+        "auto": "Automatic",
+        "sync": "Wait for the result"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "mode",
+        "choice_labels"
       ]
     }
   ],
