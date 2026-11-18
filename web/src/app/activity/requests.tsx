@@ -21,6 +21,8 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { Money } from "@/components/product/money";
+import { receiptCost, costCopy } from "@/app/usage/receipt-cost";
 import { EmptyState } from "@/components/product/empty-state";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
@@ -203,6 +205,13 @@ function outcomeSummary(receipt: Receipt) {
 function duration(ms?: number | null) {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "Duration not recorded";
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+function requestCost(receipt: Receipt) {
+  const cost = receiptCost(receipt);
+  if (cost.kind === "amount") return <Money amount={cost.usd} precise />;
+  if (cost.kind === "local") return <Money amount={null} local />;
+  return <span title={costCopy[cost.kind].help}>{costCopy[cost.kind].label}</span>;
 }
 
 export function Requests() {
@@ -498,6 +507,9 @@ export function Requests() {
                             {" · "}
                             {duration(row.receipt.latency_ms) || "Duration not recorded"}
                           </p>
+                          <p className="max-w-full break-words text-right text-meta">
+                            <span className="sr-only">Cost: </span>{requestCost(row.receipt)}
+                          </p>
                         </div>
                         <ArrowRight
                           aria-hidden="true"
@@ -547,7 +559,7 @@ export function Requests() {
           </div>
         </>
       )}
-      <RequestReceiptSheet record={record} returnFocus={() => {
+      <RequestReceiptSheet record={record} cost={record ? requestCost(record.receipt) : undefined} returnFocus={() => {
         (openerRef.current?.isConnected ? openerRef.current : filterRef.current)?.focus();
       }} onOpenChange={(open) => {
         if (!open) setSelectedReceiptKey(null);
