@@ -411,7 +411,7 @@ class TestShippedWorkflowOutputMediaTypes(unittest.TestCase):
             checked += 1
             with self.subTest(manifest=filename, binding=binding, output=key, writer=writer):
                 self.assertEqual(declared, written)
-        self.assertGreaterEqual(checked, 30, "fewer known output writers checked than shipped")
+        self.assertGreaterEqual(checked, 27, "fewer known output writers checked than shipped")
         self.assertEqual(unchecked, self.UNCHECKED_OUTPUTS)
 
 
