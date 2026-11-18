@@ -1787,7 +1787,7 @@
         "description": "Create a sound effect from a text prompt.",
         "properties": {
           "batch_size": {
-            "description": "How many clips to make at once.",
+            "description": "Makes this many clips, but only the first one comes back.",
             "maximum": 4,
             "minimum": 1,
             "type": "integer"
@@ -1956,7 +1956,7 @@
           },
           "mode": {
             "default": "auto",
-            "description": "Choose async to receive a job to check later, or sync to wait for the result.",
+            "description": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
             "enum": [
               "auto",
               "sync",

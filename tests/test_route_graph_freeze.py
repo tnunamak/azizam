@@ -294,7 +294,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-18 (train 70): the four FLUX.2 Klein 4B workflows are closed (exposure disabled), so they leave
         # the document as well (tests/fixtures/headless_openapi.json shows the same removal and nothing else). Before it the
         # digest was f49f734f7c0bd271fc41a6ebc4919e4a2d4802ebab1198c0f0875ebe2b8cec9c.
-        assert route_graph.openapi_digest(proxy.app) == "409ef81edfc5e53b44ebbb84f26b388923014c3334f4d53630ef94ba45679010"
+        # Re-captured 2026-11-18 (train 76, walkthrough B8): the tangoflux batch_size and image-identity mode help changed;
+        # only those two input schemas moved (tests/fixtures/headless_openapi.json shows the same). Before it the digest was
+        # 409ef81edfc5e53b44ebbb84f26b388923014c3334f4d53630ef94ba45679010.
+        assert route_graph.openapi_digest(proxy.app) == "a329207e10d25d7fcb7f790c98c2d33ba8282677769b4dd649fd97709b90d551"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.

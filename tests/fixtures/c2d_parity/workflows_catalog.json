@@ -532,7 +532,7 @@
         "sha256": "2e681f751e03d27d584e54dd42e756c792aa6454e10d0561e6e6f4566281c8c6"
       },
       "row": {
-        "bytes": 11098,
+        "bytes": 11150,
         "full": {
           "aliases": [
             "sfx-default"
@@ -700,8 +700,8 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
-              "description": "How many clips to make at once.",
-              "help": "How many clips to make at once.",
+              "description": "Makes this many clips, but only the first one comes back.",
+              "help": "Makes this many clips, but only the first one comes back.",
               "ignored": false,
               "label": "Number of clips",
               "maximum": 4,
@@ -840,7 +840,7 @@
           "try_url": "/try/?workflow=audio.generate.tangoflux",
           "typical_seconds": 4
         },
-        "sha256": "2d681ceb238860ce9fe802b16144ddfb261198b96bd5150f48a2fc2922143de6"
+        "sha256": "1b967706d20d56c309dc83997fee901154916a7478357b70875fab4c7a86d4b1"
       }
     },
     "audio.generate.yue2-song": {
@@ -1729,8 +1729,8 @@
         "sha256": "cb3019e61001436ee9ce1d379f464b649abcb0e3f22310153a2f76d3b82e0d3c"
       },
       "row": {
-        "bytes": 20480,
-        "sha256": "edf7ce8a938a2bd5f93317b4df41c446982e1c9cf97e2016be97661c13afcdd6"
+        "bytes": 20534,
+        "sha256": "fb219fef61c03352864afed90dd232104d92ada83adcda0a8873d92d78c9418b"
       }
     },
     "image.edit.qwen-image-2.1-edit": {

@@ -2013,7 +2013,7 @@
       "sha256": "4c9b746afb4101a955b435cded1de8b7eaa9963a98d2fae9f111e6b8b47bd3a6"
     },
     "audio.generate.tangoflux": {
-      "bytes": 4719,
+      "bytes": 4745,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -2146,7 +2146,7 @@
             "description": "Create a sound effect from a text prompt.",
             "properties": {
               "batch_size": {
-                "description": "How many clips to make at once.",
+                "description": "Makes this many clips, but only the first one comes back.",
                 "maximum": 4,
                 "minimum": 1,
                 "type": "integer"
@@ -2198,7 +2198,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux",
         "run_path": null
       },
-      "sha256": "af5d3ca321aa560686eb7dd728eda09666a89cb2aa53dcc6878758ed63eed20d"
+      "sha256": "d8dc713e546bd1388431974e588e01a4c16bcfb48c78e24d335edf6074535147"
     },
     "audio.generate.yue2-song": {
       "bytes": 4009,
@@ -2571,7 +2571,7 @@
       "sha256": "fdb681e6fc2ee48a85a49bb425c587cc044a201a6abcb12c53d2340019503e6a"
     },
     "image.edit.image-identity": {
-      "bytes": 7634,
+      "bytes": 7661,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2724,7 +2724,7 @@
               },
               "mode": {
                 "default": "auto",
-                "description": "Choose async to receive a job to check later, or sync to wait for the result.",
+                "description": "Auto waits only for one attempt without refinement. Sync always waits; async gives a job to check later.",
                 "enum": [
                   "auto",
                   "sync",
@@ -2831,7 +2831,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_image_identity",
         "run_path": null
       },
-      "sha256": "650e6f007c0b428b426dcbb10c8d4532a45a4da61f367ecf6703bd02a43dc14b"
+      "sha256": "47c1bd60d3044e63520f3531ce36a12a2bc395786ed2349110b8be99e60786a7"
     },
     "image.edit.qwen-image-2.1-edit": {
       "bytes": 4160,
