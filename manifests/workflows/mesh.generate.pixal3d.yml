@@ -30,6 +30,7 @@ inputs:
     help: Geometry resolution. Higher is slower.
     type: integer
     enum: [512, 1024, 1536]
+    choice_labels: {"512": "Low detail (fastest)", "1024": "Medium detail", "1536": "High detail (slowest)"}
     default: 1024
 outputs:
   mesh:

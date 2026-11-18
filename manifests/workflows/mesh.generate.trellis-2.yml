@@ -30,12 +30,14 @@ inputs:
     help: Geometry resolution. Higher is slower.
     type: integer
     enum: [512, 1024, 1536]
+    choice_labels: {"512": "Low detail (fastest)", "1024": "Medium detail", "1536": "High detail (slowest)"}
     default: 1024
   bg_removal:
     label: background removal
-    help: Leave empty to let the service choose.
+    help: Choose how the background is cut away, or leave it empty to let the service choose.
     type: string
     enum: [threshold, birefnet]
+    choice_labels: {"threshold": "Quick cutout", "birefnet": "Careful cutout (AI)"}
   extensions:
     label: extensions
     help: Reserved. Supplying it is refused until a service option is mapped to it.
