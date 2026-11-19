@@ -165,8 +165,18 @@ def test_a_workflow_that_is_missing_on_one_side_is_a_difference():
 
 
 def test_a_tree_equals_itself_in_every_check(trees, tmp_path):
-    with reuse_unchanged_dump(trees["same"]):
+    # Not inside reuse_unchanged_dump: the two sides are two real dumps of one root, so a dump that is not
+    # repeatable (an unordered set, a clock, a random draw) fails here. This is the one repeatability case.
+    made: list[Path] = []
+    real_dump = eq.dump_tree
+
+    def counted(candidate, corpus_file, python=None):
+        made.append(candidate)
+        return real_dump(candidate, corpus_file, python)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(eq, "dump_tree", counted)
         result = run(trees["same"], trees["same"], tmp_path)
+    assert made == [trees["same"], trees["same"]], "both sides must be their own dump"
     assert result.ok and result.explained == []
     assert result.compared["projections"] > 300 and result.compared["requests"] > 300
     assert result.compared["services"] >= 1 and result.compared["protocols"] >= 1
