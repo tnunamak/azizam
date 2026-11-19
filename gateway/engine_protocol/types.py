@@ -46,6 +46,8 @@ class Connection:
     timeouts: Timeouts = field(default_factory=Timeouts)
     headers: Mapping[str, str] = field(default_factory=dict)
     remote_capability: Any = field(default=None, repr=False, compare=False)
+    # The guarded transport the capability was bound to; a reviewed adapter sends every request through it (bound_wire).
+    remote_transport: Any = field(default=None, repr=False, compare=False)
     remote_enabled: bool = False
 
     def __post_init__(self) -> None:

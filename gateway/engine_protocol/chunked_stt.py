@@ -48,6 +48,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, M
 import httpx
 
 from gateway import private_io, stt_chunking
+from gateway.engine_protocol import bound_wire
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION, AdapterOrigin
 from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description, shipped_for_implementation
 from gateway.engine_protocol.errors import UnknownOperation, UnsupportedByAdapter
@@ -55,7 +56,6 @@ from gateway.engine_protocol.httpx_wire import failure, lower_headers, reply_fro
 from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
-from gateway import engine_egress
 from gateway.service_registry import join_base_path
 
 _DEFAULT_PROTOCOL = shipped_for_implementation("chunked_transcription")
@@ -324,21 +324,21 @@ class ChunkedSttAdapter:
         raise UnsupportedByAdapter("The transcription adapter lists no inventory.")
 
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
-        from gateway.remote_engine import refuse_unbound_connection
-        refuse_unbound_connection(conn)
+        bound_wire.bound_transport(conn)    # a connection with no authority for an address marked remote is refused here
         route = ROUTES.get(op)
         if route is None:
             raise UnknownOperation(f"The transcription adapter has no operation '{op}'.")
         url = join_base_path(conn.address, route)
         timeout = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
-        if isinstance(request, SttRun):
-            return await self._run(url, timeout, request)
-        if isinstance(request, SttUpload):
-            return await self._post_once(url, timeout, request)
+        if isinstance(request, (SttRun, SttUpload)):
+            async with bound_wire.operation(conn):
+                if isinstance(request, SttRun):
+                    return await self._run(url, timeout, request, conn)
+                return await self._post_once(url, timeout, request, conn)
         raise UnsupportedByAdapter("A transcription takes an SttRun or an SttUpload request.")
 
     @staticmethod
-    async def _post_once(url: str, timeout: httpx.Timeout, request: SttUpload) -> Reply:
+    async def _post_once(url: str, timeout: httpx.Timeout, request: SttUpload, conn: Connection | None = None) -> Reply:
         execution = request.execution
         workspace = None
         lease = None
@@ -359,7 +359,7 @@ class ChunkedSttAdapter:
                     paths.append(path)
                 await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
                     deadline_at=deadline_at, on_cancel=None, resource_lease=lease)
-            async with engine_egress.async_client(timeout=timeout) as client:
+            async with bound_wire.client(conn, timeout=timeout) as client:
                 if request.on_whole_file_attempt is not None:
                     request.on_whole_file_attempt()
                 resp = await stt_chunking.await_with_cancellation(
@@ -376,9 +376,9 @@ class ChunkedSttAdapter:
                     lease.release()
         return reply_from(resp)
 
-    async def _run(self, url: str, timeout: httpx.Timeout, run: SttRun) -> TranscriptReply | StreamReply:
+    async def _run(self, url: str, timeout: httpx.Timeout, run: SttRun, conn: Connection | None = None) -> TranscriptReply | StreamReply:
         execution = run.execution
-        client = engine_egress.async_client(timeout=timeout)
+        client = bound_wire.client(conn, timeout=timeout)
         run.cleanup.add("http_client", client.aclose)
         wire = _RunWire(self.label, client, url, run, self._filenames)
         uploads = run.uploads

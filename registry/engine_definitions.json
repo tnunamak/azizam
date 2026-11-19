@@ -1101,6 +1101,29 @@
           "help": "Where the server listens, with its port. Do not add /v1."
         },
         {
+          "key": "where",
+          "label": "Where does it run?",
+          "type": "select",
+          "default": "this",
+          "order": 2,
+          "options": [
+            {"value": "this", "label": "On this computer"},
+            {"value": "network", "label": "On another computer on my network"}
+          ],
+          "owner_only": true,
+          "help": "Another computer must be on your own private network. Azizam shows the network it will call and asks you to confirm it."
+        },
+        {
+          "key": "network_trusted",
+          "label": "I trust this network",
+          "type": "boolean",
+          "default": false,
+          "order": 3,
+          "show_if": {"field": "where", "equals": "network"},
+          "owner_only": true,
+          "help": "Needed for a server reached with plain http, and for a Tailscale address (100.64 to 100.127). Anyone on that network can read what Azizam and the server send each other, unless it is your own Tailscale network. This kind of server is used without a key."
+        },
+        {
           "key": "models",
           "label": "Models",
           "type": "multiselect",
@@ -1232,7 +1255,8 @@
       "record": {
         "protocol": "inline-tts",
         "native_passthrough": false,
-        "base_path": ""
+        "base_path": "",
+        "remote": {"tasks": ["speech"], "limits": {"total_s": 300}}
       }
     },
     {
@@ -1269,6 +1293,29 @@
           "order": 1,
           "placeholder": "http://192.168.1.50:8000",
           "help": "Where the server listens, with its port. Do not add /v1."
+        },
+        {
+          "key": "where",
+          "label": "Where does it run?",
+          "type": "select",
+          "default": "this",
+          "order": 2,
+          "options": [
+            {"value": "this", "label": "On this computer"},
+            {"value": "network", "label": "On another computer on my network"}
+          ],
+          "owner_only": true,
+          "help": "Another computer must be on your own private network. Azizam shows the network it will call and asks you to confirm it."
+        },
+        {
+          "key": "network_trusted",
+          "label": "I trust this network",
+          "type": "boolean",
+          "default": false,
+          "order": 3,
+          "show_if": {"field": "where", "equals": "network"},
+          "owner_only": true,
+          "help": "Needed for a server reached with plain http, and for a Tailscale address (100.64 to 100.127). Anyone on that network can read what Azizam and the server send each other, unless it is your own Tailscale network. This kind of server is used without a key."
         },
         {
           "key": "models",
@@ -1346,7 +1393,8 @@
       "record": {
         "protocol": "chunked-stt",
         "native_passthrough": false,
-        "base_path": ""
+        "base_path": "",
+        "remote": {"tasks": ["transcription"], "limits": {"total_s": 600}}
       }
     },
     {
@@ -1532,7 +1580,7 @@
           "order": 3,
           "show_if": {"field": "where", "equals": "network"},
           "owner_only": true,
-          "help": "Needed for a server reached with plain http. Anyone on that network can read what Azizam and the server send each other. A server that needs a key must use https."
+          "help": "Needed for a server reached with plain http, and for a Tailscale address (100.64 to 100.127). Anyone on that network can read what Azizam and the server send each other, unless it is your own Tailscale network. A server that needs a key must use https."
         },
         {
           "key": "models",

@@ -118,7 +118,7 @@ ENGINE_CONNECTION = register(Obj("EngineConnection", {
     "headers": HEADERS,
     "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}, extras=HIDDEN),
     "remote_dispatch": Obj("RemoteDispatchPolicy", {
-        "version": NUM, "enabled": BOOL, "private_cidrs": JSON, "limits": JSON, "transport": SHORT, "tasks": JSON,
+        "version": NUM, "enabled": BOOL, "private_cidrs": JSON, "limits": JSON, "transport": SHORT, "tasks": JSON, "shared_space": BOOL,
     }, extras=HIDDEN),
 }, extras=HIDDEN))
 
