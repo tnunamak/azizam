@@ -32,7 +32,6 @@ CONFIG_BASE = re.compile(r"(?i)(config|settings|cfg|conf)$")
 # "file::qualified function": why it need not register. Each reads a name from configuration but the value is not a
 # credential that can reach an upstream or a log, or its caller registers it.
 NO_REGISTRATION_NEEDED = {
-    "gateway/backends/llm_execution.py::_base_url_from_config": "an address, not a credential",
     "gateway/compat.py::positive_int_env": "a number from the environment",
     "gateway/config_sources.py::startup_rows": "reads which startup keys the schema marks secret, to list them; it never reads a value",
     "gateway/engine_admin.py::_stored_evidence_binding": "hashes the value into an evidence digest; the value goes nowhere",
@@ -44,8 +43,6 @@ NO_REGISTRATION_NEEDED = {
     "gateway/request_body_limits.py::RequestBodyLimits.from_config": "a number from the environment",
     "gateway/secret_store.py::export_provider_secret_env": "builds the process environment for the sidecar; its caller (build_sidecar_env) registers",
     "proxy.py::_admin_session_signing_key_from_config": "a signing key: never sent to an upstream and never logged",
-    "proxy.py::_probe_service_resource_fact": "the name of a base-URL variable (an address)",
-    "proxy.py::_service_resource_probe_url": "the name of a base-URL variable (an address)",
     "proxy.py::_is_internal_litellm_lifecycle_request": "compares the internal key with a request header; neither is logged or sent on",
     "proxy.py::_bootstrap_admin_oidc_cfg": "reads the names of the signing-key settings to build the sign-in configuration; the key is never sent or logged",
     "proxy.py::_resolved_admin_oidc_config": "the signing key of the admin session: signs a cookie, never sent to an upstream or logged",

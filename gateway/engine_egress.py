@@ -105,6 +105,8 @@ def _prefix_of_url(value: Any) -> str:
 
 def _destination_prefixes(record: Mapping[str, Any]) -> dict[str, set[str]]:
     """The ``host:port`` keys one service record is reached at, each with the URL path prefixes the record gives it."""
+    from gateway.service_registry import environment_base_url  # service_registry imports this module
+
     found: dict[str, set[str]] = {}
     scopes = [record]
     if isinstance(record.get("config"), Mapping):
@@ -118,7 +120,9 @@ def _destination_prefixes(record: Mapping[str, Any]) -> dict[str, set[str]]:
                     found.setdefault(key, set()).add(_prefix_of_url(host))
             elif isinstance(port, (int, str)) and not isinstance(port, bool) and str(port).isdigit():
                 found.setdefault(destination_key(host, int(port), str(scope.get("scheme") or "http")), set()).add("")
-        urls = [scope.get(field) for field in _URL_FIELDS]
+        # The address a record's ``base_url_env`` variable holds is dialed in place of the record's own, so the gate
+        # maps it too: a lease for the record's domain covers both.
+        urls = [*(scope.get(field) for field in _URL_FIELDS), environment_base_url(scope)]
         connection = scope.get("connection")
         if isinstance(connection, Mapping):
             urls.append(connection.get("address"))
