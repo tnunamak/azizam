@@ -221,6 +221,14 @@ class SttChunkMergeTests(unittest.TestCase):
         for (_, previous_end), (next_start, _) in zip(times, times[1:]):
             self.assertLessEqual(previous_end, next_start)
 
+    def test_verbose_json_whisper_seek_moves_with_its_piece(self) -> None:
+        # Whisper's seek counts 10 ms frames from the start of the audio it received, so a later piece's seek shifts too.
+        first = self._verbose("a", [{"id": 0, "seek": 0, "start": 0.0, "end": 2.0, "text": "a"}])
+        second = self._verbose("b", [{"id": 0, "seek": 300, "start": 3.0, "end": 4.0, "text": "b"}, {"id": 1, "start": 4.0, "end": 5.0, "text": "c"}])
+        merged = stt_chunking.merge_transcription_payloads(
+            [first, second], pieces=[(0.0, 25.5), (25.5, 31.0)], duration_seconds=31.0)
+        self.assertEqual([segment.get("seek") for segment in merged["segments"]], [0, 2850, None])
+
     def test_planned_pieces_tile_the_source_without_overlap(self) -> None:
         for quiet_at in ([], [25.0, 95.0], [28.0, 61.0, 118.0]):
             with self.subTest(quiet_at=quiet_at):
