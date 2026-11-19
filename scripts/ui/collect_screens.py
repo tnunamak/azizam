@@ -22,7 +22,7 @@ STATIC_NA = {
 
 THEMES = ("light", "dark")
 WIDTHS = ("1440", "390")
-STATES = ("seeded", "empty", "error")
+STATES = ("seeded", "empty", "error", "loading")
 
 ROUTE_COVERAGE = {
     "/": {
@@ -39,7 +39,7 @@ ROUTE_COVERAGE = {
     "/design": {"groups": ("design",), "states": ("n-a",), "note": "Static design-system route; data state is N/A."},
     "/engines": {"groups": ("status-engines-services",), "states": STATES, "note": "Canonical Engines matrix."},
     "/invite": {"groups": ("people-invite",), "states": STATES, "note": "Invite acceptance public route."},
-    "/library": {"groups": ("library",), "states": ("grid", "empty", "error"), "note": "Library uses grid as seeded success."},
+    "/library": {"groups": ("library",), "states": ("grid", "empty", "error", "loading"), "note": "Library uses grid as seeded success."},
     "/models": {"groups": ("models",), "states": STATES, "note": "Canonical Models route."},
     "/people": {
         "groups": ("people-people", "people-invites", "people-plans"),
@@ -51,11 +51,21 @@ ROUTE_COVERAGE = {
     "/setup": {"groups": ("public-setup",), "states": STATES, "note": "Public setup route matrix."},
     "/sign-in": {"groups": ("public-sign-in",), "states": STATES, "note": "Public sign-in route matrix."},
     "/status": {"groups": ("status",), "states": STATES, "note": "Canonical Status route."},
-    "/try": {"groups": ("try",), "states": ("empty", "error", "result"), "note": "Try uses result as seeded success."},
-    "/usage": {"groups": ("usage",), "states": ("empty", "error", "lane"), "note": "Usage uses lane as seeded success."},
+    "/try": {"groups": ("try",), "states": ("empty", "error", "result", "loading"), "note": "Try uses result as seeded success."},
+    "/usage": {"groups": ("usage",), "states": ("empty", "error", "lane", "loading"), "note": "Usage uses lane as seeded success."},
     "/docs": {"groups": ("docs",), "states": ("n-a",), "note": "Static API reference; data state is N/A."},
     "/redoc": {"groups": ("redoc",), "states": ("n-a",), "note": "Static API reference; data state is N/A."},
 }
+
+# Every data route is captured while its data is still on the way; only the
+# static routes (design, docs, redoc) have no data state at all.
+_NO_LOADING_STATE = [
+    route
+    for route, spec in ROUTE_COVERAGE.items()
+    if "n-a" not in spec["states"] and "loading" not in spec["states"]
+]
+if _NO_LOADING_STATE:
+    raise SystemExit(f"Data routes without a loading state: {', '.join(sorted(_NO_LOADING_STATE))}")
 
 
 def classify(path: Path) -> tuple[str, str]:
@@ -63,7 +73,7 @@ def classify(path: Path) -> tuple[str, str]:
     name = stem.split("/")[-1]
     if stem.startswith("home/"):
         return "home", stem.split("/", 1)[1]
-    for state in ("seeded", "empty", "error", "first-run", "n-a"):
+    for state in ("seeded", "empty", "error", "loading", "first-run", "n-a"):
         token = f"-{state}-"
         if token in name:
             return name.split(token, 1)[0], name
@@ -144,6 +154,7 @@ def main() -> int:
         "## State Notes",
         "",
         "- Seeded/empty/error screenshots use the route's own e2e fixture when present.",
+        "- Loading screenshots (`web/e2e/loading-states.spec.ts`) hold the route's own data requests unanswered.",
         "- Static routes `design`, `docs`, and `redoc` have data state N/A.",
         "- Fixtures for removed pages are excluded.",
         "- `/` is Home and is covered by the Home matrix.",
