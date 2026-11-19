@@ -288,6 +288,19 @@ def lifecycle_block(values: Mapping[str, Any], definition: Mapping[str, Any]) ->
     return {"type": "command", "managed": True, "driver": "command", "driver_config": driver_config}
 
 
+def _declares(definition: Mapping[str, Any], key: str) -> bool:
+    return any(field["key"] == key for field in definition["fields"])
+
+
+def _no_headers_sent(definition: Mapping[str, Any]) -> dict[str, Any]:
+    """The values that say "the page changed no header", for a kind that has a header field; none for a kind without one.
+
+    A record's view is read back into the values a check, test or update validates, and a name the kind does not
+    declare is refused there, so the view must not add one the kind lacks.
+    """
+    return {"headers": []} if _declares(definition, "headers") else {}
+
+
 def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
                  stored_headers: Iterable[Any] = ()) -> dict[str, Any]:
     """Validate draft values against the definition's field list."""
@@ -1054,7 +1067,7 @@ class EngineService:
     def _saved_test_inputs(self, catalog: EngineCatalog, definition: Mapping[str, Any], record: Mapping[str, Any],
                            ctx: Any) -> tuple[dict[str, Any], KeyInput]:
         shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
-        values = {**shown["values"], "headers": []}
+        values = {**shown["values"], **_no_headers_sent(definition)}
         clean = clean_values(definition, values, stored_headers=(record.get("config") or {}).get("headers") or ())
         key = resolve_key(clean, ctx, record=record, db_path=self.db_path, env=self.env)
         return clean, key
@@ -1071,7 +1084,7 @@ class EngineService:
             shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
             values = {**shown["values"], **values}
             if values.get("headers") == shown["values"].get("headers"):
-                values["headers"] = []
+                values.update(_no_headers_sent(definition))
         _refuse_protocol_probe(values)
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
@@ -1103,7 +1116,7 @@ class EngineService:
             shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
             values = {**shown["values"], **values}
             if values.get("headers") == shown["values"].get("headers"):
-                values["headers"] = []
+                values.update(_no_headers_sent(definition))
         _refuse_protocol_probe(values)
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
@@ -1367,7 +1380,7 @@ class EngineService:
         # What the page was shown for a header or a start and stop command is a read of entries, not text to save:
         # headers are changed only when the body names them, and the commands only when their text differs.
         if "headers" not in sent or sent["headers"] == before["values"].get("headers"):
-            values["headers"] = []
+            values.update(_no_headers_sent(definition))
         lifecycle_changed = any(_same_text(values.get(key)) != _same_text(before["values"].get(key)) for key in _LIFECYCLE_FIELDS)
         if not before["lifecycle_editable"] and any(
             _same_text(values.get(key)) != _same_text(before["values"].get(key))
@@ -1376,10 +1389,14 @@ class EngineService:
             raise DraftError("The stored process uses a different driver. These lifecycle fields cannot edit it safely.", field="lifecycle_mode")
         stored_config = record.get("config") or {}
         _refuse_reserved_texts({key: value for key, value in values.items() if value != before["values"].get(key)})
-        if "api_key" not in values:
+        if "api_key" not in values and _declares(definition, "api_key"):
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
-        clean = clean_values(definition, values, stored_headers=(record.get("config") or {}).get("headers") or ())
+        # The update fills in settings the page was not shown (an unchanged key, headers). Only a name the definition
+        # declares, or one the caller sent, reaches validation: a kind with no key or header field never sees them.
+        declared = {f["key"] for f in definition["fields"]} | {"dispatch", "protocol_description"}
+        clean = clean_values(definition, {key: value for key, value in values.items() if key in declared or key in sent},
+                             stored_headers=(record.get("config") or {}).get("headers") or ())
         _admin_limits(ctx, {**values, **clean}, definition, before=before)
         if not _is_owner(ctx):
             saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
@@ -1415,7 +1432,7 @@ class EngineService:
                                        check={"outcome": "error", "findings": [dup]})
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         check_summary = before["check"] or {}
-        observed: dict[str, Any] = {}
+        observed: dict[str, Any] | None = None  # None: no check ran, the record keeps its observations
         if connection_changed and not disabled:
             _refuse_protocol_probe(clean)
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
@@ -1573,7 +1590,7 @@ class EngineService:
                                                  replace=existing is not None, existing=existing,
                                                  drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")),
                                                  **({"in_transaction": recheck} if recheck is not None else {}),
-                                                 **({"observations": observations} if observations else {}))
+                                                 **({"observations": observations} if observations is not None else {}))
             except protocol_description_store.DescriptionRefused as refused:
                 raise EngineRouteError(status.HTTP_409_CONFLICT, "protocol_description_changed", str(refused),
                                        field="protocol_description") from None
