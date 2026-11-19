@@ -1279,19 +1279,6 @@
               "id_keys": ["id"],
               "where": {"key": "task", "equals": "automatic-speech-recognition"}
             }
-          },
-          {
-            "id": "all_models",
-            "offers": "model",
-            "method": "GET",
-            "path": "/v1/models",
-            "from": "origin",
-            "capability": "transcription",
-            "list": {
-              "shape": "array_of_objects",
-              "select": "/data",
-              "id_keys": ["id"]
-            }
           }
         ],
         "route_probes": true,

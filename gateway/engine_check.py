@@ -705,11 +705,12 @@ def _entry_ids(items: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for item in items if isinstance(items, list) else ():
         if isinstance(item, str) and item.strip():
-            if not read.get("where"):
-                out.append((item.strip(), item.strip()))
+            out.append((item.strip(), item.strip()))  # a bare id names no field, so a where keeps it
         elif isinstance(item, Mapping):
             where = read.get("where")
-            if where and item.get(where["key"]) != where["equals"]:
+            # An entry that names the field must hold the text; one that does not name it is kept (a server
+            # that names no task lists only what it serves).
+            if where and where["key"] in item and item[where["key"]] != where["equals"]:
                 continue
             ident = _first_text(item, read.get("id_keys") or ("id",))
             if ident:

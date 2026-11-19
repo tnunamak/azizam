@@ -275,7 +275,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["key", "equals"],
-          "description": "Keep only the entries (objects) whose key holds exactly this text. An entry without the key is dropped; a list with no kept entry is empty, so a later probe may read the whole list.",
+          "description": "Drop the entries (objects) whose key holds any other value. An entry without the key is kept: a server that names no task for its models lists only what it serves.",
           "properties": {"key": {"type": "string", "minLength": 1}, "equals": {"type": "string", "minLength": 1}}
         }
       }

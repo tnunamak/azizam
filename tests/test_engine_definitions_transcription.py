@@ -128,20 +128,20 @@ def test_a_list_read_with_a_where_keeps_only_the_entries_that_match():
     assert [row["id"] for row in found["ids"]] == [ASR_ID]
 
 
-def test_a_list_read_with_a_where_drops_entries_that_have_no_such_field():
+def test_a_list_read_with_a_where_keeps_entries_that_name_no_such_field_and_drops_other_values():
     found = engine_check.read_list({"data": [{"id": "a"}, {"id": "b", "task": 3}]}, ASR_READ)
-    assert found["ids"] == []
+    assert [row["id"] for row in found["ids"]] == ["a"]
 
 
-def test_the_definitions_model_probes_read_the_task_first_then_the_whole_list():
-    probes = [p for p in _definition()["probes"]["lists"] if p["offers"] == "model"]
-    assert [p["id"] for p in probes][0] != [p["id"] for p in probes][-1]
-    first = engine_check.read_list(SPEACHES_MODELS, probes[0]["list"])
-    assert [row["id"] for row in first["ids"]] == [ASR_ID]
-    # A server that names no task (vLLM, LocalAI style) is read whole by the next probe.
+def test_the_definitions_one_model_probe_keeps_speech_recognition_models_only():
+    (probe,) = [p for p in _definition()["probes"]["lists"] if p["offers"] == "model"]
+    assert [row["id"] for row in engine_check.read_list(SPEACHES_MODELS, probe["list"])["ids"]] == [ASR_ID]
+    # A server that names no task (vLLM, LocalAI style) lists only what it serves: every entry is kept.
     plain = {"object": "list", "data": [{"id": "whisper-large-v3", "object": "model"}]}
-    assert engine_check.read_list(plain, probes[0]["list"])["ids"] == []
-    assert [row["id"] for row in engine_check.read_list(plain, probes[-1]["list"])["ids"]] == ["whisper-large-v3"]
+    assert [row["id"] for row in engine_check.read_list(plain, probe["list"])["ids"]] == ["whisper-large-v3"]
+    # A speaches with only text-to-speech models downloaded offers no transcription model, not its voices' models.
+    speech_only = {"object": "list", "data": [row for row in SPEACHES_MODELS["data"] if row["task"] != "automatic-speech-recognition"]}
+    assert engine_check.read_list(speech_only, probe["list"])["ids"] == []
 
 
 # ---- (c) the multipart real test -----------------------------------------------------------------------------------
