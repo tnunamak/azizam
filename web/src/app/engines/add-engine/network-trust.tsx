@@ -14,6 +14,10 @@ const HOW: Record<RemotePlan["transport"], string> = {
 /** The reason every save stays off while a plain http network has not been trusted. */
 export const TRUST_REASON = "Tick “I trust this network” to add this server. It is reached with plain http.";
 
+/** What the owner trusts when the address is in the range mesh networks use. Azizam cannot tell a mesh from a shared network. */
+export const SHARED_SPACE_NOTE =
+  "This address is in the range Tailscale and other mesh networks use (100.64 to 100.127). Internet providers also use it for shared networks, so tick only if it is your own mesh: the network can reach this server, and so can every device on it.";
+
 /** True while the owner has been asked to trust the network and has not said yes. */
 export function trustPending(remote: RemotePlan | undefined, trusted: boolean): boolean {
   return Boolean(remote?.trust_needed) && !trusted;
@@ -43,6 +47,7 @@ export function NetworkTrust({
         <b className="font-medium">{`Azizam will call ${remote.network} on your network`}</b>
       </p>
       <p className="text-meta text-muted-foreground">{HOW[remote.transport]}</p>
+      {remote.shared_space && <p className="text-meta text-muted-foreground">{SHARED_SPACE_NOTE}</p>}
       {remote.trust_needed && (
         <div className="flex items-center gap-2">
           <Checkbox
@@ -62,7 +67,9 @@ export function NetworkTrust({
           {error}
         </p>
       )}
-      {trustPending(remote, trusted) && !error && <Note tone="warn">{TRUST_REASON}</Note>}
+      {trustPending(remote, trusted) && !error && (
+        <Note tone="warn">{remote.transport === "tls" ? "Tick “I trust this network” to add this server." : TRUST_REASON}</Note>
+      )}
     </div>
   );
 }
