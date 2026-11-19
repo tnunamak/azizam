@@ -474,6 +474,14 @@
   {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.engine_admin.engine_lifecycle",
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/lifecycle",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
     "handler": "gateway.transition_admin.start_transition",
     "method": "POST",
     "path": "/admin/api/engines/domains/{domain}/transitions",

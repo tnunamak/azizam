@@ -653,6 +653,11 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "owner_only": false
   },
+  "POST /admin/api/engines/{service_id}/lifecycle": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
+  },
   "POST /admin/api/engines/domains/{domain}/transitions": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner role required",
