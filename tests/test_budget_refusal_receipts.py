@@ -172,3 +172,16 @@ def test_old_ledger_loses_profile_id_keeps_its_rows_and_is_backed_up(tmp_path):
     with pytest.raises(BudgetExceeded):
         reserve_provider_spend(_profile(), _provider(spend_caps_usd={"daily": "1.00"}), Cost(Decimal("0.01"), "price-table", "typesafe"),
                                path=ledger, now=NOW)
+
+
+def test_a_running_request_settles_past_its_cap_and_the_next_one_is_refused(tmp_path):
+    """The site says: "Spend caps use recorded spend. Requests already running can exceed a cap before their final
+    cost is known." A request admitted under its estimate keeps its full settled cost; the cap then refuses the next."""
+    from gateway.providers import settle_provider_spend
+    ledger, provider = tmp_path / "ledger.db", _provider(spend_caps_usd={"daily": "1.00"})
+    running = reserve_provider_spend(_profile(), provider, Cost(Decimal("0.10"), "price-table", "typesafe"), path=ledger, now=NOW)
+    settled = settle_provider_spend(running, Cost(Decimal("1.50"), "provider-usage", "typesafe"), path=ledger, now=NOW + 5)
+    assert settled.usd == Decimal("1.50")
+    with pytest.raises(BudgetExceeded) as caught:
+        reserve_provider_spend(_profile(), provider, Cost(Decimal("0.01"), "price-table", "typesafe"), path=ledger, now=NOW + 10)
+    assert caught.value.refusal() == {"code": "budget_exceeded", "limit": {"period": "daily", "scope": "provider"}}
