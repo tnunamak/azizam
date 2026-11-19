@@ -110,7 +110,7 @@ def fetch_for(node_list: dict, *, stats: dict | None = None):
     """A fake engine for the check: the status page and the node list answer; every other path is not found."""
     seen: list[str] = []
 
-    async def fetch(method, url, *, headers, cap_bytes, timeout_s, content=None):
+    async def fetch(method, url, **_sent):
         path = "/" + url.split("//", 1)[1].split("/", 1)[1] if url.count("/") > 2 else "/"
         seen.append(f"{method} {path}")
         if method == "GET" and path == "/system_stats":
@@ -119,36 +119,33 @@ def fetch_for(node_list: dict, *, stats: dict | None = None):
             return Answer(method=method, url=url, status=200, body=json.dumps(node_list).encode())
         return Answer(method=method, url=url, status=404, body=b"{}")
 
-    fetch.seen = seen  # type: ignore[attr-defined]
-    return fetch
+    return fetch, seen
 
 
 # -- 1. the added record is the graph service --------------------------------------------------------------------
 
 
 def test_added_comfy_record_is_the_images_graph_service(live, install):
+    port = free_port()
     service = service_over(live, install)
-    created = add_engine(service, install.folder, free_port())
+    created = add_engine(service, install.folder, port)
     service_id = created["service_id"]
 
     # The saved record is data: a node-graph protocol record with the address the port implies and a literal start command.
     stored = service.store.get_service_registry()["services"][service_id]
     assert stored["enabled"] is True
-    assert sorted(stored["capabilities"] if "capabilities" in stored else stored["config"]["capabilities"]) == sorted(
-        ["images", "generations", "videos", "audio.generate"])
-    process = stored["config"]["process"] if "process" in stored.get("config", {}) else stored["process"]
+    assert stored["capabilities"] == ["images", "generations", "videos", "audio.generate"]
+    assert stored["config"]["protocol"] == "node-graph" and stored["config"]["address"] == f"http://127.0.0.1:{port}"
     real = os.path.realpath(install.folder)
-    assert process["start"][:2] == [f"{real}/.venv/bin/python", f"{real}/main.py"]
-    assert process["start"][2:4] == ["--listen", "127.0.0.1"]
+    assert stored["process"]["start"] == [f"{real}/.venv/bin/python", f"{real}/main.py", "--listen", "127.0.0.1",
+                                          "--port", str(port)]
 
     # The gateway loads the saved registry, and each graph family is that record.
     proxy.reload_runtime_config()
     for family in FAMILIES:
         view = proxy._graph_service(family)
-        assert view.service_id == service_id, family
-        assert view.enabled is True, family
-    assert proxy.DERIVED.GRAPH_HOST == created["address"] if "address" in created else True
-    assert proxy.DERIVED.GRAPH_HOST.startswith("http://127.0.0.1:")
+        assert (view.service_id, view.enabled, view.host) == (service_id, True, f"http://127.0.0.1:{port}"), family
+    assert proxy.DERIVED.GRAPH_HOST == f"http://127.0.0.1:{port}" and proxy.DERIVED.GRAPH_ENABLED is True
 
 
 # -- 2. offerings follow the node list ---------------------------------------------------------------------------
@@ -172,8 +169,8 @@ def test_offerings_are_the_workflows_whose_requires_the_inventory_satisfies():
 
 
 def test_the_check_reads_the_node_list_and_reports_the_offerings(live, install):
-    service = service_over(live, install, workflow_manifests=lambda: MANIFESTS,
-                           fetch=fetch_for(object_info(*[n for n in FULL_LIST if n != "TileScaler"])))
+    fetch, seen = fetch_for(object_info(*[n for n in FULL_LIST if n != "TileScaler"]))
+    service = service_over(live, install, workflow_manifests=lambda: MANIFESTS, fetch=fetch)
     body = {"definition": DEFINITION, "values": {"address": "http://127.0.0.1:40123"}}
     check = asyncio.run(service.check(OWNER, body))
 
@@ -181,14 +178,13 @@ def test_the_check_reads_the_node_list_and_reports_the_offerings(live, install):
     assert [row["id"] for row in workflows["offered"]] == ["draw", "restyle"]
     assert [row["id"] for row in workflows["unavailable"]] == ["scale"]
     assert workflows["unavailable"][0]["missing"][0]["name"] == "TileScaler"
-    assert service.fetch.seen.count("GET /object_info") == 1  # the node list is read once, not once per workflow
+    assert seen.count("GET /object_info") == 1  # the node list is read once, not once per workflow
 
 
 def test_a_node_list_cut_short_offers_nothing_rather_than_a_wrong_answer():
     # The engine's real list holds a few thousand nodes; a list that hit the entry cap is not a full inventory.
     big = object_info(*(f"Node{i}" for i in range(60)))
-    read = engine_check.read_list({"shape": "object_keys", "max_entries": 10}, Answer(
-        method="GET", url="http://127.0.0.1:1/object_info", status=200, body=json.dumps(big).encode()))
+    read = engine_check.read_list(big, {"shape": "object_keys", "max_entries": 10})
     assert read["truncated"] is True and len(read["ids"]) == 10
 
 
@@ -223,7 +219,7 @@ def test_a_first_image_goes_through_the_added_record_to_the_engine(live, install
         response = asyncio.run(drive())
         trace = rig.trace()
 
-    assert response.status_code == 200, response.text
+    assert response is not None and response.status_code == 200, response.text
     items = response.json()["data"]
     assert len(items) == 1
     import base64
@@ -243,9 +239,9 @@ def test_the_template_refuses_a_folder_with_no_main_py(live, install):
     service = service_over(live, install)
     with pytest.raises(Exception) as caught:
         add_engine(service, install.bare, free_port())
+    assert getattr(caught.value, "code", None) == "process_template_refused"
     assert "main.py" in str(caught.value)
-    assert getattr(caught.value, "code", "process_template_refused") == "process_template_refused"
-    assert service.store.get_service_registry().get("services") in ({}, None) or not service.store.get_service_registry()["services"]
+    assert not service.store.get_service_registry().get("services")  # nothing was saved
 
 
 def test_the_shipped_definition_names_no_engine_product_and_asks_for_one_folder_and_one_port():
