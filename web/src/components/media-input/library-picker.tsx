@@ -444,12 +444,9 @@ export function LibraryPicker({
                           data-stuck={stuck || undefined}
                           className={cn(
                             "text-foreground bg-background sticky -top-1 z-20 border-b pt-1 pb-2 text-base font-medium",
-                            // Pinned: a hairline, and the tiles fade in under it rather than being cut flat (the fade
-                            // starts below the hairline, which sits on the heading's own bottom edge). Its first 8 px are
-                            // solid, so the cut-off tops of the captions passing under never show as torn letters.
-                            stuck
-                              ? "border-border after:from-background after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%+1px)] after:h-5 after:bg-linear-to-b after:from-40% after:to-transparent"
-                              : "border-transparent",
+                            // Pinned: a hairline, and what passes under is cut flat at it, as the Android photo picker
+                            // and iOS lists do. A fade under the line left half-visible caption letters (11-18 visual review).
+                            stuck ? "border-border" : "border-transparent",
                           )}
                         >
                           {group.key === "undated" ? (

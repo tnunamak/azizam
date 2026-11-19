@@ -1260,10 +1260,8 @@ test("a day's heading stays at the top of the scroll area while its pictures pas
   const bodyTop = (await body.boundingBox())!.y;
   expect(Math.abs((await pinned.boundingBox())!.y - bodyTop)).toBeLessThanOrEqual(1);
   expect(await pinned.evaluate((el) => getComputedStyle(el).borderBottomColor)).not.toBe("rgba(0, 0, 0, 0)");
-  // The fade under it starts below the hairline, so it does not paint over it.
-  expect(await pinned.evaluate((el) => parseFloat(getComputedStyle(el, "::after").top))).toBeGreaterThanOrEqual(
-    await pinned.evaluate((el) => el.clientHeight + 1),
-  );
+  // Nothing fades under it: what passes under is cut flat at the hairline, so no half-faded caption letters show.
+  expect(await pinned.evaluate((el) => getComputedStyle(el, "::after").content)).toBe("none");
   // The heading's surface is opaque, and the header does not draw a second edge above it.
   expect(await pinned.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
   expect(await header.evaluate((el) => getComputedStyle(el).borderBottomColor)).toBe("rgba(0, 0, 0, 0)");
