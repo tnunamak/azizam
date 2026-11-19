@@ -37,7 +37,7 @@ export function SignInConnections({ empty }: { empty: ReactNode }) {
     >
       <div className="p-4">
         {isPending ? (
-          <Skeleton className="h-10 w-full" />
+          <Skeleton role="status" aria-label="Loading signed-in apps" className="h-10 w-full" />
         ) : isError ? (
           <ErrorState
             message="Couldn't load your connections."
