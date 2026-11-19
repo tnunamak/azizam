@@ -1239,12 +1239,14 @@ class PreHeaderDisconnectRaceTests(unittest.IsolatedAsyncioTestCase):
                 send_llm_execution_request(execution_request, disconnect_watcher=watcher)
             )
             try:
-                await asyncio.wait_for(stalling_client.send_started.wait(), timeout=1)
+                # Upper bounds only (a full suite on a loaded host overran 1 s): a dispatch the disconnect did not
+                # cancel ends in the client's 5 s read timeout instead, which assertRaises still refuses.
+                await asyncio.wait_for(stalling_client.send_started.wait(), timeout=10)
                 disconnect_now.set()
 
                 with self.assertRaises(ClientDisconnectedBeforeHeaders):
-                    await asyncio.wait_for(dispatch_task, timeout=1)
-                self.assertTrue(await asyncio.wait_for(stalling_client.send_cancelled.wait(), timeout=1))
+                    await asyncio.wait_for(dispatch_task, timeout=10)
+                self.assertTrue(await asyncio.wait_for(stalling_client.send_cancelled.wait(), timeout=10))
                 self.assertTrue(stalling_client.closed)
                 await watcher.aclose()
             finally:
