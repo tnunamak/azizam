@@ -107,7 +107,7 @@ _SDK_TRANSCRIPTION_FIELDS = frozenset(Transcription.__annotations__)
 _MERGEABLE_TRANSCRIPTION_FIELDS = frozenset({"text", "usage"})
 # A verbose_json reply adds these (OpenAI's verbose transcription object); each is merged by ``_merge_verbose``.
 _VERBOSE_TRANSCRIPTION_FIELDS = frozenset({"task", "language", "duration", "segments", "words"})
-_WHISPER_FRAMES_PER_SECOND = 100
+_SEEK_FRAMES_PER_SECOND = 100
 _SDK_DURATION_USAGE_FIELDS = frozenset(UsageDuration.__annotations__)
 _SDK_TOKEN_USAGE_FIELDS = frozenset(UsageTokens.__annotations__)
 _SDK_TOKEN_DETAIL_FIELDS = frozenset(UsageTokensInputTokenDetails.__annotations__)
@@ -1721,8 +1721,8 @@ def _merge_verbose(
         for segment in payload["segments"]:
             shifted = _shift_timed(segment, offset, limit)
             if isinstance(segment.get("seek"), int) and not isinstance(segment.get("seek"), bool):
-                # Whisper's seek counts 10 ms frames from the start of the audio it was given.
-                shifted["seek"] = segment["seek"] + round(offset * _WHISPER_FRAMES_PER_SECOND)
+                # The verbose_json seek field counts 10 ms frames from the start of the audio the engine was given.
+                shifted["seek"] = segment["seek"] + round(offset * _SEEK_FRAMES_PER_SECOND)
             if isinstance(segment.get("words"), list):
                 shifted["words"] = [_shift_timed(word, offset, limit) for word in segment["words"]]
             shifted["id"] = len(segments)
