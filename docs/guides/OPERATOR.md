@@ -52,8 +52,8 @@ and protocol fields.
 
 ## Add local engines
 
-Open `/engines/` to manage local services. A service record should describe
-an engine that already exists and is reachable by the gateway.
+Open `/engines/` to manage local services. For an engine you run yourself,
+create a service record for an engine the gateway can already reach.
 
 For a generic OpenAI-compatible chat engine:
 
@@ -72,6 +72,26 @@ to host `127.0.0.1` is usually not reachable from inside the container.
 Engine-specific behavior belongs in service data, not gateway code. Use
 service records, model mappings, and configured transforms rather than code
 branches for an engine.
+
+### Add a workflow engine Azizam starts
+
+1. Open **Settings → Engine folders** and choose the folders engines may run
+   from. Azizam refuses the whole computer as a folder and stores each
+   allowed folder by its real path. Removing a folder stops new saves from
+   that folder. An engine you already saved keeps running until you remove
+   it or turn host commands off.
+2. Open **Engines → Add engine** and choose the workflow engine. Pick its
+   install folder, the one that holds `main.py`. Azizam looks for Python in
+   `.venv` first, then in `venv`, inside that folder. It picks a free port
+   and shows the exact command in a preview before you save.
+3. Azizam starts the engine and waits for it to answer on its status path.
+   It lists which bundled workflows the engine can run. For a workflow
+   that needs a missing node or model file, it lists what is missing.
+   Workflows you add yourself are not checked here.
+4. Azizam sends each kind of work, such as pictures, video, or sound, to
+   one engine. If another engine already handles that work, **Add engine**
+   shows which engine will keep it or take it. Azizam saves only after
+   you confirm.
 
 ## Add remote providers
 
