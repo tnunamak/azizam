@@ -265,7 +265,7 @@ export default function PeoplePage() {
   };
   const gateCopy = {
     loading: {
-      title: "Access plans must load first",
+      title: "Loading access plans",
       description: "You can invite someone once your access plans load.",
     },
     failed: {
@@ -425,12 +425,10 @@ export default function PeoplePage() {
         }
       >
         {/* The reason "Invite someone" is dimmed, on the tabs that list people or
-            invites. While plans load, the skeleton says it; on the Access plans
-            tab, the card below says what failed. */}
+            invites. On the Access plans tab, the card below says what failed. */}
         {owner &&
         planGate !== "ready" &&
-        planGate !== "loading" &&
-        !(planGate === "failed" && tab === "plans") &&
+        !(planGate === "failed" && tabFailed) &&
         !gateInEmptyState ? (
           <StatusLine
             compact

@@ -219,10 +219,10 @@ test("fallback model list keeps capabilities and leaves unknown rows unclassifie
     return response({ choices: [{ message: { content: "ok" } }] });
   });
   render(<TryPage />);
-  await screen.findByText("We couldn’t tell why the model list didn’t load.");
+  await screen.findByText("We couldn’t load the models. Nothing was changed. Try again.");
   // Run waits for a list. Retry prepares the key and reads the fallback.
   expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Try again to load the (models|workflows)$/ }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/openai/v1/models", expect.anything(),
   ));
@@ -247,8 +247,8 @@ test("fallback does not send an unknown model as chat", async () => {
     return response({});
   });
   render(<TryPage />);
-  await screen.findByText("We couldn’t tell why the model list didn’t load.");
-  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText("We couldn’t load the models. Nothing was changed. Try again.");
+  fireEvent.click(screen.getByRole("button", { name: /^Try again to load the (models|workflows)$/ }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/openai/v1/models", expect.anything(),
   ));
@@ -298,7 +298,7 @@ test("a missing catalog leaves no invented model selected", async () => {
     response(url.includes("workflows") ? workflows : {}, !url.includes("/me/api/models/catalog")),
   );
   render(<TryPage />);
-  await screen.findByText("We couldn’t tell why the model list didn’t load.");
+  await screen.findByText("We couldn’t load the models. Nothing was changed. Try again.");
   expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
   expect(screen.queryByText(/Unverified model/)).toBeNull();
 });
@@ -346,11 +346,11 @@ test.each(["http", "transport"])(
     );
     await userEvent.click(screen.getByRole("tab", { name: "Workflow" }));
     expect(
-      await screen.findByText("We couldn’t tell why the workflow list didn’t load."),
+      await screen.findByText("We couldn’t load the workflows. Nothing was changed. Try again."),
     ).toBeVisible();
     fetchMock.mockImplementation(async () => response(workflows));
     fireEvent.click(
-      screen.getByRole("button", { name: "Retry" }),
+      screen.getByRole("button", { name: /^Try again to load the (models|workflows)$/ }),
     );
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
@@ -379,11 +379,11 @@ test.each(["http", "transport"])(
     );
     await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
     expect(
-      await screen.findByText("We couldn’t tell why the model list didn’t load."),
+      await screen.findByText("We couldn’t load the models. Nothing was changed. Try again."),
     ).toBeVisible();
     fetchMock.mockImplementation(async () => response(models));
     fireEvent.click(
-      screen.getByRole("button", { name: "Retry" }),
+      screen.getByRole("button", { name: /^Try again to load the (models|workflows)$/ }),
     );
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),

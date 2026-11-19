@@ -332,6 +332,7 @@ function InstanceSection() {
       ) : isError ? (
         <SectionLoadFailed
           thing="instance settings"
+          className=""
           error={error}
           onRetry={() => void refetch()}
         />
@@ -454,6 +455,7 @@ function DefaultsSection() {
       ) : !data ? (
         <SectionLoadFailed
           thing="access plans"
+          className=""
           error={error}
           onRetry={() => void refetch()}
         />
@@ -635,6 +637,7 @@ function MediaSection() {
       ) : isError ? (
         <SectionLoadFailed
           thing="media admission settings"
+          className=""
           error={error}
           onRetry={() => void refetch()}
         />
@@ -670,6 +673,7 @@ function HostCommandsSection() {
       ) : isError ? (
         <SectionLoadFailed
           thing="the computer command setting"
+          className=""
           error={error}
           onRetry={() => void refetch()}
         />
@@ -1092,6 +1096,7 @@ function ExtensionsSection() {
       ) : isError ? (
         <SectionLoadFailed
           thing="extensions"
+          className=""
           error={error}
           onRetry={() => void refetch()}
         />

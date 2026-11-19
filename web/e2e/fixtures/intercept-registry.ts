@@ -385,6 +385,7 @@ export const REGISTRY: Endpoint[] = [
   }),
   reads("/me/api/jobs", { required: ["/jobs", "/next_cursor"] }),
   reads("/me/api/media", { required: ["/assets"] }),
+  reads("/me/api/mcp/connections", { required: ["/connections"] }),
   reads("/me/api/models/catalog", { required: ["/aliases", "/models"] }),
   // Home's one-time request history notice reads this; a capture stubs it due.
   reads("/me/api/retention", { required: ["/notice_due"] }),

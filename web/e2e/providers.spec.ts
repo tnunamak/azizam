@@ -219,7 +219,7 @@ for (const [state, theme, width] of [
       ).toBeVisible();
     } else {
       await expect(
-        page.getByRole("button", { name: "Retry providers" }),
+        page.getByRole("button", { name: /^Try again/ }),
       ).toBeVisible();
     }
     await inspect(page, `providers-${state}-${theme}-${width}`);

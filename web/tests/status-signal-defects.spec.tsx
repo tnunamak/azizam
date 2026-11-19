@@ -104,8 +104,12 @@ it("reports an engine list load failure with unknown engine states and working R
 it.each([403, 500, 503])("reports member status HTTP %s errors by status, blaming no layer", async (status) => {
   vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(status));
   mountHealthErrorPage(<MemberStatus />);
-  expect(await screen.findByText("Couldn’t check your status")).toBeVisible();
-  expect(screen.getByText("The gateway returned an error. Try again.")).toBeVisible();
+  expect(await screen.findByText("Couldn’t load your status")).toBeVisible();
+  expect(screen.getByText(
+    status === 403
+      ? "Your account does not have permission for this action. Ask the gateway owner to check your access."
+      : "We couldn’t load your status. Nothing was changed. Try again.",
+  )).toBeVisible();
   // The status code is kept for whoever needs it, out of the main sentence.
   expect(screen.getByText("Technical details")).toBeInTheDocument();
   expect(screen.getByText(new RegExp(`HTTP ${status}`))).toBeInTheDocument();
@@ -116,8 +120,8 @@ it.each([403, 500, 503])("reports member status HTTP %s errors by status, blamin
 it.each([new TypeError("Failed to fetch"), new Error("Unexpected failure")])("keeps unclassified member status errors neutral: %s", async (error) => {
   vi.spyOn(productApi, "status").mockRejectedValue(error);
   mountHealthErrorPage(<MemberStatus />);
-  expect(await screen.findByText("Couldn’t check your status")).toBeVisible();
-  expect(screen.getByText("We couldn’t tell where this stopped. Try again.")).toBeVisible();
+  expect(await screen.findByText("Couldn’t load your status")).toBeVisible();
+  expect(screen.getByText("We couldn’t load your status. Nothing was changed. Try again.")).toBeVisible();
   expect(screen.queryByText(/could not be reached/)).toBeNull();
   expect(screen.queryByText(/Check your connection/)).toBeNull();
   expect(screen.queryByText(/check failed \(HTTP/)).toBeNull();

@@ -101,11 +101,11 @@ it.each(["model", "workflow"])(
     expect(
       await screen.findByText(
         section === "workflow"
-          ? "Workflows couldn’t be loaded"
-          : "Models couldn’t be loaded",
+          ? "Couldn’t load the workflows"
+          : "Couldn’t load the models",
       ),
     ).toBeVisible();
-    const retry = screen.getByRole("button", { name: "Retry" });
+    const retry = screen.getByRole("button", { name: /^Try again/ });
     failing = false;
     fetchMock.mockClear();
     await user.click(retry);

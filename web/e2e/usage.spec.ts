@@ -126,7 +126,7 @@ test("usage error light at 1440px has no serious axe violation", async ({ page }
   );
   await page.goto("/usage/");
   await expect(
-    page.getByText("Usage could not be loaded", { exact: true }),
+    page.getByText("Couldn’t load your usage", { exact: true }),
   ).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await expectNoSeriousAxeViolations(page);

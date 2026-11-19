@@ -1,3 +1,5 @@
+import { isNetworkFailure } from "@/lib/network-error";
+
 export type ErrorRecovery = "retry" | "sign-in" | "owner-help" | "refresh";
 export interface ErrorCopy {
   heading: string;
@@ -24,7 +26,7 @@ export const OUTAGE_MESSAGE =
  */
 export function isOutageError(error: unknown): boolean {
   if (error === null || error === undefined) return false;
-  if (error instanceof TypeError) return true;
+  if (isNetworkFailure(error)) return true;
   if (typeof error !== "object") return false;
   const status = "status" in error && typeof error.status === "number" ? error.status : null;
   const code = "code" in error && typeof error.code === "string" ? error.code : "";

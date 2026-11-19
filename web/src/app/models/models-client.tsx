@@ -909,6 +909,7 @@ export default function ModelsClient() {
     data: catalogData,
     isPending: catalogPending,
     isError: catalogError,
+    error: catalogFailure,
     isFetching: catalogFetching,
     refetch: refetchCatalog,
   } = useQuery({
@@ -1015,7 +1016,8 @@ export default function ModelsClient() {
         <LoadingCatalog />
       ) : catalogError ? (
         <ErrorState
-          message="We couldn't load the models. Try again."
+          thing="the models"
+          error={catalogFailure}
           onRetry={() => refetchCatalog()}
           retrying={catalogFetching}
         />

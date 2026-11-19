@@ -87,6 +87,8 @@ import { useViewer } from "@/components/shell/session";
 import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 import { RenameAppDialog, RenameKeysDialog } from "./rename";
+import { OUTAGE_MESSAGE } from "@/lib/error-copy";
+import { usePageOutage } from "@/lib/page-outage";
 import { AppKeyRows, KeylessAccessRow } from "./app-details";
 import { RequestHistorySetting } from "./request-history-setting";
 
@@ -275,6 +277,7 @@ function AppsContents() {
     data: accountData,
     isPending: accountPending,
     isError: accountError,
+    error: accountFailure,
     refetch: refetchAccount,
   } = useQuery({
     queryKey: accountKey,
@@ -900,10 +903,16 @@ function AppsContents() {
       ? apps.map((app) => ({
           queryKey: trustedAddressesKey(app.id),
           queryFn: () => listTrustedAddresses(app.id),
+          meta: { page: "apps" },
         }))
       : [],
   });
   const keylessOf = (index: number): TrustedAddress[] => keylessQueries[index]?.data ?? [];
+  // One outage, one error: the first app whose addresses failed carries the
+  // line, and its "Try again" asks every failed app again.
+  const { outage, retryAll, retrying: retryingAll } = usePageOutage("apps");
+  const firstKeylessFailed = keylessQueries.findIndex((query) => query.isError);
+  const retryKeyless = () => keylessQueries.forEach((query) => query.isError && void query.refetch());
   const firstKeylessIndex = apps.findIndex((_, index) => keylessOf(index).length > 0);
   const keysApp = apps.find((item) => item.id === renamingKeysOf) ?? null;
   const actionAppName = action
@@ -969,6 +978,16 @@ function AppsContents() {
           </Link>
         </p>
       )}
+      {outage && !accountError ? (
+        <div className="mb-4">
+          <ErrorState
+            heading="Couldn’t load some app details"
+            message={OUTAGE_MESSAGE}
+            onRetry={retryAll}
+            retrying={retryingAll}
+          />
+        </div>
+      ) : null}
       {accountPending ? (
         <div
           role="status"
@@ -980,7 +999,8 @@ function AppsContents() {
         </div>
       ) : accountError ? (
         <ErrorState
-          message="Your apps could not be loaded. Try again."
+          thing="your apps"
+          error={accountFailure}
           onRetry={() => void refetchAccount()}
         />
       ) : !accountData?.authenticated ? (
@@ -1283,7 +1303,10 @@ function AppsContents() {
                   <KeylessAccessRow
                     appName={appName}
                     addresses={keylessOf(index)}
-                    failed={keylessQueries[index]?.isError ?? false}
+                    failed={index === firstKeylessFailed}
+                    onRetry={retryKeyless}
+                    outage={outage}
+                    retrying={keylessQueries.some((query) => query.isFetching)}
                     showHint={index === firstKeylessIndex}
                   />
                 ) : null}

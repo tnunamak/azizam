@@ -310,12 +310,14 @@ describe("providers page states", () => {
     expect(screen.getAllByRole("button", { name: "Add provider" })[0]).toBeVisible();
   });
 
-  it("error: offers Retry providers", async () => {
+  it("error: offers Try again and keeps the server's words behind Technical details", async () => {
     installFetch("error");
     renderPage();
     expect(
-      await screen.findByRole("button", { name: "Retry providers" }),
+      await screen.findByRole("button", { name: "Try again to load your providers" }),
     ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Couldn’t load your providers" })).toBeVisible();
+    expect(screen.queryByText("Provider API unavailable")).toBeNull();
   });
 });
 

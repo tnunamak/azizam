@@ -392,7 +392,7 @@ test("models error catalog: light at 390px fits and passes axe", async ({
     503,
   );
   await expect(
-    page.getByText("We couldn't load the models. Try again."),
+    page.getByText("We couldn’t load the models. Nothing was changed. Try again."),
   ).toBeVisible();
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);

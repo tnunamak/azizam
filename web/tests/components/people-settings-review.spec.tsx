@@ -216,12 +216,12 @@ describe("People and Settings red-team regressions", () => {
     );
     mount(<PeoplePage />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Couldn’t load this",
+      "Couldn’t load people",
     );
-    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Try again/ })).toBeEnabled();
     await userEvent.click(screen.getByRole("tab", { name: "Invites" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t load this");
-    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t load invites");
+    expect(screen.getByRole("button", { name: /^Try again/ })).toBeEnabled();
   });
   it("shows owner-only states without retry to administrators", async () => {
     for (const path of [
@@ -735,14 +735,14 @@ describe("People and Settings red-team regressions", () => {
       mount(<PeoplePage />);
       await screen.findByText("Morgan");
       expect(
-        await screen.findByText("Access plans couldn’t be loaded"),
+        await screen.findByText("Access plans must load first"),
       ).toBeInTheDocument();
       expect(invite_()).toBeDisabled();
       vi.mocked(api.accessPlans.list).mockResolvedValue([plan]);
       await userEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() => expect(invite_()).toBeEnabled());
       expect(
-        screen.queryByText("Access plans couldn’t be loaded"),
+        screen.queryByText("Access plans must load first"),
       ).not.toBeInTheDocument();
     });
     it("offers the same retry in the Invites empty state", async () => {
@@ -754,7 +754,7 @@ describe("People and Settings red-team regressions", () => {
         await screen.findByRole("tab", { name: "Invites" }),
       );
       expect(
-        await screen.findByText("Access plans couldn’t be loaded"),
+        await screen.findByText("Access plans must load first"),
       ).toBeInTheDocument();
       const calls = vi.mocked(api.accessPlans.list).mock.calls.length;
       vi.mocked(api.accessPlans.list).mockResolvedValue([plan]);

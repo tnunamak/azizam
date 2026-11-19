@@ -204,22 +204,50 @@ export function KeylessAccessRow({
   appName,
   addresses,
   failed,
+  onRetry,
+  retrying = false,
+  outage = false,
   showHint,
 }: {
   appName: string;
   addresses: TrustedAddress[];
-  /** The list could not be read; the row says so rather than hiding. */
+  /**
+   * The list could not be read; the row says so rather than hiding. The page
+   * passes it for one app only, and `onRetry` asks every failed app again, so
+   * one outage reads as one error, not one per app.
+   */
   failed: boolean;
+  onRetry: () => void;
+  retrying?: boolean;
+  /** The whole page is down: the page offers the one retry, so this row only says so. */
+  outage?: boolean;
   showHint: boolean;
 }) {
+  if (failed && outage) {
+    return (
+      <p className={`${childBand} ${childIndent} text-meta py-2 pr-4`}>
+        Keyless access didn’t load. Nothing was changed.
+      </p>
+    );
+  }
   if (failed) {
     return (
-      <p
+      <div
         role="alert"
-        className={`${childBand} ${childIndent} text-destructive text-meta py-2 pr-4`}
+        className={`${childBand} ${childIndent} text-meta flex flex-wrap items-center gap-x-3 gap-y-1 py-2 pr-4`}
       >
-        Keyless access couldn&apos;t be loaded.
-      </p>
+        <span>Keyless access didn’t load. Nothing was changed.</span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="max-sm:min-h-11"
+          disabled={retrying}
+          onClick={onRetry}
+          aria-label="Try again to load keyless access"
+        >
+          Try again
+        </Button>
+      </div>
     );
   }
   if (addresses.length === 0) return null;

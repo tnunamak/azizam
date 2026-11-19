@@ -682,17 +682,17 @@ it("filter regression: a 503 failure retries the same filtered changes and recov
   } });
   await screen.findByText("Sam · initial-row");
   await pickChangeFilter("Change type", "Apps");
-  expect(await screen.findByText("Couldn't load changes")).toBeVisible();
+  expect(await screen.findByText("Couldn’t load changes")).toBeVisible();
   expect(screen.queryByRole("region", { name: "No matching changes" })).toBeNull();
   expect(screen.queryByText("Sam · initial-row")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("Apps");
   audit.mockClear();
   unavailable = false;
-  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await userEvent.click(screen.getByRole("button", { name: /^Try again/ }));
   expect(await screen.findByText("Sam · recovered-filter")).toBeVisible();
   expect(audit).toHaveBeenCalledTimes(1);
   expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, action_prefix: "app." }));
-  expect(screen.queryByText("Couldn't load changes")).toBeNull();
+  expect(screen.queryByText("Couldn’t load changes")).toBeNull();
 });
 
 it("filter regression: paging retains both filters and appends older matching changes", async () => {

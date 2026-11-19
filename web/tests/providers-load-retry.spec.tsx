@@ -24,7 +24,7 @@ it.each(["/admin/api/providers/-/catalog", "/admin/api/access-plans"])(
       const path = String(input);
       return path === failedPath && failing
         ? Response.json(
-            { error: { message: "Metadata load failed" } },
+            { error: { message: "We couldn’t load your providers. Nothing was changed. Try again." } },
             { status: 503 },
           )
         : Response.json(
@@ -41,10 +41,10 @@ it.each(["/admin/api/providers/-/catalog", "/admin/api/access-plans"])(
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Metadata load failed",
+      "We couldn’t load your providers. Nothing was changed. Try again.",
     );
     failing = false;
-    fireEvent.click(screen.getByRole("button", { name: "Retry providers" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Try again/ }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === failedPath),
@@ -69,7 +69,7 @@ it.each([
       }
       if (path === failedPath && failing) {
         return Response.json(
-          { error: { message: "Metadata load failed" } },
+          { error: { message: "We couldn’t load your providers. Nothing was changed. Try again." } },
           { status: 503 },
         );
       }
@@ -139,7 +139,7 @@ it.each([
         });
       }
       expect(await dialog.findByRole("alert")).toHaveTextContent(
-        "Metadata load failed",
+        "We couldn’t load your providers. Nothing was changed. Try again.",
       );
       for (const name of ["2. Key", "3. Models", "4. Access and caps"]) {
         expect(dialog.getByRole("button", { name })).toBeDisabled();
@@ -151,7 +151,7 @@ it.each([
       ).toBeDisabled();
       expect(dialog.queryByLabelText("Search providers")).toBeNull();
       failing = false;
-      fireEvent.click(dialog.getByRole("button", { name: "Retry providers" }));
+      fireEvent.click(dialog.getByRole("button", { name: /^Try again/ }));
       await waitFor(() => expect(dialog.queryByRole("alert")).toBeNull());
       // Retry restores the steps whose prerequisites were met before the
       // failure; with no provider chosen yet, later steps stay gated (SE-27).
@@ -722,13 +722,13 @@ it("lists a configured provider by name", async () => {
   }
 });
 
-it("offers Retry providers when the provider list cannot load", async () => {
+it("offers Try again when the provider list cannot load", async () => {
   const client = await renderProvidersList(() =>
     Response.json({ error: { message: "Provider API unavailable" } }, { status: 503 }),
   );
   try {
-    expect(await screen.findByRole("button", { name: "Retry providers" })).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent("Provider API unavailable");
+    expect(await screen.findByRole("button", { name: /^Try again/ })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn’t load your providers. Nothing was changed. Try again.");
     expect(screen.queryByText("No providers yet")).toBeNull();
   } finally {
     client.clear();
