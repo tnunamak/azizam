@@ -24,7 +24,7 @@ import httpx
 
 from gateway.backends.cancellation import CancellationToken
 from gateway.outbound_request import backend_query_string
-from gateway.service_registry import is_litellm_service_record
+from gateway.service_registry import engine_base_address, is_litellm_service_record
 from gateway import engine_egress
 
 LITELLM_BODY_EXECUTION_PATHS = frozenset(
@@ -196,17 +196,9 @@ def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> s
 
 
 def _base_url_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
-    env_name = str(config.get("base_url_env") or config.get("api_base_env") or "").strip()
-    if env_name:
-        env_value = str(get_env(env_name, environ=env) or "").strip()
-        if env_value:
-            return env_value.rstrip("/")
-    return str(
-        config.get("base_url")
-        or config.get("api_base")
-        or config.get("default_base_url")
-        or ""
-    ).rstrip("/")
+    """Where the gateway dials the substrate: the one address every reader of the record dials (the status grid and
+    the catalog's health probe read it through the same function)."""
+    return engine_base_address(config, env)
 
 
 def litellm_url(*, base_url: str, path: str, query: str = "") -> str:
