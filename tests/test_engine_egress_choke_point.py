@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -279,8 +280,14 @@ def test_a_publish_replaces_the_map(monkeypatch) -> None:
     assert not engine_egress.mapped_destinations()
 
 
+@cache
+def _repo_tree(path: Path) -> ast.Module:
+    # Tracked source is fixed during a worker's run. Callers only read AST nodes.
+    return ast.parse(path.read_text())
+
+
 def _function(name: str) -> ast.FunctionDef:
-    return next(node for node in ast.walk(ast.parse(Path(proxy.__file__).read_text()))
+    return next(node for node in ast.walk(_repo_tree(Path(proxy.__file__).resolve()))
                 if isinstance(node, ast.FunctionDef) and node.name == name)
 
 
@@ -427,7 +434,7 @@ def _imported_files(path: Path) -> set[Path]:
     """The repo modules one file imports (anywhere in it, relative imports included)."""
     found: set[Path] = set()
     package = _relative(path).rsplit("/", 1)[0].replace("/", ".") if "/" in _relative(path) else ""
-    for node in ast.walk(ast.parse(path.read_text())):
+    for node in ast.walk(_repo_tree(path)):
         names: list[str] = []
         if isinstance(node, ast.Import):
             names = [alias.name for alias in node.names]
@@ -506,9 +513,9 @@ def _call_name(node: ast.Call) -> str:
 class _Module:
     """One parsed module: parents, the outermost function of each node, the httpx names it binds."""
 
-    def __init__(self, path: Path, source: str | None = None) -> None:
+    def __init__(self, path: Path, source: str | None = None, *, tree: ast.Module | None = None) -> None:
         self.relative = _relative(path)
-        self.tree = ast.parse(path.read_text() if source is None else source)
+        self.tree = tree if tree is not None else ast.parse(path.read_text() if source is None else source)
         self.parent: dict[ast.AST, ast.AST] = {}
         self.owner: dict[ast.AST, str] = {}
         self.annotation: set[ast.AST] = set()
@@ -572,7 +579,10 @@ class _Module:
 
 
 def _parsed(modules: list[Path] | None = None) -> list[_Module]:
-    return [_Module(path) for path in (_MODULES if modules is None else modules) if _relative(path) != _FACTORY]
+    if modules is not None:
+        # Explicit inputs (including the generated negative control) are not cached.
+        return [_Module(path) for path in modules if _relative(path) != _FACTORY]
+    return [_Module(path, tree=_repo_tree(path)) for path in _MODULES if _relative(path) != _FACTORY]
 
 
 def _unlisted_httpx(attributes: set[str], allowed: dict, modules: list[_Module]) -> list[str]:
@@ -588,7 +598,8 @@ def _unlisted(names: set[str], allowed: dict, modules: list[_Module]) -> list[st
 
 
 def _by_relative(relative: str) -> _Module:
-    return next(module for module in _parsed() if module.relative == relative)
+    path = next(path for path in _MODULES if _relative(path) != _FACTORY and _relative(path) == relative)
+    return _Module(path, tree=_repo_tree(path))
 
 
 def test_the_scan_covers_every_module_proxy_imports_not_only_the_gateway_package() -> None:
