@@ -91,13 +91,14 @@ def test_every_field_is_one_the_running_gateway_reads():
 
 
 def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
-    """Chat and embeddings go through the model router to the engine. Speech and transcription go to the reviewed adapters, which
-    read the engine's record (the engines derived from service records). Images, reranking and
-    live voice go to fixed built-in services, so ticking them would save nothing the gateway uses
+    """Chat and embeddings go through the model router to the engine. Speech, transcription and the node-graph work (pictures,
+    video, sound) go to the reviewed adapters, which read the engine's record (the engines derived from service records).
+    Reranking and live voice go to fixed built-in services, so ticking them would save nothing the gateway uses
     (add-engine-spec.md section 8, v2)."""
-    assert set(SEED["capabilities"]) == {"chat", "embeddings", "speech", "transcription"}
+    served = {"chat", "embeddings", "speech", "transcription", "images", "videos", "audio_generate"}
+    assert set(SEED["capabilities"]) == served
     for definition in SEED["definitions"]:
-        assert set(definition["capabilities"]) <= {"chat", "embeddings", "speech", "transcription"}, definition["definition"]
+        assert set(definition["capabilities"]) <= served, definition["definition"]
         assert definition["flow"] == "detect"
         # Probe implications must refer to catalog capabilities, not arbitrary names.
         known = set(SEED["capabilities"])
@@ -225,8 +226,9 @@ def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
                                              key=engine_check.KeyInput(), fetch=fetch)
                 assert len(calls) > 3
                 assert all(call[2] == probe_s for call in calls)
-                routes = [catalog.capability(cap)["route"]["path"] for cap in definition["capabilities"]]
-                assert any(call[0] == "POST" and any(call[1].endswith(route) for route in routes) for call in calls)
+                routes = [row["route"]["path"] for row in map(catalog.capability, definition["capabilities"]) if "route" in row]
+                # A definition whose capabilities have no route of its own (node-graph work) sends no route probe.
+                assert not routes or any(call[0] == "POST" and any(call[1].endswith(route) for route in routes) for call in calls)
                 for reply_s, expected in ((None, test_s), (3, 3), (600, test_s), ("bad", test_s)):
                     calls.clear()
                     draft = dict(values)
