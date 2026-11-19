@@ -70,6 +70,7 @@ class Rig:
         rig = self
 
         async def spied(bound, request, timeouts):
+            rig.sends += 1
             rig.depth = getattr(rig, "depth", 0) + 1
             try:
                 return await real_send(bound, request, timeouts)
@@ -77,6 +78,7 @@ class Rig:
                 rig.depth -= 1
         monkeypatch.setattr(BoundTransport, "send", spied)
         self.depth = 0
+        self.sends = 0
         self.recorder.on_connect = self._on_connect
         # The ordinary client may not be built for a remote connection: that is the side door.
         real_client = engine_egress.async_client
@@ -119,6 +121,7 @@ def test_a_speech_call_reaches_the_network_only_inside_a_guarded_send(monkeypatc
 
     assert reply.status == 200
     assert rig.recorder.paths == [route]
+    assert rig.sends == 1, "one adapter request is exactly one guarded send"
     rig.assert_guarded()
 
 
@@ -134,6 +137,27 @@ def test_a_streamed_speech_call_is_guarded_too(monkeypatch) -> None:
         finally:
             await reply.aclose()
     assert run(go()) == WAV
+    assert rig.sends == 1, "one streamed request is exactly one guarded send"
+    rig.assert_guarded()
+
+
+def test_closing_a_streamed_reply_closes_the_guarded_response(monkeypatch) -> None:
+    rig = Rig(monkeypatch, "inline-tts", "speech")
+    rig.recorder.responses = [_answer(WAV, "audio/wav")]
+    closed: list[str] = []
+    real_close = bound_wire._Body.aclose
+
+    async def recording_close(body) -> None:
+        closed.append("guarded")
+        await real_close(body)
+    monkeypatch.setattr(bound_wire._Body, "aclose", recording_close)
+
+    async def go() -> None:
+        reply = await inline_tts.InlineTtsAdapter().invoke(
+            rig.conn, "speech.stream", CanonicalRequest(op="speech.stream", body=SPEECH_BODY, headers={"content-type": "application/json"}))
+        await reply.aclose()      # the caller stops early, before reading the body
+    run(go())
+    assert closed == ["guarded"], "closing the reply must close the guarded response under it"
     rig.assert_guarded()
 
 
