@@ -45,3 +45,41 @@ def test_operator_invite_steps_open_the_dialog_before_choosing_its_plan():
     operator = (ROOT / "docs/guides/OPERATOR.md").read_text(encoding="utf-8")
     people = _section(operator, "Manage people and access plans")
     assert people.index("Invite someone") < people.index("**Access plan**")
+
+
+def _web_text():
+    files = (ROOT / "web/src").rglob("*.tsx")
+    return "\n".join(p.read_text(encoding="utf-8") for p in files if ".spec." not in p.name)
+
+
+def test_owner_docs_name_the_choices_that_turn_on_the_create_buttons():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    operator = (ROOT / "docs/guides/OPERATOR.md").read_text(encoding="utf-8")
+    key_step = readme.split("4. Open **Apps & keys**", 1)[1].split("\n5. ", 1)[0]
+    for text in (key_step, operator):
+        for label in ("**You**", "**A service**", "Create app and key", "Create another key"):
+            assert label in text, label
+    for people in (
+        _section(readme, "Share with family or friends"),
+        _section(operator, "Manage people and access plans"),
+    ):
+        assert "Allow anyone" in people and "Create invite link" in people
+        assert "127.0.0.1" in people
+
+
+def test_member_guide_names_only_controls_the_screens_have():
+    guide = (ROOT / "docs/guides/FOR_MEMBERS.md").read_text(encoding="utf-8")
+    web = _web_text()
+    for gone in ("Gateway check", "Continue to Home"):
+        assert gone not in guide, gone
+        assert f">{gone}<" not in web and f"\"{gone}\"" not in web, gone
+    for label in ("I’ve saved it", "Set up", "Apps & keys"):
+        assert label in guide and label in web, label
+
+
+def test_setup_guide_gets_the_first_key_from_apps_and_covers_a_docker_engine():
+    setup = (ROOT / "docs/FIRST_RUN_SETUP.md").read_text(encoding="utf-8")
+    assert "mint the first App" not in setup and "mint a runtime key" not in setup
+    assert "Mint the first" not in setup
+    assert "### Engine in its own Docker container on the same computer" in setup
+    assert "`litellm`" in setup and "AZIZAM_DOCKER_GATEWAY" in setup

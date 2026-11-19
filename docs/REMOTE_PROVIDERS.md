@@ -10,7 +10,7 @@ references, never plaintext keys.
 
 Open **Providers** and select **Add provider**. Choose a shipped preset or a
 generic compatible endpoint, enter a key or environment-variable name, and
-run **Gateway check**. The check lists models; presets can also declare an
+run **Check provider connection**. The check lists models; presets can also declare an
 authentication probe when model listing alone does not verify the key.
 Changing the preset or endpoint clears the pasted key, environment reference,
 and previous check results. Enter the credential again for the new destination.

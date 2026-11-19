@@ -18,7 +18,7 @@ Keep your API key, which starts with `opk_`, private by keeping it out of public
 1. Open the invitation link.
 2. Create an account, or sign in with the configured identity provider.
 3. Save the API key when the page shows it.
-4. Continue to Home.
+4. Choose **I’ve saved it** to go to Home.
 
 The key is shown once. If you lose it, create a new key from
 `/apps/`, or ask the owner to help you.
@@ -27,11 +27,13 @@ An invitation can be used once before it expires; if your link no longer works, 
 
 ## Connect an app from Home
 
-1. Open `/`.
-2. Choose an app card.
-3. Create or select a key.
-4. Copy the base URL and key into your app.
-5. Use **Gateway check**, then send a message from your app.
+1. Open `/`. For a quick first chat, type a message in the box on Home and
+   choose **Send**.
+2. To connect an app, choose your app's card on Home. It opens **Apps & keys**.
+3. Choose **Set up** on the app. The Connect page shows the base URL and the
+   model. Use the key you saved, or create a new one.
+4. Copy the base URL, key and model into your app.
+5. Send a message from your app.
 
 For OpenAI-compatible clients, use this base URL:
 
@@ -49,7 +51,7 @@ That loopback URL works only on the device that runs the gateway. If your app
 runs on another phone, laptop, container, or server, ask the owner for the
 gateway URL that is reachable from that device.
 
-**Gateway check** tests the gateway with a real request. It does not test your app settings; the message from your app checks those settings.
+A message sent from Home tests the gateway with a real request. It does not test your app settings; the message from your app checks those settings.
 
 The page shows only capabilities that your access plan and the gateway can use.
 If the gateway has no available model for a capability, that capability can be
