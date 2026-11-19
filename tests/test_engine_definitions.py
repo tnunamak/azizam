@@ -45,6 +45,19 @@ def test_the_seed_holds_its_definitions_with_any_openai_compatible_server_first(
                 assert isinstance(text, str) and text.strip(), (owner, row.get("code"), part)
 
 
+def test_public_catalog_names_the_slots_of_a_definition_with_a_process_template_and_nothing_else():
+    rows = {row["definition"]: row for row in load_engine_catalog().public()["definitions"]}
+    assert rows["workflow-image-engine"]["process_slots"] == {
+        "folder": {"type": "path", "kind": "dir", "locate": ["main.py"]},
+        "port": {"type": "port", "kind": None, "locate": []},
+    }
+    for definition_id, row in rows.items():
+        if definition_id != "workflow-image-engine":
+            assert row["process_slots"] is None, definition_id
+        # The command itself stays out of the catalog; process-preview returns it.
+        assert "process_template" not in row
+
+
 def test_every_secret_field_is_write_only():
     for definition in SEED["definitions"]:
         for field in definition["fields"]:
