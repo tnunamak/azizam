@@ -229,24 +229,37 @@ origin-bound credential block. Ordinary connection headers cannot hold keys.
 
 ## This computer, or another computer on your network
 
-By default a protocol (http-v1) engine runs on this computer. Its address must be
-loopback, such as `http://127.0.0.1:7860`. Container hostnames, LAN addresses and
-public hostnames are refused without a DNS lookup. A record marked paid or remote
-is refused at save, because this route has no paid-provider access or spend ledger.
-An older refused record can remain unchanged while you edit other services, or you can
-disable it. Other edits and re-enabling it must pass the current check. Use the
-existing provider route for those records.
+1. Open Engines, then Add engine.
+2. Under **Where does it run?**, choose **On another computer on my network**.
+3. Enter the engine address. Azizam suggests a network from that address.
+4. Check that it matches the network you trust before you save.
+5. Tick **I trust this network** only if you know the address belongs to your own network.
 
-An owner can also add an http-v1 engine that runs on another computer on the same
-private network. Today the Stable Diffusion web API (`sdapi`), the speech server
-(`openai-speech`) and the transcription server (`openai-transcription`) definitions offer
-this, and so does any hand-written http-v1 record that opts in. In the Add engine dialog choose **Where does it run? → On another computer on
-my network**. The dialog computes the network from the address you typed (the /24 around
-an IPv4 host, the /64 around an IPv6 host) and asks you to confirm it. You never type a
-network range. Only the owner can make this choice; a member or an app key is refused.
-Saving writes `connection.remote_dispatch` with `enabled: true`, `private_cidrs` set to
-that one network, `transport`, and `tasks`, and sets `cost_class` to `free-local`. The
-audit line names the network.
+Use plain http only on the approved network, and only without a key.
+If the engine needs a key, or you cannot confirm the network, use https.
+Ask whoever runs the engine for its https address.
+Some mesh networks use addresses from 100.64.0.0 to 100.127.255.255.
+Internet providers also use this range. Azizam cannot tell your mesh from someone else's.
+
+Only the owner can add an engine this way. Members and app keys cannot.
+Stable Diffusion's web API, speech and transcription engines offer this choice.
+A speech engine on another computer must return the whole answer in one response.
+A transcription or picture engine must also return one complete response.
+Node graph engines such as ComfyUI stay on this computer. The dialog tells you this.
+Use the existing provider route for paid-provider records.
+
+### Technical note
+
+By default an `http-v1` engine runs on this computer, at a loopback address such as `http://127.0.0.1:7860`.
+Without remote opt-in, container names, LAN addresses and public hostnames are refused without DNS lookup.
+Paid or remote records fail at save because this route has no paid-provider access or spend ledger.
+You can leave an older refused record unchanged while editing other services, or disable it.
+Other edits and re-enabling must pass the current checks.
+
+A hand-written `http-v1` record can opt in to the private-network path.
+Azizam suggests one network, a `/24` for IPv4 or a `/64` for IPv6, so you never type a range.
+Saving sets `connection.remote_dispatch` with `enabled: true`, its network in `private_cidrs`, `transport` and `tasks`.
+It also sets `cost_class` to `free-local`. The audit line names the network.
 
 ```json
 "remote_dispatch": {
@@ -257,43 +270,31 @@ audit line names the network.
 }
 ```
 
-`transport` is `tls` (an `https` address) or `private_plaintext` (an `http` address).
-Plain http is valid only when all of these hold; otherwise the save is refused with a
-plain message:
+The transport is `tls` for `https` or `private_plaintext` for `http`.
+A plain HTTP save is refused with a plain message unless all addresses the name resolves to are inside the approved network.
+The record must have no key, and the owner must tick the trust box.
+Fixed headers count as keys by name (`Authorization`, `X-Api-Key`, `Cookie`) or by value pattern (`Bearer …`, `sk-…`).
+Use HTTPS or remove the key to use plain HTTP.
+Loopback, link-local, cloud-metadata and this computer's own addresses are refused regardless of the network.
+Public addresses are never approved for plain HTTP.
+The private pools are `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and `fc00::/7`.
 
-- every address the name resolves to lies inside the approved private network;
-- no key is bound to the record, so a key cannot be sent over plain http, even on your
-  own network (put the server behind a reverse proxy that uses https, or remove the key).
-  A fixed header counts as a key when its name says so (`Authorization`, `X-Api-Key`,
-  `Cookie`) or its value looks like one (`Bearer …`, `sk-…`);
-- the owner ticked "this network is trusted".
+Tailscale and other mesh networks can use shared address space `100.64.0.0/10`.
+The owner must tick the trust box after seeing the shared-space warning.
+Saving adds `"shared_space": true` beside `private_cidrs`; without it a policy naming shared space is refused.
+The cloud metadata address within this range remains refused.
 
-Loopback, link-local, cloud-metadata and this computer's own addresses are refused
-whatever the network says. A public address is never approved for plain http. The private
-pools are `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and `fc00::/7`.
+The definition lists permitted `tasks` in `record.remote.tasks`.
+Only buffered speech, a synchronous picture and buffered transcription are supported.
+The gateway refuses chunked or streamed answers, and refuses offerings outside the task list at save.
+The `sdapi`, `openai-speech` and `openai-transcription` definitions allow `image`, `speech` and `transcription` respectively.
+The speech and transcription adapters use the same guarded transport client function as `http-v1`.
+It lives in `gateway/engine_protocol/bound_wire.py`; neither adapter owns a client.
+Node graph engines use their own sockets and a WebSocket, so they stay on this computer.
 
-A Tailscale or other mesh address (`100.64.0.0/10`, shared address space) is accepted only
-when the owner ticks the trust box after the dialog says what that trusts: internet
-providers also use this range for shared networks, so the gateway cannot tell your mesh from
-someone else's. Saving then also writes `"shared_space": true` beside `private_cidrs`; without
-it a policy that names a shared-space network is refused. A cloud metadata address sits
-inside this range and stays refused.
-
-`tasks` limits which work the engine may do on another computer. A definition lists
-them in `record.remote.tasks`, and only for work that arrives in one buffered answer
-(buffered speech, a synchronous picture, buffered transcription). A chunked or
-streamed answer is refused on this path, and an offering for a task outside the list is
-refused at save. The `sdapi` definition allows `image`, `openai-speech` allows `speech` and
-`openai-transcription` allows `transcription`. The speech and transcription adapters send
-every request through the same guarded transport as an http-v1 engine (one client
-function, `gateway/engine_protocol/bound_wire.py`; the adapters hold no client of their
-own). Node-graph engines keep their own sockets and a WebSocket, so they stay on this
-computer; the dialog says so in plain words when you pick another computer.
-
-At every HTTP exchange the gateway resolves the hostname once, checks all answers, and
-dials only those checked addresses. It never follows redirects, refuses
-`transfer-encoding`, caps bytes and time, and keeps credentials bound to their approved
-origin. Path templates cannot change the origin or traverse directories. User path
-values refuse percent and semicolon; ids the engine returned may contain them and are
-encoded again as literal path values. The design and its tests are in
-[REMOTE_ENGINES.md](../design/REMOTE_ENGINES.md).
+For each exchange the gateway resolves the hostname once, checks all answers and dials only checked addresses.
+It never follows redirects, refuses `transfer-encoding`, caps bytes and time, and binds credentials to their approved origin.
+Path templates cannot change origin or traverse directories.
+User path values reject percent and semicolon.
+Engine-returned IDs may contain them and are encoded again as literal path values.
+See [REMOTE_ENGINES.md](../design/REMOTE_ENGINES.md) for the design and its tests.
