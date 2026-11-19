@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import hashlib
 import hmac
 import json
@@ -35,7 +36,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import log_scrub
+from gateway import log_scrub, process_template
 from gateway import admin_store, category_enforcement, egress, projection, protocol_description_store, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.compat import positive_int_env
 from gateway.access_plans import PlanError, plan_from_document
@@ -55,8 +56,11 @@ from gateway.engine_check import (
     join_url,
     run_check,
     run_real_test,
+    GATEWAY_PORTS,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
+from gateway.engine_protocol import description as protocol_descriptions, reviewed as reviewed_adapters
+from gateway.service_priority import selected_service
 from gateway.engine_connection import inference_base_url
 from gateway.transition_gate import GATE_RETRY_AFTER_S, policy_for
 from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, SECRET_PLACEHOLDER, header_problem, routed_models
@@ -1026,13 +1030,100 @@ def _refuse_protocol_probe(values: Mapping[str, Any]) -> None:
                                field="dispatch")
 
 
+@functools.cache
+def shipped_workflow_manifests() -> tuple[Mapping[str, Any], ...]:
+    """The workflow manifests the release ships: what a check judges an engine's node inventory against."""
+    from gateway.discovery import BUNDLED_WORKFLOWS_DIR, WorkflowRegistry
+
+    return tuple(record.manifest for record in WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR).records())
+
+
+def shadowing_finding(catalog: EngineCatalog, definition: Mapping[str, Any], registry: Mapping[str, Any], *,
+                      service_id: str, name: str, capabilities: Iterable[str], enabled: bool) -> dict[str, Any] | None:
+    """A warning when the record to be added would take over, or would lose, graph work another enabled engine does now.
+
+    A node-graph engine serves pictures, video and sound, and the gateway picks one service for each of them by
+    priority, then by id: a second engine of this kind either never gets the work or takes it from the engine that does
+    it. The order is ``gateway.service_priority.selected_service``, over the records that speak the protocol, as the
+    gateway's ``_graph_services_of`` (proxy.py) takes it. Nothing is said for a protocol that is not a node graph's, or
+    when no other enabled engine does any of this work.
+    """
+    protocol = definition["record"]["protocol"]
+    doc = protocol_descriptions.load_registry().get(protocol)
+    if doc is None or doc.adapter_id is None or not doc.binding:
+        return None
+    words: list[str] = []
+    labels: dict[str, str] = {}
+    for cap_id in capabilities:
+        if cap_id in definition["capabilities"]:
+            cap = catalog.capability(cap_id)
+            for word in cap["record_capabilities"]:
+                if word not in words:
+                    words.append(word)
+                labels.setdefault(word, cap["label"].lower())
+    new_record = {"name": name, "enabled": enabled, "capabilities": words, "protocol": protocol}
+    backends = service_registry.runtime_backends(registry)
+    rows: list[tuple[str, str, str]] = []  # (what is made, who makes it now, who makes it after the save)
+    for family in doc.serves:
+        if selected_service({service_id: new_record}, family) is None:
+            continue
+        speakers: dict[str, Any] = {}
+        for sid, backend in backends.items():
+            if reviewed_adapters.speaks_serving_adapter(backend, family):
+                try:
+                    selected_service({sid: backend}, family)
+                except ValueError:
+                    continue  # a record the gateway cannot order is left out here too
+                speakers[sid] = backend
+        doing = [sid for sid, backend in speakers.items() if selected_service({sid: backend}, family) is not None
+                 and service_registry.bool_from_config(backend.get("enabled"), True)]
+        if doing:
+            now, after = selected_service(speakers, family), selected_service({**speakers, service_id: new_record}, family)
+            rows.append((labels.get(family, family), now[0] if now else doing[0], after[0] if after else service_id))
+    if not rows:
+        return None
+
+    def called(sid: str) -> str:
+        return f"“{((registry.get('services') or {}).get(sid) or {}).get('name') or sid}”"
+
+    by_now: dict[str, list[str]] = {}
+    for label, now, _after in rows:
+        by_now.setdefault(now, []).append(label)
+    taken = [label for label, _now, after in rows if after == service_id]
+    kept = [(label, after) for label, _now, after in rows if after != service_id]
+    sentences = [f"Another engine already does work this one would do: "
+                 + "; ".join(f"{called(sid)} makes {_joined(labels_)}" for sid, labels_ in by_now.items())]
+    if taken:
+        sentences.append(f"After you add this engine, it will make {_joined(taken)} instead")
+    if kept:
+        winners = _joined(sorted({called(after) for _label, after in kept}))
+        sentences.append(f"{winners} will keep making {_joined([label for label, _ in kept])}, and this engine will not be used for that work")
+    return {
+        "code": "shadows_engine", "severity": "warning", "field": "capabilities", "keep_off": False,
+        "title": "Another engine does this work",
+        "what": ". ".join(sentences) + ".",
+        "why": "Azizam sends each kind of work to one engine, chosen by priority and then by name. Two engines of this kind do not share it.",
+        "fix": "Add it anyway if that is what you want, or turn the other engine off first.",
+    }
+
+
+def _joined(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 class EngineService:
     """The create and edit steps. The store persists; the r47 rules are re-checked there."""
 
     def __init__(self, store: Any, *, catalog_loader: Callable[[], EngineCatalog] = load_engine_catalog,
                  fetch: Fetch | None = None, env: Callable[[str], str | None] | None = None,
-                 hop_timeout: Callable[[], float] | None = None) -> None:
+                 hop_timeout: Callable[[], float] | None = None,
+                 gateway_ports: Callable[[], Iterable[int]] | None = None,
+                 port_free: Callable[[int], bool] = process_template.port_is_free,
+                 workflow_manifests: Callable[[], Iterable[Mapping[str, Any]]] | None = None) -> None:
         self.store = store
+        self.workflow_manifests = workflow_manifests or shipped_workflow_manifests
+        self.gateway_ports = gateway_ports or (lambda: GATEWAY_PORTS)
+        self.port_free = port_free
         self.catalog_loader = catalog_loader
         self.fetch = fetch or make_http_fetch()
         self.env = env or (lambda name: os.environ.get(name) or None)
@@ -1044,6 +1135,12 @@ class EngineService:
     @property
     def db_path(self) -> Path:
         return Path(getattr(self.store, "path"))
+
+    def _workflows_for(self, definition: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        """The workflow manifests a check judges, for a definition that reads an engine's node inventory; else none."""
+        if not any(probe.get("offers") == "node" for probe in definition["probes"].get("lists") or ()):
+            return []
+        return list(self.workflow_manifests())
 
     def catalog(self) -> EngineCatalog:
         try:
@@ -1101,7 +1198,8 @@ class EngineService:
                 # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
                 existing = []
         result = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
-                                 viewer_role="owner" if _is_owner(ctx) else "admin")
+                                 viewer_role="owner" if _is_owner(ctx) else "admin",
+                                 workflows=self._workflows_for(definition))
         return projection.scrub_value(result)
 
     async def test(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
@@ -1307,6 +1405,15 @@ class EngineService:
             raise DraftError("Give the engine a name.", field="name")
         _header_credentials_are_the_owners(ctx, body.get("values"))
         _refuse_reserved_texts(values)
+        resolved = None
+        if definition.get("process_template") is not None:
+            # An engine Azizam starts: the slot values become the literal process block now, with the address they imply.
+            if not _is_owner(ctx):
+                raise _owner_only("Only the owner can add an engine that Azizam starts.")
+            resolved = await asyncio.to_thread(self._resolve_process, definition, body.get("slots"))
+            if values.get("address") not in (None, "", resolved.address):
+                raise DraftError("Azizam gives this engine its address from the port. Leave the address out.", field="address")
+            values = {**values, "address": resolved.address}
         clean = clean_values(definition, values)
         _admin_limits(ctx, {**values, **clean}, definition, before=None)
         registry = self.store.get_service_registry()
@@ -1315,11 +1422,13 @@ class EngineService:
         while service_id in (registry.get("services") or {}):
             service_id, n = f"{base_id}-{n}", n + 1
         disabled = bool(body.get("disabled"))
+        # An engine Azizam has not started yet has nothing to check: it is saved, and the first start proves it.
+        unchecked = disabled or resolved is not None
         if not disabled:
             _refuse_protocol_probe(clean)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=None, db_path=self.db_path, env=self.env)
         check: dict[str, Any] | None = None
-        if disabled:
+        if unchecked:
             # A server kept off is not checked, but an address already in use still stops.
             dup = duplicate_finding(catalog, definition, clean, _existing_engines(registry),
                                     viewer_role="owner" if _is_owner(ctx) else "admin")
@@ -1329,27 +1438,94 @@ class EngineService:
         else:
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch,
                                     existing=_existing_engines(registry),
-                                    viewer_role="owner" if _is_owner(ctx) else "admin")
+                                    viewer_role="owner" if _is_owner(ctx) else "admin",
+                                    workflows=self._workflows_for(definition))
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
         capabilities = body.get("capabilities")
         if capabilities is None:
             capabilities = [c["id"] for c in (check or {}).get("capabilities") or () if c.get("ticked")]
+            if resolved is not None:
+                capabilities = list(definition["capabilities"])
         if not isinstance(capabilities, list):
             raise DraftError("capabilities must be a list of ids.", field="capabilities")
         if disabled and body.get("capabilities") is None:
             capabilities = []
         if not disabled and not capabilities:
             raise DraftError("Choose at least one thing this engine does, or add it turned off.", field="capabilities")
+        shadow = shadowing_finding(catalog, definition, registry, service_id=service_id, name=name,
+                                   capabilities=capabilities, enabled=not disabled)
+        if shadow is not None:
+            # A second engine of one kind changes who serves the work, so it is said once, like a check's warning.
+            report = {**(check or {}), "outcome": "warning", "findings": [*((check or {}).get("findings") or ()), shadow]}
+            _gate(report, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
         models = body.get("models")
         if models is None and check is not None:
             models = check.get("models") or []
         record = self._write(ctx, catalog, definition, clean, service_id=service_id, name=name, capabilities=capabilities,
                              models=models, enabled=not disabled,
-                             check=_check_summary(check, address=clean["address"], disabled=disabled, reason=str(body.get("keep_off_reason") or "")),
+                             check=_check_summary(check, address=clean["address"], disabled=unchecked, reason=str(body.get("keep_off_reason") or "")),
                              tests={}, key=key, existing=None,
                              expected_generation=expected_generation, action="create",
-                             observations=observations_from_check(check))
+                             observations=resolved.observations() if resolved is not None else observations_from_check(check),
+                             process=resolved.process_block() if resolved is not None else None,
+                             residency=resolved.residency() if resolved is not None else None)
         return {**record, "service_id": service_id}
+
+    # -- engines Azizam starts: a definition's process template ------------------------------------
+
+    def _reserved_ports(self, registry: Mapping[str, Any]) -> set[int]:
+        """Ports a new engine may not take: this gateway's own and the ones saved engines already name."""
+        from urllib.parse import urlsplit
+
+        taken = {int(port) for port in self.gateway_ports()}
+        for record in (registry.get("services") or {}).values():
+            config = record.get("config") if isinstance(record, Mapping) else None
+            for holder in (record, config):
+                if not isinstance(holder, Mapping):
+                    continue
+                if isinstance(holder.get("port"), int):
+                    taken.add(holder["port"])
+                for source in (holder.get("address"), (holder.get("connection") or {}).get("address")):
+                    try:
+                        port = urlsplit(source).port if isinstance(source, str) else None
+                    except ValueError:
+                        port = None
+                    if port:
+                        taken.add(port)
+                fixed = ((holder.get("process") or {}).get("port") or {}).get("fixed")
+                if isinstance(fixed, int):
+                    taken.add(fixed)
+        return taken
+
+    def _resolve_process(self, definition: Mapping[str, Any], slots: Any) -> process_template.Resolved:
+        """The literal process block for these slot values; a refusal is a 422 that names the first reason."""
+        try:
+            return process_template.resolve(
+                definition["process_template"], slots if slots is not None else {},
+                allowed_folders=process_template.allowed_folders(self.db_path), port_free=self.port_free,
+                reserved_ports=self._reserved_ports(self.store.get_service_registry()))
+        except process_template.TemplateRefused as refused:
+            raise EngineRouteError(status.HTTP_422_UNPROCESSABLE_CONTENT, "process_template_refused", str(refused),
+                                   field=refused.problems[0].slot or "slots") from None
+
+    def process_preview(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """A dry run: the command these slot values make, or every reason they do not. Stores and runs nothing."""
+        definition = _definition(self.catalog(), body.get("definition"))
+        template = definition.get("process_template")
+        if template is None:
+            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "no_process_template",
+                                   "Azizam does not start this kind of engine.", field="definition")
+        slots = body.get("slots")
+        if slots is not None and not isinstance(slots, Mapping):
+            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_slots", "slots must be an object.", field="slots")
+        try:
+            resolved = process_template.resolve(
+                template, slots or {}, allowed_folders=process_template.allowed_folders(self.db_path),
+                port_free=self.port_free, reserved_ports=self._reserved_ports(self.store.get_service_registry()))
+        except process_template.TemplateRefused as refused:
+            return {"argv": [], "cwd": None, "env_names": list(template.get("env") or ()), "port": None,
+                    "ready": dict(template["ready"]), "problems": [p.public() for p in refused.problems]}
+        return {**resolved.preview(), "problems": []}
 
     async def update(self, ctx: Any, service_id: str, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
         if body.get("recheck") is True and not _is_owner(ctx):
@@ -1436,7 +1612,8 @@ class EngineService:
         if connection_changed and not disabled:
             _refuse_protocol_probe(clean)
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
-                                    viewer_role="owner" if _is_owner(ctx) else "admin")
+                                    viewer_role="owner" if _is_owner(ctx) else "admin",
+                                    workflows=self._workflows_for(definition))
             # The check ran against the stored address; its report must not repeat what the page is not shown.
             check = projection.scrub_value(check, projection.url_secret_parts(clean["address"]))
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
@@ -1493,7 +1670,9 @@ class EngineService:
                keep_lifecycle: bool = False, keep_timeout: bool = False, probe_connection_changed: bool = False,
                extra_capabilities: Iterable[str] = (),
                record_capabilities: list[str] | None = None,
-               observations: Mapping[str, Any] | None = None) -> dict[str, Any]:
+               observations: Mapping[str, Any] | None = None,
+               process: Mapping[str, Any] | None = None,
+               residency: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
         written: list[str] = []
         retired: list[str] = []
@@ -1590,7 +1769,8 @@ class EngineService:
                                                  replace=existing is not None, existing=existing,
                                                  drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")),
                                                  **({"in_transaction": recheck} if recheck is not None else {}),
-                                                 **({"observations": observations} if observations is not None else {}))
+                                                 **({"observations": observations} if observations is not None else {}),
+                                                 **({"process": process, "residency": residency} if process is not None else {}))
             except protocol_description_store.DescriptionRefused as refused:
                 raise EngineRouteError(status.HTTP_409_CONFLICT, "protocol_description_changed", str(refused),
                                        field="protocol_description") from None
@@ -1697,6 +1877,28 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
         return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"access": result})
+
+    @router.post("/engines/process-preview")
+    async def engine_process_preview(request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            if not _is_owner(ctx):
+                raise _owner_only("Only the owner can preview how Azizam starts an engine.")
+            body = await read_json(request)
+            if not isinstance(body, Mapping):
+                raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_body", "Send a JSON object.")
+            answer = await asyncio.to_thread(service.process_preview, body)
+        except (EngineRouteError, DraftError, PermissionError) as exc:
+            return _error(exc)
+        except Exception as exc:  # noqa: BLE001
+            if hasattr(exc, "as_response"):
+                return exc.as_response()  # type: ignore[no-any-return]
+            raise
+        response = egress.plain_json_response(response_class="engine_process_preview", content=answer)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @router.post("/engines/{service_id}/lifecycle")
     async def engine_lifecycle(service_id: str, request: Request) -> JSONResponse:

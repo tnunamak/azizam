@@ -815,6 +815,15 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
     # ``managed`` and the systemd service name live under ``lifecycle`` in the
     # record but flat on the backend dict; promote them for managed backends.
     process = service.get("process")
+    legacy_driver = (process.get("legacy_lifecycle") or {}).get("driver") if isinstance(process, Mapping) else None
+    if isinstance(process, Mapping) and process.get("driver") == "process" and legacy_driver in (None, "", "external", "none"):
+        # A record's own owned-process block (one a definition's process_template resolved to, not the view of a
+        # legacy process lifecycle) runs under ProcessDriver, which reads the block and its ``process_ready``
+        # observation from this projection. No other observation is carried: only the one the driver requires.
+        out["process"] = {key: copy.deepcopy(value) for key, value in process.items() if key != "legacy_lifecycle"}
+        ready = (service.get("observations") or {}).get("process_ready") if isinstance(service.get("observations"), Mapping) else None
+        if isinstance(ready, Mapping):
+            out["observations"] = {"process_ready": copy.deepcopy(dict(ready))}
     lifecycle = (process.get("legacy_lifecycle") if isinstance(process, Mapping) else None) or service.get("lifecycle")
     if isinstance(lifecycle, Mapping):
         if lifecycle.get("managed"):

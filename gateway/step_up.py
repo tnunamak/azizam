@@ -47,6 +47,8 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/admin/api/extensions/enable"),
     # Whether Azizam may run commands on this computer.
     ("PUT", "/admin/api/operator/host-commands"),
+    # Which folders engines may be started from (a template engine runs a program found in one).
+    ("PUT", "/admin/api/operator/engine-folders"),
     # Who is in, and with which role.
     ("POST", "/admin/api/invites"),
     ("GET", "/admin/api/invites/*/link"),

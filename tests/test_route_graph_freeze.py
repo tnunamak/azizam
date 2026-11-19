@@ -20,6 +20,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/admin/api/engines/process-preview": "owner-only dry run of the command a definition's process_template makes from slot values; stores and runs nothing; "
+                                          "tests/test_engine_process_template.py covers it",
+    "/admin/api/operator/engine-folders": "owner-only list of folders engines may be started from (read and write, audited, step-up on write); "
+                                          "tests/test_engine_process_template.py covers it",
     "/admin/api/engines/{service_id}/lifecycle": "the owner starts, stops or restarts one engine over its lifecycle driver; owner only, audited; "
                                                  "tests/test_engine_lifecycle_route.py covers it",
     "/admin/api/workflow-choices": "owner choice freshness and refresh, outside the public schema; tests/test_choice_owner_review.py covers the routes and binding resolution",
@@ -308,7 +312,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-19 for POST /admin/api/engines/{service_id}/lifecycle (see ADDED_PATHS): only that path is new
         # (tests/fixtures/headless_openapi.json shows the same addition and nothing else). Before it the digest was
         # 72d2606fff75483a26f6158165473007fbaedd115acb454d80a510b8905c97df.
-        assert route_graph.openapi_digest(proxy.app) == "ae29ca8c59c34f568113a516bccbf63d98b6cc52642771b8a28fc3bcf3e88361"
+        # Re-captured 2026-11-19 for POST /admin/api/engines/process-preview and GET and PUT /admin/api/operator/engine-folders
+        # (see ADDED_PATHS): only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and
+        # nothing else). Before it the digest was ae29ca8c59c34f568113a516bccbf63d98b6cc52642771b8a28fc3bcf3e88361.
+        assert route_graph.openapi_digest(proxy.app) == "ed6835d2d53b1985153826c22a9e09f7c812363cd4b01c6d829ef5cd798cb891"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.

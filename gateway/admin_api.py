@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, browser_origin, config_fold, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, secret_commands, service_registry
+from gateway import admin_catalog, admin_store, browser_origin, config_fold, engine_admin, engine_check, egress, extension_packages, process_template, projection, projection_types, record_carriers, secret_commands, service_registry
 from gateway.session_guard import BrowserSession, SessionEnded
 
 __all__ = [
@@ -1810,6 +1810,7 @@ def create_admin_router(
     engine_fetch: engine_check.Fetch | None = None,
     engine_hop_timeout: Callable[[], float] | None = None,
     engine_lifecycle: Any = None,
+    engine_gateway_ports: Callable[[], Iterable[int]] | None = None,
     stt_measurements: Any = None,
     frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
     registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
@@ -1851,7 +1852,8 @@ def create_admin_router(
 
     # Add engine: definitions, check, draft test, who can use the models and the engine view.
     # Create and edit with a definition run through the services routes below.
-    engine_service = engine_admin.EngineService(store, fetch=engine_fetch, hop_timeout=engine_hop_timeout)
+    engine_service = engine_admin.EngineService(store, fetch=engine_fetch, hop_timeout=engine_hop_timeout,
+                                             gateway_ports=engine_gateway_ports)
     engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body,
                                         lifecycle=engine_lifecycle)
     if transitions is not None:
@@ -3317,6 +3319,62 @@ def create_admin_router(
             result["note"] = ("New starts are blocked. Processes Azizam already runs keep running "
                               "until they are stopped or the gateway restarts.")
         response = egress.plain_json_response(result, response_class="switch")
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        return response
+
+    @router.get("/operator/engine-folders")
+    def get_engine_folders(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(403, "owner_required", "Only the owner can read the folders engines run from.").as_response()
+        record = admin_store.get_operator_setting(process_template.SETTING, path=store.path)
+        response = egress.plain_json_response({
+            "folders": list(((record or {}).get("value") or {}).get("folders") or []),
+            "revision": admin_store.operator_setting_revision(record),
+        }, response_class="engine_run_folders")
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @router.put("/operator/engine-folders")
+    async def update_engine_folders(request: Request) -> JSONResponse:
+        # Each folder is stored as its real path; the root is never allowed. Azizam checks the list when an engine is
+        # saved: removing a folder stops new engines from it, while an engine already saved keeps its command until it
+        # is removed or running commands on this computer is off.
+        ctx = await asyncio.to_thread(_guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(403, "owner_required", "Only the owner can change the folders engines run from.").as_response()
+        try:
+            body = await _read_json_body(request)
+            if set(body) != {"folders"} or not isinstance(body["folders"], list):
+                raise _RouteError(400, "invalid_engine_folders", "folders must be a list of full folder paths")
+            folders = process_template.clean_folders(body["folders"])
+            record = admin_store.put_operator_setting_with_audit(
+                process_template.SETTING, {"folders": folders},
+                updated_by=ctx.subject,
+                audit_action="operator.engine_folders.update",
+                audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id,
+                audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting",
+                audit_target_id=process_template.SETTING,
+                audit_metadata={"count": len(folders), "folders": folders},
+                expected_revision=settings_revision(request),
+                path=store.path,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except process_template.FolderRefused as exc:
+            return _RouteError(400, "invalid_engine_folders", str(exc)).as_response()
+        except admin_store.SettingsConflictError:
+            return settings_conflict()
+        response = egress.plain_json_response(
+            {"folders": record["value"]["folders"], "revision": admin_store.operator_setting_revision(record)},
+            response_class="engine_run_folders")
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         return response
 

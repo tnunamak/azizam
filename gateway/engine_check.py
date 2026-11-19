@@ -23,6 +23,7 @@ import io
 import ipaddress
 import json
 import math
+import posixpath
 import re
 import secrets
 import socket
@@ -756,20 +757,28 @@ assert tuple(_LIST_READERS) == LIST_SHAPES, "every list shape needs one reader"
 def read_list(body: Any, read: Mapping[str, Any]) -> dict[str, Any]:
     """Read one JSON answer as a list of ids by the shape ``read`` names.
 
-    ``{"ids": [{"id", "name"}, ...], "default": str | None}``: ids without repeats, in the server's order. An answer that
-    does not have the shape gives no ids; nothing here raises on a stranger's JSON.
+    ``{"ids": [{"id", "name"}, ...], "default": str | None, "truncated": bool}``: ids without repeats, in the server's
+    order, at most ``max_entries`` of them (``MAX_LIST_ENTRIES`` when the read names none); ``truncated`` says more were
+    there. An answer that does not have the shape gives no ids; nothing here raises on a stranger's JSON.
     """
     reader = _LIST_READERS.get(read.get("shape", ""))
     node = _pointer(body, read.get("select", ""))
     pairs = reader(node, read) if reader is not None and node is not _MISSING else []
     seen: set[str] = set()
     ids = []
+    limit = read.get("max_entries") or MAX_LIST_ENTRIES
+    truncated = False
     for ident, name in pairs:
-        if ident not in seen and len(ids) < MAX_LIST_ENTRIES:
-            seen.add(ident)
-            ids.append({"id": ident, "name": name})
+        if ident in seen:
+            continue
+        if len(ids) >= limit:
+            truncated = True
+            break
+        seen.add(ident)
+        ids.append({"id": ident, "name": name})
     default = _pointer(body, read["default_select"]) if read.get("default_select") else _MISSING
-    return {"ids": ids, "default": default.strip() if isinstance(default, str) and default.strip() else None}
+    return {"ids": ids, "default": default.strip() if isinstance(default, str) and default.strip() else None,
+            "truncated": truncated}
 
 
 # ---------------------------------------------------------------------------
@@ -1009,12 +1018,27 @@ async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[di
         url = _route_url(ctx, probe["path"], probe["from"])
         if safe_probe_path(probe["path"]) is not None and _plain_route(url):
             urls[probe["id"]] = url
+    # One fetch per URL, read up to the largest size any probe of that URL asks for.
+    caps: dict[str, int] = {}
+    for probe in probes:
+        if probe["id"] in urls:
+            caps[urls[probe["id"]]] = max(caps.get(urls[probe["id"]], 0), probe.get("cap_bytes", MODEL_LIST_CAP_BYTES))
     answers = dict(zip(dict.fromkeys(urls.values()), await asyncio.gather(
-        *(_get(ctx, url, cap=MODEL_LIST_CAP_BYTES) for url in dict.fromkeys(urls.values())))))
+        *(_get(ctx, url, cap=caps[url]) for url in dict.fromkeys(urls.values())))))
     chosen: dict[str, dict[str, Any]] = {}
     for probe in probes:
         answer = answers.get(urls.get(probe["id"], ""))
-        if probe["offers"] in chosen or answer is None or answer.transport != "ok" or answer.status != 200:
+        if answer is None or answer.status != 200:
+            continue
+        if probe["offers"] == "node":
+            # An unreadable inventory is kept, so the check can say so; a later probe that reads it takes its place.
+            if probe["offers"] in chosen and not chosen[probe["offers"]].get("unreadable"):
+                continue
+            node_found = _read_node_list(answer, probe)
+            if node_found is not None:
+                chosen[probe["offers"]] = node_found
+            continue
+        if probe["offers"] in chosen or answer.transport != "ok":
             continue
         found = read_list(answer.json, probe["list"])
         filtered_out = not found["ids"] and "where" in probe["list"] and bool(
@@ -1023,6 +1047,137 @@ async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[di
             chosen[probe["offers"]] = {"id": probe["id"], "offers": probe["offers"], "path": probe["path"],
                                        "capability": probe.get("capability"), "filtered_out": filtered_out, **found}
     return list(chosen.values())
+
+
+def _combo_choices(spec: Any) -> list[str]:
+    """The names an input offers when its spec is a combo: ``[[names...], {...}]`` (the engine's own list inputs) or
+    ``["COMBO", {"options": [...]}]`` (the form newer nodes use). Backslashes are read as folder marks, as on a Windows
+    install, so a name reads the same on either side of a comparison."""
+    if not isinstance(spec, list) or not spec:
+        return []
+    names = spec[0]
+    if names == "COMBO":
+        names = spec[1].get("options") if len(spec) > 1 and isinstance(spec[1], Mapping) else None
+    if not isinstance(names, list):
+        return []
+    return [name.replace("\\", "/").strip() for name in names if isinstance(name, str) and name.strip()]
+
+
+def node_list_inventory(body: Any) -> tuple[list[str], list[str]] | None:
+    """``(node classes, every name a combo input offers)`` for an engine's node list, else ``None``.
+
+    A node list is an object that holds at least one entry, each entry an object with an ``input`` key. Any other
+    answer (an error body, a page, a list) is not a node list: it is unreadable, not a list of zero nodes.
+    """
+    if not isinstance(body, Mapping) or not body:
+        return None
+    names: dict[str, None] = {}
+    for spec in body.values():
+        if not isinstance(spec, Mapping) or "input" not in spec:
+            return None
+        groups = spec["input"]
+        for group in groups.values() if isinstance(groups, Mapping) else ():
+            for entry in group.values() if isinstance(group, Mapping) else ():
+                names.update(dict.fromkeys(_combo_choices(entry)))
+    return [str(key) for key in body], list(names)
+
+
+NODE_LIST_UNREADABLE = {
+    "too_large": "The engine's node list was too large to read",
+    "not_json": "The engine's node list was not in a form Azizam can read",
+    "not_node_list": "The engine's answer was not a node list",
+    "cut_short": "The engine's node list was longer than Azizam reads",
+}
+
+
+def _read_node_list(answer: Answer, probe: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The entry of a node probe: the inventory when the list reads, else the reason it does not (``unreadable``)."""
+    base = {"id": probe["id"], "offers": probe["offers"], "path": probe["path"], "capability": probe.get("capability"),
+            "filtered_out": False, "ids": [], "default": None, "truncated": False}
+    if answer.transport == "too_large":
+        return {**base, "unreadable": "too_large"}
+    if answer.transport != "ok":
+        return None
+    body = answer.json
+    if body is None:
+        return {**base, "unreadable": "not_json"}
+    inventory = node_list_inventory(body)
+    if inventory is None:
+        return {**base, "unreadable": "not_node_list"}
+    found = read_list(body, probe["list"])
+    if found["truncated"]:
+        # A cut inventory would call a workflow's node missing when it is only past the cut, so none is offered.
+        return {**base, "unreadable": "cut_short"}
+    return {**base, **found, "node_classes": inventory[0], "model_names": inventory[1]}
+
+
+def _node_list_finding(reason: str) -> dict[str, Any]:
+    """The finding for a node list that could not be read, in the words of the check's other findings."""
+    return {
+        "code": "node_list_unreadable", "severity": "warning", "field": "address", "keep_off": False,
+        "title": "Workflows not listed",
+        "what": f"{NODE_LIST_UNREADABLE[reason]}, so Azizam cannot say which workflows it can run.",
+        "why": "Azizam judges each workflow by the nodes and model files the engine lists. Without the list, it shows none as ready.",
+        "fix": "The engine can still be used. Check that its node list answers at its address, then check again.",
+    }
+
+
+def _binding_of(definition: Mapping[str, Any]) -> str:
+    """The key under a workflow manifest's ``bindings`` that holds this kind of engine's graph: its protocol's own data."""
+    from gateway.engine_protocol import description
+
+    doc = description.load_registry().get(definition["record"]["protocol"])
+    return str(getattr(doc, "binding", "") or "")
+
+
+def workflow_offerings(manifests: Iterable[Mapping[str, Any]], binding: str, node_classes: Iterable[str],
+                       model_names: Iterable[str] = ()) -> dict[str, Any]:
+    """Which of these workflows an engine with these node classes and combo names can run, and what each other one lacks.
+
+    ``manifests`` are the workflow manifests the release ships; a workflow an owner added is not judged here. A
+    workflow is a manifest that holds a ``bindings.<binding>`` block. Its ``requires`` are judged by
+    ``gateway.workflow_requirements``: each custom node against ``node_classes``, each model file against
+    ``model_names``, the names the engine's own combo inputs offer (``node_list_inventory``). A combo name is a path
+    inside a model folder and the node list does not say which folder, so a name stands for the file in any role the
+    workflow asks of it: the file name is what is compared. A model file with a required hash is never confirmed.
+    ``{"nodes": count, "offered": [{"id", "name"}], "unavailable": [{"id", "name", "missing": [{"kind", "name", "reason"}]}]}``
+    """
+    from gateway.workflow_requirements import validate_workflow_requirements
+
+    classes = sorted({name for name in node_classes if isinstance(name, str) and name})
+    names = list(dict.fromkeys(name for name in model_names if isinstance(name, str) and name))
+    offered: list[dict[str, Any]] = []
+    unavailable: list[dict[str, Any]] = []
+    for manifest in manifests:
+        block = (manifest.get("bindings") or {}).get(binding) if isinstance(manifest.get("bindings"), Mapping) else None
+        if not isinstance(block, Mapping):
+            continue
+        row = {"id": str(manifest.get("id") or ""), "name": str(manifest.get("display_name") or manifest.get("id") or "")}
+        requires = block.get("requires") if isinstance(block.get("requires"), Mapping) else {}
+        models = list(requires.get("models") or ())
+        roles = {entry["role"] for entry in models if isinstance(entry, Mapping) and isinstance(entry.get("role"), str)}
+        inventory = {"node_classes": classes,
+                     "models": [{"role": role, "path": name, "name": posixpath.basename(name)} for role in sorted(roles) for name in names]}
+        try:
+            verdict = validate_workflow_requirements(
+                {"requires": {"custom_nodes": list(requires.get("custom_nodes") or ()), "models": models}}, inventory)
+        except ValueError:
+            unavailable.append({**row, "missing": [{"kind": "requirements", "name": "",
+                                                    "reason": "the workflow's requirements cannot be read"}]})
+            continue
+        if verdict.ok:
+            offered.append(row)
+        else:
+            unavailable.append({**row, "missing": [{"kind": issue.kind, "name": issue.name, "reason": _missing_reason(issue)}
+                                                   for issue in verdict.missing]})
+    return {"nodes": len(classes), "offered": offered, "unavailable": unavailable}
+
+
+def _missing_reason(issue: Any) -> str:
+    """A missing model file says which file the engine does not list; a node keeps the requirement check's words."""
+    if issue.kind == "model" and "hash" not in issue.reason:
+        return f"the engine's node list offers no model file {issue.name.partition(':')[2]}"
+    return issue.reason
 
 
 def _classify_route(answer: Answer, baseline: Answer, against_body: str) -> str:
@@ -1077,6 +1232,7 @@ async def run_check(
     viewer_role: str = "owner",
     baseline_token: str | None = None,
     now: Callable[[], float] = time.time,
+    workflows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Run the ladder within the definition's optional whole-check deadline.
 
@@ -1086,7 +1242,7 @@ async def run_check(
     async with asyncio.timeout(definition.get("timeouts", {}).get("check_s")):
         return await _run_check(
             catalog, definition, values, key=key, fetch=fetch, existing=existing,
-            viewer_role=viewer_role, baseline_token=baseline_token, now=now,
+            viewer_role=viewer_role, baseline_token=baseline_token, now=now, workflows=workflows,
         )
 
 
@@ -1101,8 +1257,12 @@ async def _run_check(
     viewer_role: str = "owner",
     baseline_token: str | None = None,
     now: Callable[[], float] = time.time,
+    workflows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
-    """Run the ladder for ``definition`` against draft ``values``. Persists nothing."""
+    """Run the ladder for ``definition`` against draft ``values``. Persists nothing.
+
+    ``workflows`` are the workflow manifests a definition with a node inventory list is judged against.
+    """
     data = catalog.data
     fields = {f["key"]: f for f in definition["fields"]}
     address = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
@@ -1294,6 +1454,12 @@ async def _run_check(
             taken = set()
             models = [_model_row(catalog, row["id"], [found["capability"]] if found["capability"] else [], taken, None)
                       for row in found["ids"]]
+        elif found["offers"] == "node":
+            if found.get("unreadable"):
+                result["findings"].append(_node_list_finding(found["unreadable"]))
+            else:
+                result["workflows"] = workflow_offerings(workflows, _binding_of(definition), found["node_classes"],
+                                                         found["model_names"])
         else:
             result["voices"] = found["ids"]
             result["default_voice"] = found["default"]
@@ -1492,6 +1658,8 @@ async def run_real_test(
     address = normalize_address(values.get("address"))
     cap = catalog.capability(capability_id)
     test = catalog.data["real_tests"][cap["real_test"]]
+    if test.get("kind") == "get_probe":
+        return await _run_get_probe(definition, values, capability_id, cap, test, address=address, key=key, fetch=fetch, now=now)
     headers = _auth_headers(key.value, values)
     prefix = str(values.get("path_prefix") or "").strip()
     base = check_base(address, prefix)
@@ -1571,6 +1739,57 @@ async def run_real_test(
             "raw": _raw(answer),
         }
     return result
+
+
+async def _run_get_probe(definition: Mapping[str, Any], values: Mapping[str, Any], capability_id: str,
+                         cap: Mapping[str, Any], test: Mapping[str, Any], *, address: str, key: "KeyInput",
+                         fetch: Fetch, now: Callable[[], float]) -> dict[str, Any]:
+    """A real test that only reads: one GET of the test's status path. It sends no body and queues no work."""
+    url = join_url(origin_of(address), test["path"])
+    if safe_probe_path(test["path"]) is None or not _plain_route(url):
+        raise DraftError("This kind of server declares a route that cannot be tested safely.", field="capability")
+    headers = _auth_headers(key.value, values)
+    test_timeout_s = definition.get("timeouts", {}).get("real_test_s", TEST_TIMEOUT_S)
+    timeout_s = min(_number(values.get("reply_timeout_s"), test_timeout_s, low=1, high=600), test_timeout_s)
+    answer = await fetch("GET", url, headers=headers, cap_bytes=DEFAULT_CAP_BYTES, timeout_s=timeout_s, content=None)
+    ok, reply = _judge_get_probe(test["expect"], answer)
+    if answer.withheld:
+        reply = (f"The server answered “{answer.status_text}”. " if answer.status else "") + WITHHELD_TEXT
+    result: dict[str, Any] = {
+        "capability": capability_id, "label": cap["label"], "sent_to": f"GET {url}", "cost": test["cost"],
+        "at": int(now()), "via": "draft", "seconds": answer.seconds, "status": answer.status, "adjusted": False,
+        "sent": test["sent"],
+        "request": {"method": "GET", "url": url,
+                    "headers": {name: "Bearer [redacted]" if name.lower() == "authorization" else value
+                                for name, value in headers.items()},
+                    "body": {}, "timeout_s": timeout_s},
+        "ok": ok, "reply": reply,
+    }
+    if not ok:
+        what = (f"Azizam could not complete the request: {answer.detail or answer.transport}." if answer.transport != "ok"
+                else f"The server answered “{answer.status_text}” at {result['sent_to']}.")
+        result["finding"] = {
+            "what": what,
+            "why": "The engine did not answer its status page as this kind of engine does." if answer.transport == "ok"
+                   else "The server did not answer in time, or the connection broke.",
+            "fix": "Check that the engine is running, then test again.",
+            "raw": _raw(answer),
+        }
+    return result
+
+
+def _judge_get_probe(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
+    """A read passes on the status and, when the test names one, a key in the JSON reply."""
+    if answer.transport != "ok" or answer.status is None:
+        return False, answer.detail or "No answer"
+    if answer.status != expect["status"]:
+        if answer.status // 100 != 2:
+            return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
+        return False, f"The server answered HTTP {answer.status}; Azizam expected HTTP {expect['status']}."
+    wanted = expect.get("json_key")
+    if wanted and _at(answer.json, wanted) is None:
+        return False, f"An answer without “{wanted}”: {_excerpt(answer.text, 120)}"
+    return True, "The engine answered"
 
 
 def _judge_binary(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
