@@ -62,7 +62,7 @@ Each target row in the JSON file has:
 |---|---|---|---|---|---|
 | `open-webui` | Open WebUI | chat-frontend | OpenAI chat/embeddings/images/audio | P0 | manual-smoke |
 | `librechat` | LibreChat | chat-frontend | OpenAI chat/images/audio | P0 | unverified |
-| `continue` | Continue | coding-agent | OpenAI chat/completions/embeddings | P0 | unverified |
+| `continue` | Continue | coding-agent | OpenAI chat/completions/embeddings | P0 | manual-smoke (CLI: streaming chat and tools; autocomplete and embeddings need the editor) |
 | `cline` | Cline | coding-agent | OpenAI chat, Anthropic messages | P1 | unverified |
 | `sillytavern` | SillyTavern | roleplay-frontend | OpenAI chat, Anthropic messages | P1 | unverified |
 | `vercel-ai-sdk` | Vercel AI SDK | sdk-framework | OpenAI chat/responses, Anthropic messages | P0 | automated-probe (5 of 6 cases; Anthropic streaming not covered) |
@@ -73,6 +73,13 @@ The Vercel AI SDK row rests on `tests/compat/node/vercel-ai-sdk.test.mjs`: its c
 streaming, forced tool call, structured output and Responses API cases passed against a
 live gateway on 2026-11-18. It runs by hand, not in the gate. Anthropic Messages
 streaming needs the `@ai-sdk/anthropic` package and is not covered.
+
+The Continue row rests on one run of the real Continue CLI (`@continuedev/cli` 1.5.47,
+headless `cn -p`) against a live gateway on 2026-11-19. Streaming chat passed, a `Read`
+tool call round-tripped, and an unknown model got one OpenAI-shaped 400
+(`invalid_request_error`, `model_not_found`) with no retries. The CLI sends only streaming
+chat, so `/v1/models`, non-streaming chat, autocomplete (`/v1/completions`) and embeddings
+are not covered; those roles live in the editor extension.
 
 `models.list` (`GET /v1/models`) appears in nearly every row. That
 endpoint is load-bearing for almost every self-hosted frontend's
