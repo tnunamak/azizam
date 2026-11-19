@@ -170,3 +170,17 @@ def test_the_egress_gate_maps_the_address_the_variable_names(monkeypatch):
     monkeypatch.setenv(ENV_NAME, "http://litellm:4000")
 
     assert {"litellm:4000", "127.0.0.1:4011"} <= destinations_of(_release_litellm())
+
+
+def test_chat_keeps_a_stored_base_url_path_when_the_record_also_names_host_and_port(monkeypatch):
+    # An owner who points the substrate at a server under a path prefix stores base_url with that path; host and port
+    # alone name only the origin. Chat must post under the prefix, as it did before the variable had one reader.
+    monkeypatch.setenv(ENV_NAME, "http://litellm:4000")
+    record = _release_litellm()
+    record["config"] = {**record["config"], "base_url_env": "", "api_base_env": "",
+                        "base_url": "http://127.0.0.1:18452/substrate", "host": "127.0.0.1", "port": 18452,
+                        "base_path": "/substrate"}
+
+    chat = litellm_runtime_from_registry({"services": {"litellm": record}}, env={ENV_NAME: "http://litellm:4000"}).base_url
+
+    assert chat == "http://127.0.0.1:18452/substrate"
