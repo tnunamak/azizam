@@ -37,6 +37,10 @@
     "observe": {"feature": "observe", "steps": [
       {"method": "GET", "path": "/queue", "stream": false}]}
   },
+  "node-graph": {
+    "observe": {"feature": "observe", "steps": [
+      {"method": "GET", "path": "/system_stats", "stream": false}]}
+  },
   "inline-tts": {
     "speech": {"feature": "audio.speech", "steps": [
       {"method": "POST", "path": "/v1/audio/speech", "stream": false,
