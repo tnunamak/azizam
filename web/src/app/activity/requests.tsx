@@ -26,7 +26,8 @@ import { receiptCost, costCopy } from "@/app/usage/receipt-cost";
 import { EmptyState } from "@/components/product/empty-state";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
-import { Callout, DelayedSpinner, StateBadge } from "@/components/product/status-ui";
+import { DelayedSpinner, StateBadge } from "@/components/product/status-ui";
+import { ErrorState } from "@/components/product/error-state";
 import { formatTimestamp } from "@/lib/format";
 import { networkFetch } from "@/lib/network-error";
 import { requestCapability } from "@/lib/capability-state";
@@ -245,6 +246,7 @@ export function Requests() {
     isPending,
     isFetching,
     isError,
+    error,
     isFetchNextPageError,
     isFetchingNextPage,
     hasNextPage,
@@ -418,21 +420,7 @@ export function Requests() {
           </Card>
         </div>
       ) : isError && rows.length === 0 ? (
-        <Callout
-          as="div"
-          severity="critical"
-          title="Couldn't load requests"
-          headerAction={
-            <Button variant="outline" onClick={() => void refetch()}>
-              Try again
-            </Button>
-          }
-        >
-          <p>
-            The request list could not be loaded. We could not
-            identify the cause. Try again.
-          </p>
-        </Callout>
+        <ErrorState thing="requests" error={error} onRetry={() => void refetch()} />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={ReceiptText}
@@ -464,22 +452,12 @@ export function Requests() {
       ) : (
         <>
           {isError && !isFetchNextPageError && (
-            <Callout
-              as="div"
-              severity="critical"
-              title="Couldn't refresh requests"
-              headerAction={
-                <Button variant="outline" onClick={() => void refetch()}>
-                  Try again
-                </Button>
-              }
-            >
-              <p>
-                The request list could not be refreshed. We could
-                not identify the cause. The requests already loaded are still
-                shown.
-              </p>
-            </Callout>
+            <ErrorState
+              heading="Couldn’t refresh requests"
+              error={error}
+              message="We couldn’t refresh the list. The requests already loaded are still shown. Nothing was changed. Try again."
+              onRetry={() => void refetch()}
+            />
           )}
           <Card className="gap-0 overflow-hidden p-0! max-sm:p-0!">
             <Table dense aria-label="Request receipts" className="table-fixed">
@@ -565,22 +543,13 @@ export function Requests() {
           </Card>
           <div className="flex flex-col items-center gap-4">
             {isFetchNextPageError && (
-              <Callout
-                as="div"
-                severity="critical"
-                title="Couldn't load more requests"
-                headerAction={
-                  <Button variant="outline" aria-disabled={isFetchingNextPage} onClick={(event) => loadMore(event.currentTarget)}>
-                    Try again
-                  </Button>
-                }
-              >
-                <p>
-                The request list could not be refreshed. We could
-                not identify the cause. The requests already loaded are still
-                shown.
-              </p>
-              </Callout>
+              <ErrorState
+                heading="Couldn’t load more requests"
+                error={error}
+                message="We couldn’t load more requests. The requests already loaded are still shown. Nothing was changed. Try again."
+                onRetry={() => void fetchNextPage()}
+                retrying={isFetchingNextPage}
+              />
             )}
             {hasNextPage ? (
               <Button

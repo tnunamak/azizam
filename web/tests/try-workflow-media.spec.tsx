@@ -440,7 +440,7 @@ describe("a workflow catalog that failed to load", () => {
     render(<TryPage />);
     await user.click(screen.getByRole("tab", { name: "Workflow" }));
     expect(
-      await screen.findByRole("button", { name: "Retry" }),
+      await screen.findByRole("button", { name: /^Try again/ }),
     ).toBeVisible();
   });
 });
@@ -676,9 +676,9 @@ describe("readable Try model choices", () => {
     expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(".gguf");
     if (source === "fallback") {
       // Run waits while the list has failed; Retry reads the fallback list.
-      await screen.findByRole("button", { name: "Retry" });
+      await screen.findByRole("button", { name: /^Try again/ });
       expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      fireEvent.click(screen.getByRole("button", { name: /^Try again/ }));
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
     {

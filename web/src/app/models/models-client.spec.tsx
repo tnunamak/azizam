@@ -1082,11 +1082,11 @@ describe("loading, errors and an empty catalog", () => {
         </QueryClientProvider>
       </ViewerContext.Provider>,
     );
-    expect(await screen.findByText("We couldn't load the models. Try again.")).toBeVisible();
+    expect(await screen.findByText("We couldn’t load the models. Nothing was changed. Try again.")).toBeVisible();
     expect(screen.queryByRole("searchbox")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByRole("button", { name: "chat" })).toBeVisible();
-    expect(screen.queryByText("We couldn't load the models. Try again.")).toBeNull();
+    expect(screen.queryByText("We couldn’t load the models. Nothing was changed. Try again.")).toBeNull();
   });
 
   it.each([

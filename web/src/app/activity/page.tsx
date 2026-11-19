@@ -26,7 +26,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
-import { Callout, DelayedSpinner, StatusLine } from "@/components/product/status-ui";
+import { Callout, DelayedSpinner } from "@/components/product/status-ui";
+import { ErrorState } from "@/components/product/error-state";
+import { OUTAGE_MESSAGE, outageCount } from "@/lib/error-copy";
 import { formatTimestamp } from "@/lib/format";
 
 const auditRowLayout = "flex w-full items-center gap-4 py-4 text-left";
@@ -103,6 +105,7 @@ export default function ActivityPage() {
     data: people,
     isPending: peoplePending,
     isError: peopleError,
+    error: peopleFailure,
     refetch: refetchPeople,
   } = useQuery({
     queryKey: ["users"],
@@ -125,6 +128,7 @@ export default function ActivityPage() {
     refetch: refetchAudit,
     isFetching: auditFetching,
     isError: auditError,
+    error: auditFailure,
     isFetchNextPageError: nextPageError,
     isPending: auditPending,
     fetchNextPage,
@@ -145,6 +149,10 @@ export default function ActivityPage() {
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
   const entries = auditData?.pages.flatMap((page) => page.records) ?? [];
+  // One outage, one error: when both sources fail on the gateway, show one.
+  const outage =
+    outageCount([peopleError ? peopleFailure : null, auditError ? auditFailure : null]) >= 2 &&
+    !entries.length;
   // One name per person: the people list wins, so the selector, the rows and
   // the sheet never disagree about who made a change.
   const personNames = new Map(
@@ -278,27 +286,17 @@ export default function ActivityPage() {
               </Button>
             )}
           </div>
-          {peoplePending && (
-            <StatusLine tone="unknown" text="Loading people" compact />
-          )}
-          {peopleError && (
-            <Callout
-              as="div"
-              severity="critical"
-              title="Couldn't load people"
-              headerAction={
-                <Button variant="outline" onClick={() => void refetchPeople()}>
-                  Try again
-                </Button>
-              }
-            >
-              <p>
-                People could not be loaded. Try again.
-                {optionsData?.records.length
+          {peopleError && !outage && (
+            <ErrorState
+              thing="people"
+              error={peopleFailure}
+              message={`We couldn’t load people. Nothing was changed.${
+                optionsData?.records.length
                   ? " Names from recent changes are still shown."
-                  : ""}
-              </p>
-            </Callout>
+                  : ""
+              } Try again.`}
+              onRetry={() => void refetchPeople()}
+            />
           )}
           <div className="flex flex-wrap items-center gap-3">
             {automatedCount > 0 && (
@@ -332,22 +330,12 @@ export default function ActivityPage() {
             </Button>
           </div>
           {auditError && entries.length > 0 && !nextPageError && (
-            <Callout
-              as="div"
-              severity="critical"
-              title="Couldn't refresh changes"
-              headerAction={
-                <Button variant="outline" onClick={() => void refetchAudit()}>
-                  Try again
-                </Button>
-              }
-            >
-              <p>
-                The changes list could not be refreshed. We could
-                not identify the cause. The changes already loaded are still
-                shown.
-              </p>
-            </Callout>
+            <ErrorState
+              heading="Couldn’t refresh changes"
+              error={auditFailure}
+              message="We couldn’t refresh the list. The changes already loaded are still shown. Nothing was changed. Try again."
+              onRetry={() => void refetchAudit()}
+            />
           )}
           {auditPending ? (
             <div role="group" aria-label="Loading changes" aria-busy="true" className="relative">
@@ -367,21 +355,15 @@ export default function ActivityPage() {
               </div>
             </div>
           ) : auditError && !entries.length ? (
-            <Callout
-              as="div"
-              severity="critical"
-              title="Couldn't load changes"
-              headerAction={
-                <Button variant="outline" onClick={() => void refetchAudit()}>
-                  Try again
-                </Button>
-              }
-            >
-              <p>
-                The changes list could not be loaded. We could not
-                identify the cause. Try again.
-              </p>
-            </Callout>
+            <ErrorState
+              thing="changes"
+              error={auditFailure}
+              message={outage ? OUTAGE_MESSAGE : undefined}
+              onRetry={() => {
+                void refetchAudit();
+                if (outage) void refetchPeople();
+              }}
+            />
           ) : !entries.length ? (
             <EmptyState
               icon={History}

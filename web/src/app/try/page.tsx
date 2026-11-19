@@ -1650,6 +1650,8 @@ export default function TryPage() {
     }
   }, []);
 
+  // "Try again" on an unreadable history setting asks both settings again.
+  const [settingsRetries, setSettingsRetries] = useState(0);
   useEffect(() => {
     if (!personViewer) return;
     let live = true;
@@ -1669,7 +1671,7 @@ export default function TryPage() {
       live = false;
       window.removeEventListener("focus", refresh);
     };
-  }, [personViewer]);
+  }, [personViewer, settingsRetries]);
 
   useEffect(() => {
     if (!requestedModel || !linkedModelTab) return;
@@ -3185,6 +3187,7 @@ export default function TryPage() {
                       id={`keep-history-${tab.value}`}
                       keepState={keepState}
                       history={historyChoice}
+                      onRetry={() => setSettingsRetries((count) => count + 1)}
                       forget={forget}
                       onForget={setForget}
                       owner={owner}
@@ -3629,6 +3632,7 @@ function KeepHistoryControl({
   onForget,
   keepState,
   history,
+  onRetry,
   owner,
   memory,
   made,
@@ -3640,6 +3644,8 @@ function KeepHistoryControl({
   keepState: TryKeepState | null;
   /** Undefined while loading; null when the setting cannot be read. */
   history: RequestHistoryChoice | null | undefined;
+  /** Ask for the person's settings again after they could not be read. */
+  onRetry: () => void;
   owner: boolean;
   /** The tab keeps its words with what it makes (pictures, audio, workflow results). */
   memory: boolean;
@@ -3718,6 +3724,10 @@ function KeepHistoryControl({
       </div>
     );
   }
+  // The setting could not be read, so "on" would claim something unknown. The
+  // switch waits (and stays off) until it can be read; a person who already
+  // chose to forget keeps that choice.
+  const unreadable = !forget && (keepState === "unknown" || history === null);
   let note: ReactNode;
   if (forget) {
     note = (
@@ -3730,11 +3740,26 @@ function KeepHistoryControl({
         ) : null}
       </>
     );
-  } else if (keepState === "unknown" || history === null) {
-    note = memory
-      ? "Couldn't read your saved words and chats setting. Saved words are visible only to you."
-      : "Couldn’t read your settings. Saved items are visible only to you.";
-  } else if (keepState === null || history === undefined) {
+  } else if (unreadable) {
+    note = (
+      <>
+        <span className="block">
+          {memory
+            ? "Couldn’t read your saved words and chats setting. Saved words are visible only to you."
+            : "Couldn’t read your settings. Saved items are visible only to you."}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2 max-sm:min-h-11"
+          onClick={onRetry}
+        >
+          Try again
+        </Button>
+      </>
+    );
+  } else if (keepState === null || history === undefined || history === null) {
     note = "Checking what Azizam keeps…";
   } else {
     note = (
@@ -3762,10 +3787,10 @@ function KeepHistoryControl({
   return (
     <div
       data-slot="keep-history"
-      data-state={forget ? "off" : "on"}
+      data-state={forget || unreadable ? "off" : "on"}
       className={cn(
         "rounded-control flex items-center gap-3 border px-3 py-2.5",
-        forget && "bg-muted",
+        (forget || unreadable) && "bg-muted",
       )}
     >
       <Ghost aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
@@ -3779,7 +3804,8 @@ function KeepHistoryControl({
       </div>
       <Switch
         id={id}
-        checked={!forget}
+        checked={!forget && !unreadable}
+        disabled={unreadable}
         onCheckedChange={(next) => onForget(!next)}
         aria-describedby={`${id}-note`}
       />
@@ -3946,9 +3972,8 @@ function CatalogNotice({
     return (
       <div onClick={(event) => event.preventDefault()}>
         <ErrorState
-          heading={`${noun === "model" ? "Models" : "Workflows"} couldn’t be loaded`}
-          message={`We couldn’t tell why the ${noun} list didn’t load.`}
-          action={{ label: "Retry", onClick: onRetry }}
+          thing={noun === "model" ? "the models" : "the workflows"}
+          onRetry={onRetry}
         />
         {unsupported}
       </div>

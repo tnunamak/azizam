@@ -297,7 +297,7 @@ it("explains an unreadable saved words and chats setting while preserving the pr
   await ready();
   expect(
     await screen.findByText(
-      "Couldn't read your saved words and chats setting. Saved words are visible only to you.",
+      "Couldn’t read your saved words and chats setting. Saved words are visible only to you.",
     ),
   ).toBeVisible();
   expect(

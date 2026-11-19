@@ -156,7 +156,7 @@ test("request errors retry and audit details use readable timestamps", async ({
   await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "Requests", exact: true }).click();
   await expect(
-    page.getByText("Couldn't load requests", { exact: true }),
+    page.getByText("Couldn’t load requests", { exact: true }),
   ).toBeVisible();
   fail = false;
   await page.getByRole("button", { name: /Retry|Try again/ }).click();

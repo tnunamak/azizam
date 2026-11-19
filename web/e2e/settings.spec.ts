@@ -241,22 +241,16 @@ for (const [state, theme, width] of [
           page.getByRole("heading", { name: "Advanced", exact: true }),
         ).toHaveCount(0);
         if (state === "error") {
+          // One outage, one error: the page says so once and one Try again asks every read again.
+          const main = page.getByRole("main");
+          await expect(main.getByRole("alert")).toHaveCount(1);
           await expect(
-            page
-              .getByRole("region", { name: "Receipts", exact: true })
-              .getByText("Couldn’t load receipt settings"),
+            main.getByRole("alert").getByRole("heading", { name: "Couldn’t load settings", exact: true }),
           ).toBeVisible();
-          await expect(
-            page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(8);
-          for (const name of ["People and access"]) {
-            const retry = page
-              .getByRole("region", { name, exact: true })
-              .getByRole("button", { name: "Try again" });
-            expect((await retry.boundingBox())?.height).toBeGreaterThanOrEqual(
-              44,
-            );
-          }
+          await expect(main.getByText(/Nothing was changed/).first()).toBeVisible();
+          const retry = main.getByRole("button", { name: /^Try again/ });
+          await expect(retry).toHaveCount(1);
+          expect((await retry.boundingBox())?.height).toBeGreaterThanOrEqual(44);
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),

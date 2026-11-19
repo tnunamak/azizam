@@ -1561,6 +1561,8 @@ export function StatusClient() {
           </>
         }
       >
+        {/* In an outage the page-level error below says it once. */}
+        {outage ? null : (
         <StatusLine
           tone={verdict.tone}
           text={verdict.text}
@@ -1573,6 +1575,7 @@ export function StatusClient() {
         >
           {note ? <span>{note}</span> : null}
         </StatusLine>
+        )}
       </PageHeader>
       {/* While a card explains a problem, a wide screen keeps the card in a
           reading column and puts the rest of the system beside it (D1.3:

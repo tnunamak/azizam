@@ -197,14 +197,14 @@ for (const mode of ["light", "dark"] as const) {
         page.getByText("Couldn’t load your library", { exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Try again" }),
+        page.getByRole("button", { name: /^Try again/ }),
       ).toBeVisible();
       await auditPage(page);
       await page.screenshot({
         path: `test-results/screens/library-error-${mode}-${width}.png`,
         fullPage: true,
       });
-      await page.getByRole("button", { name: "Try again" }).click();
+      await page.getByRole("button", { name: /^Try again/ }).click();
       // Picture tiles carry no text; the tile is named by its prompt.
       await expect(
         page.getByRole("button", { name: /Open A clean product render/ }),

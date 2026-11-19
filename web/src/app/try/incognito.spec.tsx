@@ -234,4 +234,30 @@ describe("Keep request history in Try", () => {
     renderTry();
     expect(await screen.findByRole("switch", { name: "Keep request history" })).not.toBeChecked();
   });
+
+  it("waits, off and disabled, while the setting cannot be read, and recovers on Try again", async () => {
+    mocks.requestHistory.mockRejectedValue(new Error("unavailable"));
+    serve("chat");
+    renderTry();
+    const keep = await screen.findByRole("switch", { name: "Keep request history" });
+    expect(await screen.findByText("Couldn’t read your settings. Saved items are visible only to you.")).toBeVisible();
+    // "On" would claim something unknown.
+    expect(keep).toBeDisabled();
+    expect(keep).not.toBeChecked();
+    mocks.requestHistory.mockResolvedValue(historyOn);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Keep request history" })).toBeEnabled());
+    expect(screen.getByRole("switch", { name: "Keep request history" })).toBeChecked();
+    expect(await screen.findByText("Saved in your History for 7 days.")).toBeVisible();
+  });
+
+  it("keeps a choice to forget even while the setting cannot be read", async () => {
+    sessionStorage.setItem("azizam.try.forget", "1");
+    mocks.requestHistory.mockRejectedValue(new Error("unavailable"));
+    serve("chat");
+    renderTry();
+    const keep = await screen.findByRole("switch", { name: "Keep request history" });
+    expect(await screen.findByText("Not saved in your History.")).toBeVisible();
+    expect(keep).toBeEnabled();
+  });
 });

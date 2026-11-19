@@ -40,9 +40,9 @@ describe("integrated UI coherence", () => {
     );
     renderWithQuery(<ProvidersPage />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Provider controls could not be loaded. Try again.",
+      "We couldn’t load your providers. Nothing was changed. Try again.",
     );
-    expect(screen.getByRole("button", { name: "Retry providers" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Try again/ })).toBeVisible();
   });
 
   it("renders normalized provider status without secret fields", async () => {

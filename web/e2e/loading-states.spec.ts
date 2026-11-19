@@ -30,11 +30,13 @@ interface Capture {
    * Apps loader stood for the 40 ms of its own session request only).
    */
   holdsSession?: boolean;
+  /** Text the loading state must not show: it would name something the page is not waiting for. */
+  absent?: string;
 }
 
 const CAPTURES: Capture[] = [
   { group: "home", url: "/", scope: "signed-in", loadingLabel: "Loading recent work" },
-  { group: "activity-audit", url: "/activity/", scope: "signed-in", tab: "Changes", loadingLabel: "Loading changes" },
+  { group: "activity-audit", url: "/activity/", scope: "signed-in", tab: "Changes", loadingLabel: "Loading changes", absent: "Loading people" },
   { group: "activity-requests", url: "/activity/", scope: "signed-in", loadingLabel: "Loading requests" },
   { group: "apps", url: "/apps/", scope: "signed-in", loadingLabel: "Loading apps", holdsSession: true },
   { group: "status-engines-services", url: "/engines/", scope: "signed-in", loadingLabel: "Loading engines" },
@@ -148,6 +150,39 @@ async function capture(
     const loader = page.getByLabel(item.loadingLabel, { exact: true }).first();
     await expect(loader, `${where}: the route's labeled loading state`).toBeAttached();
     await expect.soft(page.getByRole("heading", { level: 1 }), `${where}: the page title stays`).toBeVisible();
+    if (item.absent) {
+      await expect.soft(page.getByText(item.absent, { exact: true }), `${where}: no "${item.absent}" line`).toHaveCount(0);
+    }
+    // A skeleton must be visible against the surface it sits on, also with the pulse off.
+    const ratio = await page.evaluate(() => {
+      const probe = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+      const paint = (css: string) => {
+        probe.clearRect(0, 0, 1, 1);
+        probe.fillStyle = css;
+        probe.fillRect(0, 0, 1, 1);
+        const [r, g, b, a] = probe.getImageData(0, 0, 1, 1).data;
+        return { r, g, b, a };
+      };
+      const light = ({ r, g, b }: { r: number; g: number; b: number }) => {
+        const lin = (v: number) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      };
+      const surface = (from: Element | null) => {
+        for (let node = from; node; node = node.parentElement) {
+          const color = paint(getComputedStyle(node).backgroundColor);
+          if (color.a === 255) return color;
+        }
+        return paint(getComputedStyle(document.body).backgroundColor);
+      };
+      const ratios = [...document.querySelectorAll('main [data-slot="skeleton"]')].map((bar) => {
+        const fill = paint(getComputedStyle(bar).backgroundColor);
+        const a = light(fill);
+        const b = light(surface(bar.parentElement));
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      });
+      return ratios.length ? Math.min(...ratios) : null;
+    });
+    if (ratio !== null) expect.soft(ratio, `${where}: skeleton fill against its surface`).toBeGreaterThanOrEqual(1.15);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect.soft(overflow, `${where}: fits the viewport`).toBeLessThanOrEqual(0);
     const main = await page.evaluate(() => {

@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { NetworkUnavailableError } from "@/lib/network-error";
 import { usePageOutage } from "./page-outage";
 
 afterEach(cleanup);
@@ -41,7 +42,7 @@ function mount(sources: Array<() => unknown>) {
 }
 
 it("is an outage when two sources fail with a 503", async () => {
-  mount([() => new ApiError("x", "", 503), () => new TypeError("offline"), () => null]);
+  mount([() => new ApiError("x", "", 503), () => new NetworkUnavailableError(), () => null]);
   expect(await screen.findByRole("button", { name: "count 2 outage true" })).toBeVisible();
 });
 

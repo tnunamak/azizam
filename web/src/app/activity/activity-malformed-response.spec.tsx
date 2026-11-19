@@ -65,15 +65,15 @@ it.each([
       <CrashBoundary><Requests /></CrashBoundary>
     </QueryClientProvider>,
   );
-  expect(await screen.findByText("Couldn't load requests")).toBeVisible();
+  expect(await screen.findByText("Couldn’t load requests")).toBeVisible();
   expect(screen.queryByText("Unexpected render crash")).not.toBeInTheDocument();
   expect(screen.queryByText("No request receipts yet")).not.toBeInTheDocument();
   expect(requestReads).toBe(1);
   valid = true;
-  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await userEvent.click(screen.getByRole("button", { name: /^Try again/ }));
   expect(await screen.findByText("No request receipts yet")).toBeVisible();
   await waitFor(() => expect(requestReads).toBe(2));
-  expect(screen.queryByText("Couldn't load requests")).not.toBeInTheDocument();
+  expect(screen.queryByText("Couldn’t load requests")).not.toBeInTheDocument();
 });
 
 it("keeps the first request page when the next pick-list is malformed", async () => {
@@ -93,12 +93,12 @@ it("keeps the first request page when the next pick-list is malformed", async ()
   render(<QueryClientProvider client={client}><CrashBoundary><Requests /></CrashBoundary></QueryClientProvider>);
   const row = await screen.findByRole("button", { name: "Request details: Chat by Mira" });
   await userEvent.click(screen.getByRole("button", { name: "Load more" }));
-  expect(await screen.findByText("Couldn't load more requests")).toBeVisible();
+  expect(await screen.findByText("Couldn’t load more requests")).toBeVisible();
   expect(row).toBeVisible();
   expect(screen.queryByText("Unexpected render crash")).not.toBeInTheDocument();
   validNext = true;
-  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-  await waitFor(() => expect(screen.queryByText("Couldn't load more requests")).not.toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /^Try again/ }));
+  await waitFor(() => expect(screen.queryByText("Couldn’t load more requests")).not.toBeInTheDocument());
   expect(row).toBeVisible();
   expect(urls.filter((url) => url.includes("before=older"))).toHaveLength(2);
 });

@@ -8,6 +8,7 @@ import { SettingsSection } from "@/components/product/setting-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { accountApi } from "@/lib/account-api";
+import { usePageOutage } from "@/lib/page-outage";
 import { toast } from "@/lib/toast";
 
 /**
@@ -18,10 +19,13 @@ import { toast } from "@/lib/toast";
  */
 export function SignInConnections({ empty }: { empty: ReactNode }) {
   const queryClient = useQueryClient();
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isError, error, isFetching, refetch } = useQuery({
     queryKey: ["mcp", "connections"],
     queryFn: accountApi.mcpConnections,
+    meta: { page: "apps" },
   });
+  // When the gateway is down the page says so once; this section only names what did not load.
+  const { outage } = usePageOutage("apps");
   const revoke = useMutation({
     mutationFn: (id: string) => accountApi.revokeMcpConnection(id),
     onSuccess: () => {
@@ -39,10 +43,19 @@ export function SignInConnections({ empty }: { empty: ReactNode }) {
         {isPending ? (
           <Skeleton role="status" aria-label="Loading signed-in apps" className="h-10 w-full" />
         ) : isError ? (
-          <ErrorState
-            message="Couldn't load your connections."
-            onRetry={() => void refetch()}
-          />
+          outage ? (
+            <p className="text-meta">
+              <span className="font-medium">Couldn’t load signed-in apps.</span>{" "}
+              <span className="text-muted-foreground">Nothing was changed.</span>
+            </p>
+          ) : (
+            <ErrorState
+              thing="signed-in apps"
+              error={error}
+              onRetry={() => void refetch()}
+              retrying={isFetching}
+            />
+          )
         ) : data.length === 0 ? (
           <p className="text-muted-foreground text-meta">{empty}</p>
         ) : (

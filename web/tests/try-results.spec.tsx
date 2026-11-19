@@ -98,9 +98,9 @@ describe("PF-006 a failure names its layer, not an HTTP code", () => {
     answer = (url) => (url.includes("models") ? json({}, 500) : undefined);
     account.params = new URLSearchParams();
     render(<TryPage />);
-    expect(await screen.findByText("Models couldn’t be loaded")).toBeVisible();
-    expect(screen.getByText("We couldn’t tell why the model list didn’t load.")).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    expect(await screen.findByText("Couldn’t load the models")).toBeVisible();
+    expect(screen.getByText("We couldn’t load the models. Nothing was changed. Try again.")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: /^Try again/ })).toHaveLength(1);
   });
 });
 

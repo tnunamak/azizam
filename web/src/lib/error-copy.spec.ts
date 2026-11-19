@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api";
+import { NetworkUnavailableError } from "@/lib/network-error";
 import { errorCopy, isOutageError, outageCount, readFailureCopy } from "@/lib/error-copy";
 
 describe("read-failure copy", () => {
@@ -38,12 +39,14 @@ describe("one outage", () => {
     expect(isOutageError(new ApiError("x", "", 403))).toBe(false);
     expect(isOutageError(new ApiError("x", "", 404))).toBe(false);
     expect(isOutageError(null)).toBe(false);
+    // A bug in our own code is not an outage.
+    expect(isOutageError(new TypeError("x is not a function"))).toBe(false);
   });
 
   it("counts the sources that failed together", () => {
     const down = new ApiError("x", "", 503);
     expect(outageCount([down, undefined, null])).toBe(1);
-    expect(outageCount([down, new TypeError("offline"), undefined])).toBe(2);
+    expect(outageCount([down, new NetworkUnavailableError(), undefined])).toBe(2);
     expect(outageCount([down, new ApiError("x", "", 403)])).toBe(1);
   });
 });
