@@ -1361,7 +1361,7 @@
       "definition_version": 1,
       "title": "Workflow image engine",
       "example": "For example, ComfyUI",
-      "summary": "Makes pictures, video and sound by running workflows. Azizam starts it from its install folder, then lists the workflows it can run.",
+      "summary": "Makes pictures, video and sound by running workflows. Azizam starts it from its install folder, then lists which of the workflows that come with Azizam it can run.",
       "keywords": [
         "workflow",
         "node graph",
@@ -1429,7 +1429,7 @@
         "Finding the workflows it can run"
       ],
       "name_fallback": "{host_label}",
-      "models_note": "Azizam shows the workflows this engine can run. A workflow that needs a node the engine lacks is listed with the missing node.",
+      "models_note": "Azizam shows which of the workflows that come with it this engine can run. A workflow that needs a node or a model file the engine lacks is listed with what is missing. Workflows you add yourself are not judged here.",
       "advice": [],
       "process_template": {
         "argv": [
@@ -1439,6 +1439,10 @@
           "127.0.0.1",
           "--port",
           "{port}"
+        ],
+        "program_choices": [
+          "{folder}/.venv/bin/python",
+          "{folder}/venv/bin/python"
         ],
         "cwd": "{folder}",
         "slots": {

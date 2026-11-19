@@ -611,6 +611,61 @@ def test_a_program_that_cannot_run_is_refused(folders):
     assert [p.code for p in found.problems] == ["program_missing"]
 
 
+def test_a_program_that_is_missing_names_its_path(folders):
+    (folders.install / "venv" / "bin" / "python").unlink()
+    refused = refusal(TEMPLATE, folders.values(), allowed_folders=folders.allowed)
+    assert refused.problems[0].code == "program_missing"
+    assert f"{os.path.realpath(folders.install)}/venv/bin/python" in refused.problems[0].why
+
+
+CHOICES = ["{folder}/.venv/bin/python", "{folder}/venv/bin/python"]
+
+
+def test_the_first_program_choice_that_exists_replaces_argv0(folders):
+    # The install has venv/bin/python only: the second choice wins, whatever argv[0] names.
+    template = template_with(argv=["{folder}/.venv/bin/python", "{folder}/stub.py", "--port", "{port}"], program_choices=CHOICES)
+    resolved = resolve(template, folders.values(), allowed_folders=folders.allowed, port_free=lambda _port: True)
+    real = os.path.realpath(folders.install)
+    assert resolved.argv[0] == f"{real}/venv/bin/python" and resolved.argv[1] == f"{real}/stub.py"
+    # An install with both takes the first.
+    (folders.install / ".venv" / "bin").mkdir(parents=True)
+    os.symlink(sys.executable, folders.install / ".venv" / "bin" / "python")
+    first = resolve(template, folders.values(), allowed_folders=folders.allowed, port_free=lambda _port: True)
+    assert first.argv[0] == f"{real}/.venv/bin/python"
+
+
+def test_program_choices_that_all_miss_name_every_path_tried(folders):
+    (folders.install / "venv" / "bin" / "python").unlink()
+    found = refusal(template_with(program_choices=CHOICES), folders.values(), allowed_folders=folders.allowed)
+    assert [p.code for p in found.problems] == ["program_missing"]
+    real = os.path.realpath(folders.install)
+    assert f"{real}/.venv/bin/python" in found.problems[0].why and f"{real}/venv/bin/python" in found.problems[0].why
+
+
+def test_a_program_choice_that_is_a_shell_is_refused_even_after_an_earlier_one_exists(folders):
+    shell = folders.install / "venv" / "bin" / "bash"
+    shell.write_text("#!/bin/sh\n")
+    shell.chmod(0o755)
+    template = template_with(program_choices=["{folder}/venv/bin/python", "{folder}/venv/bin/bash"])
+    assert [p.code for p in refusal(template, folders.values(), allowed_folders=folders.allowed).problems] == ["shell_program"]
+
+
+def test_a_program_choice_outside_the_allowed_folders_is_refused(folders):
+    template = template_with(program_choices=["{folder}/venv/bin/python", "/usr/bin/env"])
+    refused = refusal(template, folders.values(), allowed_folders=folders.allowed)
+    assert refused.problems[0].code == "program_outside_allowed_folders"
+
+
+def test_program_choices_are_checked_as_data():
+    from gateway.process_template import template_errors
+
+    assert template_errors(template_with(program_choices=CHOICES)) == []
+    errors = template_errors(template_with(program_choices=["{nope}/python", "{port}/python", "python"]))
+    assert any("program_choices[0]" in e and "{nope}" in e for e in errors)
+    assert any("program_choices[1]" in e and "port slot" in e for e in errors)
+    assert any("program_choices[2]" in e and "absolute path" in e for e in errors)
+
+
 def test_the_projection_carries_only_the_ready_observation(rig, folders):
     created = rig.create(folders.values(port=free_port()))
     record = rig.registry()["services"][created["service_id"]]

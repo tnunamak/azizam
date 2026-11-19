@@ -250,3 +250,220 @@ def test_the_shipped_definition_names_no_engine_product_and_asks_for_one_folder_
     assert sorted(template["slots"]) == ["folder", "port"]
     assert template["slots"]["folder"]["locate"] == ["main.py"]
     assert template["argv"][1] == "{folder}/main.py" and "127.0.0.1" in template["argv"]
+
+
+# -- 5. a second engine of this kind changes who serves the work ---------------------------------------------------
+
+
+def another_install(install: Install, name: str) -> Path:
+    """One more allowed folder with an engine install, for a second record."""
+    folder = install.root / name
+    (folder / ".venv" / "bin").mkdir(parents=True)
+    (folder / "main.py").write_text(STUB_MAIN)
+    os.symlink(sys.executable, folder / ".venv" / "bin" / "python")
+    return folder
+
+
+def add_named(service: engine_admin.EngineService, folder: Path, name: str, **extra) -> dict:
+    generation = service.store.get_service_registry_snapshot()[1]
+    body = {"definition": DEFINITION, "name": name, "slots": {"folder": str(folder), "port": free_port()}, **extra}
+    return asyncio.run(service.create(OWNER, body, expected_generation=generation))
+
+
+def saved_ids(service: engine_admin.EngineService) -> set[str]:
+    return set((service.store.get_service_registry().get("services") or {}))
+
+
+@pytest.mark.parametrize("name, service_id, serves_after", [
+    ("Studio", "studio", "comfyui"),
+    ("ComfyUI 2", "comfyui-2", "comfyui"),
+    ("Alpha", "alpha", "alpha"),
+])
+def test_a_second_graph_engine_says_who_will_serve_and_saves_only_on_a_yes(live, install, name, service_id, serves_after):
+    service = service_over(live, install)
+    add_named(service, install.folder, "ComfyUI")
+    assert saved_ids(service) == {"comfyui"}
+    folder = another_install(install, "second")
+
+    with pytest.raises(engine_admin.EngineRouteError) as caught:
+        add_named(service, folder, name)
+    assert (caught.value.status_code, caught.value.code) == (409, "engine_check_warnings")
+    assert saved_ids(service) == {"comfyui"}  # without a yes nothing was saved
+    finding = caught.value.check["findings"][0]
+    assert finding["code"] == "shadows_engine" and finding["severity"] == "warning"
+    assert "“ComfyUI” makes pictures, video and sound and music" in finding["what"]
+    if serves_after == "comfyui":
+        assert "“ComfyUI” will keep making pictures, video and sound and music" in finding["what"]
+        assert "this engine will not be used" in finding["what"]
+    else:
+        assert "After you add this engine, it will make pictures, video and sound and music instead" in finding["what"]
+
+    saved = add_named(service, folder, name, acknowledge_warnings=True)
+    assert saved["service_id"] == service_id and saved_ids(service) == {"comfyui", service_id}
+    # What the finding said is what the gateway does with the saved records.
+    proxy.reload_runtime_config()
+    assert {proxy._graph_service(family).service_id for family in FAMILIES} == {serves_after}
+
+
+def test_the_first_graph_engine_and_a_disabled_other_raise_no_shadow_warning(live, install):
+    service = service_over(live, install)
+    add_named(service, install.folder, "ComfyUI", disabled=True)  # off, and it names no capability
+    folder = another_install(install, "second")
+    add_named(service, folder, "Studio")  # no other engine is on: nothing is shadowed
+    assert saved_ids(service) == {"comfyui", "studio"}
+
+
+def test_the_shadow_order_is_the_gateways_on_three_records():
+    from gateway.service_priority import selected_service
+
+    def record(priority=None, enabled=True):
+        out = {"capabilities": ["images", "generations", "videos", "audio.generate"], "protocol": "node-graph",
+               "enabled": enabled, "host": "127.0.0.1", "port": 8188}
+        if priority is not None:
+            out["priority"] = priority
+        return out
+
+    for backends in (
+        {"comfyui": record(), "studio": record(), "alpha": record()},
+        {"comfyui": record(50), "studio": record(), "alpha": record(60)},
+        {"comfyui": record(), "studio": record(10, enabled=False), "alpha": record(10)},
+    ):
+        for family, view in proxy._graph_services_of(backends).items():
+            assert (selected_service(backends, family) or ("", {}))[0] == view.service_id, (family, backends)
+
+
+# -- 6. offerings follow the node list and the model files it offers -----------------------------------------------
+
+
+def loader_list(*classes: str, files=("alpha-weights.safetensors", "sub/beta-weights.safetensors")) -> dict:
+    """A node list with a loader whose one combo input offers these model files, as the engine's own list does."""
+    out = object_info(*classes)
+    out["WeightLoader"] = {"input": {"required": {"weights_name": [list(files), {}]}}, "output": ["MODEL"], "name": "WeightLoader"}
+    return out
+
+
+def needing(identifier: str, *models: tuple[str, str]) -> dict:
+    block = {"requires": {"custom_nodes": [], "models": [{"role": role, "path": path} for role, path in models]}}
+    return {"id": identifier, "display_name": identifier.title(), "bindings": {"comfyui": block}}
+
+
+def check_with(live, install, manifests, fetch) -> dict:
+    service = service_over(live, install, workflow_manifests=lambda: manifests, fetch=fetch)
+    return asyncio.run(service.check(OWNER, {"definition": DEFINITION, "values": {"address": "http://127.0.0.1:40123"}}))
+
+
+def test_a_workflow_that_needs_a_model_file_is_offered_only_when_a_combo_lists_it(live, install):
+    manifests = [needing("present", ("diffusion_model", "diffusion_models/alpha-weights.safetensors")),
+                 needing("nested", ("checkpoint", "checkpoints/beta-weights.safetensors")),
+                 needing("absent", ("lora", "loras/gamma-weights.safetensors"))]
+    fetch, _seen = fetch_for(loader_list("SampleLatent"))
+    workflows = check_with(live, install, manifests, fetch)["workflows"]
+    assert [row["id"] for row in workflows["offered"]] == ["present", "nested"]
+    (absent,) = workflows["unavailable"]
+    assert absent["id"] == "absent"
+    (missing,) = absent["missing"]
+    assert missing["kind"] == "model" and "gamma-weights.safetensors" in missing["name"]
+    assert "gamma-weights.safetensors" in missing["reason"]
+
+
+def test_a_node_with_an_empty_choice_list_does_not_satisfy_a_model_requirement(live, install):
+    manifests = [needing("needs-file", ("diffusion_model", "diffusion_models/alpha-weights.safetensors"))]
+    fetch, _seen = fetch_for(loader_list("SampleLatent", files=()))
+    workflows = check_with(live, install, manifests, fetch)["workflows"]
+    assert workflows["offered"] == [] and [row["id"] for row in workflows["unavailable"]] == ["needs-file"]
+
+
+def test_a_model_file_in_the_newer_combo_form_counts(live, install):
+    node_list = object_info("SampleLatent")
+    node_list["NewLoader"] = {"input": {"required": {"weights_name": ["COMBO", {"options": ["alpha-weights.safetensors"]}]}}}
+    manifests = [needing("present", ("diffusion_model", "diffusion_models/alpha-weights.safetensors"))]
+    fetch, _seen = fetch_for(node_list)
+    assert [row["id"] for row in check_with(live, install, manifests, fetch)["workflows"]["offered"]] == ["present"]
+
+
+# -- 7. a node list that cannot be read is said so ------------------------------------------------------------------
+
+
+def fetch_node_reply(**reply):
+    """A fake engine whose status page answers and whose node list answers as ``reply`` says."""
+    async def fetch(method, url, **_sent):
+        path = "/" + url.split("//", 1)[1].split("/", 1)[1] if url.count("/") > 2 else "/"
+        if method == "GET" and path == "/system_stats":
+            return Answer(method=method, url=url, status=200, body=json.dumps({"system": {"os": "invented"}}).encode())
+        if method == "GET" and path == "/object_info":
+            return Answer(method=method, url=url, **{"status": 200, **reply})
+        return Answer(method=method, url=url, status=404, body=b"{}")
+
+    return fetch
+
+
+NODE_LIST_FINDING = "so Azizam cannot say which workflows it can run."
+
+
+@pytest.mark.parametrize("reply, said", [
+    ({"transport": "too_large", "body": b""}, "The engine's node list was too large to read, " + NODE_LIST_FINDING),
+    ({"body": b"<html>not json</html>"}, "The engine's node list was not in a form Azizam can read, " + NODE_LIST_FINDING),
+    ({"body": b'{"detail": "Not authenticated"}'}, "The engine's answer was not a node list, " + NODE_LIST_FINDING),
+    ({"body": b'["SampleLatent"]'}, "The engine's answer was not a node list, " + NODE_LIST_FINDING),
+    ({"body": b'{"SampleLatent": {"name": "no inputs key"}}'}, "The engine's answer was not a node list, " + NODE_LIST_FINDING),
+])
+def test_an_unreadable_node_list_gives_no_offerings_and_a_finding(live, install, reply, said):
+    check = check_with(live, install, MANIFESTS, fetch_node_reply(**reply))
+    assert "workflows" not in check
+    (finding,) = [f for f in check["findings"] if f["code"] == "node_list_unreadable"]
+    assert finding["what"] == said and finding["severity"] == "warning"
+
+
+def test_a_node_list_cut_short_at_the_entry_cap_gives_no_offerings_and_a_finding(live, install):
+    cap = load_engine_catalog().definition(DEFINITION)["probes"]["lists"][0]["list"]["max_entries"]
+    body = json.dumps({f"Node{i}": {"input": {}} for i in range(cap + 1)}).encode()
+    check = check_with(live, install, MANIFESTS, fetch_node_reply(body=body))
+    assert "workflows" not in check
+    (finding,) = [f for f in check["findings"] if f["code"] == "node_list_unreadable"]
+    assert finding["what"] == "The engine's node list was longer than Azizam reads, " + NODE_LIST_FINDING
+    # One node fewer is the whole list, and it is read.
+    whole = json.dumps({f"Node{i}": {"input": {}} for i in range(cap)}).encode()
+    assert "workflows" in check_with(live, install, MANIFESTS, fetch_node_reply(body=whole))
+
+
+def test_the_node_probe_asks_for_its_own_byte_cap(live, install):
+    asked: dict[str, int] = {}
+
+    async def fetch(method, url, *, cap_bytes, **_sent):
+        asked[url.rsplit("/", 1)[1]] = cap_bytes
+        return Answer(method=method, url=url, status=200, body=b"{}")
+
+    check_with(live, install, MANIFESTS, fetch)
+    assert asked["object_info"] == 16 * 1024 * 1024
+    assert asked["system_stats"] < asked["object_info"]
+
+
+# -- 8. the status read a real test makes ---------------------------------------------------------------------------
+
+
+def run_status_test(live, install, **reply):
+    calls: list[tuple[str, str]] = []
+
+    async def fetch(method, url, **_sent):
+        calls.append((method, url))
+        return Answer(method=method, url=url, **reply)
+
+    service = service_over(live, install, fetch=fetch)
+    body = {"definition": DEFINITION, "values": {"address": "http://127.0.0.1:40123"}, "capability": "images"}
+    return asyncio.run(service.test(OWNER, body)), calls
+
+
+def test_the_status_read_passes_on_a_200_with_its_key_and_reads_with_get(live, install):
+    result, calls = run_status_test(live, install, status=200, body=json.dumps({"system": {}}).encode())
+    assert result["ok"] is True and "finding" not in result
+    assert calls == [("GET", "http://127.0.0.1:40123/system_stats")]
+
+
+def test_the_status_read_fails_on_a_500(live, install):
+    result, _calls = run_status_test(live, install, status=500, body=b'{"error": "broken"}')
+    assert result["ok"] is False and "500" in result["reply"] and result["finding"]["what"]
+
+
+def test_the_status_read_fails_on_a_200_without_its_key(live, install):
+    result, _calls = run_status_test(live, install, status=200, body=b'{"devices": []}')
+    assert result["ok"] is False and "system" in result["reply"]

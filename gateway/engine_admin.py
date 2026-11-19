@@ -59,6 +59,8 @@ from gateway.engine_check import (
     GATEWAY_PORTS,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
+from gateway.engine_protocol import description as protocol_descriptions, reviewed as reviewed_adapters
+from gateway.service_priority import selected_service
 from gateway.engine_connection import inference_base_url
 from gateway.transition_gate import GATE_RETRY_AFTER_S, policy_for
 from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, SECRET_PLACEHOLDER, header_problem, routed_models
@@ -1036,6 +1038,79 @@ def shipped_workflow_manifests() -> tuple[Mapping[str, Any], ...]:
     return tuple(record.manifest for record in WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR).records())
 
 
+def shadowing_finding(catalog: EngineCatalog, definition: Mapping[str, Any], registry: Mapping[str, Any], *,
+                      service_id: str, name: str, capabilities: Iterable[str], enabled: bool) -> dict[str, Any] | None:
+    """A warning when the record to be added would take over, or would lose, graph work another enabled engine does now.
+
+    A node-graph engine serves pictures, video and sound, and the gateway picks one service for each of them by
+    priority, then by id: a second engine of this kind either never gets the work or takes it from the engine that does
+    it. The order is ``gateway.service_priority.selected_service``, over the records that speak the protocol, as the
+    gateway's ``_graph_services_of`` (proxy.py) takes it. Nothing is said for a protocol that is not a node graph's, or
+    when no other enabled engine does any of this work.
+    """
+    protocol = definition["record"]["protocol"]
+    doc = protocol_descriptions.load_registry().get(protocol)
+    if doc is None or doc.adapter_id is None or not doc.binding:
+        return None
+    words: list[str] = []
+    labels: dict[str, str] = {}
+    for cap_id in capabilities:
+        if cap_id in definition["capabilities"]:
+            cap = catalog.capability(cap_id)
+            for word in cap["record_capabilities"]:
+                if word not in words:
+                    words.append(word)
+                labels.setdefault(word, cap["label"].lower())
+    new_record = {"name": name, "enabled": enabled, "capabilities": words, "protocol": protocol}
+    backends = service_registry.runtime_backends(registry)
+    rows: list[tuple[str, str, str]] = []  # (what is made, who makes it now, who makes it after the save)
+    for family in doc.serves:
+        if selected_service({service_id: new_record}, family) is None:
+            continue
+        speakers: dict[str, Any] = {}
+        for sid, backend in backends.items():
+            if reviewed_adapters.speaks_serving_adapter(backend, family):
+                try:
+                    selected_service({sid: backend}, family)
+                except ValueError:
+                    continue  # a record the gateway cannot order is left out here too
+                speakers[sid] = backend
+        doing = [sid for sid, backend in speakers.items() if selected_service({sid: backend}, family) is not None
+                 and service_registry.bool_from_config(backend.get("enabled"), True)]
+        if doing:
+            now, after = selected_service(speakers, family), selected_service({**speakers, service_id: new_record}, family)
+            rows.append((labels.get(family, family), now[0] if now else doing[0], after[0] if after else service_id))
+    if not rows:
+        return None
+
+    def called(sid: str) -> str:
+        return f"“{((registry.get('services') or {}).get(sid) or {}).get('name') or sid}”"
+
+    by_now: dict[str, list[str]] = {}
+    for label, now, _after in rows:
+        by_now.setdefault(now, []).append(label)
+    taken = [label for label, _now, after in rows if after == service_id]
+    kept = [(label, after) for label, _now, after in rows if after != service_id]
+    sentences = [f"Another engine already does work this one would do: "
+                 + "; ".join(f"{called(sid)} makes {_joined(labels_)}" for sid, labels_ in by_now.items())]
+    if taken:
+        sentences.append(f"After you add this engine, it will make {_joined(taken)} instead")
+    if kept:
+        winners = _joined(sorted({called(after) for _label, after in kept}))
+        sentences.append(f"{winners} will keep making {_joined([label for label, _ in kept])}, and this engine will not be used for that work")
+    return {
+        "code": "shadows_engine", "severity": "warning", "field": "capabilities", "keep_off": False,
+        "title": "Another engine does this work",
+        "what": ". ".join(sentences) + ".",
+        "why": "Azizam sends each kind of work to one engine, chosen by priority and then by name. Two engines of this kind do not share it.",
+        "fix": "Add it anyway if that is what you want, or turn the other engine off first.",
+    }
+
+
+def _joined(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 class EngineService:
     """The create and edit steps. The store persists; the r47 rules are re-checked there."""
 
@@ -1377,6 +1452,12 @@ class EngineService:
             capabilities = []
         if not disabled and not capabilities:
             raise DraftError("Choose at least one thing this engine does, or add it turned off.", field="capabilities")
+        shadow = shadowing_finding(catalog, definition, registry, service_id=service_id, name=name,
+                                   capabilities=capabilities, enabled=not disabled)
+        if shadow is not None:
+            # A second engine of one kind changes who serves the work, so it is said once, like a check's warning.
+            report = {**(check or {}), "outcome": "warning", "findings": [*((check or {}).get("findings") or ()), shadow]}
+            _gate(report, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
         models = body.get("models")
         if models is None and check is not None:
             models = check.get("models") or []

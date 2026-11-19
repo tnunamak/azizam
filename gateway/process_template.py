@@ -116,6 +116,7 @@ def template_errors(template: Mapping[str, Any]) -> list[str]:
             errors.append(f"slots.{name}.locate: markers are looked up inside a folder, so the slot's kind must be dir")
     used: set[str] = set()
     where = [(f"argv[{i}]", text) for i, text in enumerate(template.get("argv") or ())]
+    where += [(f"program_choices[{i}]", text) for i, text in enumerate(template.get("program_choices") or ())]
     if template.get("cwd") is not None:
         where.append(("cwd", template["cwd"]))
     for place, text in where:
@@ -128,14 +129,14 @@ def template_errors(template: Mapping[str, Any]) -> list[str]:
     for name in slots:
         if name not in used:
             errors.append(f"slots.{name}: no argv word or cwd uses this slot")
-    argv = template.get("argv") or []
-    if argv:
-        first = argv[0]
+    programs = [("argv[0]", template["argv"][0])] if template.get("argv") else []
+    programs += [(f"program_choices[{i}]", text) for i, text in enumerate(template.get("program_choices") or ())]
+    for place, first in programs:
         head = _tokens(first)
         if not (os.path.isabs(first) or (head and slots.get(head[0], {}).get("type") == "path" and first.startswith("{"))):
-            errors.append("argv[0]: the program must be an absolute path or start with a path slot")
+            errors.append(f"{place}: the program must be an absolute path or start with a path slot")
         if any(slots.get(token, {}).get("type") == "port" for token in head):
-            errors.append("argv[0]: the program cannot come from a port slot")
+            errors.append(f"{place}: the program cannot come from a port slot")
     return errors
 
 
@@ -268,8 +269,26 @@ def _program_problem(argv0: str, roots: list[str]) -> Problem | None:
     if names & SHELLS:
         return Problem("shell_program", "", "A shell cannot be the program. Azizam runs the program itself, with no shell.")
     if not (os.path.isfile(lexical) and os.access(lexical, os.X_OK)):
-        return Problem("program_missing", "", "The program does not exist or cannot run.")
+        return Problem("program_missing", "", f"The program {lexical} does not exist or cannot run.")
     return None
+
+
+def _choose_program(choices: list[str], roots: list[str]) -> tuple[str, Problem | None]:
+    """The first of ``choices`` that exists and can run, as the program; else why none can.
+
+    Every choice meets the lexical checks (a full path, inside an allowed folder, not a shell) whether or not an earlier
+    one wins, so the template's safety does not depend on which install the owner has. A choice that fails them is
+    refused. When all pass but none exists, ``program_missing`` names every path tried.
+    """
+    problems = [_program_problem(choice, roots) for choice in choices]
+    for problem in problems:
+        if problem is not None and problem.code != "program_missing":
+            return choices[0], problem
+    for choice, problem in zip(choices, problems):
+        if problem is None:
+            return choice, None
+    tried = ", ".join(os.path.normpath(choice) for choice in choices)
+    return choices[0], Problem("program_missing", "", f"No program was found to run the engine. Azizam looked for: {tried}.")
 
 
 def resolve(template: Mapping[str, Any], values: Any, *, allowed_folders: Iterable[str],
@@ -286,7 +305,7 @@ def resolve(template: Mapping[str, Any], values: Any, *, allowed_folders: Iterab
     for name in sorted(set(values) - set(slots)):
         problems.append(Problem("unknown_slot", name, f"{name}: this kind of engine has no such setting."))
     # A token the template names must be a slot it declares; the schema check at load makes this a second guard.
-    for place in [*(template.get("argv") or ()), template.get("cwd") or ""]:
+    for place in [*(template.get("argv") or ()), *(template.get("program_choices") or ()), template.get("cwd") or ""]:
         for token in _tokens(place):
             if token not in slots:
                 problems.append(Problem("unknown_token", token, f"The command names {{{token}}}, which is not a setting."))
@@ -318,7 +337,11 @@ def resolve(template: Mapping[str, Any], values: Any, *, allowed_folders: Iterab
 
     argv = [fill(word) for word in template["argv"]]
     cwd = fill(template["cwd"]) if template.get("cwd") else None
-    problem = _program_problem(argv[0], roots)
+    choices = [fill(word) for word in template.get("program_choices") or ()]
+    if choices:
+        argv[0], problem = _choose_program(choices, roots)
+    else:
+        problem = _program_problem(argv[0], roots)
     if problem is None and cwd is not None:
         real_cwd = os.path.realpath(cwd)
         if not os.path.isabs(cwd) or not os.path.isdir(real_cwd) or not _under(real_cwd, roots):

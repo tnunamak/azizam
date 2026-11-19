@@ -326,6 +326,7 @@
       "description": "How Azizam starts this kind of engine on this computer. The owner gives slot values (a folder, a port), never a command line. They are resolved once, when the engine is saved, into the literal process block the process driver runs (gateway/process_template.py).",
       "properties": {
         "argv": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "program_choices": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 1024}, "description": "Where the program may be, in the order to look: each is a template for argv[0], with the same slots and the same checks. The first that exists and can run replaces argv[0]. When none does, the refusal names every path tried."},
         "cwd": {"type": "string", "minLength": 1, "maxLength": 1024},
         "env": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}, "description": "Names of environment variables the engine reads. Never values."},
         "slots": {"type": "object", "minProperties": 1, "maxProperties": 16, "additionalProperties": {"$ref": "#/$defs/processSlot"}},
