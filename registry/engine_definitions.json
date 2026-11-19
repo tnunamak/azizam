@@ -49,6 +49,7 @@
     "likely_metadata_only": "Its {document} lists {path}.",
     "likely_test": "A real test passed at {time}. That shows the server can do this.",
     "likely_list": "Its {document} answered with {count} entries.",
+    "likely_route": "The {noun} route answered an empty request with “{status_text}”. This kind of server only serves {noun}, so the route is there.",
     "possible": "The {noun} route answered an empty request with “{status_text}”. That shows the route exists.",
     "possible_why": "A “{status_short}” answer shows the route exists, not that a model can do this. Run a real test to find out.",
     "against": "It answered the {noun} route with “{excerpt}”.",
@@ -1134,6 +1135,7 @@
           }
         ],
         "route_probes": true,
+        "route_proves": true,
         "route_base": "/v1"
       },
       "capabilities": [
@@ -1148,7 +1150,19 @@
       ],
       "name_fallback": "{host_label}",
       "models_note": "Azizam shows the models and voices the server reports. It does not send a key to this kind of server.",
-      "advice": [],
+      "advice": [
+        {
+          "code": "needkey",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {"status_in": [401, 403], "key_sent": false},
+          "title": "This server asks for a key",
+          "what": "This server asks for a key, and this kind of server is used without a key.",
+          "why": "It answered “{status_text}”. Azizam sends no key to a speech server of this kind, so it cannot be added this way.",
+          "fix": "Turn the key off on the server, or use a server that needs none. A server that needs a key cannot be added this way."
+        }
+      ],
       "record": {
         "protocol": "inline-tts",
         "native_passthrough": false,

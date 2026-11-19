@@ -981,6 +981,11 @@ def _model_row(catalog: EngineCatalog, model_id: str, model_caps: list[str], tak
     return row
 
 
+# The record keys a check's list probes fill (``result["voices"]``, ``result["default_voice"]``). A write that carries a
+# check's observations replaces exactly these on the record, so a later check never leaves an older answer behind.
+OBSERVED_LIST_KEYS = ("voices", "default_voice")
+
+
 async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Run the definition's list probes. For each ``offers`` kind, the first probe that finds ids wins.
 
@@ -1305,6 +1310,9 @@ async def _run_check(
         elif cap_id in listed and cap_id not in route_levels:
             document, path = listed[cap_id]
             level, evidence = "likely", _fill(evidence_text["likely_metadata_only"], {"document": document, "path": path})
+        elif route_level == "possible" and answer is not None and definition["probes"].get("route_proves"):
+            level = "likely"
+            evidence = _fill(evidence_text["likely_route"], {"noun": noun, "status_text": _error_message(answer) if answer.status and answer.status >= 400 else answer.status_text})
         elif route_level == "possible" and answer is not None:
             level = "possible"
             evidence = _fill(evidence_text["possible"], {"noun": noun, "status_text": _error_message(answer) if answer.status and answer.status >= 400 else answer.status_text})

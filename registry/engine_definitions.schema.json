@@ -311,6 +311,7 @@
             "metadata": {"type": "array", "items": {"$ref": "#/$defs/id"}},
             "lists": {"type": "array", "items": {"$ref": "#/$defs/listProbe"}},
             "route_probes": {"type": "boolean"},
+            "route_proves": {"type": "boolean", "description": "A route that answers an empty request as present (level possible) counts as likely. Only for a kind the owner chose because the server serves just these capabilities."},
             "route_base": {"type": "string", "pattern": "^/"}
           }
         },
