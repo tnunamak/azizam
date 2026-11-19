@@ -15,7 +15,7 @@ import pytest
 import proxy
 from gateway import admin_store, engine_check, media_jobs, receipt_store, remote_engine
 from gateway.engine_definitions import load_engine_catalog
-from gateway.engine_protocol import description, dispatch
+from gateway.engine_protocol import description, dispatch, reviewed
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.operation_catalog import project_dispatch_task_aliases
 from gateway.engine_protocol.transport import HttpxTransport
@@ -47,12 +47,11 @@ def _remote_definitions():
 def test_a_definition_allows_another_computer_only_for_tasks_served_in_one_buffered_piece():
     """The per-operation rule is data. The remote path refuses chunked answers, so each task a definition allows there
     must be served by an operation of its description that answers whole: no stream, no event framing."""
-    definitions = _remote_definitions()
+    definitions = [d for d in _remote_definitions() if d['record'].get('dispatch')]
     assert [d['definition'] for d in definitions] == ['sdapi']
     docs = description.load_registry()
     catalog = dispatch._task_catalog()
     for definition in definitions:
-        assert definition['record']['dispatch'], 'another computer is for engines the gateway calls through a description'
         doc = docs[definition['record']['dispatch']['protocol']]
         assert doc.executor == 'http-v1'
         for task in definition['record']['remote']['tasks']:
@@ -66,11 +65,16 @@ def test_a_definition_allows_another_computer_only_for_tasks_served_in_one_buffe
                 assert getattr(response, 'stream', None) is None
 
 
-def test_the_adapters_do_not_declare_another_computer():
-    # node-graph, inline-tts and chunked-stt stay on this computer in this slice.
+def test_only_the_adapters_that_send_through_the_guard_declare_another_computer():
+    # inline-tts and chunked-stt send every request through the remote capability's transport (bound_wire); node-graph keeps
+    # its own sockets and websocket, so it stays on this computer.
     catalog = load_engine_catalog()
-    for definition_id in ('workflow-image-engine', 'openai-speech', 'openai-transcription'):
-        assert not catalog.definition(definition_id)['record'].get('remote')
+    assert not catalog.definition('workflow-image-engine')['record'].get('remote')
+    for definition_id, task in (('openai-speech', 'speech'), ('openai-transcription', 'transcription')):
+        record = catalog.definition(definition_id)['record']
+        assert record['remote']['tasks'] == [task]
+        assert not record.get('dispatch')
+        assert reviewed.sends_through_remote_guard(record['protocol'])
 
 
 # -- the owner's dialog ----------------------------------------------------------------------------------------------
@@ -118,7 +122,7 @@ def test_the_check_shows_the_computed_network_and_never_asks_for_a_typed_one(gat
     assert checked.status_code == 200, checked.text
     check = checked.json()['check']
     assert check['outcome'] == 'ok', check['findings']
-    assert check['remote'] == {'network': NETWORK, 'transport': 'private_plaintext', 'trust_needed': True, 'trusted': False}
+    assert check['remote'] == {'network': NETWORK, 'transport': 'private_plaintext', 'trust_needed': True, 'trusted': False, 'shared_space': False}
     assert [row['id'] for row in check['models']] == [ALPHA, BETA]
     # A typed network is not a field at all.
     typed = _check(owner, {'address': ADDRESS, 'where': 'network', 'private_cidrs': ['10.0.0.0/8']})
@@ -197,8 +201,6 @@ def test_this_computer_is_refused_whatever_the_network(gateway, monkeypatch):
 
 @pytest.mark.parametrize('definition_id, address', [
     ('workflow-image-engine', f'http://{LAN}.5:8188'),
-    ('openai-speech', f'http://{LAN}.5:8880'),
-    ('openai-transcription', f'http://{LAN}.5:8000'),
 ])
 def test_a_server_the_gateway_calls_through_an_adapter_is_refused_in_plain_words(gateway, definition_id, address):
     owner, *_ = owner_and_admin(gateway)
@@ -310,7 +312,7 @@ def test_an_https_address_cannot_be_named_plaintext_and_a_public_network_is_neve
 
 # -- the socket boundary: nothing is dialled outside the approved network -----------------------------------------------
 
-def _socket_runtime(monkeypatch, answers, *, address='http://engine.example:7860'):
+def _socket_runtime(monkeypatch, answers, *, address='http://engine.example:7860', cidr=NETWORK, shared_space=False):
     from gateway.engine_protocol.assets import MemoryAssetStore
     from gateway.remote_engine import ClientFactory
     from gateway.remote_engine_transport import RemoteNetworkTransport
@@ -322,7 +324,8 @@ def _socket_runtime(monkeypatch, answers, *, address='http://engine.example:7860
         'cost_class': 'free-local',
         'connection': {'dispatch': 'protocol', 'protocol': 'sdapi', 'address': address, 'credentials': {},
                        'remote_dispatch': {'enabled': True, 'version': 1, 'transport': 'private_plaintext',
-                                           'private_cidrs': [NETWORK], 'tasks': ['image']}},
+                                           'private_cidrs': [cidr], 'tasks': ['image'],
+                                           **({'shared_space': True} if shared_space else {})}},
         'offerings': [offering]}}
     registry = {'services': {'lan': service}}
     recorder = SocketRecorder(monkeypatch)
@@ -476,3 +479,143 @@ def test_speech_job_on_private_host_via_fake(gateway, fake_upstreams, monkeypatc
     assert [(r.method, str(r.url)) for r in seen] == [('POST', f'http://{LAN}.6:8880/v1/audio/speech')]
     assert json.loads(seen[0].content)['input'] == 'hello there'
     assert 'authorization' not in {name.lower() for name in seen[0].headers}  # the caller's key stops at the gateway
+
+
+# -- slice S7: the shared address space of a mesh network, the unique-local pool, and headers on plain http ----------------
+
+SHARED_ROOT = '100.' '64'                       # built from parts: a host address in this range is a leak to the public scan
+TAILNET_HOST = f'{SHARED_ROOT}.3.9'
+TAILNET_NETWORK = f'{SHARED_ROOT}.3.0/24'
+TAILNET_ADDRESS = f'http://{TAILNET_HOST}:7860'
+TAILNET_METADATA = '100.' '100.100.200'         # the cloud metadata address that sits inside the shared range
+
+
+def _plain_record(address=ADDRESS, cidrs=(NETWORK,), **more):
+    return {'id': 'lan', 'enabled': True, 'config': {
+        'cost_class': 'free-local',
+        'connection': {'dispatch': 'protocol', 'protocol': 'sdapi', 'address': address, 'credentials': {},
+                       'remote_dispatch': {'enabled': True, 'version': 1, 'transport': 'private_plaintext',
+                                           'private_cidrs': list(cidrs), **more}},
+        'offerings': []}}
+
+
+def test_the_refusal_names_the_pool_the_gateway_really_accepts():
+    with pytest.raises(remote_engine.PlainRefusal) as refused:
+        remote_engine.network_around(['203.0.113.9'])
+    assert 'fc00::/7' in str(refused.value) and 'fd00::/8' not in str(refused.value)
+    assert 'Tailscale' in str(refused.value)
+    # The pool in the words is the pool in the check: both halves of fc00::/7, and nothing outside it.
+    assert remote_engine.network_around(['fc12:3456:789a:1::5']) == 'fc12:3456:789a:1::/64'
+    assert remote_engine.network_around(['fd12:3456:789a:1::5']) == 'fd12:3456:789a:1::/64'
+    with pytest.raises(remote_engine.PlainRefusal):
+        remote_engine.network_around(['fe80::5'])
+
+
+def test_a_mesh_address_gives_its_own_network_and_the_metadata_address_never_does():
+    assert remote_engine.network_around([TAILNET_HOST]) == TAILNET_NETWORK
+    assert remote_engine.is_shared_space(remote_engine.ipaddress.ip_network(TAILNET_NETWORK))
+    assert not remote_engine.is_shared_space(remote_engine.ipaddress.ip_network(NETWORK))
+    with pytest.raises(remote_engine.PlainRefusal):
+        remote_engine.network_around([TAILNET_METADATA])
+
+
+def test_the_shared_address_space_is_approved_only_when_the_owner_names_it():
+    record = _plain_record(TAILNET_ADDRESS, cidrs=(TAILNET_NETWORK,))
+    with pytest.raises(ProtocolError):
+        remote_engine.policy(record)       # a private network the owner approved is not the shared space
+    record['config']['connection']['remote_dispatch']['shared_space'] = True
+    approved, cidrs, _ = remote_engine.policy(record)
+    assert cidrs == (TAILNET_NETWORK,)
+    record['config']['connection']['remote_dispatch']['shared_space'] = 'yes'
+    with pytest.raises(ProtocolError):
+        remote_engine.policy(record)       # only a true boolean counts
+    # Naming the shared space does not widen what else a network may be.
+    wide = _plain_record(TAILNET_ADDRESS, cidrs=(f'{SHARED_ROOT}.0.0/10',), shared_space=True)
+    with pytest.raises(ProtocolError):
+        remote_engine.policy(wide)         # a /10 is far wider than one network
+    public = _plain_record(TAILNET_ADDRESS, cidrs=('203.0.113.0/24',), shared_space=True)
+    with pytest.raises(ProtocolError):
+        remote_engine.policy(public)
+
+
+def test_an_approved_mesh_address_is_dialled_and_the_metadata_address_inside_it_is_not(monkeypatch):
+    runtime, recorder, _ = _socket_runtime(monkeypatch, [TAILNET_HOST], address='http://mesh.example:7860',
+                                           cidr=TAILNET_NETWORK, shared_space=True)
+    recorder.responses.append(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]')
+    try:
+        asyncio.run(runtime.invoke('models', {}))
+    except ProtocolError:
+        pass
+    assert recorder.connections == [(TAILNET_HOST, 7860)]
+
+    # The owner approved the network that holds the metadata address: it is still never dialled.
+    metadata_network = TAILNET_METADATA.rsplit('.', 1)[0] + '.0/24'
+    denied, recorder, _ = _socket_runtime(monkeypatch, [TAILNET_METADATA], address='http://mesh.example:7860',
+                                          cidr=metadata_network, shared_space=True)
+    with pytest.raises(ProtocolError):
+        asyncio.run(denied.invoke('models', {}))
+    assert recorder.connections == []
+
+
+def test_a_mesh_address_is_saved_only_after_the_owner_says_what_it_trusts(gateway, fake_upstreams):
+    _sdapi_server(fake_upstreams, host=f'{TAILNET_HOST}:7860')
+    owner, *_ = owner_and_admin(gateway)
+    checked = _check(owner, {'address': TAILNET_ADDRESS, 'where': 'network'})
+    assert checked.status_code == 200, checked.text
+    plan = checked.json()['check']['remote']
+    assert plan['network'] == TAILNET_NETWORK and plan['shared_space'] is True and plan['trust_needed'] is True
+
+    refused = _create(owner, _values(TAILNET_ADDRESS, network_trusted=False))
+    assert refused.status_code == 400, refused.text
+    error = refused.json()['error']
+    assert error['field'] == 'network_trusted' and 'Tailscale' in error['message'] and TAILNET_NETWORK in error['message']
+    assert _stored(gateway) is None
+
+    created = _create(owner, _values(TAILNET_ADDRESS))
+    assert created.status_code == 201, created.text
+    block = _stored(gateway)['config']['connection']['remote_dispatch']
+    assert block['shared_space'] is True and block['private_cidrs'] == [TAILNET_NETWORK]
+
+
+def test_an_ordinary_private_network_never_writes_the_shared_space_flag(gateway, fake_upstreams):
+    _sdapi_server(fake_upstreams)
+    owner, *_ = owner_and_admin(gateway)
+    assert _create(owner, _values()).status_code == 201
+    assert 'shared_space' not in _stored(gateway)['config']['connection']['remote_dispatch']
+
+
+def test_the_metadata_address_inside_the_shared_space_is_refused_in_the_dialog(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    for send in (lambda: _check(owner, {'address': f'http://{TAILNET_METADATA}:7860', 'where': 'network'}),
+                 lambda: _create(owner, _values(f'http://{TAILNET_METADATA}:7860'))):
+        refused = send()
+        assert refused.status_code == 400 and 'not on a private network' in refused.json()['error']['message'], refused.text
+    assert _stored(gateway) is None
+
+
+@pytest.mark.parametrize('headers', [
+    {'Authorization': 'x'},                              # by its name
+    {'X-Api-Key': 'x'},
+    {'Cookie': 'a=b'},
+    {'X-Session': 'x'},
+    {'X-Hint': 'Bearer abcdef0123456789abcdef'},         # by its value
+    {'X-Hint': 'sk-abcdef0123456789abcdef0123'},
+    [{'name': 'X-Hint', 'value': 'Basic dXNlcjpwYXNzd29yZA=='}],
+])
+def test_plain_http_refuses_a_static_header_that_carries_a_key(headers):
+    for place in ('connection', 'config', 'service'):
+        record = _plain_record()
+        carrier = {'connection': record['config']['connection'], 'config': record['config'], 'service': record}[place]
+        carrier['headers'] = headers
+        with pytest.raises(remote_engine.PlainRefusal, match='header that carries a key'):
+            remote_engine.policy(record)
+
+
+def test_plain_http_keeps_an_ordinary_header_and_https_is_not_asked_about_it():
+    ordinary = _plain_record()
+    ordinary['config']['connection']['headers'] = {'X-Request-Source': 'azizam', 'Accept-Language': 'en'}
+    remote_engine.policy(ordinary)
+    # Over https the transport carries a key safely, so the rule is for plain http only.
+    secured = _plain_record('https://engine.example', cidrs=())
+    secured['config']['connection'].update(remote_dispatch={'enabled': True, 'version': 1}, headers={'X-Api-Key': 'x'})
+    remote_engine.policy(secured)
