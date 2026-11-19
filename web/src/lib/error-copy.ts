@@ -6,10 +6,45 @@ export interface ErrorCopy {
   details?: string;
 }
 
+/** The shared words for a read that failed: one heading shape, one reassurance. */
+export function readFailureCopy(thing: string): { heading: string; message: string } {
+  return {
+    heading: `Couldn’t load ${thing}`,
+    message: `We couldn’t load ${thing}. Nothing was changed. Try again.`,
+  };
+}
+
+/** The sentence for one outage that took several sources of a page down. */
+export const OUTAGE_MESSAGE =
+  "The gateway didn’t answer. Nothing was changed. Try again.";
+
+/**
+ * True for a failure of the gateway or the network (5xx, no answer), not for a
+ * 4xx that names a problem with the request or the person's access.
+ */
+export function isOutageError(error: unknown): boolean {
+  if (error === null || error === undefined) return false;
+  if (error instanceof TypeError) return true;
+  if (typeof error !== "object") return false;
+  const status = "status" in error && typeof error.status === "number" ? error.status : null;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  return code === "network_unavailable" || (status !== null && status >= 500);
+}
+
+/** How many of a page's sources failed as one outage. */
+export function outageCount(errors: ReadonlyArray<unknown>): number {
+  return errors.filter(isOutageError).length;
+}
+
 /** Present known error contracts without echoing provider responses or secrets. */
 export function errorCopy(
   error: unknown,
-  options: { heading?: string; role?: "member" | "owner" | "admin" } = {},
+  options: {
+    heading?: string;
+    role?: "member" | "owner" | "admin";
+    /** What failed to load; a read failure then names it and says nothing was changed. */
+    thing?: string;
+  } = {},
 ): ErrorCopy {
   const record = error && typeof error === "object" ? error : {};
   const code =
@@ -26,7 +61,9 @@ export function errorCopy(
     [safeCode, status && status >= 100 && status <= 599 ? `HTTP ${status}` : ""]
       .filter(Boolean)
       .join(" · ") || undefined;
-  const heading = options.heading ?? "Couldn’t complete this request";
+  const heading =
+    options.heading ??
+    (options.thing ? readFailureCopy(options.thing).heading : "Couldn’t complete this request");
   const result = (message: string, recovery: ErrorRecovery): ErrorCopy => ({
     heading,
     message,
@@ -96,6 +133,8 @@ export function errorCopy(
       "Your change is saved, but the gateway is still running the previous settings. Open Status and choose Apply again.",
       "retry",
     );
+  if (options.thing)
+    return result(readFailureCopy(options.thing).message, "retry");
   if (status !== null && status >= 500)
     return result("The gateway could not complete this request.", "retry");
   if (error instanceof TypeError || code === "network_unavailable")

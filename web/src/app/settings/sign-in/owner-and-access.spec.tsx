@@ -271,8 +271,8 @@ describe("loading and failing to load", () => {
     mocked.preview.mockResolvedValue(emptyPreview());
     mocked.get.mockResolvedValue(liveSnapshot());
     mount();
-    expect(await screen.findByText("Couldn’t load this")).toBeInTheDocument();
-    expect(screen.getByText("Sign-in settings could not be loaded.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn’t load sign-in settings.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again to load sign-in settings" })).toBeInTheDocument();
   });
 
   it("tells someone who may not read it that this is the owner's", async () => {

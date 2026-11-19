@@ -628,7 +628,7 @@ describe("WP-20 shell recovery", () => {
 describe("WP-20 shared widgets", () => {
   it("does not invent a failing layer when no context is known", () => {
     render(<ErrorState />);
-    expect(screen.getByText("We couldn't tell where this stopped. Reload this page.")).toBeVisible();
+    expect(screen.getByText("We couldn’t tell where this stopped. Reload this page.")).toBeVisible();
   });
 
   it("keeps missing progress indeterminate and honors a custom maximum", () => {

@@ -240,13 +240,13 @@ it("blames the failed check, claims no engine is ready, and recovers on Refresh"
     expect(screen.getAllByRole("status")[0]).toHaveTextContent("Couldn’t check status"),
   );
   expect(
-    await screen.findByRole("heading", { name: "Engine health couldn’t load" }),
+    await screen.findByRole("heading", { name: "Couldn’t load engine health" }),
   ).toBeVisible();
   expect(screen.queryByText(/\bready\b/i)).toBeNull();
   spy.mockResolvedValue(seeded);
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   await screen.findByRole("button", { name: /Engines: 2 ready, 1 turned off/ });
-  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Couldn’t load engine health" })).toBeNull();
 });
 
 it("keeps a provider failure and its Retry visible while the table is folded", async () => {
@@ -260,9 +260,9 @@ it("keeps a provider failure and its Retry visible while the table is folded", a
   expect(
     screen
       .getAllByRole("alert")
-      .filter((a) => /Provider status couldn’t load/.test(a.textContent ?? "")),
+      .filter((a) => /Couldn’t load provider status/.test(a.textContent ?? "")),
   ).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: "Retry providers" }));
+  await user.click(screen.getByRole("button", { name: "Try again to load provider status" }));
   expect(providerState.refetch).toHaveBeenCalledTimes(1);
 });
 
@@ -277,7 +277,7 @@ it("removes stale green engine observations after a failed refresh", async () =>
   expect(rows().filter((r) => /Ready/.test(r.textContent ?? ""))).toHaveLength(2);
   spy.mockRejectedValue(Object.assign(new Error("Refresh failed"), { status: 503 }));
   await user.click(screen.getByRole("button", { name: "Refresh" }));
-  await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  await screen.findByRole("heading", { name: "Couldn’t load engine health" });
   expect(rows()).toHaveLength(3);
   expect(rows().filter((r) => /Ready/.test(r.textContent ?? ""))).toHaveLength(0);
   expect(screen.queryByText(/engines? ready/i)).toBeNull();

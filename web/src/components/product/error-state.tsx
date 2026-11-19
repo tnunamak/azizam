@@ -2,7 +2,7 @@
 import { Loader2 } from "lucide-react";
 import { Callout } from "./status-ui";
 import { Button } from "@/components/ui/button";
-import { errorCopy } from "@/lib/error-copy";
+import { errorCopy, readFailureCopy } from "@/lib/error-copy";
 
 export interface ErrorStateProps {
   /** null hides the sentence when the heading and button say enough. */
@@ -10,6 +10,12 @@ export interface ErrorStateProps {
   /** critical for failures; info for expected states such as signing in. */
   severity?: "critical" | "attention" | "info";
   heading?: string;
+  /**
+   * What failed to load ("people", "your library"). Gives the heading
+   * "Couldn’t load <thing>", the default message that says nothing was
+   * changed, and the retry button's accessible name.
+   */
+  thing?: string;
   error?: unknown;
   viewerRole?: "member" | "owner" | "admin";
   action?: { label: string } & (
@@ -22,6 +28,7 @@ export interface ErrorStateProps {
 export function ErrorState({
   message,
   heading,
+  thing,
   error,
   viewerRole = "member",
   action,
@@ -29,7 +36,7 @@ export function ErrorState({
   retrying = false,
   severity = "critical",
 }: ErrorStateProps) {
-  const copy = errorCopy(error, { heading, role: viewerRole });
+  const copy = errorCopy(error, { heading, role: viewerRole, thing });
   const recovery = copy.recovery;
   const retry = (recovery === "retry" || recovery === "refresh") && onRetry;
   const actionNode = action ? (
@@ -52,7 +59,13 @@ export function ErrorState({
       <a href="/sign-in/">Sign in</a>
     </Button>
   ) : retry ? (
-    <Button variant="outline" size="sm" disabled={retrying} onClick={onRetry}>
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={retrying}
+      onClick={onRetry}
+      aria-label={thing && !retrying && recovery === "retry" ? `Try again to load ${thing}` : undefined}
+    >
       {retrying && <Loader2 className="animate-spin" data-icon="inline-start" />}{" "}
       {retrying
         ? "Trying again…"
@@ -65,7 +78,7 @@ export function ErrorState({
     <Callout
       as="div"
       severity={severity}
-      title={heading ?? (error ? copy.heading : "Something didn’t load")}
+      title={heading ?? (error || thing ? copy.heading : "Something didn’t load")}
       actions={actionNode}
     >
       {message === null ? null : (
@@ -73,7 +86,9 @@ export function ErrorState({
           {message ??
             (error
               ? copy.message
-              : `We couldn't tell where this stopped. ${onRetry ? "Try again." : "Reload this page."}`)}
+              : thing
+                ? readFailureCopy(thing).message
+                : `We couldn’t tell where this stopped. ${onRetry ? "Try again." : "Reload this page."}`)}
         </p>
       )}
       {copy.details && (

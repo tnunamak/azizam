@@ -22,6 +22,9 @@ import { HouseholdPromptsSection } from "./household-prompts";
 import { MediaFolderSection } from "./media-folder";
 import { SignInSection } from "./sign-in/sign-in-section";
 import { ErrorState } from "@/components/product/error-state";
+import { OUTAGE_MESSAGE } from "@/lib/error-copy";
+import { usePageOutage } from "@/lib/page-outage";
+import { SectionLoadFailed } from "./load-failed";
 import { EmptyState } from "@/components/product/empty-state";
 import { RelativeTime } from "@/components/product/relative-time";
 import { Button } from "@/components/ui/button";
@@ -101,29 +104,20 @@ function useDraft<T>(initial: T) {
   const setDraft = (draft: T) => setState((current) => ({ ...current, draft }));
   return [state.draft, setDraft] as const;
 }
-function SettingsError({
-  error,
-  message,
-  onRetry,
-}: {
-  error: unknown;
-  message: string;
-  onRetry: () => void;
-}) {
-  return error instanceof ApiError && error.status === 403 ? (
-    <p role="alert" className="text-muted-foreground text-meta">
-      Only the owner can change this.
-    </p>
-  ) : (
+/** One error for one outage across the page; each section then says only what did not load. */
+function SettingsOutage() {
+  const { outage, retryAll, retrying } = usePageOutage("settings");
+  return outage ? (
     <div className="[&_button]:min-h-11 [&_summary]:min-h-11">
       <ErrorState
-        heading="Couldn’t load this"
-        error={error}
-        message={message}
-        onRetry={onRetry}
+        heading="Couldn’t load settings"
+        message={OUTAGE_MESSAGE}
+        error={new ApiError("gateway_unavailable", "", 503)}
+        onRetry={retryAll}
+        retrying={retrying}
       />
     </div>
-  );
+  ) : null;
 }
 
 /** Collapsed sections show a summary; expanded sections show only the editor. */
@@ -306,6 +300,7 @@ function MutationError({ error }: { error: unknown }) {
 function InstanceSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.instance,
+    meta: { page: "settings" },
     staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ instance: Instance; revision: string }>(
@@ -335,9 +330,9 @@ function InstanceSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <SettingsError
+        <SectionLoadFailed
+          thing="instance settings"
           error={error}
-          message="Instance settings could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
@@ -439,6 +434,7 @@ function InstanceForm({
 function DefaultsSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.defaults,
+    meta: { page: "settings" },
     staleTime: 15_000,
     queryFn: async () => {
       const [defaults, plans] = await Promise.all([
@@ -456,17 +452,18 @@ function DefaultsSection() {
       {isPending ? (
         <Loading />
       ) : !data ? (
-        <SettingsError
+        <SectionLoadFailed
+          thing="access plans"
           error={error}
-          message="Access plans couldn't be loaded. Try again."
           onRetry={() => void refetch()}
         />
       ) : (
         <>
           {isError && (
-            <SettingsError
+            <ErrorState
+              heading="Couldn’t refresh access settings"
+              message="The values below may be out of date; your edits are kept."
               error={error}
-              message="Couldn’t refresh access settings. The values below may be out of date; your edits are kept."
               onRetry={() => void refetch()}
             />
           )}
@@ -592,6 +589,7 @@ function DefaultsForm({
 function MediaSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.media,
+    meta: { page: "settings" },
     staleTime: 15_000,
     queryFn: () =>
       adminFetch<{
@@ -635,9 +633,9 @@ function MediaSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <SettingsError
+        <SectionLoadFailed
+          thing="media admission settings"
           error={error}
-          message="Media admission settings could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
@@ -654,6 +652,7 @@ function HostCommandsSection() {
   const client = useQueryClient();
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.hostCommands,
+    meta: { page: "settings" },
     staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ enabled: boolean; revision: string }>(
@@ -669,9 +668,9 @@ function HostCommandsSection() {
       {isPending ? (
         <Loading label="Loading computer command setting" />
       ) : isError ? (
-        <SettingsError
+        <SectionLoadFailed
+          thing="the computer command setting"
           error={error}
-          message="Computer command setting could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : owner ? (
@@ -1018,6 +1017,7 @@ function ExtensionsSection() {
   const client = useQueryClient();
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.extensions,
+    meta: { page: "settings" },
     staleTime: 15_000,
     queryFn: () =>
       adminFetch<{
@@ -1090,9 +1090,9 @@ function ExtensionsSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <SettingsError
+        <SectionLoadFailed
+          thing="extensions"
           error={error}
-          message="Extensions could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
@@ -1273,6 +1273,7 @@ export default function SettingsPage() {
   return (
     <div className="page-read">
       <PageHeader title="Settings" />
+      <SettingsOutage />
       <div className="page-stack">
         <InstanceSection />
         <SignInSection />

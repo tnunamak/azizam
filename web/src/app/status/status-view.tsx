@@ -18,7 +18,8 @@ import {
 } from "@/components/product/status-ui";
 import { CapNotice } from "@/components/product/cap-notice";
 import { PageHeader } from "@/components/product/page-header";
-import { ApiError } from "@/lib/api";
+import { api, ApiError, queryKeys } from "@/lib/api";
+import { OUTAGE_MESSAGE, outageCount } from "@/lib/error-copy";
 import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { productApi, type MemberStatusCapability } from "@/lib/product-api";
 import {
@@ -75,6 +76,17 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
   });
   const retryStatus = () => void refetch();
   const model = useCapabilityViews(false);
+  // One outage, one error: the status read and the model read failing together
+  // say so once, and one "Try again" asks both again.
+  const outage = !requestsOnly && outageCount([isError ? error : null, model.isError ? model.error : null]) >= 2;
+  const refreshAll = () => {
+    retryStatus();
+    if (outage) model.refetch();
+  };
+  // On the owner's page this view only adds "your requests"; the owner view
+  // reads the gateway status itself and has already said so if that failed.
+  const ownerStatus = useQuery({ queryKey: queryKeys.status, queryFn: api.status, enabled: false });
+  const ownerStatusFailed = ownerStatus.isError;
   const expired =
     error instanceof ApiError &&
     error.status === 401 &&
@@ -195,18 +207,17 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
             }
           />
         ) : isError ? (
-          <ErrorState
-            heading="Couldn’t check your status"
-            error={error}
-            // Only an HTTP answer proves the gateway was reached.
-            message={
-              error instanceof ApiError
-                ? "The gateway returned an error. Try again."
-                : "We couldn’t tell where this stopped. Try again."
-            }
-            onRetry={retryStatus}
-            retrying={isFetching}
-          />
+          // On the owner's page the owner view above reports the outage once.
+          requestsOnly && ownerStatusFailed ? null : (
+            <ErrorState
+              thing={requestsOnly ? "your requests" : "your status"}
+              heading={outage ? "Couldn’t check status" : undefined}
+              message={outage ? OUTAGE_MESSAGE : undefined}
+              error={error}
+              onRetry={refreshAll}
+              retrying={isFetching || model.isFetching}
+            />
+          )
         ) : data ? (
           <div className="grid items-start gap-(--space-section)">
             {!requestsOnly ? <div className="min-w-0 space-y-(--space-section)">
@@ -250,7 +261,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                   title={memberTerms.whatYouCanUse}
                 />
                 {model.isPending ? <p className="text-muted-foreground text-meta">Checking available models…</p> : model.isError ? (
-                  <ErrorState heading="Available models couldn’t load" message="Try again." onRetry={model.refetch} />
+                  <ErrorState thing="the available models" error={model.error} onRetry={model.refetch} retrying={model.isFetching} />
                 ) : capabilityViews.length ? (
                   <CapabilityList views={capabilityViews} columns={2} />
                 ) : (
@@ -379,7 +390,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
               </p> : null}
             </section>
           </div>
-        ) : <ErrorState heading="Couldn’t check your status" message="The gateway returned no status. Try again." onRetry={retryStatus} retrying={isFetching} />}
+        ) : <ErrorState thing={requestsOnly ? "your requests" : "your status"} onRetry={retryStatus} retrying={isFetching} />}
       </div>
     </div>
   );

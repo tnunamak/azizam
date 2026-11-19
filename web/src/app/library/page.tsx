@@ -304,20 +304,20 @@ class LibraryFailure extends Error {
     readonly reason: "gateway" | "unreadable" | "unknown",
   ) {
     super(reason === "unknown"
-      ? "We couldn't tell where this stopped. Try again."
+      ? "We couldn’t tell where this stopped. Try again."
       : reason === "unreadable"
-        ? "We couldn't read the response. Try again."
+        ? "We couldn’t read the response. Try again."
         : stage === "library"
-          ? "We couldn't load your library. Try again."
+          ? "Your creations are safe. Try again."
           : stage === "prepare"
-            ? "We couldn't prepare this file. Try again."
+            ? "We couldn’t prepare this file. Try again."
             : stage === "download"
-              ? "The file couldn't be downloaded. Try again."
+              ? "The file couldn’t be downloaded. Try again."
               : stage === "delete"
-                ? "We couldn't delete this creation. Try again."
+                ? "We couldn’t delete this creation. Try again."
                 : stage === "folder"
-                  ? "We couldn't confirm the media folder. Nothing was removed. Try again."
-                  : "This browser couldn't share the file. Use Download.");
+                  ? "We couldn’t confirm the media folder. Nothing was removed. Try again."
+                  : "This browser couldn’t share the file. Use Download.");
   }
 }
 // The gateway's own sentence for a media folder failure, shown as it is.
@@ -330,7 +330,7 @@ class MediaFolderFailure extends LibraryFailure {
 function failureCopy(error: unknown) {
   return error instanceof LibraryFailure
     ? error.message
-    : "We couldn't tell where this stopped. Try again.";
+    : "We couldn’t tell where this stopped. Try again.";
 }
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -1745,16 +1745,30 @@ function presentFacts(
  * A supporting query's failure, with its own Retry. Its wait and an empty
  * answer stay quiet (P1): the page works without them.
  */
-function QueryFeedback({ label, query }: {
-  label: string;
-  query: { isFetching: boolean; isError: boolean; refetch: () => unknown };
+/**
+ * One line for reads that failed beside the page's main content, with one
+ * "Try again" for all of them (one outage, one retry).
+ */
+function QueryFeedback({ items }: {
+  items: Array<{ label: string; isError: boolean; isFetching: boolean; refetch: () => unknown }>;
 }) {
-  if (!query.isError) return null;
+  const failed = items.filter((item) => item.isError);
+  if (!failed.length) return null;
+  const labels = failed.map((item) => item.label);
+  const label = labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : labels[0];
+  const fetching = failed.some((item) => item.isFetching);
   return (
-    <p role="status" className="text-meta">
-      We couldn’t load {label}.{" "}
-      <Button variant="link" disabled={query.isFetching} onClick={() => void query.refetch()}>
-        {query.isFetching ? "Loading…" : `Retry ${label}`}
+    <p role="status" className="text-meta flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span>We couldn’t load {label}. Nothing was changed.</span>
+      <Button
+        variant="outline"
+        size="sm"
+        className="max-sm:min-h-11"
+        disabled={fetching}
+        aria-label={`Try again to load ${label}`}
+        onClick={() => failed.forEach((item) => void item.refetch())}
+      >
+        {fetching ? "Trying again…" : "Try again"}
       </Button>
     </p>
   );
@@ -2196,7 +2210,7 @@ function CreationViewer({
                 ) : null}
               </div>
               {receiptFailed ? <p role="status">We couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
-              {maker && !prompt && takesText ? <QueryFeedback label="saved words and chats"query={{ isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }} /> : null}
+              {maker && !prompt && takesText ? <QueryFeedback items={[{ label: "saved words and chats", isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }]} /> : null}
               <KeyValueList
                 className="figures"
                 items={presentFacts([
@@ -2929,8 +2943,15 @@ export default function LibraryPage() {
             </Button>
           ) : null}
         </section>
-        <QueryFeedback label="model names" query={{ isError: modelCatalogError, isFetching: modelCatalogFetching, refetch: refetchModelCatalog }} />
-        {showRunningMedia ? <QueryFeedback label="running work" query={{ isError: homeError, isFetching: homeFetching, refetch: refetchHome }} /> : null}
+        {/* When the library itself did not load, its siblings stay quiet: one outage, one error. */}
+        {showInitialError ? null : (
+          <QueryFeedback
+            items={[
+              { label: "model names", isError: modelCatalogError, isFetching: modelCatalogFetching, refetch: refetchModelCatalog },
+              { label: "running work", isError: showRunningMedia && homeError, isFetching: homeFetching, refetch: refetchHome },
+            ]}
+          />
+        )}
         {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetFetching ? <p role="status">Opening that creation…</p> : null}
         {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetError ? (
           <div className="mb-4">
@@ -2964,7 +2985,8 @@ export default function LibraryPage() {
         ) : null}
         {showInitialError ? (
           <ErrorState
-            heading="Couldn’t load your library"
+            thing="your library"
+            error={libraryError instanceof LibraryFailure ? undefined : libraryError}
             message={failureCopy(libraryError)}
             onRetry={() => void refetch()}
             retrying={isFetching}

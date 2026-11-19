@@ -8,6 +8,8 @@ import { api, adminFetch, ApiError, type AccessPlan, type AccessPlanChoice, type
 import { HandOverDialog } from "@/app/apps/hand-over-dialog";
 import { useViewer } from "@/components/shell/session";
 import { formatPersonName } from "@/lib/format";
+import { OUTAGE_MESSAGE } from "@/lib/error-copy";
+import { usePageOutage } from "@/lib/page-outage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -142,7 +144,7 @@ export default function PeoplePage() {
     isError: peopleIsError,
     error: peopleError,
     refetch: peopleRefetch,
-  } = useQuery({ queryKey: peopleKey, queryFn: peopleApi.people });
+  } = useQuery({ queryKey: peopleKey, queryFn: peopleApi.people, meta: { page: "people" } });
   const {
     data: invitesData,
     isPending: invitesIsPending,
@@ -152,14 +154,19 @@ export default function PeoplePage() {
   } = useQuery({
     queryKey: invitesKey,
     queryFn: peopleApi.invites,
+    meta: { page: "people" },
   });
   const {
     data: plansData,
     isPending: plansIsPending,
     isError: plansIsError,
     isFetching: plansIsFetching,
+    error: plansError,
     refetch: plansRefetch,
-  } = useQuery({ queryKey: plansKey, queryFn: api.accessPlans.list });
+  } = useQuery({ queryKey: plansKey, queryFn: api.accessPlans.list, meta: { page: "people" } });
+  // One outage, one error: when two of the three reads failed together, the tab
+  // you are on says so once and one "Try again" asks all of them again.
+  const { outage, retryAll, retrying: retryingAll } = usePageOutage("people");
   const [tab, setTab] = useState("people");
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
@@ -258,11 +265,11 @@ export default function PeoplePage() {
   };
   const gateCopy = {
     loading: {
-      title: "Loading access plans",
+      title: "Access plans must load first",
       description: "You can invite someone once your access plans load.",
     },
     failed: {
-      title: "Access plans couldn’t be loaded",
+      title: "Access plans must load first",
       description: "Inviting someone needs an access plan. Try again.",
     },
     none: {
@@ -270,8 +277,14 @@ export default function PeoplePage() {
       description: "An invitation gives one person the access a plan allows.",
     },
   } as const;
+  // The tab on screen already shows its own failure and its own retry; a
+  // second retry in the header would be two answers to one outage.
+  const tabFailed =
+    (tab === "people" && peopleIsError) ||
+    (tab === "invites" && invitesIsError) ||
+    tab === "plans";
   const gateButton = (size: "sm" | "default") =>
-    planGate === "failed" ? (
+    planGate === "failed" && !tabFailed ? (
       <Button
         variant="outline"
         size={size}
@@ -411,16 +424,17 @@ export default function PeoplePage() {
           </Button>
         }
       >
-        {owner && planGate !== "ready" && !gateInEmptyState ? (
+        {/* The reason "Invite someone" is dimmed, on the tabs that list people or
+            invites. While plans load, the skeleton says it; on the Access plans
+            tab, the card below says what failed. */}
+        {owner &&
+        planGate !== "ready" &&
+        planGate !== "loading" &&
+        !(planGate === "failed" && tab === "plans") &&
+        !gateInEmptyState ? (
           <StatusLine
             compact
-            tone={
-              planGate === "loading"
-                ? "unknown"
-                : planGate === "failed"
-                  ? "bad"
-                  : "warn"
-            }
+            tone={planGate === "failed" ? "bad" : "warn"}
             text={gateCopy[planGate].title}
           >
             {gateButton("sm")}
@@ -447,18 +461,23 @@ export default function PeoplePage() {
             <Loading label="Loading people" />
           ) : peopleIsError ? (
             <ErrorState
-              heading="Couldn’t load this"
+              thing="people"
               error={peopleError}
               message={
                 peopleError instanceof ApiError && peopleError.status === 403
                   ? "Only the owner can change this."
-                  : "People could not be loaded. Try again."
+                  : outage
+                    ? OUTAGE_MESSAGE
+                    : undefined
               }
               onRetry={
                 peopleError instanceof ApiError && peopleError.status === 403
                   ? undefined
-                  : () => void peopleRefetch()
+                  : outage
+                    ? retryAll
+                    : () => void peopleRefetch()
               }
+              retrying={outage && retryingAll}
             />
           ) : !peopleData.people.length ? (
             gateInEmptyState ? (
@@ -606,18 +625,23 @@ export default function PeoplePage() {
             <Loading label="Loading invites" />
           ) : invitesIsError ? (
             <ErrorState
-              heading="Couldn’t load this"
+              thing="invites"
               error={invitesError}
               message={
                 invitesError instanceof ApiError && invitesError.status === 403
                   ? "Only the owner can change this."
-                  : "Invites could not be loaded. Try again."
+                  : outage
+                    ? OUTAGE_MESSAGE
+                    : undefined
               }
               onRetry={
                 invitesError instanceof ApiError && invitesError.status === 403
                   ? undefined
-                  : () => void invitesRefetch()
+                  : outage
+                    ? retryAll
+                    : () => void invitesRefetch()
               }
+              retrying={outage && retryingAll}
             />
           ) : !invites.length ? (
             gateInEmptyState ? (
@@ -690,8 +714,11 @@ export default function PeoplePage() {
             <Loading label="Loading access plans" />
           ) : plansIsError ? (
             <ErrorState
-              message="Access plans could not be loaded. Try again."
-              onRetry={() => void plansRefetch()}
+              thing="access plans"
+              error={plansError}
+              message={outage ? OUTAGE_MESSAGE : undefined}
+              onRetry={outage ? retryAll : () => void plansRefetch()}
+              retrying={outage ? retryingAll : plansIsFetching}
             />
           ) : !plansData.length ? (
             <EmptyState
