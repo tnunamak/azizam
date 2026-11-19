@@ -746,6 +746,7 @@ function EngineFoldersSection() {
   const owner = useViewer().role === "owner";
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: engineFoldersKey,
+    meta: { page: "settings" },
     enabled: owner,
     staleTime: 15_000,
     queryFn: engineFoldersApi.get,
