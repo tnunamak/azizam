@@ -277,14 +277,15 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
             def sent(model: str, **voice: object) -> object:
                 resp = client.post("/v1/audio/speech", json={"model": model, "input": "hi", "response_format": "wav", **voice})
                 taken = upstream.take()
-                return json.loads(taken[0]["body"])["voice"] if resp.status_code == 200 else resp.json()["error"]["code"]
+                return json.loads(taken[0]["body"]).get("voice") if resp.status_code == 200 else resp.json()["error"]["code"]
 
             self.assertEqual(sent("kokoro", voice="narrator-7"), "Narrator-7")
             self.assertEqual(sent("kokoro"), "Reader-2")
             self.assertEqual(sent("kokoro", voice="alloy"), "voice_not_available")
             # An engine without a voice list takes the caller's voice id; nothing is invented.
             self.assertEqual(sent("supertonic", voice="Any-Voice"), "any-voice")
-            self.assertEqual(sent("supertonic"), "")
+            # No voice asked and none to default to: the voice is left out, not sent empty (an intended change).
+            self.assertIsNone(sent("supertonic"))
             listing = client.get("/v1/audio/voices").json()
         self.assertNotIn("kokoro", listing["engines"])
 

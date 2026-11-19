@@ -65,3 +65,11 @@ reason = "no shipped local engine preset speaks this protocol upstream (Anthropi
 protocol = "comfyui"
 set = "observe"
 status = "recorded"
+
+[[cell]]
+protocol = "inline-tts"
+set = "speech"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the openai-speech engine definition (train 86) speaks inline-tts upstream; a recording against a local OpenAI-compatible speech server needs a recorder protocol entry for binary audio replies"
+expires_on = 2027-01-08
