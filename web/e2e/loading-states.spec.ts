@@ -42,7 +42,9 @@ const CAPTURES: Capture[] = [
   { group: "settings", url: "/settings/", scope: "signed-in", loadingLabel: "Loading settings" },
   { group: "public-setup", url: "/setup/", scope: "public", loadingLabel: "Loading setup" },
   { group: "public-sign-in", url: "/sign-in/", scope: "public", loadingLabel: "Loading sign-in" },
-  { group: "status", url: "/status/", scope: "signed-in", loadingLabel: "Loading status" },
+  // The owner page waits on two sources; the requests list is the one with a labeled loader. "Loading status" is
+  // only the route's code-loading fallback, which a held data request never shows.
+  { group: "status", url: "/status/", scope: "signed-in", loadingLabel: "Loading your requests" },
   { group: "try", url: "/try/", scope: "signed-in", loadingLabel: "Loading models" },
   { group: "usage", url: "/usage/", scope: "signed-in", loadingLabel: "Loading usage" },
 ];
