@@ -906,7 +906,8 @@ vitest = 4489  # Train 78: +1 (4488 -> 4489): a choice that shares a built-in ob
 # Home media slots (2026-11-09): +8 Playwright cases in e2e/home-media-slots.spec.ts (4 rows at 1440 and 390 px); playwright test --list 723 + live-data 3 + household 18 = 744.
 # Library picker day headings (2026-11-12): +3 cases in library-pick-everywhere.spec.ts (a pinned day heading; small days share a row at 390 and 1440); playwright test --list rose 724 -> 727.
 # Train 68 (2026-11-17): +3 cases in e2e/service-apps.spec.ts (an administrator's service app, a member's plain create, the handover); the gate counted 751.
-playwright = 751
+# Loading states (2026-11-19): +4 Playwright cases in e2e/loading-states.spec.ts (both themes at 1440 and 390 px); playwright test --list 730 -> 734 + live-data 3 + household 18 = 755.
+playwright = 755
 # Builder E2 (2026-11-08): +1 case in e2e/workflows-owner.spec.ts (owner flow, chromium only); not yet run, see the report.
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
