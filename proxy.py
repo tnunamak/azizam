@@ -21469,6 +21469,12 @@ async def _handle_rerank(request: Request, path: str) -> Response:
 
     service_id = str(resolution.service or "")
     service = (config.get("backends") or {}).get(service_id) or {}
+    # Rerank runs on the embedding engines, so it shares their resource class: turning embeddings off turns rerank off.
+    admission = _dispatch_admission_response(
+        "text.rerank", auth_context=auth_context, service_id=service_id, resource_class="embeddings",
+    )
+    if admission is not None:
+        return admission
     not_ready = await _ensure_speech_service_ready(service_id, label="Rerank engine")
     if not_ready is not None:
         code, retry_after = _readiness_refusal(not_ready)

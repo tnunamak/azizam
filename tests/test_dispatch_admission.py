@@ -186,6 +186,24 @@ def test_additional_routes_block_dispatch(dispatch_env, monkeypatch, path, body)
     assert 'resource_class_disabled' in payload['admission']['reason_codes']
 
 
+def test_rerank_is_refused_before_its_engine_starts(dispatch_env, monkeypatch):
+    client, _calls = dispatch_env
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_resource_classes': ['embeddings']})
+    monkeypatch.setattr(proxy, 'resolve_stable_alias', lambda *_a: SimpleNamespace(
+        engine='test-rerank', engine_spec={}, service='test-service', upstream_model='test-rerank'))
+    started = []
+
+    async def ready(*_a, **_kw):
+        started.append('engine')
+
+    monkeypatch.setattr(proxy, '_ensure_speech_service_ready', ready)
+    response = client.post('/v1/rerank', json={'model': 'test', 'query': 'q', 'documents': ['a', 'b']})
+    assert response.status_code == 503, response.text
+    assert response.json()['error']['code'] == 'resource_admission_denied'
+    assert 'resource_class_disabled' in response.json()['admission']['reason_codes']
+    assert started == []
+
+
 @pytest.mark.parametrize('protocol', ['openai', 'anthropic', 'ollama'])
 @pytest.mark.parametrize('cfg,override,code', [
     ({'disabled_intents': ['chat.generate']}, {}, 'intent_disabled'),
