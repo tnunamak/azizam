@@ -4490,8 +4490,7 @@ async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any
             return {"status": "unknown"}
     else:
         probe_config = dict(bcfg)
-        env_name = str(bcfg.get("base_url_env") or bcfg.get("api_base_env") or "").strip()
-        env_base = str(get_env(env_name) or "").strip() if env_name else ""
+        env_base = service_registry.environment_base_url(bcfg)
         if env_base:
             probe_config["base_url"] = env_base
         endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
@@ -4575,9 +4574,7 @@ def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
     (decision D39). An unreadable one, or one stored for another origin, gives no URL.
     """
     try:
-        env_name = str(service_config.get("base_url_env") or service_config.get("api_base_env") or "").strip()
-        env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
-        base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
+        base_url = (service_registry.environment_base_url(service_config) or runtime_secrets.first_url(service_config)).strip()
         if not base_url:
             base_url = service_registry.host_port_origin(service_config)
         dialed = runtime_secrets.url(service_config, "health_endpoint", base=base_url, join=_probe_join).strip()
@@ -18593,7 +18590,10 @@ def _runtime_health_endpoint(service: Mapping[str, Any]) -> str | None:
     config = service.get("config")
     merged = {**(config if isinstance(config, Mapping) else {}), **service}
     try:
-        base = runtime_secrets.first_url(merged, ("base_url",)) or health_base(merged) or ""
+        # An address the record's environment variable names is dialed in place of its stored one, and no stored
+        # credential is bound to it.
+        stored_base = "" if service_registry.environment_base_url(merged) else runtime_secrets.first_url(merged, ("base_url",))
+        base = stored_base or health_base(merged) or ""
         dialed = runtime_secrets.url(merged, "health_endpoint", base=base, join=join_health)
     except runtime_secrets.SecretUnavailable:
         return None
