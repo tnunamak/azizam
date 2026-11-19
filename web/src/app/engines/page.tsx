@@ -379,8 +379,9 @@ function EnginesContents() {
 
   if (registryIsPending) {
     return (
-      <div className="flex flex-col gap-6" role="status" aria-label="Loading engines" aria-busy="true">
+      <div className="flex flex-col gap-6">
         <PageHeader title="Engines" />
+        <p role="status" aria-label="Loading engines" className="sr-only">Loading engines</p>
         <Skeleton aria-hidden="true" className="h-20 w-full" />
         <Skeleton aria-hidden="true" className="h-72 w-full" />
       </div>
@@ -639,8 +640,9 @@ export default function Page() {
   return (
     <Suspense
       fallback={
-        <div className="flex flex-col gap-6" role="status" aria-label="Loading engines" aria-busy="true">
+        <div className="flex flex-col gap-6">
           <PageHeader title="Engines" />
+          <p role="status" aria-label="Loading engines" className="sr-only">Loading engines</p>
           <Skeleton aria-hidden="true" className="h-20 w-full" />
           <Skeleton aria-hidden="true" className="h-72 w-full" />
         </div>

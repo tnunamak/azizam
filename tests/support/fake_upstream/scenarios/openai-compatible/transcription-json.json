@@ -1,0 +1,37 @@
+{
+  "protocol": "openai-compatible",
+  "name": "transcription-json",
+  "description": "One JSON transcription answer and one JSON translation answer; the test reads the model field of the multipart upload it received.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "OpenAI-compatible POST /v1/audio/transcriptions answering one application/json body with the transcript text"
+  },
+  "exchanges": [
+    {
+      "id": "transcription",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/transcriptions"
+      },
+      "response": {
+        "json": {
+          "text": "hello from the fake"
+        }
+      }
+    },
+    {
+      "id": "translation",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/translations"
+      },
+      "response": {
+        "json": {
+          "text": "hello in English from the fake"
+        }
+      },
+      "required": false,
+      "repeat": true
+    }
+  ]
+}

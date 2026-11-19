@@ -201,9 +201,10 @@ def test_a_loop_or_an_unknown_engine_is_refused_on_write_with_422_and_writes_not
     assert loop.status_code == 422 and loop.json()["error"]["code"] == "config_invalid"
     assert {p["pointer"] for p in loop.json()["problems"]} <= {"/chat/stable/default", "/chat/stable/fast"}
     assert loop.json()["problems"] and "alias_invalid" in loop.json()["problems"][0]["message"]
-    unknown = app.set(("/transcriptions/stable/stt", ["ghost"]))
+    # Rerank: an engine section no service record gives engines to, so an unknown engine is a fault, not a dangling name.
+    unknown = app.set(("/rerank/stable/rr", ["ghost"]))
     assert unknown.status_code == 422
-    assert [p["pointer"] for p in unknown.json()["problems"]] == ["/transcriptions/stable/stt"]
+    assert [p["pointer"] for p in unknown.json()["problems"]] == ["/rerank/stable/rr"]
     assert rows(app.db) == [] and app.effective() == release_aliases()
     fine = app.set(("/speech/engines/e1", {"service": "svc", "model": "m"}), ("/speech/stable/tts", ["e1"]))
     assert fine.status_code == 200, fine.text
@@ -214,12 +215,12 @@ def test_a_loop_or_an_unknown_engine_that_reached_the_store_is_skipped_on_load(t
     admin_store.init_db(db)
     items = [admin_store.ConfigItem(SECTION, "/chat/stable/default", "set", json.dumps("fast")),
              admin_store.ConfigItem(SECTION, "/chat/stable/fast", "set", json.dumps("default")),
-             admin_store.ConfigItem(SECTION, "/transcriptions/stable/stt", "set", json.dumps(["ghost"]))]
+             admin_store.ConfigItem(SECTION, "/rerank/stable/rr", "set", json.dumps(["ghost"]))]
     admin_store.apply_config_change(items, if_match={SECTION: "0"}, validate=None, path=db)
     layer = home.layer({}, path=db, registry={"services": {}})
     effective = layer.config[SECTION]
     assert validate_aliases(effective) == [], "what serves is valid"
-    assert effective.get("transcriptions", {}).get("stable", {}).get("stt") is None
+    assert effective.get("rerank", {}).get("stable", {}).get("rr") is None
     assert "override_rejected" in {p["code"] for p in layer.problems[SECTION]}
     with pytest.raises(AliasUnavailableError) as caught:
         resolve_alias(effective, "chat", "default")

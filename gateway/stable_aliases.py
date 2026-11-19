@@ -338,16 +338,22 @@ def _pointer(*parts: Any) -> str:
     return "".join("/" + str(part).replace("~", "~0").replace("/", "~1") for part in parts)
 
 
+# The sections whose engines a service record gives (gateway/derived_engines.py).
+DERIVED_ENGINE_OPERATIONS = ("speech", "transcriptions")
+
+
 def _alias_issues(
-    cfg: Mapping[str, Any] | None, derived_speech: Iterable[str] = (), *, registry_known: bool = False,
+    cfg: Mapping[str, Any] | None, derived: Mapping[str, Iterable[str]] | None = None, *, registry_known: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Problems as ``(JSON Pointer, text, severity)``; the pointer is the entry the problem sits on ('' = the section).
 
-    ``derived_speech`` are the ids of the speech engines the service records give (gateway/derived_engines.py): a tier
-    or an OpenAI-name pattern may name one, though the stored table does not hold it. When the registry is known
-    (``registry_known``), a speech tier or pattern naming an id that is neither a table entry nor derived is not a
-    structure fault: a deleted record's engine looks the same as a typo, so it is shown dangling like an entry whose
-    service is gone, and the tier skips it. With no registry the same name stays an unknown engine."""
+    ``derived`` maps a section (``speech``, ``transcriptions``) to the ids of the engines the service records give
+    (gateway/derived_engines.py): a tier or an OpenAI-name pattern may name one, though the stored table does not hold
+    it. When the registry is known (``registry_known``), a tier or pattern of such a section naming an id that is
+    neither a table entry nor derived is not a structure fault: a deleted record's engine looks the same as a typo,
+    so it is shown dangling like an entry whose service is gone, and the tier skips it. With no registry the same
+    name stays an unknown engine."""
+    derived = derived or {}
     issues: list[tuple[str, str, str]] = []
     if not isinstance(cfg, Mapping):
         return [("", "model_aliases must be a mapping", INVALID)]
@@ -363,9 +369,9 @@ def _alias_issues(
             continue
         stable = _stable_map(section)
         engines = _engine_map(section)
-        known = {*engines, *(_norm(engine) for engine in derived_speech)} if operation == "speech" else set(engines)
+        known = {*engines, *(_norm(engine) for engine in derived.get(operation, ()))}
         # An engine id no table entry and no record gives: dangling where a record could have given it (see above).
-        absent_severity = DANGLING if registry_known and operation == "speech" else INVALID
+        absent_severity = DANGLING if registry_known and operation in DERIVED_ENGINE_OPERATIONS else INVALID
         if engines and operation not in ENGINE_OPERATIONS:
             issues.append((_pointer(operation, "engines"),
                            f"{operation}: engines are only valid for speech/transcriptions/rerank/decisions", INVALID))
@@ -440,7 +446,15 @@ def alias_problems(candidate: Mapping[str, Any] | None, context: Mapping[str, An
     """
     registry = (context or {}).get("registry")
     services = registry.get("services") if isinstance(registry, Mapping) else None
-    derived = derived_engines.derive_speech_engines(services, include_disabled=True)
+    # A disabled record still defines its names (include_disabled), so a tier naming one stays valid while it is off.
+    # A derived id the owner's own section already resolves is left out of the merge (derived_engines), so it is
+    # not known here either: a tier naming it would name an engine that never exists.
+    derived = {
+        operation: [name for name in derive(services, include_disabled=True)
+                    if not owner_resolves_name(candidate, operation, name)]
+        for operation, derive in (("speech", derived_engines.derive_speech_engines),
+                                  ("transcriptions", derived_engines.derive_transcription_engines))
+    }
     problems = [
         Problem(pointer or None, "alias_invalid" if severity == INVALID else "service_gone", severity, text)
         for pointer, text, severity in _alias_issues(candidate, derived, registry_known=isinstance(services, Mapping))
