@@ -111,7 +111,8 @@
       "additionalProperties": false,
       "required": ["sent", "cost"],
       "properties": {
-        "kind": {"enum": ["json_post", "binary_post", "multipart_post"], "description": "json_post (the default) reads a JSON reply. binary_post reads bytes: it passes when the reply holds the status, the content type prefix and the number of bytes in expect. multipart_post sends body as form fields with one generated file, and passes when the reply has the status and a JSON string at expect.json_string (an empty string counts)."},
+        "kind": {"enum": ["json_post", "binary_post", "multipart_post", "get_probe"], "description": "json_post (the default) reads a JSON reply. binary_post reads bytes: it passes when the reply holds the status, the content type prefix and the number of bytes in expect. multipart_post sends body as form fields with one generated file, and passes when the reply has the status and a JSON string at expect.json_string (an empty string counts). get_probe reads one status path of the engine with GET and queues no work: it passes when the reply has the status and, if expect.json_key is set, that key in its JSON."},
+        "path": {"type": "string", "pattern": "^/", "description": "get_probe only: the server-root path to read."},
         "file": {
           "type": "object",
           "additionalProperties": false,
@@ -131,7 +132,8 @@
             "status": {"type": "integer", "minimum": 100, "maximum": 599},
             "content_type_prefix": {"type": "string", "minLength": 1},
             "min_bytes": {"type": "integer", "minimum": 1},
-            "json_string": {"type": "string", "minLength": 1, "description": "multipart_post: the key of a string in the JSON reply, as a dotted path."}
+            "json_string": {"type": "string", "minLength": 1, "description": "multipart_post: the key of a string in the JSON reply, as a dotted path."},
+            "json_key": {"type": "string", "minLength": 1, "description": "get_probe: a key the JSON reply must hold, as a dotted path."}
           }
         },
         "sent": {"type": "string"},
@@ -271,6 +273,7 @@
         "id_keys": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
         "name_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "default_select": {"type": "string", "description": "A JSON pointer to the id the server names as its default."},
+        "max_entries": {"type": "integer", "minimum": 1, "maximum": 50000, "description": "The most ids kept. The default is 2000. A list that holds more is cut and marked truncated."},
         "where": {
           "type": "object",
           "additionalProperties": false,
@@ -287,11 +290,12 @@
       "description": "One read of a list the server reports. The first probe of an offers kind that finds ids wins. A model list replaces the models the primary probe found; a voice list is stored with the record.",
       "properties": {
         "id": {"$ref": "#/$defs/id"},
-        "offers": {"enum": ["model", "voice"]},
+        "offers": {"enum": ["model", "voice", "node"], "description": "model and voice lists feed the form. node is the engine's inventory of node classes: the check reads it to say which workflows the engine can run."},
         "method": {"const": "GET"},
         "path": {"type": "string", "pattern": "^/"},
         "from": {"enum": ["origin", "address"]},
         "capability": {"$ref": "#/$defs/id", "description": "The capability a non-empty list shows the server offers. Models read from this list are for this work."},
+        "cap_bytes": {"type": "integer", "minimum": 1024, "maximum": 16777216, "description": "The most bytes read from the answer. A node inventory can be several megabytes."},
         "list": {"$ref": "#/$defs/listRead"}
       }
     },

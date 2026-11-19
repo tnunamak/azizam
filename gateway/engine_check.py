@@ -756,20 +756,28 @@ assert tuple(_LIST_READERS) == LIST_SHAPES, "every list shape needs one reader"
 def read_list(body: Any, read: Mapping[str, Any]) -> dict[str, Any]:
     """Read one JSON answer as a list of ids by the shape ``read`` names.
 
-    ``{"ids": [{"id", "name"}, ...], "default": str | None}``: ids without repeats, in the server's order. An answer that
-    does not have the shape gives no ids; nothing here raises on a stranger's JSON.
+    ``{"ids": [{"id", "name"}, ...], "default": str | None, "truncated": bool}``: ids without repeats, in the server's
+    order, at most ``max_entries`` of them (``MAX_LIST_ENTRIES`` when the read names none); ``truncated`` says more were
+    there. An answer that does not have the shape gives no ids; nothing here raises on a stranger's JSON.
     """
     reader = _LIST_READERS.get(read.get("shape", ""))
     node = _pointer(body, read.get("select", ""))
     pairs = reader(node, read) if reader is not None and node is not _MISSING else []
     seen: set[str] = set()
     ids = []
+    limit = read.get("max_entries") or MAX_LIST_ENTRIES
+    truncated = False
     for ident, name in pairs:
-        if ident not in seen and len(ids) < MAX_LIST_ENTRIES:
-            seen.add(ident)
-            ids.append({"id": ident, "name": name})
+        if ident in seen:
+            continue
+        if len(ids) >= limit:
+            truncated = True
+            break
+        seen.add(ident)
+        ids.append({"id": ident, "name": name})
     default = _pointer(body, read["default_select"]) if read.get("default_select") else _MISSING
-    return {"ids": ids, "default": default.strip() if isinstance(default, str) and default.strip() else None}
+    return {"ids": ids, "default": default.strip() if isinstance(default, str) and default.strip() else None,
+            "truncated": truncated}
 
 
 # ---------------------------------------------------------------------------
@@ -1009,8 +1017,13 @@ async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[di
         url = _route_url(ctx, probe["path"], probe["from"])
         if safe_probe_path(probe["path"]) is not None and _plain_route(url):
             urls[probe["id"]] = url
+    # One fetch per URL, read up to the largest size any probe of that URL asks for.
+    caps: dict[str, int] = {}
+    for probe in probes:
+        if probe["id"] in urls:
+            caps[urls[probe["id"]]] = max(caps.get(urls[probe["id"]], 0), probe.get("cap_bytes", MODEL_LIST_CAP_BYTES))
     answers = dict(zip(dict.fromkeys(urls.values()), await asyncio.gather(
-        *(_get(ctx, url, cap=MODEL_LIST_CAP_BYTES) for url in dict.fromkeys(urls.values())))))
+        *(_get(ctx, url, cap=caps[url]) for url in dict.fromkeys(urls.values())))))
     chosen: dict[str, dict[str, Any]] = {}
     for probe in probes:
         answer = answers.get(urls.get(probe["id"], ""))
@@ -1023,6 +1036,48 @@ async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[di
             chosen[probe["offers"]] = {"id": probe["id"], "offers": probe["offers"], "path": probe["path"],
                                        "capability": probe.get("capability"), "filtered_out": filtered_out, **found}
     return list(chosen.values())
+
+
+def _binding_of(definition: Mapping[str, Any]) -> str:
+    """The key under a workflow manifest's ``bindings`` that holds this kind of engine's graph: its protocol's own data."""
+    from gateway.engine_protocol import description
+
+    doc = description.load_registry().get(definition["record"]["protocol"])
+    return str(getattr(doc, "binding", "") or "")
+
+
+def workflow_offerings(manifests: Iterable[Mapping[str, Any]], binding: str, node_classes: Iterable[str]) -> dict[str, Any]:
+    """Which workflows an engine with these node classes can run, and for each other one the node it lacks.
+
+    A workflow is a manifest that holds a ``bindings.<binding>`` block. Its ``requires.custom_nodes`` are judged by
+    ``gateway.workflow_requirements`` against the inventory. Its model-file requirements are not: an engine's node list
+    names no model files, so a workflow is offered by the nodes it needs, and a missing model shows when it first runs.
+    ``{"nodes": count, "offered": [{"id", "name"}], "unavailable": [{"id", "name", "missing": [{"kind", "name", "reason"}]}]}``
+    """
+    from gateway.workflow_requirements import validate_workflow_requirements
+
+    classes = sorted({name for name in node_classes if isinstance(name, str) and name})
+    offered: list[dict[str, Any]] = []
+    unavailable: list[dict[str, Any]] = []
+    for manifest in manifests:
+        block = (manifest.get("bindings") or {}).get(binding) if isinstance(manifest.get("bindings"), Mapping) else None
+        if not isinstance(block, Mapping):
+            continue
+        row = {"id": str(manifest.get("id") or ""), "name": str(manifest.get("display_name") or manifest.get("id") or "")}
+        requires = block.get("requires") if isinstance(block.get("requires"), Mapping) else {}
+        try:
+            verdict = validate_workflow_requirements(
+                {"requires": {"custom_nodes": list(requires.get("custom_nodes") or ())}}, {"node_classes": classes})
+        except ValueError:
+            unavailable.append({**row, "missing": [{"kind": "requirements", "name": "",
+                                                    "reason": "the workflow's requirements cannot be read"}]})
+            continue
+        if verdict.ok:
+            offered.append(row)
+        else:
+            unavailable.append({**row, "missing": [{"kind": issue.kind, "name": issue.name, "reason": issue.reason}
+                                                   for issue in verdict.missing]})
+    return {"nodes": len(classes), "offered": offered, "unavailable": unavailable}
 
 
 def _classify_route(answer: Answer, baseline: Answer, against_body: str) -> str:
@@ -1077,6 +1132,7 @@ async def run_check(
     viewer_role: str = "owner",
     baseline_token: str | None = None,
     now: Callable[[], float] = time.time,
+    workflows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Run the ladder within the definition's optional whole-check deadline.
 
@@ -1086,7 +1142,7 @@ async def run_check(
     async with asyncio.timeout(definition.get("timeouts", {}).get("check_s")):
         return await _run_check(
             catalog, definition, values, key=key, fetch=fetch, existing=existing,
-            viewer_role=viewer_role, baseline_token=baseline_token, now=now,
+            viewer_role=viewer_role, baseline_token=baseline_token, now=now, workflows=workflows,
         )
 
 
@@ -1101,8 +1157,12 @@ async def _run_check(
     viewer_role: str = "owner",
     baseline_token: str | None = None,
     now: Callable[[], float] = time.time,
+    workflows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
-    """Run the ladder for ``definition`` against draft ``values``. Persists nothing."""
+    """Run the ladder for ``definition`` against draft ``values``. Persists nothing.
+
+    ``workflows`` are the workflow manifests a definition with a node inventory list is judged against.
+    """
     data = catalog.data
     fields = {f["key"]: f for f in definition["fields"]}
     address = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
@@ -1294,6 +1354,10 @@ async def _run_check(
             taken = set()
             models = [_model_row(catalog, row["id"], [found["capability"]] if found["capability"] else [], taken, None)
                       for row in found["ids"]]
+        elif found["offers"] == "node":
+            # A cut inventory would call a workflow's node missing when it is only past the cut, so none is offered.
+            if found["ids"] and not found["truncated"]:
+                result["workflows"] = workflow_offerings(workflows, _binding_of(definition), [row["id"] for row in found["ids"]])
         else:
             result["voices"] = found["ids"]
             result["default_voice"] = found["default"]
@@ -1492,6 +1556,8 @@ async def run_real_test(
     address = normalize_address(values.get("address"))
     cap = catalog.capability(capability_id)
     test = catalog.data["real_tests"][cap["real_test"]]
+    if test.get("kind") == "get_probe":
+        return await _run_get_probe(definition, values, capability_id, cap, test, address=address, key=key, fetch=fetch, now=now)
     headers = _auth_headers(key.value, values)
     prefix = str(values.get("path_prefix") or "").strip()
     base = check_base(address, prefix)
@@ -1571,6 +1637,57 @@ async def run_real_test(
             "raw": _raw(answer),
         }
     return result
+
+
+async def _run_get_probe(definition: Mapping[str, Any], values: Mapping[str, Any], capability_id: str,
+                         cap: Mapping[str, Any], test: Mapping[str, Any], *, address: str, key: "KeyInput",
+                         fetch: Fetch, now: Callable[[], float]) -> dict[str, Any]:
+    """A real test that only reads: one GET of the test's status path. It sends no body and queues no work."""
+    url = join_url(origin_of(address), test["path"])
+    if safe_probe_path(test["path"]) is None or not _plain_route(url):
+        raise DraftError("This kind of server declares a route that cannot be tested safely.", field="capability")
+    headers = _auth_headers(key.value, values)
+    test_timeout_s = definition.get("timeouts", {}).get("real_test_s", TEST_TIMEOUT_S)
+    timeout_s = min(_number(values.get("reply_timeout_s"), test_timeout_s, low=1, high=600), test_timeout_s)
+    answer = await fetch("GET", url, headers=headers, cap_bytes=DEFAULT_CAP_BYTES, timeout_s=timeout_s, content=None)
+    ok, reply = _judge_get_probe(test["expect"], answer)
+    if answer.withheld:
+        reply = (f"The server answered “{answer.status_text}”. " if answer.status else "") + WITHHELD_TEXT
+    result: dict[str, Any] = {
+        "capability": capability_id, "label": cap["label"], "sent_to": f"GET {url}", "cost": test["cost"],
+        "at": int(now()), "via": "draft", "seconds": answer.seconds, "status": answer.status, "adjusted": False,
+        "sent": test["sent"],
+        "request": {"method": "GET", "url": url,
+                    "headers": {name: "Bearer [redacted]" if name.lower() == "authorization" else value
+                                for name, value in headers.items()},
+                    "body": {}, "timeout_s": timeout_s},
+        "ok": ok, "reply": reply,
+    }
+    if not ok:
+        what = (f"Azizam could not complete the request: {answer.detail or answer.transport}." if answer.transport != "ok"
+                else f"The server answered “{answer.status_text}” at {result['sent_to']}.")
+        result["finding"] = {
+            "what": what,
+            "why": "The engine did not answer its status page as this kind of engine does." if answer.transport == "ok"
+                   else "The server did not answer in time, or the connection broke.",
+            "fix": "Check that the engine is running, then test again.",
+            "raw": _raw(answer),
+        }
+    return result
+
+
+def _judge_get_probe(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
+    """A read passes on the status and, when the test names one, a key in the JSON reply."""
+    if answer.transport != "ok" or answer.status is None:
+        return False, answer.detail or "No answer"
+    if answer.status != expect["status"]:
+        if answer.status // 100 != 2:
+            return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
+        return False, f"The server answered HTTP {answer.status}; Azizam expected HTTP {expect['status']}."
+    wanted = expect.get("json_key")
+    if wanted and _at(answer.json, wanted) is None:
+        return False, f"An answer without “{wanted}”: {_excerpt(answer.text, 120)}"
+    return True, "The engine answered"
 
 
 def _judge_binary(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:

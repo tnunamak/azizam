@@ -283,8 +283,8 @@ def test_the_catalog_refuses_a_template_whose_tokens_do_not_match_its_slots():
         catalog_with(template_with(slots={"folder": {"type": "path", "kind": "dir", "locate": ["../x"]}, "port": {"type": "port"}}))
 
 
-def test_no_shipped_definition_carries_a_template_yet():
-    assert not [d["definition"] for d in SHIPPED["definitions"] if "process_template" in d]
+def test_only_the_workflow_image_definition_carries_a_template():
+    assert [d["definition"] for d in SHIPPED["definitions"] if "process_template" in d] == ["workflow-image-engine"]
 
 
 # -- the routes ----------------------------------------------------------------------------------
