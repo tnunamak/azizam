@@ -212,6 +212,8 @@ PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
     "engine_protocol": frozenset({"id", "source", "text"}),
     "engine_check": frozenset({"check", "test", "access"}),
     "engine_lifecycle": frozenset({"service_id", "action", "result", "state", "why"}),
+    "engine_process_preview": frozenset({"argv", "cwd", "env_names", "port", "ready", "problems"}),
+    "engine_run_folders": frozenset({"folders", "revision"}),
     "transition": frozenset({"op_id", "state", "gate", "operation", "parked", "active_leases", "last_lease_at", "policy"}),
     "provider_catalog": frozenset({"providers"}),
     "provider_reconciliation": frozenset({"reconciliations", "reconciliation"}),

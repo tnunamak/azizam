@@ -217,6 +217,10 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
                 validate_facts(definition["retention_facts"])
             except ValueError as exc:
                 errors.append(f"{where}.{exc}")
+        if "process_template" in definition:
+            from gateway.process_template import template_errors
+
+            errors += [f"{where}.process_template.{message}" for message in template_errors(definition["process_template"])]
         keys = [field["key"] for field in definition["fields"]]
         if len(set(keys)) != len(keys):
             errors.append(f"{where}.fields: two fields share a key")

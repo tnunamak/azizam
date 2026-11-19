@@ -18150,6 +18150,7 @@ app.include_router(
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
         engine_hop_timeout=upstream_read_timeout,
         engine_lifecycle=ADMIN_ENGINE_LIFECYCLE,
+        engine_gateway_ports=_engine_check_self_ports,
         stt_measurements=STT_MEASUREMENTS,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
