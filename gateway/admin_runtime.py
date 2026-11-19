@@ -1389,7 +1389,10 @@ class AdminSQLiteStore:
             actor=actor,
             service_id=service_id,
             expected_generation=expected_generation,
-            extra={"definition": str(raw.get("definition") or "")},
+            # A record that names a program to run says so in its audit line, with the command and its port.
+            extra={"definition": str(raw.get("definition") or ""),
+                   **({"process_start": list(process.get("start") or ()),
+                       "process_port": (process.get("port") or {}).get("fixed")} if process else {})},
             _trusted_engine_evidence=True,
             in_transaction=in_transaction,
         )

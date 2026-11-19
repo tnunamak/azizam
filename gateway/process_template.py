@@ -162,18 +162,24 @@ MAX_FOLDERS = 50
 
 
 def clean_folders(folders: list[Any]) -> list[str]:
-    """The owner's list as stored: full paths of folders that exist, no duplicates. The root folder is never allowed."""
+    """The owner's list as stored: the real path of each folder that exists, no duplicates.
+
+    The root folder is never allowed, however it is written (``//``, ``/./``) or reached (a symlink to it): each
+    folder is stored as its real path, so what the owner sees is what the resolver checks against. The list is read
+    when an engine is saved; removing a folder stops new saves from it, not engines already saved (remove the
+    engine, or turn off running commands on this computer, to stop those).
+    """
     out: list[str] = []
     if len(folders) > MAX_FOLDERS:
         raise FolderRefused(f"At most {MAX_FOLDERS} folders.")
     for item in folders:
         if not isinstance(item, str) or not item or "\x00" in item or not os.path.isabs(item):
             raise FolderRefused("Each folder is a full path, starting with /.")
-        path = os.path.normpath(item)
+        path = os.path.realpath(item)
         if path == os.sep:
             raise FolderRefused("Azizam cannot run engines from the whole computer. Choose one folder.")
         if not os.path.isdir(path):
-            raise FolderRefused(f"{path} is not a folder that exists.")
+            raise FolderRefused(f"{os.path.normpath(item)} is not a folder that exists.")
         if path not in out:
             out.append(path)
     return out
@@ -201,7 +207,8 @@ def _under(path: str, roots: Collection[str]) -> bool:
 def _roots(allowed: Iterable[str]) -> list[str]:
     out = []
     for folder in allowed:
-        if isinstance(folder, str) and os.path.isabs(folder):
+        # The root is refused again here, so a stored value that names it some other way allows nothing.
+        if isinstance(folder, str) and os.path.isabs(folder) and os.path.realpath(folder) != os.sep:
             out.append(os.path.realpath(folder))
     return out
 
