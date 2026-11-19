@@ -356,6 +356,8 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.create_litellm_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/litellm/keys/delete` | owner-bearer | denied | `gateway.admin_api.delete_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.get_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/engine-folders` | owner-bearer | denied | `gateway.admin_api.get_engine_folders`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `PUT /admin/api/operator/engine-folders` | owner-bearer | denied | `gateway.admin_api.update_engine_folders`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `PUT /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.update_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/operator/media-job-admission` | owner-bearer | denied | `gateway.admin_api.update_media_job_admission_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/overrides` | owner-bearer | denied | `gateway.admin_api.list_operator_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -368,6 +370,7 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/engines/check` | owner-bearer | denied | `gateway.engine_admin.check_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/engines/process-preview` | owner-bearer | denied | `gateway.engine_admin.engine_process_preview`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `POST /admin/api/engines/{service_id}/lifecycle` | owner-bearer | denied | `gateway.engine_admin.engine_lifecycle`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `POST /admin/api/engines/domains/{domain}/transitions` | owner-bearer | denied | `gateway.transition_admin.start_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/engines/domains/{domain}/transitions/{op_id}` | owner-bearer | denied | `gateway.transition_admin.get_transition`; AdminAuthenticator / _require_admin; owner role required | owner |

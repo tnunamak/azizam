@@ -929,6 +929,12 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.get_engine_folders",
+      "method": "GET",
+      "path": "/admin/api/operator/engine-folders",
+      "access": "operational"
+    },
+    {
       "handler": "gateway.admin_api.create_admin_router.<locals>.get_litellm_config",
       "method": "GET",
       "path": "/admin/api/operator/litellm-config",
@@ -1070,6 +1076,12 @@
       "handler": "gateway.admin_api.create_admin_router.<locals>.update_host_commands",
       "method": "PUT",
       "path": "/admin/api/operator/host-commands",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_engine_folders",
+      "method": "PUT",
+      "path": "/admin/api/operator/engine-folders",
       "access": "operational"
     },
     {
@@ -1353,6 +1365,12 @@
       "handler": "gateway.engine_admin.register_engine_routes.<locals>.engine_access",
       "method": "POST",
       "path": "/admin/api/engines/access",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.engine_process_preview",
+      "method": "POST",
+      "path": "/admin/api/engines/process-preview",
       "access": "operational"
     },
     {

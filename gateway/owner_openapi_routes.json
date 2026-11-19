@@ -300,6 +300,16 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "owner_only": true
   },
+  "GET /admin/api/operator/engine-folders": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
+  },
+  "PUT /admin/api/operator/engine-folders": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
+  },
   "PUT /admin/api/operator/media-job-admission": {
     "tag": "media and library",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -652,6 +662,11 @@
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "owner_only": false
+  },
+  "POST /admin/api/engines/process-preview": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/engines/{service_id}/lifecycle": {
     "tag": "engines and providers",

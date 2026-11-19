@@ -127,6 +127,7 @@ MESH_LIVE = {
 }
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
+ENGINE_FOLDERS = "/admin/api/operator/engine-folders"  # the owner's list of folders engines may run from; tests/test_engine_process_template.py covers it
 SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere",
                  "/auth/api/clear-browser-cache"}
 PROVIDER_SIGN_OUT_PATH = "/login/provider-sign-out"
@@ -225,7 +226,7 @@ def _deliberate(key: str) -> str | None:
         return "video_row"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
-    if path == HOST_COMMANDS:
+    if path in (HOST_COMMANDS, ENGINE_FOLDERS):
         return "host_commands"
     if path in SESSION_PATHS:
         return "sessions"
