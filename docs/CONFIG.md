@@ -299,6 +299,13 @@ An uncut file above a maximum declared on the record is refused unless its reque
 (HTTP 422 or 502, code `stt_audio_cannot_be_split`). A record without a declared maximum sends an uncut file whole;
 the engine page marks this as no measured limit and offers the measure action.
 
+Only `response_format=json` and `verbose_json` requests are cut: the pieces' replies are JSON objects the gateway can merge.
+A `verbose_json` reply keeps its segments: each segment (and word) time moves by the piece's start in the source, segment
+ids are renumbered in order, `duration` is the whole source's and `language` is the first piece's. A piece reply without
+`segments` fails the request. `text`, `srt` and `vtt`, `timestamp_granularities`, `include`, `chunking_strategy`, streaming
+and more than one file keep a long file from being cut; the refusal names the option, the file's length when known, and the
+declared maximum.
+
 Pieces do not overlap and the texts are joined as they come. The silence keys (`silence_noise_db`,
 `silence_min_seconds`, `silence_search_seconds`) are no longer read. The default-only upgrade removes the old
 `silence_search_seconds` field when it still holds the seeded value. The measure action finds good values for an engine
