@@ -13,6 +13,7 @@ def test_shipped_protocol_selection_golden():
         "chunked-stt": "adapter:chunked-stt", "gateway-compose": "adapter:gateway-compose",
         "http-multipart": "adapter:http-multipart", "inline-tts": "adapter:inline-tts",
         "node-graph": "adapter:node-graph", "ollama-native": "http-v1", "openai-compatible": "http-v1",
+        "sdapi": "http-v1",
     }
     for protocol, implementation in [("chunked-stt", "ChunkedSttAdapter"),
                                      ("inline-tts", "InlineTtsAdapter"), ("node-graph", "NodeGraphAdapter")]:

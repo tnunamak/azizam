@@ -179,6 +179,30 @@ def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
     return errors
 
 
+def _dispatch_errors(dispatch: Mapping[str, Any]) -> list[str]:
+    """The record a definition writes dispatches through an installed description: the description must exist and
+    declare the operations the offering's selection names."""
+    from gateway.engine_protocol import description
+
+    doc = description.load_registry().get(dispatch["protocol"])
+    if doc is None or doc.executor != "http-v1":
+        return [f"protocol: no installed http-v1 description named {dispatch['protocol']!r}"]
+    errors: list[str] = []
+    selection = dispatch["offering"]["selection"]
+    if selection.get("mode") == "switch":
+        switch = selection.get("switch") or {}
+        call = doc.operations.get(switch.get("call"))
+        if call is None or call.op_class != "control":
+            errors.append(f"offering.selection.switch.call: {switch.get('call')!r} is not a control operation of {doc.id}")
+        if switch.get("observe_selected") not in (dispatch.get("observations") or {}):
+            errors.append(f"offering.selection.switch.observe_selected: {switch.get('observe_selected')!r} is not in observations")
+    for name, observation in (dispatch.get("observations") or {}).items():
+        op = (observation or {}).get("op")
+        if op is not None and (doc.operations.get(op) is None):
+            errors.append(f"observations.{name}.op: {doc.id} declares no operation {op!r}")
+    return errors
+
+
 def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     """Rules a JSON Schema cannot say: references between rows, unique ids, regexes that compile."""
     errors: list[str] = []
@@ -217,6 +241,8 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
                 validate_facts(definition["retention_facts"])
             except ValueError as exc:
                 errors.append(f"{where}.{exc}")
+        if "dispatch" in definition["record"]:
+            errors += [f"{where}.record.dispatch.{message}" for message in _dispatch_errors(definition["record"]["dispatch"])]
         if "process_template" in definition:
             from gateway.process_template import template_errors
 

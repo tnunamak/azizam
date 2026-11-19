@@ -46,5 +46,10 @@
     "transcription": {"feature": "audio.transcriptions", "steps": [
       {"method": "POST", "path": "/v1/audio/transcriptions", "stream": false,
        "json": {"model": "{{model}}", "response_format": "json"}}]}
+  },
+  "sdapi": {
+    "images": {"feature": "image.generate", "steps": [
+      {"method": "POST", "path": "/v1/images/generations", "stream": false,
+       "json": {"model": "{{model}}", "prompt": "hi", "response_format": "b64_json"}}]}
   }
 }

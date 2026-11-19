@@ -81,3 +81,11 @@ status = "pending"
 owner = "azizam maintainers"
 reason = "the openai-transcription engine definition speaks chunked-stt upstream; a recording against a local OpenAI-compatible transcription server needs a recorder step that uploads a multipart audio file, and the recorder sends JSON steps only"
 expires_on = 2027-01-08
+
+[[cell]]
+protocol = "sdapi"
+set = "images"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the sdapi engine definition speaks sdapi upstream; a recording needs a local Stable Diffusion web API server and the operator's choice to queue one generation, which this build did not do"
+expires_on = 2027-01-08
