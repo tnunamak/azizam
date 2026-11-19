@@ -5344,7 +5344,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                     "GET /v1/audio/voices lists the voices.",
                     status_code=400, param="voice", code="voice_not_available",
                 )
-            body_json["voice"] = voice
+            if voice:
+                body_json["voice"] = voice
+            else:
+                body_json.pop("voice", None)  # no voice asked and none defaulted: leave the key out, not ""
         if engine is not None:
             tts_service_id = model_resolution.alias.service or default_service_id
             if tts_service_id != default_service_id:
