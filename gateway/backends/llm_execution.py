@@ -24,7 +24,7 @@ import httpx
 
 from gateway.backends.cancellation import CancellationToken
 from gateway.outbound_request import backend_query_string
-from gateway.service_registry import engine_base_address, is_litellm_service_record
+from gateway.service_registry import environment_base_url, is_litellm_service_record
 from gateway import engine_egress
 
 LITELLM_BODY_EXECUTION_PATHS = frozenset(
@@ -196,9 +196,21 @@ def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> s
 
 
 def _base_url_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
-    """Where the gateway dials the substrate: the one address every reader of the record dials (the status grid and
-    the catalog's health probe read it through the same function)."""
-    return engine_base_address(config, env)
+    """Where the gateway dials the substrate: the address the record's variable holds (read by the one reader the
+    status grid and the catalog's health probe also use), else the stored base URL with its path prefix.
+
+    The stored ``base_url`` comes before host and port here: a substrate served under a path prefix stores that
+    prefix only in ``base_url``, and host and port name the origin alone.
+    """
+    from_environment = environment_base_url(config, env)
+    if from_environment:
+        return from_environment.rstrip("/")
+    return str(
+        config.get("base_url")
+        or config.get("api_base")
+        or config.get("default_base_url")
+        or ""
+    ).rstrip("/")
 
 
 def litellm_url(*, base_url: str, path: str, query: str = "") -> str:
