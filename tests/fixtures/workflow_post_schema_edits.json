@@ -1885,8 +1885,8 @@
     },
     {
       "after": {
-        "birefnet": "Careful cutout (AI)",
-        "threshold": "Quick cutout"
+        "birefnet": "AI cutout",
+        "threshold": "Simple cutout"
       },
       "before": null,
       "before_present": false,
