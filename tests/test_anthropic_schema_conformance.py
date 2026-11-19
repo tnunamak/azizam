@@ -238,7 +238,7 @@ class AnthropicConformanceTests(unittest.TestCase):
 
     def test_receipt_headers(self) -> None:
         for stream in (False, True):
-            for receipt in (None, "receipt-123"):
+            for receipt in (None, "req_0123abcd"):
                 with self.subTest(stream=stream, receipt=receipt):
                     headers = {"X-Azizam-Receipt-Id": receipt, "X-Azizam-Request-Id": receipt} if receipt else {}
                     upstream = sse([]) if stream else chat_completion({"role": "assistant", "content": "hello"})
@@ -246,7 +246,7 @@ class AnthropicConformanceTests(unittest.TestCase):
                     self.assertEqual(response.headers.get("X-Azizam-Receipt-Id"), receipt)
                     self.assertEqual(response.headers.get("X-Azizam-Request-Id"), receipt)
                     if receipt:
-                        self.assertEqual(response.headers["request-id"], "req_" + receipt)
+                        self.assertEqual(response.headers["request-id"], receipt)
                     else:
                         self.assertTrue(response.headers["request-id"].startswith("req_"))
 

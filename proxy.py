@@ -31921,8 +31921,8 @@ def _receipt_headers(upstream: httpx.Response) -> dict[str, str]:
 
 
 def _anthropic_request_id(upstream: httpx.Response) -> str:
-    receipt_id = upstream.headers.get("X-Azizam-Receipt-Id")
-    return f"req_{receipt_id}" if receipt_id else f"req_{uuid.uuid4().hex}"
+    # Receipt ids are already "req_<hex>", the shape the Anthropic SDK expects, so the id is the request-id.
+    return upstream.headers.get("X-Azizam-Receipt-Id") or f"req_{uuid.uuid4().hex}"
 
 
 async def anthropic_messages(request: Request):
