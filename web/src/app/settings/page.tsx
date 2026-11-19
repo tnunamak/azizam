@@ -12,6 +12,7 @@ import {
   adminRegistryMutation,
   api,
 } from "@/lib/api";
+import { engineFoldersApi, engineFoldersKey } from "@/lib/engines-api";
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { ReceiptsSection } from "./receipts";
@@ -732,6 +733,161 @@ function HostCommandsForm({
     </form>
   );
 }
+
+/**
+ * The folders Azizam may start engines from. Each add or remove saves the whole list at once, so the gateway's
+ * refusal (a folder that does not exist, the whole computer) shows beside the field the owner just used. The gateway
+ * saves each folder by its real path, so a shortcut is saved as the folder it points to.
+ */
+function EngineFoldersSection() {
+  const owner = useViewer().role === "owner";
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: engineFoldersKey,
+    enabled: owner,
+    staleTime: 15_000,
+    queryFn: engineFoldersApi.get,
+  });
+  const count = data?.folders.length ?? 0;
+  return (
+    <Section
+      title="Engine folders"
+      summary={
+        data
+          ? { label: count === 0 ? "None yet" : `${count} ${count === 1 ? "folder" : "folders"}` }
+          : undefined
+      }
+      description="The folders Azizam may start engines from. An engine that Azizam starts must be installed inside one of them."
+    >
+      {!owner ? (
+        <p className="text-muted-foreground text-meta">Only the owner can change this.</p>
+      ) : isPending ? (
+        <Loading label="Loading engine folders" />
+      ) : isError ? (
+        <SettingsError
+          error={error}
+          message="Engine folders could not be loaded."
+          onRetry={() => void refetch()}
+        />
+      ) : (
+        <EngineFoldersForm initial={data} />
+      )}
+    </Section>
+  );
+}
+
+function EngineFoldersForm({ initial }: { initial: { folders: string[]; revision: string } }) {
+  const client = useQueryClient();
+  const [typed, setTyped] = useState("");
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: ({ folders }: { folders: string[]; typed?: string }) =>
+      engineFoldersApi.put(folders, initial.revision),
+    onSuccess: (result, { typed: added }) => {
+      client.setQueryData(engineFoldersKey, result);
+      setRefusal(null);
+      if (added !== undefined) {
+        setTyped("");
+        const fresh = result.folders.find((folder) => !initial.folders.includes(folder));
+        // The gateway keeps the real path. Say so when it differs from what was typed.
+        setSaved(
+          fresh && fresh !== added.replace(/\/+$/, "")
+            ? `Saved as ${fresh}. Azizam keeps the real location of a folder, even when you give a shortcut to it.`
+            : null,
+        );
+      } else setSaved(null);
+    },
+    onError: (failure) => {
+      setSaved(null);
+      setRefusal(
+        failure instanceof ApiError && failure.status === 400
+          ? failure.message
+          : failure instanceof ApiError && (failure.status === 412 || failure.status === 409)
+            ? "The list changed elsewhere. Reload this page to see the latest."
+            : "The folders could not be saved. Try again.",
+      );
+    },
+  });
+  const add = () => {
+    const folder = typed.trim();
+    if (!folder) return;
+    save.mutate({ folders: [...initial.folders, folder], typed: folder });
+  };
+  return (
+    <div className="space-y-5">
+      <form
+        className="space-y-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          add();
+        }}
+      >
+        <Field
+          id="engine-folder-add"
+          label="Add a folder"
+          help="Give the full path, starting with /. Azizam saves the actual folder location, never the whole computer."
+        >
+          <div className="flex flex-wrap gap-2">
+            <Input
+              id="engine-folder-add"
+              className="min-w-0 flex-1 font-mono"
+              value={typed}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="/srv/engines"
+              aria-invalid={refusal ? true : undefined}
+              aria-describedby={refusal ? "engine-folder-refusal" : undefined}
+              onChange={(event) => {
+                setTyped(event.target.value);
+                setRefusal(null);
+              }}
+            />
+            <Button type="submit" className="min-h-11" disabled={save.isPending || !typed.trim()}>
+              {save.isPending && <Loader2 className="animate-spin" aria-hidden />}
+              Add folder
+            </Button>
+          </div>
+        </Field>
+        {refusal && (
+          <p id="engine-folder-refusal" role="alert" className="text-destructive text-meta">
+            {refusal}
+          </p>
+        )}
+        {saved && (
+          <p role="status" className="text-muted-foreground text-meta">
+            {saved}
+          </p>
+        )}
+      </form>
+      {initial.folders.length === 0 ? (
+        <p className="text-muted-foreground text-meta">
+          No folders yet. Azizam will not start any engine until you add one.
+        </p>
+      ) : (
+        <ul aria-label="Engine folders" className="bg-card rounded-panel divide-y border">
+          {initial.folders.map((folder) => (
+            <li key={folder} className="flex items-center justify-between gap-3 px-4 py-2">
+              <span className="text-meta min-w-0 font-mono [overflow-wrap:anywhere]">{folder}</span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 shrink-0"
+                aria-label={`Remove ${folder}`}
+                disabled={save.isPending}
+                onClick={() => save.mutate({ folders: initial.folders.filter((other) => other !== folder) })}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-muted-foreground text-meta">
+        Removing a folder stops new engines from being saved from it. It does not change engines you already saved.
+      </p>
+    </div>
+  );
+}
 function mediaFields(initial: Partial<MediaAdmission>) {
   return {
     disabled_intents: (initial.disabled_intents ?? []).join(", "),
@@ -1128,6 +1284,7 @@ export default function SettingsPage() {
         <MediaFolderSection />
         <MediaSection />
         <HostCommandsSection />
+        <EngineFoldersSection />
         <ExtensionsSection />
       </div>
     </div>

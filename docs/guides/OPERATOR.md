@@ -75,19 +75,27 @@ branches for an engine.
 
 ### Add a workflow engine Azizam starts
 
-1. Open **Settings → Engine folders** and choose the folders engines may run
-   from. Azizam refuses the whole computer as a folder and stores each
-   allowed folder by its real path. Removing a folder stops new saves from
-   that folder. An engine you already saved keeps running until you remove
-   it or turn host commands off.
-2. Open **Engines → Add engine** and choose the workflow engine. Pick its
-   install folder, the one that holds `main.py`. Azizam looks for Python in
-   `.venv` first, then in `venv`, inside that folder. It picks a free port
-   and shows the exact command in a preview before you save.
-3. Azizam starts the engine and waits for it to answer on its status path.
-   It lists which bundled workflows the engine can run. For a workflow
-   that needs a missing node or model file, it lists what is missing.
-   Workflows you add yourself are not checked here.
+Only the owner can do this.
+
+1. Open **Settings → Engine folders**. Type the full path of each folder
+   that engines may run from and press **Add folder**. Azizam saves the real
+   path, which is the actual folder location, even if you pick a shortcut.
+   Azizam refuses the whole computer as a folder. Removing a folder stops
+   new engines from being saved from it. It does not change an engine you
+   already saved. To stop one of those, remove the engine or turn off
+   **Computer commands** in Settings.
+2. Open **Engines → Add engine** and choose the workflow engine. If you have
+   not added a folder yet, the dialog says so and links to **Engine
+   folders**. Type the install folder, the one that holds `main.py`. Azizam
+   fills in a free port, and you can change it. Azizam looks for Python in
+   `.venv` first, then in `venv`, inside that folder. Before you save, a
+   preview shows the exact command, the working folder and the port. When a
+   value is wrong, the dialog says why next to that field.
+3. Saving does not start the engine. The first time Azizam starts it, Azizam
+   waits for the engine to respond to a health check. Azizam lists which of
+   the bundled workflows the engine can run. For a workflow that needs a
+   missing node or model file, it lists what is missing. Workflows you add
+   yourself are not checked here.
 4. Azizam sends each kind of work, such as pictures, video, or sound, to
    one engine. If another engine already handles that work, **Add engine**
    shows which engine will keep it or take it. Azizam saves only after

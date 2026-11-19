@@ -632,7 +632,7 @@ describe("People and Settings red-team regressions", () => {
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(9);
+    ).toHaveLength(10);
     const receipts = screen.getByRole("region", { name: "Receipts" });
     expect(
       within(receipts).getByRole("combobox", { name: "Keep receipts" }),

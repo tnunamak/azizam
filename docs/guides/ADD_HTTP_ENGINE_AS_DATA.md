@@ -227,20 +227,59 @@ server.
 An environment reference such as `os.environ/ENGINE_KEY` uses the same
 origin-bound credential block. Ordinary connection headers cannot hold keys.
 
-## Local addresses and request safety
+## This computer, or another computer on your network
 
-Executor dispatch currently accepts loopback engines only. A definition with
-`record.dispatch` says so in the check, before any request and before a save. Addresses on a LAN,
-container hostnames and public hostnames have unknown placement under the
-existing classifier and are refused without a DNS lookup. A record marked paid
-or remote, or an address classified remote by the existing registry rules, is
-refused at save because this lane has no paid-provider access or spend ledger.
-An older refused record can remain unchanged while you edit other services, or
-you can disable it. Other edits and re-enabling it must pass the current check.
-Use the existing provider route for those records. At every HTTP exchange the
-gateway resolves the hostname once, checks all answers, and dials only those
-checked addresses. It refuses link-local and cloud metadata addresses, its own
-listener ports on this computer, and cross-origin redirects; credentials stay
-bound to their approved origin. Path templates cannot change the origin or
-traverse directories. User path values refuse percent and semicolon; ids the
-engine returned may contain them and are encoded again as literal path values.
+By default a protocol (http-v1) engine runs on this computer. Its address must be
+loopback, such as `http://127.0.0.1:7860`. Container hostnames, LAN addresses and
+public hostnames are refused without a DNS lookup. A record marked paid or remote
+is refused at save, because this route has no paid-provider access or spend ledger.
+An older refused record can remain unchanged while you edit other services, or you can
+disable it. Other edits and re-enabling it must pass the current check. Use the
+existing provider route for those records.
+
+An owner can also add an http-v1 engine that runs on another computer on the same
+private network. Today the Stable Diffusion web API (`sdapi`) definition offers this, and
+so does any hand-written http-v1 record that opts in (speech, for example). In the Add engine dialog choose **Where does it run? → On another computer on
+my network**. The dialog computes the network from the address you typed (the /24 around
+an IPv4 host, the /64 around an IPv6 host) and asks you to confirm it. You never type a
+network range. Only the owner can make this choice; a member or an app key is refused.
+Saving writes `connection.remote_dispatch` with `enabled: true`, `private_cidrs` set to
+that one network, `transport`, and `tasks`, and sets `cost_class` to `free-local`. The
+audit line names the network.
+
+```json
+"remote_dispatch": {
+  "enabled": true, "version": 1,
+  "transport": "private_plaintext",
+  "private_cidrs": ["192.0.2.0/24"],
+  "tasks": ["image"]
+}
+```
+
+`transport` is `tls` (an `https` address) or `private_plaintext` (an `http` address).
+Plain http is valid only when all of these hold; otherwise the save is refused with a
+plain message:
+
+- every address the name resolves to lies inside the approved private network;
+- no key is bound to the record, so a key cannot be sent over plain http, even on your
+  own network (put the server behind a reverse proxy that uses https, or remove the key);
+- the owner ticked "this network is trusted".
+
+Loopback, link-local, cloud-metadata and this computer's own addresses are refused
+whatever the network says. A public address is never approved for plain http.
+
+`tasks` limits which work the engine may do on another computer. A definition lists
+them in `record.remote.tasks`, and only for work that arrives in one buffered answer
+(buffered speech, a synchronous picture, buffered transcription). A chunked or
+streamed answer is refused on this path, and an offering for a task outside the list is
+refused at save. The `sdapi` definition allows `image`. Definitions served by reviewed
+adapters (node-graph engines, inline speech, chunked transcription) stay on this
+computer for now; the dialog says so in plain words when you pick another computer.
+
+At every HTTP exchange the gateway resolves the hostname once, checks all answers, and
+dials only those checked addresses. It never follows redirects, refuses
+`transfer-encoding`, caps bytes and time, and keeps credentials bound to their approved
+origin. Path templates cannot change the origin or traverse directories. User path
+values refuse percent and semicolon; ids the engine returned may contain them and are
+encoded again as literal path values. The design and its tests are in
+[REMOTE_ENGINES.md](../design/REMOTE_ENGINES.md).

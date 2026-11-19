@@ -435,6 +435,15 @@
                 },
                 "observations": {"type": "object", "description": "The record's observations the selection verifies against, for example selected."}
               }
+            },
+            "remote": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tasks"],
+              "description": "This kind of server may run on another computer on the owner's network. tasks are the offering tasks it may be used for there. Each must be served by one operation of the description that answers in one buffered piece; chunked answers are refused on the remote path.",
+              "properties": {
+                "tasks": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+              }
             }
           }
         }
