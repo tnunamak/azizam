@@ -36,9 +36,9 @@ def test_operator_guide_names_the_settings_and_the_dialog_the_owner_uses():
         assert term in workflow, f"Workflow engine subsection must mention {term}"
 
 
-def test_operator_guide_says_folders_are_saved_by_real_path_and_never_the_whole_computer():
+def test_operator_guide_says_folders_are_saved_by_actual_location_and_never_the_whole_computer():
     workflow = _words(_workflow_subsection())
-    assert "real path" in workflow
+    assert "saves the folder's actual location" in workflow
     assert "whole computer" in workflow and "refuses" in workflow
 
 
@@ -51,7 +51,7 @@ def test_operator_guide_lists_the_python_choices_in_the_order_azizam_tries_them(
 def test_operator_guide_says_the_port_is_free_and_the_preview_comes_before_saving():
     workflow = _words(_workflow_subsection())
     assert "free port" in workflow
-    assert "preview" in workflow and "before you save" in workflow
+    assert re.search(r"before you save, [^.]*preview shows the exact command", workflow)
     assert workflow.index("preview") < workflow.index("saving does not start")
 
 
