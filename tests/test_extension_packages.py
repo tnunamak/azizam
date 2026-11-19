@@ -1104,6 +1104,53 @@ def test_package_lifecycle_runtime_index_registry_audit_agree(tmp_path, monkeypa
     )
 
 
+def test_package_lifecycle_fires_one_reload_per_change(tmp_path, monkeypatch):
+    from gateway import admin_store
+    from gateway.admin_api import AdminContext
+    from gateway.admin_runtime import AdminSQLiteStore
+    package = _write_package(tmp_path, """schema_version: 1
+kind: extension_package
+id: lifecycle
+version: "1"
+objects:
+  services: [service.yml]
+""", {"service.yml": """id: lifecycle-service
+name: Lifecycle service
+config:
+  base_url: http://localhost:9999
+"""})
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    store = AdminSQLiteStore(path=db)
+    config_writes = []
+    reloads = []
+    monkeypatch.setattr(store, "write_litellm_config", lambda registry: config_writes.append(registry))
+    store.on_service_registry_changed = lambda: reloads.append(None)
+    actor = AdminContext(subject="owner", roles=frozenset({"owner"}))
+    source = {"type": "local_directory", "path": str(package)}
+    store.enable_extension_package(source=source, actor=actor, expected_generation=0)
+    assert len(config_writes) == 1  # the install reloads once
+    assert len(reloads) == 1
+
+    disabled = store.remove_extension_package(package_id="lifecycle", actor=actor, mode="disable")
+    assert len(config_writes) == 2  # one config write per change
+    assert len(reloads) == 2  # one registry-changed callback per change
+    assert config_writes[-1]["services"]["lifecycle-service"]["enabled"] is False
+
+    store.enable_extension_package(
+        source=source, actor=actor,
+        expected_generation=disabled["operator_settings_generation"],
+    )
+    assert len(config_writes) == 3
+    assert len(reloads) == 3
+    assert config_writes[-1]["services"]["lifecycle-service"]["enabled"] is True
+
+    store.remove_extension_package(package_id="lifecycle", actor=actor)
+    assert len(config_writes) == 4
+    assert len(reloads) == 4
+    assert "lifecycle-service" not in config_writes[-1]["services"]
+
+
 def test_package_lifecycle_runtime_stale_generation_is_atomic(tmp_path, monkeypatch):
     import pytest
     from gateway import admin_store

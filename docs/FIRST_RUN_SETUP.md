@@ -379,6 +379,11 @@ check; a warning answers 409 until you send `"acknowledge_warnings": true`;
 check without saving, `POST /admin/api/engines/check` with the same
 `definition` and `values`.
 
+The Add engine dialog has no health endpoint field because the check stores
+the path it read as the engine's health endpoint. An engine whose server
+lists no models can be added after the owner accepts the warning, and models
+can then be added by name.
+
 A key goes in `values.api_key` (owner only). The gateway stores it encrypted,
 binds it to that address and never returns it. `values.api_key_env` names a
 server environment variable instead. `values.headers` rows are sent with every
