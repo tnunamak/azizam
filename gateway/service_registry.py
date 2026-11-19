@@ -1118,11 +1118,17 @@ def apply_service_registry_to_config(
         print(f"[service_registry] ERROR: service {service_id!r} is left out of the running config: {error}", flush=True)
         del backends[service_id]
     out["backends"] = backends
-    # A speech engine is its record: the speech route reads model_aliases.speech.engines, so the records that stay in
-    # the running config give their engines there (an owner's own entry with the same id wins).
-    derived = derived_engines.derive_speech_engines(registry.get("services"), only=set(backends))
-    if derived:
-        out["model_aliases"] = derived_engines.with_derived_speech_engines(out.get("model_aliases"), derived)
+    # A speech or transcription engine is its record: the routes read model_aliases.speech.engines and
+    # model_aliases.transcriptions.engines, so the records that stay in the running config give their engines there
+    # (an owner's own entry with the same id wins).
+    services = registry.get("services")
+    derived_speech = derived_engines.derive_speech_engines(services, only=set(backends))
+    if derived_speech:
+        out["model_aliases"] = derived_engines.with_derived_speech_engines(out.get("model_aliases"), derived_speech)
+    derived_transcription = derived_engines.derive_transcription_engines(services, only=set(backends))
+    if derived_transcription:
+        out["model_aliases"] = derived_engines.with_derived_transcription_engines(
+            out.get("model_aliases"), derived_transcription)
     return out
 
 
