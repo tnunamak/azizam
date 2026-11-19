@@ -155,6 +155,11 @@ def test_transcription_triggers_follow_loaded_recognition_rows(tmp_path, monkeyp
     rows = local.load_backend_capability_rows(write_rows(tmp_path, data))
     monkeypatch.setattr(local, "_BACKEND_ROWS", rows)
 
+    # The reviewed adapter registry keeps its own short-lived memo; warm it and hold it so only the rows reader is judged.
+    from gateway.engine_protocol import reviewed
+    monkeypatch.setattr(reviewed, "_REGISTRY_TTL_S", float("inf"))
+    reviewed.adapter_serves(local.INTENT_TRANSCRIPTIONS)
+
     def forbidden(*args, **kwargs):
         raise AssertionError("reader reloaded package data")
 

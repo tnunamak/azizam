@@ -91,6 +91,6 @@ test("add the workflow engine Azizam starts, from an allowed folder", { tag: GLO
       data: { folders: before.folders },
     });
     expect(restored.ok()).toBe(true);
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true });
   }
 });
