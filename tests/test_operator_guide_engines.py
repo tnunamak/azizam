@@ -72,3 +72,10 @@ def test_operator_guide_says_health_check_not_status_path():
     workflow = _words(_workflow_subsection())
     assert "health check" in workflow
     assert "status path" not in workflow
+
+
+def test_operator_guide_says_removing_a_folder_leaves_a_saved_engine_and_how_to_stop_it():
+    workflow = _words(_workflow_subsection())
+    assert "removing a folder stops new engines from being saved from it" in workflow
+    assert "it does not change an engine you already saved" in workflow
+    assert re.search(r"to stop one of those, remove the engine or turn off \*\*computer commands\*\*", workflow)
