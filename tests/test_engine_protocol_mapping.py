@@ -8,7 +8,7 @@ import pytest
 
 from gateway.engine_protocol import mapping, pointer
 from gateway.engine_protocol.budgets import Budgets
-from gateway.engine_protocol.errors import BudgetExceeded, DescriptionError, MappingError
+from gateway.engine_protocol.errors import BudgetExceeded, DescriptionError, MappingError, ValueRefused
 
 
 def run(rules, body=None, *, base="empty", params=None, files=None):
@@ -136,6 +136,30 @@ def test_clamp_limits_numbers_and_refuses_other_types() -> None:
 def test_stringify_puts_compact_json_inside_a_string() -> None:
     out = run([{"stringify": {"from": "/body/params", "to": "/action"}}], {"params": {"b": [1, "é"], "a": None}})
     assert out == {"action": '{"b":[1,"é"],"a":null}'}
+
+
+SIZE_RULE = [{"size": {"from": "/body/size", "width": "/w", "height": "/h"}}]
+
+
+@pytest.mark.parametrize("text, pair", [("1024x1024", (1024, 1024)), ("512X768", (512, 768)), ("512 x 768", (512, 768)), (" 64x32 ", (64, 32))])
+def test_size_splits_widthxheight_into_two_integers(text, pair) -> None:
+    out = run(SIZE_RULE, {"size": text})
+    assert out == {"w": pair[0], "h": pair[1]}
+    assert type(out["w"]) is int and type(out["h"]) is int
+
+
+@pytest.mark.parametrize("body", [{}, {"size": None}, {"size": "auto"}])
+def test_size_absent_null_or_auto_writes_nothing(body) -> None:
+    assert run(SIZE_RULE, body) == {}
+
+
+@pytest.mark.parametrize("bad", ["big", "0x10", "10x0", "10", "1024x", "x10", "-5x10", "1.5x2", 1024, True, ["1", "2"], "9" * 5000 + "x1"])
+def test_size_refuses_anything_else_with_the_image_edit_sentence_and_the_field_name(bad) -> None:
+    with pytest.raises(ValueRefused) as caught:
+        run(SIZE_RULE, {"size": bad})
+    assert str(caught.value) == "size must be 'auto' or WIDTHxHEIGHT with positive integers"
+    assert caught.value.param == "size"
+    assert isinstance(caught.value, MappingError)
 
 
 def test_when_branches_on_presence_equality_and_membership() -> None:

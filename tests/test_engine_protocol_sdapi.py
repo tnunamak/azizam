@@ -5,6 +5,7 @@ A fake server speaks the dialect. Checkpoint names here are invented.
 import base64
 import json
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -113,7 +114,7 @@ def test_description_validates():
 
 
 def test_switch_then_generate_verifies_selected(engine):
-    response = generate(engine, 'sd-beta', width=64, height=64)
+    response = generate(engine, 'sd-beta', size='64x64')
     assert response.status_code == 200, response.text
     assert base64.b64decode(response.json()['data'][0]['b64_json']) == engine.fake.image
     assert engine.fake.generated_with == [BETA]
@@ -154,6 +155,63 @@ def test_the_offering_already_selected_is_not_switched(engine):
     assert response.status_code == 200, response.text
     assert engine.fake.generated_with == [ALPHA]
     assert [r.method for r in engine.fake.requests if r.url.path == '/sdapi/v1/options'] == ['GET']
+
+
+def txt2img_bodies(engine):
+    return [json.loads(r.content) for r in engine.fake.requests if r.url.path == '/sdapi/v1/txt2img']
+
+
+def test_an_openai_size_reaches_the_server_as_width_and_height(engine):
+    response = generate(engine, 'sd-alpha', size='1024x1024')
+    assert response.status_code == 200, response.text
+    [sent] = txt2img_bodies(engine)
+    assert (sent['width'], sent['height']) == (1024, 1024)
+
+
+@pytest.mark.parametrize('spelling, expected', [('512X768', (512, 768)), ('512 x 768', (512, 768)), (' 640x480 ', (640, 480))])
+def test_the_size_spellings_of_the_image_edit_route_work_here_too(engine, spelling, expected):
+    response = generate(engine, 'sd-alpha', size=spelling)
+    assert response.status_code == 200, response.text
+    [sent] = txt2img_bodies(engine)
+    assert (sent['width'], sent['height']) == expected
+
+
+@pytest.mark.parametrize('extra', [{}, {'size': 'auto'}])
+def test_no_size_or_auto_sends_no_width_or_height(engine, extra):
+    response = generate(engine, 'sd-alpha', **extra)
+    assert response.status_code == 200, response.text
+    [sent] = txt2img_bodies(engine)
+    assert 'width' not in sent and 'height' not in sent
+
+
+@pytest.mark.parametrize('size', ['big', '0x10', '10', '1024x', '10x-5', 1024, ['1', '2']])
+def test_a_bad_size_is_a_400_naming_size_and_nothing_reaches_the_server(engine, size):
+    response = generate(engine, 'sd-beta', size=size)
+    assert response.status_code == 400, response.text
+    error = response.json()['error']
+    assert error['param'] == 'size'
+    assert error['message'] == "size must be 'auto' or WIDTHxHEIGHT with positive integers"
+    assert engine.fake.requests == []  # not even the checkpoint switch
+
+
+def test_an_omitted_response_format_or_url_returns_a_served_url(engine):
+    for extra in ({}, {'response_format': 'url'}):
+        body = {'model': 'sd-alpha', 'prompt': 'a blue square', **extra}
+        response = engine.client.post('/v1/images/generations', json=body)
+        assert response.status_code == 200, response.text
+        [item] = response.json()['data']
+        assert item['url'] and 'b64_json' not in item
+        # The url is one the gateway serves, and it holds the image the server made.
+        parts = urlsplit(item['url'])
+        served = engine.client.get(parts.path + ('?' + parts.query if parts.query else ''))
+        assert served.status_code == 200 and served.content == engine.fake.image
+
+
+def test_an_unknown_model_is_the_same_not_found_answer_other_engines_give(engine):
+    response = generate(engine, 'sd-gamma')
+    assert response.status_code == 404, response.text
+    assert response.json()['error']['code'] == 'model_not_found'
+    assert not engine.fake.requests
 
 
 # ---- the definition: add from data, pick from a list, get an image from the picked checkpoint ------------------------
@@ -237,7 +295,8 @@ def _sdapi_server(fakes):
     }, token=TOKEN))
 
 
-def test_owner_adds_the_server_from_data_picks_a_checkpoint_and_gets_its_image(gateway, fake_upstreams, monkeypatch, tmp_path):
+def _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path, *, tick=(BETA,)):
+    """The owner checks the server, ticks checkpoints, and saves. Returns what later steps need."""
     from tests.support.engine_dns import use_fake_engine_dns
     use_fake_engine_dns(monkeypatch)
     monkeypatch.setattr(engine_check, '_baseline_token', lambda: TOKEN)
@@ -258,15 +317,25 @@ def test_owner_adds_the_server_from_data_picks_a_checkpoint_and_gets_its_image(g
     check = checked.json()['check']
     assert check['outcome'] == 'ok', check['findings']
     assert [row['id'] for row in check['models']] == [ALPHA, BETA]
-    picked = [row for row in check['models'] if row['id'] == BETA]
+    picked = [row for row in check['models'] if row['id'] in tick]
 
     etag = owner.get('/admin/api/operator/service-registry').headers.get('etag', '"os-0"')
     created = owner.post('/admin/api/operator/services', headers={**csrf_for(owner), 'If-Match': etag}, json={
         'definition': 'sdapi', 'name': 'garage-pictures', 'values': {'address': server.base_url},
         'capabilities': ['images'], 'models': picked})
     assert created.status_code == 201, created.text
+    return SimpleNamespace(owner=owner, key=key, server=server, check=check, picked=picked, service_id='garage-pictures',
+                           all_models=check['models'])
 
-    record = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['garage-pictures']
+
+def _saved(gateway, service_id='garage-pictures'):
+    return admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services'][service_id]
+
+
+def test_owner_adds_the_server_from_data_picks_a_checkpoint_and_gets_its_image(gateway, fake_upstreams, monkeypatch, tmp_path):
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    owner, key, picked = added.owner, added.key, added.picked
+    record = _saved(gateway)
     config = record['config']
     assert config['connection']['dispatch'] == 'protocol' and config['connection']['protocol'] == 'sdapi'
     [offering] = config['offerings']
@@ -285,4 +354,3 @@ def test_owner_adds_the_server_from_data_picks_a_checkpoint_and_gets_its_image(g
     assert fake.generated_with == [BETA]
     assert [(r.method, r.url.path) for r in fake.requests] == [
         ('GET', '/sdapi/v1/options'), ('POST', '/sdapi/v1/options'), ('GET', '/sdapi/v1/options'), ('POST', '/sdapi/v1/txt2img')]
-

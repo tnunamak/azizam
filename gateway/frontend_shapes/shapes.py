@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse, Response
 import json
 
 from gateway import client_errors, image_extensions, image_output, provenance
+from gateway.image_size import SIZE_REFUSAL, read_size
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
 from gateway.frontend_shapes.video_views import VideoViews
@@ -290,7 +291,6 @@ class _Bytes:
 IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
 MASK_PART = "mask"
 SECOND_CHOICE = ".multi_image"                   # DEFAULT_WORKFLOWS key suffix: the default when several pictures arrive
-_DIMENSIONS = re.compile(r"[0-9]+x[0-9]+")
 
 
 def old_dimensions(text: Any) -> tuple[int, int]:
@@ -303,18 +303,6 @@ def old_dimensions(text: Any) -> tuple[int, int]:
         return int(width), int(height)
     except ValueError:
         return 1024, 1024
-
-
-def read_size(text: Any) -> tuple[int, int] | None | bool:
-    """``WIDTHxHEIGHT`` in the spellings that worked before strict validation (``512X768``, ``512 x 768``). None: no size
-    or ``auto``; False: not a size."""
-    if text is None or text == "auto":
-        return None
-    normalized = re.sub(r"\s*[xX]\s*", "x", text.strip()) if isinstance(text, str) else ""
-    if not _DIMENSIONS.fullmatch(normalized):
-        return False
-    width, height = (int(part) for part in normalized.split("x"))
-    return (width, height) if width > 0 and height > 0 else False
 
 
 class OpenAIImagesMultipart(OpenAIImagesJson):
@@ -337,7 +325,7 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     def front(self, fields: Mapping[str, Any]) -> Response | None:
         if read_size(fields.get("size")) is False:
             _wire.note("size", rejected="invalid_dimensions")
-            return _wire.error_response(400, "size must be 'auto' or WIDTHxHEIGHT with positive integers", param="size",
+            return _wire.error_response(400, SIZE_REFUSAL, param="size",
                                         code=None, null_code=True)
         _wire.note("model")
         if fields.get("size"):
