@@ -1886,7 +1886,7 @@
     {
       "after": {
         "birefnet": "AI cutout",
-        "threshold": "Simple cutout"
+        "threshold": "White-background cutout"
       },
       "before": null,
       "before_present": false,

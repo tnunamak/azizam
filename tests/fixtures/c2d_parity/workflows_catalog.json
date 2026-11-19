@@ -7158,7 +7158,7 @@
         "sha256": "38f3f3cb94dd6a4bd972961ff55c37ecb5a6cea9f24e4024f5717ea919a8ccdb"
       },
       "row": {
-        "bytes": 11446,
+        "bytes": 11456,
         "full": {
           "aliases": [],
           "availability": {
@@ -7308,7 +7308,7 @@
               "applies": "Workflow extension",
               "choice_labels": {
                 "birefnet": "AI cutout",
-                "threshold": "Simple cutout"
+                "threshold": "White-background cutout"
               },
               "description": "Choose how the background is cut away, or leave it empty to let the service choose.",
               "enum": [
@@ -7472,7 +7472,7 @@
           "try_url": "/try/?workflow=mesh.generate.trellis-2",
           "typical_seconds": null
         },
-        "sha256": "9bcaa95e2e1b31a2f11bd2b1509dbb0f2e4dfd02daee1591a5b3d820281aa107"
+        "sha256": "9856adc44608264d96fab06a204772800880df0b5cb2cc97fea4663fbbe7e9c9"
       }
     },
     "video.edit.rife-interpolate": {
