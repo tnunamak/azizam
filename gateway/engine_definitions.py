@@ -80,6 +80,12 @@ class EngineCatalog:
                 if key in row
             }
             item["fields"] = sorted(item["fields"], key=lambda field: field.get("order", 0))
+            # What the owner must give for an engine Azizam starts; the command itself comes from process-preview.
+            template = row.get("process_template")
+            item["process_slots"] = None if template is None else {
+                name: {"type": spec["type"], "kind": spec.get("kind"), "locate": list(spec.get("locate") or [])}
+                for name, spec in template["slots"].items()
+            }
             primary = row["probes"]["primary"]
             item["check_request"] = {"method": primary["method"], "path": primary["path"], "from": primary["from"]}
             # A capability names the kinds it serves, so the form offers only what the ticked capabilities serve.
