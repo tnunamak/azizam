@@ -12,6 +12,7 @@ import json
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,30 @@ def edit(tree: Path, name: str, change) -> None:
 def trees(tmp_path_factory):
     base = tmp_path_factory.mktemp("trees")
     return {"before_v1": make_tree(base / "v1", workflows=V1), "same": make_tree(base / "same")}
+
+
+@contextmanager
+def reuse_unchanged_dump(root: Path):
+    """Reuse only this root's dump inside a block that doesn't change its inputs.
+
+    Other roots (including fresh copies) still run independently. The cache is
+    discarded on exit, so filesystem, process and corpus state aren't shared
+    across tests. The JSON comparison still receives independent objects.
+    """
+    dump_tree = eq.dump_tree
+    cache = {}
+
+    def dump(candidate, corpus_file, python=None):
+        if candidate != root:
+            return dump_tree(candidate, corpus_file, python)
+        key = (corpus_file.read_bytes(), python or sys.executable)
+        if key not in cache:
+            cache[key] = dump_tree(candidate, corpus_file, python)
+        return copy.deepcopy(cache[key])
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(eq, "dump_tree", dump)
+        yield
 
 
 def run(before: Path, after: Path, tmp_path: Path, checks=eq.CHECKS):
@@ -108,7 +133,8 @@ def test_a_workflow_that_is_missing_on_one_side_is_a_difference():
 
 
 def test_a_tree_equals_itself_in_every_check(trees, tmp_path):
-    result = run(trees["same"], trees["same"], tmp_path)
+    with reuse_unchanged_dump(trees["same"]):
+        result = run(trees["same"], trees["same"], tmp_path)
     assert result.ok and result.explained == []
     assert result.compared["projections"] > 300 and result.compared["requests"] > 300
     assert result.compared["services"] >= 1 and result.compared["protocols"] >= 1
@@ -228,10 +254,11 @@ def tree_without_workflows(base: Path) -> Path:
 def test_a_check_that_compared_nothing_fails_unless_it_is_asked_to_be_empty(check, tmp_path):
     """Finding 1: empty trees and empty records gave zero comparisons and a pass."""
     tree = tree_without_workflows(tmp_path / "t")
-    result = run(tree, tree, tmp_path, checks=(check,))
-    assert not result.ok and paths(result) == [(check, "<none>", "/")]
-    assert result.compared[check] == 0
-    allowed_empty = eq.diff_effective(tree, tree, checks=(check,), scratch=tmp_path, allow_empty=(check,))
+    with reuse_unchanged_dump(tree):
+        result = run(tree, tree, tmp_path, checks=(check,))
+        assert not result.ok and paths(result) == [(check, "<none>", "/")]
+        assert result.compared[check] == 0
+        allowed_empty = eq.diff_effective(tree, tree, checks=(check,), scratch=tmp_path, allow_empty=(check,))
     assert allowed_empty.ok
 
 
@@ -385,11 +412,12 @@ def test_a_generator_range_change_that_draws_the_same_value_is_still_seen(tmp_pa
         return tree
 
     narrow, wide = with_range(tmp_path_factory.mktemp("narrow"), 3), with_range(tmp_path_factory.mktemp("wide"), 4)
-    result = run(narrow, wide, tmp_path_factory.mktemp("scratch"), checks=("requests",))
-    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
-    assert "/generate/seed/generate/maximum" in {d.path for d in result.unexplained}  # the rule itself
-    assert any(d.path.startswith("/requests") for d in result.unexplained)  # and the boundary draw it moves
-    assert run(narrow, with_range(tmp_path_factory.mktemp("same"), 3), tmp_path_factory.mktemp("scratch"), checks=("requests",)).ok
+    with reuse_unchanged_dump(narrow):
+        result = run(narrow, wide, tmp_path_factory.mktemp("scratch"), checks=("requests",))
+        assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.krea2-turbo"}
+        assert "/generate/seed/generate/maximum" in {d.path for d in result.unexplained}  # the rule itself
+        assert any(d.path.startswith("/requests") for d in result.unexplained)  # and the boundary draw it moves
+        assert run(narrow, with_range(tmp_path_factory.mktemp("same"), 3), tmp_path_factory.mktemp("scratch"), checks=("requests",)).ok
 
 
 def test_the_corpus_of_a_tree_holds_the_least_and_the_greatest_generated_value():
@@ -601,10 +629,11 @@ def test_a_step_or_an_offset_change_on_a_generated_input_is_seen_even_when_the_r
 
     plain = with_input_change(tmp_path_factory, narrow)
     gridded = with_input_change(tmp_path_factory, lambda spec: (narrow(spec), change(spec)))
-    result = run(plain, gridded, tmp_path_factory.mktemp("scratch"), checks=("requests",))
-    assert not result.ok
-    assert {d.path for d in result.unexplained if d.path.startswith("/generate")} & {"/generate/seed/step", "/generate/seed/offset"}
-    assert run(plain, with_input_change(tmp_path_factory, narrow), tmp_path_factory.mktemp("scratch"), checks=("requests",)).ok
+    with reuse_unchanged_dump(plain):
+        result = run(plain, gridded, tmp_path_factory.mktemp("scratch"), checks=("requests",))
+        assert not result.ok
+        assert {d.path for d in result.unexplained if d.path.startswith("/generate")} & {"/generate/seed/step", "/generate/seed/offset"}
+        assert run(plain, with_input_change(tmp_path_factory, narrow), tmp_path_factory.mktemp("scratch"), checks=("requests",)).ok
 
 
 def test_a_hash_must_keep_the_shape_of_the_digest_the_gateway_writes():
