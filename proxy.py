@@ -18540,6 +18540,10 @@ def _runtime_health_endpoint(service: Mapping[str, Any]) -> str | None:
     return dialed if dialed.startswith(("http://", "https://")) else None
 
 
+# The model catalog's health probe: a probe slower than this is reported as timed out (degraded).
+_CATALOG_HEALTH_PROBE_TIMEOUT_S = 0.75
+
+
 async def _models_catalog_health_evidence(
     service_records: Mapping[str, Any],
     *,
@@ -18551,7 +18555,7 @@ async def _models_catalog_health_evidence(
         if not url.startswith(("http://", "https://")):
             return None
         try:
-            async with engine_egress.async_client(timeout=0.75, verify=context) as client:
+            async with engine_egress.async_client(timeout=_CATALOG_HEALTH_PROBE_TIMEOUT_S, verify=context) as client:
                 response = await client.get(url, extensions=engine_egress.probe())
         except httpx.TimeoutException as exc:
             raise HealthProbeTimedOut() from exc
