@@ -2522,8 +2522,9 @@ def split_base_url(value: Any, *, default_port: bool = True) -> dict[str, Any]:
 
     A URL with no port means the scheme's default port, as every URL parser and HTTP client reads it: 80 for http, 443
     for https (a bare ``host`` is http). The record keeps the scheme in its own ``scheme`` field, so an https URL with
-    no port stores ``scheme: https`` beside port 443; an explicit port is stored as before, with no scheme.
-    ``default_port=False`` leaves a URL with no port without one (the caller holds the URL whole).
+    no port stores ``scheme: https`` beside port 443, and ``https://host:8443`` stores ``scheme: https`` beside its port
+    (without it the record was addressed as plain http, and a key it carries went out unencrypted).
+    ``default_port=False`` leaves the URL's port and scheme unsplit (the caller holds the URL whole).
     """
     from urllib.parse import urlparse
 
@@ -2540,8 +2541,8 @@ def split_base_url(value: Any, *, default_port: bool = True) -> dict[str, Any]:
         out["port"] = int(parsed.port)
     elif parsed.port is None and parsed.hostname and default_port:
         out["port"] = 443 if parsed.scheme == "https" else 80
-        if parsed.scheme == "https":
-            out["scheme"] = "https"
+    if parsed.scheme == "https" and parsed.hostname and default_port:
+        out["scheme"] = "https"
     path = (parsed.path or "").rstrip("/")
     if path:
         out["base_path"] = path
