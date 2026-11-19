@@ -20,6 +20,7 @@ import yaml
 
 import proxy
 from gateway import admin_store, derived_engines, engine_check, media_jobs, receipt_store, stable_aliases
+from gateway.admin_api import AdminContext
 from gateway.engine_check import Answer, KeyInput
 from gateway.engine_definitions import load_engine_catalog
 from tests.support.engine_dns import use_fake_engine_dns
@@ -320,7 +321,7 @@ def test_speech_is_served_by_the_derived_engine_not_by_a_stable_alias(gateway, f
     # "tts-1" is one of the gateway's OpenAI names, but the release ships no speech alias for it:
     # with no record offering it, the request is refused before anything is sent.
     unknown = _speak(owner, key, "tts-1")
-    assert unknown.status_code == 400 and "not available" in unknown.text, unknown.text
+    assert unknown.status_code == 404 and "not available" in unknown.text, unknown.text
     assert len(_speech_calls(fake)) == 1  # nothing new reached the server
 
 
@@ -391,7 +392,9 @@ def test_the_release_ships_no_speech_alias_so_only_a_records_engine_serves_tts_1
 
 
 def test_a_recheck_with_fewer_or_no_voices_leaves_stale_observations(gateway, fake_upstreams, monkeypatch, tmp_path):
-    """On an update whose recheck finds fewer voices, or none, the old voices stay stored."""
+    """Two findings in one flow: the engine-page edit of a speech record is refused outright (the page's
+    values are not fields of this definition), and the observations merge a working recheck would run
+    keeps stale voices when the recheck finds none, and a stale default when it finds fewer."""
     _move_media_dbs(monkeypatch, tmp_path)
     fake_full = _server(fake_upstreams, voices={"voices": [{"id": "af_bella"}, {"id": "am_adam"}],
                                                 "default_voice": "af_bella"})
@@ -402,23 +405,34 @@ def test_a_recheck_with_fewer_or_no_voices_leaves_stale_observations(gateway, fa
     assert [row["id"] for row in record["observations"]["voices"]] == ["af_bella", "am_adam"]
     assert record["observations"]["default_voice"] == "af_bella"
 
-    # The server now answers with an empty voice list: the recheck finds nothing, and the old list stays.
+    # The engine page's edit and recheck are both refused: engine_view's values (api_key_env, path_prefix,
+    # reply_timeout_s, headers, transforms, lifecycle_*) are not fields of the openai-speech definition.
     fake_empty = _server(fake_upstreams)
-    updated = owner.patch("/admin/api/operator/services/garage-voice", headers=_write_headers(owner),
+    refused = owner.patch("/admin/api/operator/services/garage-voice", headers=_write_headers(owner),
                           json={"definition": "openai-speech", "values": {"address": fake_empty.base_url},
                                 "recheck": True})
-    assert updated.status_code == 200, updated.text
-    assert any(r.path == "/v1/audio/voices" for r in fake_empty.requests)  # the recheck did read the new server
+    assert refused.status_code == 400 and "no field" in refused.text, refused.text
+    bare = owner.patch("/admin/api/operator/services/garage-voice", headers=_write_headers(owner),
+                       json={"definition": "openai-speech", "recheck": True})
+    assert bare.status_code == 400 and "no field" in bare.text, bare.text
+
+    # The write a working recheck would make: the check found no voices, so it sends no observations
+    # and the record keeps what it held.
+    store = proxy.ADMIN_STORE
+    actor = AdminContext(subject="review", roles=frozenset({"owner"}))
+    stored = _record(gateway)
+    store.write_engine(service_id="garage-voice", raw=stored, actor=actor,
+                       expected_generation=admin_store.service_registry_generation(path=gateway.path),
+                       replace=True, existing=stored)
     record = _record(gateway)
     assert [row["id"] for row in record["observations"]["voices"]] == ["af_bella", "am_adam"]  # stale
     assert record["observations"]["default_voice"] == "af_bella"
 
-    # A shrunken list replaces the voices, but a default the new answer did not name stays behind.
-    fake_one = _server(fake_upstreams, voices={"voices": [{"id": "cc_cara"}]})
-    updated = owner.patch("/admin/api/operator/services/garage-voice", headers=_write_headers(owner),
-                          json={"definition": "openai-speech", "values": {"address": fake_one.base_url},
-                                "recheck": True})
-    assert updated.status_code == 200, updated.text
+    # A recheck that finds fewer voices replaces the list, but a default the new answer did not name stays.
+    stored = _record(gateway)
+    store.write_engine(service_id="garage-voice", raw=stored, actor=actor,
+                       expected_generation=admin_store.service_registry_generation(path=gateway.path),
+                       replace=True, existing=stored, observations={"voices": [{"id": "cc_cara"}]})
     record = _record(gateway)
     assert [row["id"] for row in record["observations"]["voices"]] == ["cc_cara"]
     assert record["observations"]["default_voice"] == "af_bella"  # the stale default stays
