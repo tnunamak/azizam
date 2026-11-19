@@ -1095,6 +1095,50 @@ class TestReviewedEngineKnowledge:
         assert _check_engine_named_branches([("gateway/sample.py", source.splitlines())])
 
 
+# ---------------------------------------------------------------------------
+# The four engines an owner adds from shipped definitions (S6 of engines-as-data).
+#
+# _ENGINE_NAMES above names chat-engine products. The check reads that set when it runs, so this class widens it
+# with the ids of the speech, transcription, picture-server and workflow-engine definitions, the protocol words
+# they save, and the products they were written for. A gateway module or proxy.py that branches on one of them
+# for a difference a definition can carry fails here. The journey that adds all four through the admin routes
+# is tests/test_engines_as_data_journey.py.
+# ---------------------------------------------------------------------------
+
+_FOUR_DEFINITION_IDS = ("openai-speech", "openai-transcription", "sdapi", "workflow-image-engine")
+_FOUR_ENGINE_WORDS = frozenset({
+    *_FOUR_DEFINITION_IDS, "node-graph", "inline-tts",
+    "comfy", "comfyui", "automatic1111", "a1111", "stable-diffusion-webui", "speaches", "kokoro", "kokoro-fastapi",
+})
+
+
+class TestFourEnginesStayData:
+    @pytest.fixture(autouse=True)
+    def _widen_denylist(self, monkeypatch) -> None:
+        monkeypatch.setitem(globals(), "_ENGINE_NAMES", _ENGINE_NAMES | _FOUR_ENGINE_WORDS)
+
+    def test_the_four_definitions_still_ship_under_these_ids(self) -> None:
+        from gateway.engine_definitions import load_engine_catalog
+
+        catalog = load_engine_catalog()
+        assert [i for i in _FOUR_DEFINITION_IDS if catalog.definition(i) is None] == []
+
+    def test_no_gateway_module_branches_on_a_definition_id_or_product_name(self) -> None:
+        violations = _check_engine_named_branches()
+        assert not violations, _fail_message("branch on one of the four added-from-data engines", violations)
+
+    def test_a_branch_on_one_of_them_is_caught_in_gateway_and_the_root_module(self) -> None:
+        shapes = (
+            'if definition == "{w}": pass\n',
+            'x = 1 if record["protocol"] == "{w}" else 2\n',
+            'ok = name in ("{w}", "other")\n',
+            'for engine in ["{w}"]: pass\n',
+        )
+        missed = [(rel, word, shape) for word in sorted(_FOUR_ENGINE_WORDS) for shape in shapes for rel in ("gateway/sample.py", "proxy.py")
+                  if not _check_engine_named_branches([(rel, shape.format(w=word).splitlines())])]
+        assert missed == []
+
+
 if __name__ == "__main__":
     import sys
 
