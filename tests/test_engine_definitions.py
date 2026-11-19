@@ -221,7 +221,7 @@ def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
                     body = b'{"data": [{"id": "fixture"}], "models": [{"name": "fixture"}]}'
                     return engine_check.Answer(method, url, status=200, body=body)
 
-                values = {"address": "http://engine.invalid/v1", "transforms": []}
+                values = {"address": "http://127.0.0.1/v1", "transforms": []}
                 await engine_check.run_check(catalog, definition, values,
                                              key=engine_check.KeyInput(), fetch=fetch)
                 assert len(calls) > 3

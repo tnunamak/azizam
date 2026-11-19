@@ -1408,6 +1408,16 @@
       "models_note": "Azizam shows the checkpoints the server reports. It does not send a key to this kind of server. Azizam asks the server to switch to the checkpoint a request names, reads the selection back, and sends the image request only when the server confirms it.",
       "advice": [
         {
+          "code": "local_only",
+          "severity": "error",
+          "field": "address",
+          "when": {"local_dispatch_only": true},
+          "title": "Only a server on this computer can be added this way",
+          "what": "This kind of server can be added only when it runs on this computer.",
+          "why": "{address} is not an address on this computer. Azizam does not yet call a server of this kind at another address, and it refuses such a request instead of sending it.",
+          "fix": "Start the server on this computer and use its local address, for example http://127.0.0.1:7860."
+        },
+        {
           "code": "needkey",
           "severity": "error",
           "field": "address",

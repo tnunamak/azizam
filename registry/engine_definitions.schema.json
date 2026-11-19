@@ -161,7 +161,8 @@
         "body_matches": {"type": "string", "format": "regex"},
         "recognised": {"type": "boolean"},
         "models_count": {"type": "integer"},
-        "duplicate": {"type": "boolean"}
+        "duplicate": {"type": "boolean"},
+        "local_dispatch_only": {"type": "boolean"}
       }
     },
     "action": {

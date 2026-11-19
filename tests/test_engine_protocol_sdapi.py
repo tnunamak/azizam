@@ -354,3 +354,146 @@ def test_owner_adds_the_server_from_data_picks_a_checkpoint_and_gets_its_image(g
     assert fake.generated_with == [BETA]
     assert [(r.method, r.url.path) for r in fake.requests] == [
         ('GET', '/sdapi/v1/options'), ('POST', '/sdapi/v1/options'), ('GET', '/sdapi/v1/options'), ('POST', '/sdapi/v1/txt2img')]
+
+
+def _page_edit(added, **body):
+    """What the engine page sends for a saved server: the definition, the address, and the models it lists."""
+    from tests.test_engine_admin_routes import _edit
+    sent = {'definition': 'sdapi', 'values': {'address': added.server.base_url}, **body}
+    return _edit(added.owner, added.service_id, sent)
+
+
+def _rows(added, *ticked):
+    return [{'id': row['id'], 'public_name': row['public_name'], 'enabled': row['id'] in ticked} for row in added.all_models]
+
+
+def _offered(gateway):
+    """(public id, checkpoint, switch args) of every saved offering, and the saved model rows' checkpoints."""
+    config = _saved(gateway)['config']
+    return ([(o['id'], o['upstream'], o['selection']['switch']['args']) for o in config['offerings']],
+            [(m['upstream_model'], m.get('enabled', True)) for m in config['models']])
+
+
+def _generate_as_owner(added, monkeypatch, model):
+    fake = FakeSdapi()
+    monkeypatch.setattr(executor, 'HttpxTransport', lambda: transport.HttpxTransport.for_tests(HandlerTransport(fake)))
+    made = added.owner.post('/v1/images/generations', headers={'authorization': f'Bearer {added.key}'},
+                            json={'model': model, 'prompt': 'a blue square', 'response_format': 'b64_json'})
+    return made, fake
+
+
+def test_renaming_a_saved_server_keeps_its_checkpoints_and_offerings(gateway, fake_upstreams, monkeypatch, tmp_path):
+    from tests.test_engine_admin_routes import _edit
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    before = _offered(gateway)
+    assert _edit(added.owner, added.service_id, {'name': 'Renamed plainly'}).status_code == 200
+    assert _saved(gateway)['name'] == 'Renamed plainly' and _offered(gateway) == before
+    renamed = _page_edit(added, name='Renamed on the page')
+    assert renamed.status_code == 200, renamed.text
+    assert _saved(gateway)['name'] == 'Renamed on the page' and _offered(gateway) == before
+    made, fake = _generate_as_owner(added, monkeypatch, added.picked[0]['public_name'])
+    assert made.status_code == 200 and fake.generated_with == [BETA]
+
+
+def test_the_page_may_edit_checkpoints_of_a_server_it_added(gateway, fake_upstreams, monkeypatch, tmp_path):
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    view = added.owner.get(f'/admin/api/engines/{added.service_id}').json()['engine']
+    assert view['can_edit_offerings'] is True and view['offering_edit_reason'] is None
+
+
+def test_ticking_a_new_checkpoint_list_rebuilds_the_offerings_from_the_definition(gateway, fake_upstreams, monkeypatch, tmp_path):
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    edited = _page_edit(added, capabilities=['images'], models=_rows(added, ALPHA, BETA))
+    assert edited.status_code == 200, edited.text
+    offerings, rows = _offered(gateway)
+    assert [(o[1], o[2]) for o in offerings] == [(ALPHA, {'sd_model_checkpoint': ALPHA}), (BETA, {'sd_model_checkpoint': BETA})]
+    assert rows == [(ALPHA, True), (BETA, True)]
+    # The same offering a create builds: every key comes from the definition's template.
+    config = _saved(gateway)['config']
+    template = _definition()['record']['dispatch']['offering']['selection']['switch']
+    assert config['offerings'][0]['selection']['switch']['drain_timeout_s'] == template['drain_timeout_s']
+    made, fake = _generate_as_owner(added, monkeypatch, added.all_models[0]['public_name'])
+    assert made.status_code == 200, made.text
+    assert fake.generated_with == [ALPHA]
+
+
+def test_unticking_a_checkpoint_removes_its_offering(gateway, fake_upstreams, monkeypatch, tmp_path):
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path, tick=(ALPHA, BETA))
+    assert [o[1] for o in _offered(gateway)[0]] == [ALPHA, BETA]
+    edited = _page_edit(added, capabilities=['images'], models=_rows(added, ALPHA))
+    assert edited.status_code == 200, edited.text
+    offerings, rows = _offered(gateway)
+    assert [o[1] for o in offerings] == [ALPHA] and rows == [(ALPHA, True), (BETA, False)]
+    gone, fake = _generate_as_owner(added, monkeypatch, added.all_models[1]['public_name'])
+    assert gone.status_code >= 400, gone.text  # the name is no longer an offering of this server
+    assert fake.requests == []  # and nothing is sent to it, not even a checkpoint switch
+
+
+def test_a_models_edit_without_the_definition_rebuilds_the_offerings_too(gateway, fake_upstreams, monkeypatch, tmp_path):
+    # A script or a tool may send only the models. They used to change the model rows and leave the offerings as they were.
+    from tests.test_engine_admin_routes import _edit
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    edited = _edit(added.owner, added.service_id, {'capabilities': ['images'], 'models': _rows(added, ALPHA, BETA)})
+    assert edited.status_code == 200, edited.text
+    offerings, rows = _offered(gateway)
+    assert [o[1] for o in offerings] == [ALPHA, BETA] and [r[0] for r in rows] == [ALPHA, BETA]
+
+
+def test_offerings_changed_by_hand_are_refused_for_a_models_edit_and_nothing_changes(gateway, fake_upstreams, monkeypatch, tmp_path):
+    from tests.test_engine_admin_routes import _edit, _put_registry, _registry
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    registry = _registry(gateway)
+    registry['services'][added.service_id]['config']['offerings'][0]['selection']['switch']['drain_timeout_s'] = 7
+    _put_registry(gateway, registry)
+    view = added.owner.get(f'/admin/api/engines/{added.service_id}').json()['engine']
+    assert view['can_edit_offerings'] is False and view['offering_edit_reason']
+    before = _saved(gateway)
+    for send in (lambda: _page_edit(added, capabilities=['images'], models=_rows(added, ALPHA, BETA)),
+                 lambda: _edit(added.owner, added.service_id, {'models': _rows(added, ALPHA, BETA)})):
+        refused = send()
+        assert refused.status_code == 400, refused.text
+        assert refused.json()['error']['field'] == 'models' and refused.json()['error']['message']
+    assert _saved(gateway) == before
+
+
+def test_moving_a_saved_server_to_another_local_address_checks_it_and_keeps_the_offerings(gateway, fake_upstreams, monkeypatch, tmp_path):
+    from tests.test_engine_admin_routes import _edit
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    before = _offered(gateway)
+    moved = _sdapi_server(fake_upstreams)
+    edited = _edit(added.owner, added.service_id, {'definition': 'sdapi', 'values': {'address': moved.base_url}})
+    assert edited.status_code == 200, edited.text
+    assert _saved(gateway)['config']['connection']['address'] == moved.base_url
+    assert _offered(gateway) == before
+
+
+def test_moving_a_saved_server_to_another_computer_is_refused_in_words_before_anything_is_sent(gateway, fake_upstreams, monkeypatch, tmp_path):
+    from tests.test_engine_admin_routes import _edit
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    before = _saved(gateway)
+    refused = _edit(added.owner, added.service_id, {'definition': 'sdapi', 'values': {'address': 'http://203.0.113.9:7860'}})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['error']['code'] == 'engine_check_failed' and refused.json()['error']['field'] == 'address'
+    assert refused.json()['error']['message'] == 'This kind of server can be added only when it runs on this computer.'
+    assert _saved(gateway) == before
+
+
+def test_the_check_says_before_save_that_only_this_computer_works(gateway, fake_upstreams, monkeypatch, tmp_path):
+    # Nothing listens at 203.0.113.9: the hermetic guard fails any attempt to connect, so a pass here means nothing was sent.
+    added = _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    owner = added.owner
+    checked = owner.post('/admin/api/engines/check', headers=csrf_for(owner),
+                         json={'definition': 'sdapi', 'values': {'address': 'http://203.0.113.9:7860'}})
+    assert checked.status_code == 200, checked.text
+    check = checked.json()['check']
+    assert check['outcome'] == 'error' and check['models'] == []
+    [finding] = check['findings']
+    assert finding['code'] == 'local_only' and finding['severity'] == 'error' and finding['field'] == 'address'
+    assert finding['what'] == 'This kind of server can be added only when it runs on this computer.'
+    assert 'http://203.0.113.9:7860' in finding['why'] and '127.0.0.1' in finding['fix']
+    etag = owner.get('/admin/api/operator/service-registry').headers.get('etag', '"os-0"')
+    created = owner.post('/admin/api/operator/services', headers={**csrf_for(owner), 'If-Match': etag}, json={
+        'definition': 'sdapi', 'name': 'lan-pictures', 'values': {'address': 'http://203.0.113.9:7860'},
+        'capabilities': ['images'], 'models': added.picked})
+    assert created.status_code == 422 and created.json()['error']['code'] == 'engine_check_failed', created.text
+    assert 'lan-pictures' not in admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']

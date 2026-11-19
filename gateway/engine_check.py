@@ -1066,6 +1066,17 @@ def duplicate_finding(
     return None
 
 
+def _served_dispatch_address(address: str) -> bool:
+    """True when protocol dispatch would serve this address: the rule a saved record is held to, one place."""
+    from gateway.service_registry import validate_protocol_dispatch_local_only
+
+    try:
+        validate_protocol_dispatch_local_only({"config": {"connection": {"dispatch": "protocol", "address": address}}})
+    except ValueError:
+        return False
+    return True
+
+
 async def run_check(
     catalog: EngineCatalog,
     definition: Mapping[str, Any],
@@ -1155,6 +1166,12 @@ async def _run_check(
     dup = duplicate_finding(catalog, definition, values, existing, viewer_role=viewer_role)
     if dup is not None:
         result["findings"].append(dup)
+        return finish("error")
+    # A definition that has the gateway call the engine through an installed description serves only this computer's
+    # addresses for now. Say so here, before any request and before a save, not when the first generation fails.
+    if definition["record"].get("dispatch") and not _served_dispatch_address(address):
+        row = next(r for r in advice if r["code"] == "local_only")
+        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=None, key_sent=False))
         return finish("error")
 
     baseline_path = f"/{_BASELINE_PREFIX}{ctx.token}"
