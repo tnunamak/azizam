@@ -178,7 +178,7 @@ from gateway.workflow_call import CallError
 from gateway.workflow_view import requirements_of
 from gateway import binding_descriptors, binding_registry, identity_api, identity_scene
 from gateway import likeness as likeness_module
-from gateway import stt_chunking, stt_measurement
+from gateway import stt_chunking, stt_declared_options, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.transition_executor import TriggerLease
@@ -5972,6 +5972,17 @@ async def _dispatch_selected_stt_route(
     return _with_fallback_header(response, notes)
 
 
+def _stt_reply_lacks_verbose_segments(fields: Sequence[tuple[str, str]], raw: bytes | bytearray | None) -> bool:
+    """True when ``verbose_json`` was asked for and the engine answered a JSON object with no ``segments``."""
+    if not any(name == "response_format" for name, _ in fields):
+        return False
+    try:
+        payload = json.loads(raw or b"")
+    except (ValueError, TypeError):
+        return False
+    return stt_declared_options.verbose_json_missing_segments(fields, payload)
+
+
 def _stt_receipt(
     *,
     request: Request,
@@ -6242,6 +6253,15 @@ async def proxy_stt_request(
                     )
                     lease.workspace = workspace
                     receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
+            # The one place every transcription path passes with its fields parsed and its service final (a peeked
+            # model, a file-first handoff and a fallback attempt all arrive here), and before any byte goes to the engine.
+            try:
+                declared = stt_declared_options.options_of(execution)
+            except stt_chunking.SttConfigurationError as error:
+                return _stt_configuration_refusal(error)
+            refusal = stt_declared_options.refuse(declared, fields, model=requested_model)
+            if refusal is not None:
+                return openai_error_response(refusal.message, status_code=400, param=refusal.param, code=refusal.code)
             effective_model = model_resolution.effective_model or execution.default_model or stt_backend_model()
             named_alias = model_resolution.alias
             # An engine the request names (hand or derived) sends its own model, when the call goes to that engine's service;
@@ -6367,6 +6387,9 @@ async def proxy_stt_request(
                 )
             stt_measurement.observe_reply(reply.status, reply.mode)
             if reply.mode == "chunked":
+                if not wants_stream and stt_declared_options.verbose_json_missing_segments(fields, reply.body):
+                    return _stt_error(stt_declared_options.format_not_returned_message(requested_model),
+                                      status_code=502, code=stt_declared_options.FORMAT_NOT_RETURNED)
                 return Response(content=json.dumps(reply.body), status_code=200, media_type="application/json")
             upstream = stt_chunking.UpstreamResponse(reply.status, reply.raw, reply.headers)
             form_fields = frozenset(name for name, _ in fields)
@@ -6374,6 +6397,9 @@ async def proxy_stt_request(
                 return _stt_response_from_upstream(upstream, form_fields)
             receipt.metadata["status_code"] = reply.status
             response = _stt_response_from_upstream(upstream, form_fields)
+            if not wants_stream and reply.status == 200 and _stt_reply_lacks_verbose_segments(fields, reply.raw):
+                return _stt_error(stt_declared_options.format_not_returned_message(requested_model),
+                                  status_code=502, code=stt_declared_options.FORMAT_NOT_RETURNED)
             if wants_stream and not native_stream and reply.status == 200:
                 try:
                     events = speech_stream.transcript_json_to_sse(json.loads(reply.raw))
@@ -15456,9 +15482,22 @@ def _gateway_catalog_finish(
         )
     ]
 
+    capabilities = [_with_transcription_facts(capability) for capability in capabilities]
+
     # The mesh row's facts. Its state joins later as live evidence (LIVE_PROBES), like every other row's.
     capabilities.extend(_mesh_facts(live_registry))
     return capabilities
+
+
+def _with_transcription_facts(capability: Capability) -> Capability:
+    """A transcription alias's row says, before a caller sends anything, what its record declares and the audio it takes in one piece."""
+    if capability.intent != INTENT_TRANSCRIPTIONS or "alias" not in capability.tags or capability.limits:
+        return capability
+    try:
+        execution = _stt_execution_snapshot("transcriptions", capability.backend)
+    except stt_chunking.SttConfigurationError:
+        execution = None
+    return replace(capability, limits=tuple(stt_declared_options.capability_limits(execution).items()))
 
 
 def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:

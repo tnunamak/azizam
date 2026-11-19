@@ -295,6 +295,18 @@ engine page shows which values came from there (`stt_chunking.from_bundled_defau
 | `native_long_audio_offline` | `true` when the engine takes long offline transcription audio whole. |
 | `native_long_audio_streaming` | `true` when the engine takes long streaming transcription audio whole. |
 
+The same block also declares what the engine does with a request option:
+
+| Key | Meaning |
+|---|---|
+| `response_formats` | The `response_format` values the engine produces, as a list such as `[json, text]`. The route answers any other value with HTTP 400 `unsupported_response_format` (`param: response_format`) naming the formats the model takes, and sends nothing to the engine. Left out: no format is refused. |
+| `prompt_supported` | `false` when the engine has no prompt input. A non-empty `prompt` is then a 400 `unsupported_parameter` (`param: prompt`); an empty one is not an error. Left out: a prompt is passed on as before. |
+
+A record that declares nothing still has one backstop: when `response_format=verbose_json` was asked and the engine's reply
+has no `segments`, the route answers 502 `stt_response_format_not_returned` instead of passing on a different shape. A
+malformed declaration is a 503 `stt_configuration_invalid`. `GET /gateway/v1/capabilities` lists these values on each
+transcription alias row (see [Local client recipes](LOCAL_CLIENT_RECIPES.md#model-aliases-stable-names)).
+
 An uncut file above a maximum declared on the record is refused unless its request mode declares native long audio
 (HTTP 422 or 502, code `stt_audio_cannot_be_split`). A record without a declared maximum sends an uncut file whole;
 the engine page marks this as no measured limit and offers the measure action.
