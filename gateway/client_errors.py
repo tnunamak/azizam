@@ -159,7 +159,7 @@ GATEWAY_CODES = frozenset({
     "selection_unavailable", "settings_conflict", "settings_revision_required", "shots_seconds_mismatch", "signin_unavailable",
     "stt_audio_cannot_be_split", "stt_backend_connection_lost", "stt_backend_unavailable", "stt_cancellation_capacity", "stt_chunk_attempt_failed",
     "stt_cleanup_failed", "stt_configuration_invalid", "stt_media_setup_failed", "stt_not_configured", "stt_proxy_error", "stt_request_deadline",
-    "stt_request_timeout", "stt_resource_limit", "stt_response_limit", "stt_upload_limit", "test_required", "too_many_images",
+    "stt_request_timeout", "stt_resource_limit", "stt_response_format_not_returned", "stt_response_limit", "stt_upload_limit", "test_required", "too_many_images",
     "tts_backend_error", "unauthorized", "unsupported_audio_translation", "unsupported_media_job_content",
     "unsupported_media_job_intent", "unsupported_operation", "unsupported_response_format", "unsupported_stream_format",
     "unsupported_stream_response_format", "unsupported_stt_operation", "user_action_header_required", "user_csrf_required",

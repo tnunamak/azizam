@@ -105,6 +105,12 @@ Buffered speech backend errors return a JSON OpenAI error envelope instead of
 backend text, HTML, or audio-labelled errors. Backend 4xx/5xx statuses are
 preserved; other non-success statuses become `502`.
 
+A transcription alias whose engine record declares `response_formats` or `prompt_supported`
+([CONFIG.md](CONFIG.md#long-transcription-audio-the-service-records-chunking)) refuses a `response_format` outside the
+list (`400 unsupported_response_format`, `param: "response_format"`) and a non-empty `prompt` the engine cannot use
+(`400 unsupported_parameter`, `param: "prompt"`) before inference, as OpenAI does for a format its model cannot produce.
+A `verbose_json` answer without `segments` is a `502 stt_response_format_not_returned`, never a different shape.
+
 Transcription `stream=true` accepts `json` (the default) and `verbose_json`;
 native streaming also accepts `diarized_json`. Other formats, including `text`,
 `srt`, and `vtt`, return `400 unsupported_stream_response_format` with
