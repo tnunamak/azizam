@@ -346,7 +346,7 @@ export default function SignInPage() {
           <div className="mt-4 h-[58px]" />
           <div className="mt-3 h-11" />
         </div>
-        <p role="status" className="sr-only">
+        <p role="status" aria-label="Loading sign-in" className="sr-only">
           Getting sign-in ready…
         </p>
       </>,
