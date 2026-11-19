@@ -250,6 +250,8 @@ name `host.docker.internal` instead.
   Compose starts, set both `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY`
   (the first address in that subnet) to unused values. Use the new subnet in
   the firewall rule.
+  To see the subnets already in use, run
+  `docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' $(docker network ls -q)`.
 
 ### Engine in its own Docker container on the same computer
 

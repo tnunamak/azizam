@@ -83,3 +83,11 @@ def test_setup_guide_gets_the_first_key_from_apps_and_covers_a_docker_engine():
     assert "Mint the first" not in setup
     assert "### Engine in its own Docker container on the same computer" in setup
     assert "`litellm`" in setup and "AZIZAM_DOCKER_GATEWAY" in setup
+
+
+def test_the_subnet_overlap_advice_shows_how_to_find_the_subnets_in_use():
+    # The 2026-11-19 re-walk hit the overlap: the advice said "unused values" and gave no way to see the used ones.
+    for name in ("README.md", "docs/FIRST_RUN_SETUP.md"):
+        text = " ".join((ROOT / name).read_text(encoding="utf-8").split())
+        overlap = text.index("Pool overlaps with other one on this address space")
+        assert "docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'" in text[overlap:overlap + 900], name

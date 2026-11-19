@@ -32,7 +32,7 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
 
    The first start builds the gateway image. This can take several minutes.
 
-   If Docker says `Pool overlaps with other one on this address space`, another network already uses the default subnet. Set both `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` (the first address in that subnet) to unused values, then run `docker compose up -d` again.
+   If Docker says `Pool overlaps with other one on this address space`, another network already uses the default subnet. Set both `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` (the first address in that subnet) to unused values, then run `docker compose up -d` again. To see the subnets already in use, run `docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' $(docker network ls -q)`.
 
 2. Check that the gateway answers:
 
