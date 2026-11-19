@@ -31,6 +31,14 @@ if (!baseURL) {
   test("GET /v1/models returns a list", async () => {
     const result = await client.models.list();
     assert.ok(Array.isArray(result.data));
+    assert.ok(result.data.length > 0, "expected at least one model");
+    const ids = new Set();
+    for (const entry of result.data) {
+      assert.equal(entry?.object, "model");
+      assert.ok(typeof entry.id === "string" && entry.id.trim().length > 0, "expected a non-empty model id");
+      assert.ok(!ids.has(entry.id), `duplicate model id: ${entry.id}`);
+      ids.add(entry.id);
+    }
   });
 
   test("POST /v1/embeddings returns vectors", {
