@@ -149,6 +149,43 @@ def test_configured_resource_class_blocks_dispatch(dispatch_env, monkeypatch, na
     assert decision['reasons']
 
 
+EXTRA_ROUTES = [
+    ('/v1/completions', {'model': 'test', 'prompt': 'hi'}),
+    ('/api/embeddings', {'model': 'test', 'prompt': 'hi'}),
+    ('/ollama/api/embeddings', {'model': 'test', 'prompt': 'hi'}),
+    ('/ollama/api/embed', {'model': 'test', 'input': 'hi'}),
+    ('/ollama/api/chat', {'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'stream': False}),
+    ('/ollama/api/generate', {'model': 'test', 'prompt': 'hi', 'stream': False}),
+    ('/ollama/api/generate', {'model': 'test', 'prompt': 'hi', 'stream': True}),
+    ('/v1/images/edits', {}),
+    ('/v1/images/variations', {}),
+    ('/v1/audio/generate', {}),
+    ('/v1/audio/transcriptions', {}),
+    ('/v1/audio/translations', {}),
+]
+
+
+@pytest.mark.parametrize('path,body', EXTRA_ROUTES)
+def test_additional_routes_block_dispatch(dispatch_env, monkeypatch, path, body):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {
+        'disabled_resource_classes': ['chat', 'embeddings', 'image', 'audio', 'video'],
+    })
+    monkeypatch.setattr(proxy, '_stt_execution_snapshot', lambda *a: SimpleNamespace(
+        service_id='test-service', deadline_seconds=60))
+    response = client.post(path, json=body)
+    assert response.status_code == 503, response.text
+    assert not calls
+    payload = response.json()
+    if path.startswith(('/api/', '/ollama/api/')):
+        assert isinstance(payload['error'], str)
+        assert payload['decision']['reasons']
+    else:
+        assert payload['error']['code'] == 'resource_admission_denied'
+        assert payload['error']['decision']['reasons']
+    assert 'resource_class_disabled' in payload['admission']['reason_codes']
+
+
 @pytest.mark.parametrize('protocol', ['openai', 'anthropic', 'ollama'])
 @pytest.mark.parametrize('cfg,override,code', [
     ({'disabled_intents': ['chat.generate']}, {}, 'intent_disabled'),
