@@ -61,7 +61,7 @@ Each target row in the JSON file has:
 | ID | Name | Category | Protocols | Priority | Status |
 |---|---|---|---|---|---|
 | `open-webui` | Open WebUI | chat-frontend | OpenAI chat/embeddings/images/audio | P0 | manual-smoke |
-| `librechat` | LibreChat | chat-frontend | OpenAI chat/images/audio | P0 | unverified |
+| `librechat` | LibreChat | chat-frontend | OpenAI chat/images/audio | P0 | manual-smoke (API: models, chat, tools, images, speech, transcription; browser UI not driven) |
 | `continue` | Continue | coding-agent | OpenAI chat/completions/embeddings | P0 | manual-smoke (CLI: streaming chat and tools; autocomplete and embeddings need the editor) |
 | `cline` | Cline | coding-agent | OpenAI chat, Anthropic messages | P1 | unverified |
 | `sillytavern` | SillyTavern | roleplay-frontend | OpenAI chat, Anthropic messages | P1 | unverified |
@@ -73,6 +73,15 @@ The Vercel AI SDK row rests on `tests/compat/node/vercel-ai-sdk.test.mjs`: its c
 streaming, forced tool call, structured output and Responses API cases passed against a
 live gateway on 2026-11-18. It runs by hand, not in the gate. Anthropic Messages
 streaming needs the `@ai-sdk/anthropic` package and is not covered.
+
+The LibreChat row rests on one run of real LibreChat (v0.8.9, stable image) against a
+live gateway on 2026-11-19, driven through LibreChat's own HTTP API with a local user.
+The gateway was a custom endpoint (`endpoints.custom[]`, `models.fetch: true`) reached
+from the container through a `host-gateway` mapping. Every case passed: the model list,
+streaming and non-streaming chat, an OpenAPI action call, `image_gen_oai` to an image
+model, speech (`speech.tts.openai.url`) and transcription (`speech.stt.openai.url`).
+LibreChat refuses private addresses unless they are in `allowedAddresses`, and an action
+domain needs its scheme. The browser UI, embeddings and RAG uploads were not covered.
 
 The Continue row rests on one run of the real Continue CLI (`@continuedev/cli` 1.5.47,
 headless `cn -p`) against a live gateway on 2026-11-19. Streaming chat passed, a `Read`
