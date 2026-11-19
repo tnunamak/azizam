@@ -447,9 +447,13 @@ def alias_problems(candidate: Mapping[str, Any] | None, context: Mapping[str, An
     registry = (context or {}).get("registry")
     services = registry.get("services") if isinstance(registry, Mapping) else None
     # A disabled record still defines its names (include_disabled), so a tier naming one stays valid while it is off.
+    # A derived id the owner's own section already resolves is left out of the merge (derived_engines), so it is
+    # not known here either: a tier naming it would name an engine that never exists.
     derived = {
-        "speech": derived_engines.derive_speech_engines(services, include_disabled=True),
-        "transcriptions": derived_engines.derive_transcription_engines(services, include_disabled=True),
+        operation: [name for name in derive(services, include_disabled=True)
+                    if not owner_resolves_name(candidate, operation, name)]
+        for operation, derive in (("speech", derived_engines.derive_speech_engines),
+                                  ("transcriptions", derived_engines.derive_transcription_engines))
     }
     problems = [
         Problem(pointer or None, "alias_invalid" if severity == INVALID else "service_gone", severity, text)

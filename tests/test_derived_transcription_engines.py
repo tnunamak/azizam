@@ -192,6 +192,9 @@ def test_a_config_with_no_enabled_transcription_record_listing_models_gives_the_
     after = service_registry.apply_service_registry_to_config(base, registry)
 
     assert after == _before_transcription_derivation(monkeypatch, base, registry)
+    if case == "speech_only":  # a fixed expectation, so a speech change shared by both sides still fails here
+        assert after["model_aliases"]["speech"]["engines"] == {
+            "voice-a": {"service": "garage-voice", "model": "up-a", "voices": ["nova"], "default_voice": "nova"}}
 
 
 # ---- the validator of the stored section ---------------------------------------------------------------------------
@@ -396,3 +399,15 @@ def _patch_aliases(owner, items):
         json={"items": [{"section": "model_aliases", **item} for item in items], "if_match": {"model_aliases": revision}},
     )
     assert written.status_code == 200, written.text
+
+
+@pytest.mark.parametrize("operation,capability", [("transcriptions", "transcriptions"), ("speech", "speech")])
+def test_a_tier_naming_a_derived_engine_the_owners_own_pattern_shadows_is_shown_dangling(operation, capability):
+    # The merge leaves a derived id out when the owner's pattern already resolves it, so a tier naming it names nothing.
+    context = {"registry": _registry(**{"garage": _record(("ear-a", "up-a"), capabilities=("audio", capability))})}
+    aliases = {operation: {"stable": {"x": ["ear-a"]}, "openai": [{"match": "ear-*", "passthrough": True}]}}
+
+    problems = stable_aliases.alias_problems(aliases, context)
+
+    assert [(p.pointer, p.severity) for p in problems] == [(f"/{operation}/stable/x", "dangling")]
+    assert "ear-a" in problems[0].message
