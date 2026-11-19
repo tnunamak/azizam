@@ -945,6 +945,21 @@ def _check_summary(check: Mapping[str, Any] | None, *, address: str, disabled: b
     }
 
 
+def observations_from_check(check: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What the check read from the server's own lists that the record keeps: its voices and its default voice.
+
+    A voice is its id, with its name when the server gave a different one. Empty when the check found no voice list.
+    """
+    voices = (check or {}).get("voices")
+    if not isinstance(voices, list) or not voices:
+        return {}
+    out: dict[str, Any] = {"voices": [{"id": row["id"], **({"name": row["name"]} if row.get("name") not in (None, row["id"]) else {})}
+                                      for row in voices if isinstance(row, Mapping) and row.get("id")]}
+    if (check or {}).get("default_voice"):
+        out["default_voice"] = check["default_voice"]  # type: ignore[index]
+    return out
+
+
 def _new_secret_id(service_id: str, purpose: str) -> str:
     return f"engine:{service_id}:{purpose}:{secrets.token_hex(4)}"
 
@@ -1104,6 +1119,7 @@ class EngineService:
                 raise _owner_only("Only the owner can change service settings.")
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
+        voice = str(body.get("voice") or "").strip() or None
         if record is not None and policy_for(str(service_id), registry.get("services") or {}).enabled:
             # The test sends a real inference request to the engine. In an enabled residency domain no request
             # bytes go out without a serving lease; this path takes none, so it sends nothing.
@@ -1112,7 +1128,7 @@ class EngineService:
                 "This engine's residency domain enables transitions, and the test request is not leased for it yet. "
                 "Nothing was sent.", headers={"Retry-After": str(GATE_RETRY_AFTER_S)})
         result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model,
-                                     viewer_role="owner" if _is_owner(ctx) else "admin")
+                                     voice=voice, viewer_role="owner" if _is_owner(ctx) else "admin")
         result = projection.scrub_value(result)
         request = result.get("request")
         if isinstance(request, dict) and isinstance(request.get("headers"), Mapping):
@@ -1318,7 +1334,8 @@ class EngineService:
                              models=models, enabled=not disabled,
                              check=_check_summary(check, address=clean["address"], disabled=disabled, reason=str(body.get("keep_off_reason") or "")),
                              tests={}, key=key, existing=None,
-                             expected_generation=expected_generation, action="create")
+                             expected_generation=expected_generation, action="create",
+                             observations=observations_from_check(check))
         return {**record, "service_id": service_id}
 
     async def update(self, ctx: Any, service_id: str, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
@@ -1398,6 +1415,7 @@ class EngineService:
                                        check={"outcome": "error", "findings": [dup]})
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         check_summary = before["check"] or {}
+        observed: dict[str, Any] = {}
         if connection_changed and not disabled:
             _refuse_protocol_probe(clean)
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
@@ -1406,6 +1424,7 @@ class EngineService:
             check = projection.scrub_value(check, projection.url_secret_parts(clean["address"]))
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
             check_summary = _check_summary(check, address=clean["address"], disabled=False)
+            observed = observations_from_check(check)
         elif disabled and connection_changed:
             check_summary = _check_summary(None, address=clean["address"], disabled=True)
         capabilities_sent = isinstance(body.get("capabilities"), list)
@@ -1441,6 +1460,7 @@ class EngineService:
                            extra_capabilities=extra_capabilities,
                            record_capabilities=None if capabilities_sent else list(record.get("capabilities") or ()),
                            keep_lifecycle=not lifecycle_changed,
+                           observations=observed,
                            probe_connection_changed=connection_changed,
                            keep_timeout=_same_text(values.get("reply_timeout_s")) == _same_text(before["values"].get("reply_timeout_s")),
                            key_dropped=bool(
@@ -1455,7 +1475,8 @@ class EngineService:
                action: str, keep: Mapping[str, Any] | None = None, key_dropped: bool = False,
                keep_lifecycle: bool = False, keep_timeout: bool = False, probe_connection_changed: bool = False,
                extra_capabilities: Iterable[str] = (),
-               record_capabilities: list[str] | None = None) -> dict[str, Any]:
+               record_capabilities: list[str] | None = None,
+               observations: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
         written: list[str] = []
         retired: list[str] = []
@@ -1551,7 +1572,8 @@ class EngineService:
                 record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
                                                  replace=existing is not None, existing=existing,
                                                  drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")),
-                                                 **({"in_transaction": recheck} if recheck is not None else {}))
+                                                 **({"in_transaction": recheck} if recheck is not None else {}),
+                                                 **({"observations": observations} if observations else {}))
             except protocol_description_store.DescriptionRefused as refused:
                 raise EngineRouteError(status.HTTP_409_CONFLICT, "protocol_description_changed", str(refused),
                                        field="protocol_description") from None
