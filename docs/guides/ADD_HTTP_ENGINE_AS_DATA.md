@@ -181,8 +181,21 @@ on the server. The `observations` map is copied into the record. The
 `sdapi` definition uses this: its offering switches the server's checkpoint with
 the `choose` control call, reads it back with `selected`, and returns 503 with no
 generation call if the read-back differs. A checkpoint that the server did not
-list is never sent. Editing the models of a saved dispatch record is not yet
-covered by a test.
+list is never sent.
+
+Editing a saved dispatch record: a new list of ticked models rebuilds the
+offerings from the same template, so the models and the offerings never disagree.
+An unticked model loses its offering. A record whose offerings were changed by
+hand is not rebuilt: an edit of its models is refused with a message. A models edit
+sent without `definition` and `values` takes the same path. Moving the server
+re-runs the check at the new address.
+
+The `size` mapping rule turns an OpenAI `size` string such as `1024x1024` into two
+integer fields (`size: {from: /body/size, width: /width, height: /height}`). It
+reads the same spellings as the image edit route, sends nothing for `auto` or an
+absent size, and refuses any other value with a 400 that names `size`. The request
+map runs before the first selection call, so a refused value changes nothing on the
+server.
 
 ## Attach an encrypted stored key
 
@@ -216,7 +229,8 @@ origin-bound credential block. Ordinary connection headers cannot hold keys.
 
 ## Local addresses and request safety
 
-Executor dispatch currently accepts loopback engines only. Addresses on a LAN,
+Executor dispatch currently accepts loopback engines only. A definition with
+`record.dispatch` says so in the check, before any request and before a save. Addresses on a LAN,
 container hostnames and public hostnames have unknown placement under the
 existing classifier and are refused without a DNS lookup. A record marked paid
 or remote, or an address classified remote by the existing registry rules, is

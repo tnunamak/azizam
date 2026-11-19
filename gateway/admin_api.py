@@ -2814,7 +2814,7 @@ def create_admin_router(
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
-            if "definition" in body or "values" in body:
+            if "definition" in body or "values" in body or engine_service.edits_declared_offerings(service_id, body):
                 # The engine page: an edit that changes the connection re-runs the check.
                 record = await engine_service.update(ctx, service_id, body, expected_generation=expected_generation)
             else:
