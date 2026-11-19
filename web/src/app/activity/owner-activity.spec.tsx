@@ -145,9 +145,9 @@ it("shows people lookup errors with a retry action", async () => {
   // The default mock holds no recent changes, so no fallback names exist and
   // the page must not claim any (PF-141).
   const alert = await screen.findByRole("alert");
-  expect(within(alert).getByRole("heading", { name: "Couldn't load people" })).toBeVisible();
+  expect(within(alert).getByRole("heading", { name: "Couldn’t load people" })).toBeVisible();
   expect(alert).toHaveTextContent(
-    "People could not be loaded. Try again.",
+    "We couldn’t load people. Nothing was changed. Try again.",
   );
   expect(alert).not.toHaveTextContent("still shown");
 });
@@ -184,15 +184,15 @@ it("names the layer in change-list failures (PF-142)", async () => {
   const audit = mount(() => Promise.reject(new Error("offline")));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(
-    "The changes list could not be loaded. We could not identify the cause. Try again.",
+    "We couldn’t load changes. Nothing was changed. Try again.",
   );
   audit.mockResolvedValue({ records: [recordedChange], next_cursor: "older" });
-  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await user.click(within(alert).getByRole("button", { name: /^Try again/ }));
   await screen.findByRole("button", { name: /^Details:/ });
   audit.mockRejectedValue(new Error("offline"));
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "The changes list could not be refreshed. We could not identify the cause.",
+    "We couldn’t refresh the list. The changes already loaded are still shown.",
   );
 });
 
@@ -246,10 +246,10 @@ it("names a changes load error in an alert and retries the same query", async ()
   const user = userEvent.setup();
   const audit = mount(() => Promise.reject(new Error("offline")));
   const alert = await screen.findByRole("alert");
-  expect(within(alert).getByRole("heading", { name: "Couldn't load changes" })).toBeVisible();
+  expect(within(alert).getByRole("heading", { name: "Couldn’t load changes" })).toBeVisible();
   expect(screen.queryByText("No changes yet")).toBeNull();
   audit.mockResolvedValue({ records: [], next_cursor: null });
-  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await user.click(within(alert).getByRole("button", { name: /^Try again/ }));
   await screen.findByText("No changes yet");
   expect(screen.queryByRole("alert")).toBeNull();
 });
@@ -280,13 +280,13 @@ it("keeps request errors distinct from empty results and retries", async () => {
   vi.stubGlobal("fetch", fetchRequests);
   mountRequests();
   const alert = await screen.findByRole("alert");
-  expect(within(alert).getByRole("heading", { name: "Couldn't load requests" })).toBeVisible();
+  expect(within(alert).getByRole("heading", { name: "Couldn’t load requests" })).toBeVisible();
   expect(screen.queryByText("No request receipts yet")).toBeNull();
   fetchRequests.mockResolvedValue({
     ok: true,
     json: async () => ({ records: [], next_cursor: null, people: [], sources: [] }),
   });
-  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await user.click(within(alert).getByRole("button", { name: /^Try again/ }));
   const label = await screen.findByText("No request receipts yet");
   expect(label.parentElement?.parentElement).toHaveClass("border-dashed");
   expect(screen.getByText("Requests from apps and devices on your trusted network appear here.")).toBeVisible();
@@ -313,11 +313,11 @@ it("keeps recorded changes visible when refreshing fails", async () => {
   audit.mockRejectedValue(new Error("offline"));
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   const alert = await screen.findByRole("alert");
-  expect(within(alert).getByRole("heading", { name: "Couldn't refresh changes" })).toBeVisible();
+  expect(within(alert).getByRole("heading", { name: "Couldn’t refresh changes" })).toBeVisible();
   expect(alert).toHaveTextContent("The changes already loaded are still shown.");
   expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
   audit.mockResolvedValue({ records: [recordedChange], next_cursor: null });
-  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await user.click(within(alert).getByRole("button", { name: /^Try again/ }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
@@ -329,10 +329,10 @@ it("retries the next changes page without discarding the loaded page", async () 
   await user.click(screen.getByRole("button", { name: "Load more" }));
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByRole("heading", { name: "Couldn't load more changes" })).toBeVisible();
-  expect(screen.queryByRole("heading", { name: "Couldn't refresh changes" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Couldn’t refresh changes" })).toBeNull();
   expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
   audit.mockResolvedValue({ records: [], next_cursor: null });
-  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await user.click(within(alert).getByRole("button", { name: /^Try again/ }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ before: "older" }));
   expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
@@ -420,7 +420,7 @@ it("names the layer when the request list fails (PF-142)", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
   mountRequests();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "The request list could not be loaded. We could not identify the cause. Try again.",
+    "We couldn’t load requests. Nothing was changed. Try again.",
   );
 });
 

@@ -8,7 +8,6 @@ import { ChevronRight, MoreHorizontal, RefreshCcw, Server } from "lucide-react";
 
 import {
   api,
-  ApiError,
   queryKeys,
   type CurrentHealthService,
   type OverviewPayload,
@@ -16,7 +15,8 @@ import {
   type ServiceRegistry,
   type StatusPayload,
 } from "@/lib/api";
-import { errorCopy } from "@/lib/error-copy";
+import { errorCopy, OUTAGE_MESSAGE, outageCount } from "@/lib/error-copy";
+import { ErrorState } from "@/components/product/error-state";
 import { PRODUCT_NAME } from "@/lib/product";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -439,7 +439,6 @@ type Problem = {
   href?: string | null;
   action?: string;
   disk?: boolean;
-  retry?: () => void;
   /** Re-apply the stored registry; `error` is the plain words of a failed try. */
   apply?: { run: () => void; pending: boolean; error: string | null };
   /** Short verdict when this is the only problem. */
@@ -843,7 +842,7 @@ function ProblemCard({
       evidence={problem.evidence}
       history={problem.history}
       actions={
-        problem.href || problem.disk || problem.retry || problem.apply ? (
+        problem.href || problem.disk || problem.apply ? (
           <>
             {problem.apply ? (
               <Button
@@ -855,7 +854,6 @@ function ProblemCard({
                 {problem.apply.pending ? "Applying…" : "Apply again"}
               </Button>
             ) : null}
-            {problem.retry ? <Button variant="outline" size="sm" onClick={problem.retry}>Retry</Button> : null}
             {problem.href ? (
               <Button
                 asChild
@@ -1307,38 +1305,6 @@ export function StatusClient() {
           ];
         })
       : [];
-  const loadProblems: Problem[] = [
-    ...((statusIsError || (!statusIsPending && statusData == null))
-      ? [
-          {
-            key: "status",
-            severity: "critical" as CalloutSeverity,
-            tone: "bad" as StateTone,
-            title: "Engine health couldn’t load",
-            headline: "Couldn’t check status",
-            facts: [],
-            body: [!statusIsError ? "The gateway returned no status. Try again." : statusError instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again."],
-            retry: () => void refetchStatus(),
-            href: null,
-          },
-        ]
-      : []),
-    ...(registryIsError
-      ? [
-          {
-            key: "registry",
-            severity: "critical" as CalloutSeverity,
-            tone: "bad" as StateTone,
-            title: "Engine list couldn’t load",
-            headline: "Couldn’t load your engines",
-            facts: [],
-            body: [registryError instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again."],
-            retry: () => void refetchRegistry(),
-            href: null,
-          },
-        ]
-      : []),
-  ];
   // An engine in use whose checks stopped answering: its capabilities read
   // Unknown, so the owner needs to know which engine and since when.
   const uncheckedProblems: Problem[] = statusIsError
@@ -1378,7 +1344,6 @@ export function StatusClient() {
         ];
       });
   const problems = [
-    ...loadProblems,
     ...registryProblems(overviewData, {
       run: () => reload.mutate(),
       pending: reload.isPending,
@@ -1521,21 +1486,6 @@ export function StatusClient() {
         ]
       : []),
   ];
-  // A provider-status failure and its retry stay visible even while the
-  // table is folded: an error is not healthy detail (principle 7).
-  const providerError =
-    providers.state === "error" ? (
-      <div role="alert" className="text-destructive text-meta">
-        Provider status couldn’t load.{" "}
-        <button
-          type="button"
-          onClick={providers.refetch}
-          className="text-link inline-flex min-h-11 min-w-11 items-center font-medium underline underline-offset-4"
-        >
-          Retry providers
-        </button>
-      </div>
-    ) : null;
   const refreshAll = () => {
     void refetchStatus();
     void refetchRegistry();
@@ -1543,6 +1493,30 @@ export function StatusClient() {
     model.refetch();
     void activity.refetch();
   };
+  // One outage, one error: when two or more sources fail with a 5xx or no
+  // answer, the gateway is the problem, so the page says so once and one
+  // "Try again" asks every source again. A lone failure stays in its section.
+  const sourceErrors = [
+    statusIsError ? statusError : null,
+    registryIsError ? registryError : null,
+    activity.isError ? activity.error : null,
+    model.isError ? model.error : null,
+    providers.state === "error" ? providers.error : null,
+  ];
+  const outage = outageCount(sourceErrors) >= 2;
+  const outageError = sourceErrors.find((error) => outageCount([error]) > 0);
+  // Without the status and engine list there are no engines to show.
+  const enginesUnknown = outage && (statusIsError || registryIsError);
+  const lone = (failed: boolean) => failed && !outage;
+  // A provider-status failure and its retry stay visible even while the
+  // table is folded: an error is not healthy detail (principle 7).
+  const providerError = lone(providers.state === "error") ? (
+    <ErrorState
+      thing="provider status"
+      error={providers.state === "error" ? providers.error : undefined}
+      onRetry={providers.refetch}
+    />
+  ) : null;
 
   return (
     // A reading column, like Linear and incident.io status pages (about 670 to
@@ -1587,6 +1561,8 @@ export function StatusClient() {
           </>
         }
       >
+        {/* In an outage the page-level error below says it once. */}
+        {outage ? null : (
         <StatusLine
           tone={verdict.tone}
           text={verdict.text}
@@ -1599,6 +1575,7 @@ export function StatusClient() {
         >
           {note ? <span>{note}</span> : null}
         </StatusLine>
+        )}
       </PageHeader>
       {/* While a card explains a problem, a wide screen keeps the card in a
           reading column and puts the rest of the system beside it (D1.3:
@@ -1611,6 +1588,31 @@ export function StatusClient() {
           </div>
         ) : (
           <>
+            {outage ? (
+              <ErrorState
+                heading="Couldn’t check status"
+                message={OUTAGE_MESSAGE}
+                error={outageError}
+                onRetry={refreshAll}
+                retrying={statusIsFetching || registryIsFetching}
+              />
+            ) : null}
+            {lone(statusIsError || (!statusIsPending && statusData == null)) ? (
+              <ErrorState
+                thing="engine health"
+                error={statusError ?? undefined}
+                onRetry={() => void refetchStatus()}
+                retrying={statusIsFetching}
+              />
+            ) : null}
+            {lone(registryIsError) ? (
+              <ErrorState
+                thing="your engine list"
+                error={registryError}
+                onRetry={() => void refetchRegistry()}
+                retrying={registryIsFetching}
+              />
+            ) : null}
             {problems.length ? (
               <section
                 aria-labelledby="attention-heading"
@@ -1638,17 +1640,21 @@ export function StatusClient() {
 
             {activity.isPending ? (
               <p className="text-muted-foreground text-meta">Checking recent requests…</p>
-            ) : activity.isError || !activity.data ? (
-              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
-                Recent requests couldn’t load.
-                <Button variant="outline" size="sm" onClick={() => void activity.refetch()}>Retry recent requests</Button>
-              </div>
+            ) : lone(activity.isError || !activity.data) ? (
+              <ErrorState
+                thing="recent requests"
+                error={activity.error ?? undefined}
+                onRetry={() => void activity.refetch()}
+                retrying={activity.isFetching}
+              />
             ) : null}
-            {model.isError ? (
-              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
-                Capabilities couldn’t load.
-                <Button variant="outline" size="sm" onClick={model.refetch}>Retry capabilities</Button>
-              </div>
+            {lone(model.isError) ? (
+              <ErrorState
+                thing="capabilities"
+                error={model.error}
+                onRetry={model.refetch}
+                retrying={model.isFetching}
+              />
             ) : model.isPending ? (
               <p className="text-muted-foreground text-meta">Checking capabilities…</p>
             ) : null}
@@ -1691,6 +1697,7 @@ export function StatusClient() {
               </section>
             ) : null}
 
+            {enginesUnknown ? null : (
             <div className="flex min-w-0 flex-col gap-(--space-section) xl:contents">
               {/* Capability states lean on engine checks; without a current
               check they cannot vouch for anything, so they stay hidden. */}
@@ -1836,6 +1843,7 @@ export function StatusClient() {
                 )}
               </section>
             </div>
+            )}
           </>
         )}
         <Sheet open={diskHelpOpen} onOpenChange={setDiskHelpOpen}>

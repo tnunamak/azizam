@@ -44,7 +44,7 @@ import {
 import { Stat, StatStrip } from "@/components/product/stat-strip";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Callout, StatusLine } from "@/components/product/status-ui";
+import { StatusLine } from "@/components/product/status-ui";
 import {
   CapabilityIcon,
   EmptyState,
@@ -340,32 +340,31 @@ export default function UsagePage() {
         </div>
       ) : null}
       {isError && data ? (
-        <Callout
+        <ErrorState
           severity="attention"
-          title="Usage couldn’t refresh. These are the last loaded totals."
-          headerAction={
-            <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
-              {isFetching ? "Retrying…" : "Retry usage"}
-            </Button>
-          }
-        >
-        </Callout>
+          heading="Couldn’t refresh your usage"
+          message="These are the last totals we loaded. Nothing was changed. Try again."
+          thing="your usage"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : null}
       {isPending ? (
         <UsageSkeleton />
       ) : !data ? (
-        <Callout
-          as="div"
-          severity="critical"
-          title="Usage could not be loaded"
-          headerAction={
-            <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
-              {isFetching ? "Retrying…" : "Retry usage"}
-            </Button>
+        <ErrorState
+          thing="your usage"
+          error={error}
+          message={
+            error instanceof Error &&
+            error.message === "Usage totals weren’t included in the response. Try again."
+              ? error.message
+              : undefined
           }
-        >
-          <p>{error instanceof Error && error.message === "Usage totals weren’t included in the response. Try again." ? error.message : "Try again to load this month’s usage."}</p>
-        </Callout>
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : !hasUsage ? (
         <EmptyState
           icon={Activity}

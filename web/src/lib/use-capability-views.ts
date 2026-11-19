@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api, queryKeys } from "@/lib/api";
+import { api, ApiError, queryKeys } from "@/lib/api";
 import { networkFetch } from "@/lib/network-error";
 import { engineShortName } from "@/lib/health-presentation";
 import { useOptionalProviderStatus } from "@/lib/provider-status";
@@ -49,7 +49,11 @@ export function useActivitySample(enabled: boolean) {
         `/admin/api/activity/requests?limit=${ACTIVITY_SAMPLE}`,
         { credentials: "same-origin" },
       );
-      if (!response.ok) throw new Error("Recent requests could not be loaded.");
+      if (!response.ok) throw new ApiError(
+          "recent_requests_failed",
+          "Recent requests could not be loaded.",
+          response.status,
+        );
       const payload = (await response.json()) as { records?: ActivityRecord[] };
       return payload.records ?? [];
     },
@@ -116,6 +120,8 @@ export interface CapabilityViewsResult {
   requests: RequestSignal[];
   isPending: boolean;
   isError: boolean;
+  /** What the capability read threw, for a page that groups failures into one outage. */
+  error: unknown;
   /** The health data behind owner views failed to load; views fall back to the member model. */
   ownerHealthMissing: boolean;
   /** The owner's health check request itself failed. */
@@ -141,6 +147,7 @@ export function useCapabilityViews(
     data: homeData,
     isPending: homePending,
     isError: homeError,
+    error: homeFailure,
     refetch: refetchHome,
     isFetching: homeFetching,
   } = useQuery({
@@ -235,6 +242,7 @@ export function useCapabilityViews(
     requests,
     isPending: homePending || deferred,
     isError: homeError,
+    error: homeFailure,
     ownerHealthMissing: owner && (statusError || !health?.observation_available),
     ownerHealthError: owner && statusError,
     refetch: () => {

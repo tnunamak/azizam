@@ -1,8 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { ErrorState } from "@/components/product/error-state";
+import { SectionLoadFailed } from "../load-failed";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError } from "@/lib/api";
 import { getSignIn, signInKeys } from "@/lib/signin-api";
 import { headline, providerLabel } from "./copy";
 import { hasSavedConnection } from "./form";
@@ -13,6 +12,7 @@ export function SignInSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: signInKeys.snapshot,
     queryFn: getSignIn,
+    meta: { page: "settings" },
     staleTime: 15_000,
     refetchOnWindowFocus: false,
   });
@@ -51,20 +51,12 @@ export function SignInSection() {
           <Skeleton className="h-10 w-3/4" />
         </div>
       ) : isError ? (
-        error instanceof ApiError && error.status === 403 ? (
-          <p role="alert" className="text-muted-foreground text-meta">
-            Only the owner can change this.
-          </p>
-        ) : (
-          <div className="[&_button]:min-h-11 [&_summary]:min-h-11">
-            <ErrorState
-              heading="Couldn’t load this"
-              error={error}
-              message="Sign-in settings could not be loaded."
-              onRetry={() => void refetch()}
-            />
-          </div>
-        )
+        <SectionLoadFailed
+          thing="sign-in settings"
+          error={error}
+          onRetry={() => void refetch()}
+          className=""
+        />
       ) : (
         <SignInEditor snapshot={data} />
       )}

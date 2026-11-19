@@ -154,9 +154,9 @@ describe("Providers (empty and failed)", () => {
     const calls = gateway(Response.json({}, { status: 404 }));
     renderPage();
     expect(
-      await screen.findByText("Provider controls could not be loaded. Try again.", { exact: true }),
+      await screen.findByText("We couldn’t load your providers. Nothing was changed. Try again.", { exact: true }),
     ).toBeVisible();
-    const retry = screen.getByRole("button", { name: "Retry providers" });
+    const retry = screen.getByRole("button", { name: "Try again to load your providers" });
     expect(retry).toBeVisible();
     expect(screen.queryByText("No providers yet")).toBeNull();
     const before = calls.filter((path) => path === "/admin/api/providers").length;

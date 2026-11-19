@@ -157,11 +157,11 @@ for (const theme of ["light", "dark"] as const) {
         await page.goto("/status/");
         if (state === "error") {
           await expect(
-            page.getByRole("button", { name: "Try again" }),
+            page.getByRole("button", { name: /^Try again/ }),
           ).toBeVisible();
           // An HTTP answer proves only that the gateway answered.
           await expect(
-            page.getByText("The gateway returned an error. Try again.", {
+            page.getByText("We couldn’t load your status. Nothing was changed. Try again.", {
               exact: true,
             }),
           ).toBeVisible();
@@ -225,7 +225,7 @@ for (const theme of ["light", "dark"] as const) {
         });
         if (state === "error") {
           failed = false;
-          await page.getByRole("button", { name: "Try again" }).click();
+          await page.getByRole("button", { name: /^Try again/ }).click();
           await expect(
             yourCapabilities.getByText("Images", { exact: true }),
           ).toBeVisible();

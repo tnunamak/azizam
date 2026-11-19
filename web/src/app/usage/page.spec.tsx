@@ -587,10 +587,10 @@ test("Usage reports an Unknown load failure with a shared callout and retry", as
   let calls = 0;
   renderUsage({}, () => ++calls === 1 ? Promise.reject(new Error("offline")) : retry.promise);
   const alert = await screen.findByRole("alert");
-  expect(within(alert).getByRole("heading", { name: "Usage could not be loaded" })).toBeVisible();
+  expect(within(alert).getByRole("heading", { name: "Couldn’t load your usage" })).toBeVisible();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByText("No requests this month")).not.toBeInTheDocument();
-  await userEvent.setup().click(within(alert).getByRole("button", { name: "Retry usage" }));
+  await userEvent.setup().click(within(alert).getByRole("button", { name: "Try again to load your usage" }));
   expect(screen.getByRole("status")).toHaveTextContent("Loading usage…");
   await act(async () => retry.resolve(Response.json({ media_count: 0, requests: 4, remote_spend: 1.25 })));
   expect(await screen.findByText("$1.25")).toBeVisible();
@@ -612,17 +612,17 @@ test.each([0, 4])("Usage keeps %i cached requests through refresh failure and re
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Refreshing usage…"));
   expect(screen.getByText(cachedLabel)).toBeVisible();
   await act(async () => refresh.reject(new Error("refresh unavailable")));
-  expect(await screen.findByRole("heading", { name: "Usage couldn’t refresh. These are the last loaded totals." })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Couldn’t refresh your usage" })).toBeVisible();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.getByText(cachedLabel)).toBeVisible();
   expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  await userEvent.setup().click(screen.getByRole("button", { name: "Retry usage" }));
-  expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Try again to load your usage" }));
+  expect(screen.getByRole("button", { name: "Trying again…" })).toBeDisabled();
   expect(screen.getByText(cachedLabel)).toBeVisible();
   await act(async () => retry.resolve(Response.json({ media_count: 0, requests: 5, remote_spend: 2.5 })));
   expect(await screen.findByText("$2.50")).toBeVisible();
-  expect(screen.queryByRole("heading", { name: "Usage couldn’t refresh. These are the last loaded totals." })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Couldn’t refresh your usage" })).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
@@ -1235,9 +1235,9 @@ test("Usage failed load shows the error callout, no placeholder summary, and rec
     }
     return Response.json(seededSummary);
   });
-  expect(await screen.findByText("Usage could not be loaded", { exact: true })).toBeVisible();
+  expect(await screen.findByText("Couldn’t load your usage", { exact: true })).toBeVisible();
   expect(screen.queryByText("Unknown · Usage unavailable", { exact: true })).toBeNull();
-  await userEvent.setup().click(screen.getByRole("button", { name: "Retry usage" }));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Try again to load your usage" }));
   expect((await screen.findAllByText("Demo Chat")).length).toBeGreaterThan(0);
 });
 
@@ -1391,7 +1391,7 @@ test("Usage tells a partial total from a missing breakdown and from a genuine ze
   expect(await screen.findByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
   expect(screen.queryByText("No requests this month")).toBeNull();
   partial = false;
-  await user.click(screen.getByRole("button", { name: "Retry usage" }));
+  await user.click(screen.getByRole("button", { name: "Try again to load your usage" }));
   expect(await screen.findByText("Daily totals weren’t recorded for these requests.")).toBeVisible();
   expect(screen.getByText("Model totals weren’t recorded.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "View recent requests" }));

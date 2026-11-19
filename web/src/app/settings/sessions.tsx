@@ -1,11 +1,11 @@
 "use client";
 
+import { SectionLoadFailed } from "./load-failed";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetch, ApiError } from "@/lib/api";
 import { useViewer } from "@/components/shell/session";
 import { SettingsSection } from "@/components/product/setting-row";
-import { ErrorState } from "@/components/product/error-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -52,6 +52,7 @@ export function SessionsSection() {
   const owner = useViewer().role === "owner";
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: sessionsKey,
+    meta: { page: "settings" },
     queryFn: () => adminFetch<SessionsResponse>("/admin/api/settings/sessions"),
     enabled: owner,
   });
@@ -70,13 +71,11 @@ export function SessionsSection() {
           Loading sign-in session settings…
         </p>
       ) : isError ? (
-        <div className="p-4">
-          <ErrorState
-            heading="Couldn’t load sign-in session settings"
-            error={error}
-            onRetry={() => void refetch()}
-          />
-        </div>
+        <SectionLoadFailed
+          thing="sign-in session settings"
+          error={error}
+          onRetry={() => void refetch()}
+        />
       ) : (
         <SessionsForm key={data.revision} initial={data} />
       )}

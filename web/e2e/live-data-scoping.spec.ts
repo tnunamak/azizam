@@ -84,7 +84,7 @@ test("owner sees their own media and usage, not a member's work in a service App
   // The owner's Library has no person choice; its three items are the owner's own work.
   await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
   await expect(page.locator("article")).toHaveCount(3);
-  await expect(page.getByText("Library could not be loaded")).toHaveCount(0);
+  await expect(page.getByText("Couldn’t load your library")).toHaveCount(0);
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
   // The seeded audio.speech request, under its task name from lib/terms

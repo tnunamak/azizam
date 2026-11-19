@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
+import { ErrorState } from "@/components/product/error-state";
 import { RelativeTime } from "@/components/product/relative-time";
 import { ListCard } from "@/components/product/list-card";
 import { StatusPill } from "@/components/product/status-pill";
@@ -1867,26 +1868,7 @@ function AddProviderDialog({
             <Skeleton className="h-64 w-full" />
           </div>
         ) : metadataError ? (
-          <div
-            role="alert"
-            className="border-danger/30 bg-danger/10 text-danger rounded-panel border p-4 text-meta"
-          >
-            <p>
-              {errorText(
-                metadataError,
-                "Provider controls could not be loaded. Try again.",
-              )}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={onRetry}
-            >
-              <RefreshCw aria-hidden="true" /> Retry providers
-            </Button>
-          </div>
+          <ErrorState thing="your providers" error={metadataError} onRetry={onRetry} />
         ) : null}
         {!metadataUnavailable && step === "catalog" && (
           <div className="space-y-4">
@@ -2653,26 +2635,11 @@ export default function ProvidersPage() {
             <Skeleton className="h-64 w-full" />
           </div>
         ) : loadFailed ? (
-          <div
-            role="alert"
-            className="border-danger/30 bg-danger/10 text-danger rounded-panel border p-4 text-meta"
-          >
-            <p>
-              {errorText(
-                loadError,
-                "Provider controls could not be loaded. Try again.",
-              )}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => queryClient.refetchQueries({ queryKey: ["providers"] })}
-            >
-              <RefreshCw aria-hidden="true" /> Retry providers
-            </Button>
-          </div>
+          <ErrorState
+            thing="your providers"
+            error={loadError}
+            onRetry={() => queryClient.refetchQueries({ queryKey: ["providers"] })}
+          />
         ) : records.length === 0 && !globalState.needsReconciliation ? (
           <ProviderEmptyState onAdd={() => setAddOpen(true)} readOnly={readOnly} />
         ) : (

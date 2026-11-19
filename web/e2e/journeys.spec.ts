@@ -200,7 +200,7 @@ test("apps explain an empty account and recover after an API error", async ({
   });
   await page.reload();
   await expect(
-    page.getByText("Your apps could not be loaded. Try again."),
+    page.getByText("We couldn’t load your apps. Nothing was changed. Try again."),
   ).toBeVisible();
   await page.unroute("**/me/api/session");
   await page.getByRole("button", { name: /try again|retry/i }).click();
@@ -238,7 +238,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
   await page.reload();
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(
-    page.getByText("Couldn't load changes"),
+    page.getByRole("heading", { name: "Couldn’t load changes" }),
   ).toBeVisible();
   await page.unroute("**/admin/api/audit?**");
   await page.getByRole("button", { name: /try again|retry/i }).click();
