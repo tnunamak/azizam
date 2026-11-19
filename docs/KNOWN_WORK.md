@@ -246,7 +246,10 @@ The docs disagree about which requests get receipts:
 - `docs/PRODUCT_STRATEGY.md:19` promises a receipt for every request.
 - `docs/LITELLM_SUBSTRATE_DECISION.md:40-46` says the gateway records receipts
   after LiteLLM execution.
-- `docs/LOCAL_CLIENT_RECIPES.md` now says every request leaves a receipt.
+- `docs/LOCAL_CLIENT_RECIPES.md` no longer says only image requests get
+  receipts. It names the `X-Azizam-Receipt-Id` header for chat on the OpenAI,
+  Anthropic and Ollama protocols. No test yet proves that every request
+  leaves a receipt.
 
 The recipes also ask the reader to "capture request_id (header or response body
 depending on protocol)". They do not name the header or field for a first
