@@ -246,8 +246,7 @@ The docs disagree about which requests get receipts:
 - `docs/PRODUCT_STRATEGY.md:19` promises a receipt for every request.
 - `docs/LITELLM_SUBSTRATE_DECISION.md:40-46` says the gateway records receipts
   after LiteLLM execution.
-- `docs/LOCAL_CLIENT_RECIPES.md` (about lines 1907-1911) says observational
-  receipts exist only for image generation, edit and variation.
+- `docs/LOCAL_CLIENT_RECIPES.md` now says every request leaves a receipt.
 
 The recipes also ask the reader to "capture request_id (header or response body
 depending on protocol)". They do not name the header or field for a first

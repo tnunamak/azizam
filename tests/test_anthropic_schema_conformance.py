@@ -216,13 +216,14 @@ class AnthropicConformanceTests(unittest.TestCase):
         self.addCleanup(self.auth.stop)
         self.sent: list[dict] = []
 
-    def post(self, upstream, body: dict, stream: bool = False):
+    def post(self, upstream, body: dict, stream: bool = False, headers=None):
         async def fake_forward(request, auth_context, cc_body, *, stream):
             self.sent.append(cc_body)
             if stream:
-                return _FakeClient(), httpx.Response(200, content=upstream)
+                return _FakeClient(), httpx.Response(200, content=upstream, headers=headers)
             return httpx.Response(
                 200 if not isinstance(upstream, tuple) else upstream[0],
+                headers=headers,
                 json=upstream if not isinstance(upstream, tuple) else upstream[1],
                 request=httpx.Request("POST", "http://gateway/v1/chat/completions"),
             )
@@ -234,6 +235,20 @@ class AnthropicConformanceTests(unittest.TestCase):
             )
 
     USER = {"messages": [{"role": "user", "content": "hi"}]}
+
+    def test_receipt_headers(self) -> None:
+        for stream in (False, True):
+            for receipt in (None, "receipt-123"):
+                with self.subTest(stream=stream, receipt=receipt):
+                    headers = {"X-Azizam-Receipt-Id": receipt, "X-Azizam-Request-Id": receipt} if receipt else {}
+                    upstream = sse([]) if stream else chat_completion({"role": "assistant", "content": "hello"})
+                    response = self.post(upstream, self.USER | {"stream": stream}, stream=stream, headers=headers)
+                    self.assertEqual(response.headers.get("X-Azizam-Receipt-Id"), receipt)
+                    self.assertEqual(response.headers.get("X-Azizam-Request-Id"), receipt)
+                    if receipt:
+                        self.assertEqual(response.headers["request-id"], "req_" + receipt)
+                    else:
+                        self.assertTrue(response.headers["request-id"].startswith("req_"))
 
     # -- non-streaming -------------------------------------------------
 

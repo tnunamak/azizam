@@ -67,11 +67,11 @@ class OllamaConformanceTests(unittest.TestCase):
         self.assertIn('"done_reason": "load"', API_DOC)
         self.assertIn("`think`", API_DOC)
 
-    def post(self, path: str, body: dict, upstream, *, stream: bool | None = None):
+    def post(self, path: str, body: dict, upstream, *, stream: bool | None = None, headers=None):
         async def fake_forward(request, auth_context, cc_body, *, stream):
             self.sent.append(cc_body)
             if stream:
-                return _FakeClient(), httpx.Response(200, content=upstream)
+                return _FakeClient(), httpx.Response(200, content=upstream, headers=headers)
             if isinstance(upstream, tuple):
                 return httpx.Response(
                     upstream[0],
@@ -80,6 +80,7 @@ class OllamaConformanceTests(unittest.TestCase):
                 )
             return httpx.Response(
                 200,
+                headers=headers,
                 json=upstream,
                 request=httpx.Request("POST", "http://gateway/v1/chat/completions"),
             )
@@ -92,6 +93,17 @@ class OllamaConformanceTests(unittest.TestCase):
 
     CHAT = {"model": "default", "messages": [{"role": "user", "content": "hi"}]}
     GEN = {"model": "default", "prompt": "hi"}
+
+    def test_receipt_headers(self) -> None:
+        for path, body in (("/api/chat", self.CHAT), ("/api/generate", self.GEN)):
+            for stream in (False, True):
+                for receipt in (None, "receipt-123"):
+                    with self.subTest(path=path, stream=stream, receipt=receipt):
+                        headers = {"X-Azizam-Receipt-Id": receipt, "X-Azizam-Request-Id": receipt} if receipt else {}
+                        upstream = sse([]) if stream else chat_completion({"role": "assistant", "content": "hello"})
+                        response = self.post(path, body, upstream, stream=stream, headers=headers)
+                        self.assertEqual(response.headers.get("X-Azizam-Receipt-Id"), receipt)
+                        self.assertEqual(response.headers.get("X-Azizam-Request-Id"), receipt)
 
     # -- chat ----------------------------------------------------------
 

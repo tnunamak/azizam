@@ -31912,6 +31912,19 @@ async def anthropic_count_tokens(request: Request):
     return _json_error_response(payload, status_code=200)
 
 
+def _receipt_headers(upstream: httpx.Response) -> dict[str, str]:
+    return {
+        name: value
+        for name in ("X-Azizam-Request-Id", "X-Azizam-Receipt-Id")
+        if (value := upstream.headers.get(name)) is not None
+    }
+
+
+def _anthropic_request_id(upstream: httpx.Response) -> str:
+    receipt_id = upstream.headers.get("X-Azizam-Receipt-Id")
+    return f"req_{receipt_id}" if receipt_id else f"req_{uuid.uuid4().hex}"
+
+
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/messages"))
@@ -31964,11 +31977,12 @@ async def anthropic_messages(request: Request):
             )
             refusal = _upstream_admission_response(upstream, 'anthropic')
             if refusal is not None:
+                refusal.headers.update(_receipt_headers(upstream))
                 return refusal
             return _anthropic_error_response(
                 message,
                 status_code=upstream.status_code,
-                headers=_upstream_retry_after(upstream),
+                headers={**_upstream_retry_after(upstream), **_receipt_headers(upstream)},
                 model=canonical.get("model"),
             )
 
@@ -32003,7 +32017,8 @@ async def anthropic_messages(request: Request):
             headers={
                 "cache-control": "no-cache",
                 "x-accel-buffering": "no",
-                "request-id": f"req_{uuid.uuid4().hex}",
+                "request-id": _anthropic_request_id(upstream),
+                **_receipt_headers(upstream),
             },
         )
 
@@ -32016,11 +32031,12 @@ async def anthropic_messages(request: Request):
     if getattr(upstream, "status_code", 500) >= 400:
         refusal = _upstream_admission_response(upstream, 'anthropic')
         if refusal is not None:
+            refusal.headers.update(_receipt_headers(upstream))
             return refusal
         return _anthropic_error_response(
             _upstream_reply_message(_response_json_payload(upstream), int(getattr(upstream, "status_code", 502) or 502)),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
-            headers=_upstream_retry_after(upstream),
+            headers={**_upstream_retry_after(upstream), **_receipt_headers(upstream)},
             model=canonical.get("model"),
         )
 
@@ -32032,12 +32048,13 @@ async def anthropic_messages(request: Request):
         )
     except anthropic_protocol.AnthropicTranslationError as e:
         return _anthropic_error_response(
-            str(e), status_code=e.http_status, error_type=e.error_type
+            str(e), status_code=e.http_status, error_type=e.error_type,
+            headers=_receipt_headers(upstream),
         )
     return _json_error_response(
         payload,
         status_code=200,
-        headers={"request-id": f"req_{uuid.uuid4().hex}"},
+        headers={"request-id": _anthropic_request_id(upstream), **_receipt_headers(upstream)},
     )
 
 
@@ -32087,7 +32104,7 @@ async def _ollama_forward_non_streaming(
     *,
     protocol: str,
     intent: str,
-) -> Response | dict[str, Any]:
+) -> Response | tuple[dict[str, Any], dict[str, str]]:
     policy_error = _ollama_policy_error_response(
         auth_context,
         canonical,
@@ -32113,14 +32130,15 @@ async def _ollama_forward_non_streaming(
     if getattr(upstream, "status_code", 500) >= 400:
         refusal = _upstream_admission_response(upstream, 'ollama')
         if refusal is not None:
+            refusal.headers.update(_receipt_headers(upstream))
             return refusal
         return _ollama_error_response(
             _upstream_reply_message(_response_json_payload(upstream), int(getattr(upstream, "status_code", 502) or 502)),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
-            headers=_upstream_retry_after(upstream),
+            headers={**_upstream_retry_after(upstream), **_receipt_headers(upstream)},
             model=canonical.get("model"),
         )
-    return _response_json_payload(upstream)
+    return _response_json_payload(upstream), _receipt_headers(upstream)
 
 
 async def _ollama_forward_streaming(
@@ -32160,11 +32178,12 @@ async def _ollama_forward_streaming(
         )
         refusal = _upstream_admission_response(upstream, 'ollama')
         if refusal is not None:
+            refusal.headers.update(_receipt_headers(upstream))
             return refusal
         return _ollama_error_response(
             message,
             status_code=upstream.status_code,
-            headers=_upstream_retry_after(upstream),
+            headers={**_upstream_retry_after(upstream), **_receipt_headers(upstream)},
             model=canonical.get("model"),
         )
 
@@ -32191,7 +32210,7 @@ async def _ollama_forward_streaming(
         ndjson_stream(),
         status_code=200,
         media_type="application/x-ndjson",
-        headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+        headers={"cache-control": "no-cache", "x-accel-buffering": "no", **_receipt_headers(upstream)},
     )
 
 
@@ -32397,14 +32416,16 @@ async def ollama_chat(request: Request):
     )
     if isinstance(upstream, Response):
         return upstream
+    payload, receipt_headers = upstream
     return _json_error_response(
         ollama_protocol.canonical_response_to_chat(
-            upstream,
+            payload,
             request_model=body.get("model"),
             thinking=ollama_protocol.thinking_requested(body),
             started_ns=started_ns,
         ),
         status_code=200,
+        headers=receipt_headers,
     )
 
 
@@ -32453,14 +32474,16 @@ async def ollama_generate(request: Request):
     )
     if isinstance(upstream, Response):
         return upstream
+    payload, receipt_headers = upstream
     return _json_error_response(
         ollama_protocol.canonical_response_to_generate(
-            upstream,
+            payload,
             request_model=body.get("model"),
             thinking=ollama_protocol.thinking_requested(body),
             started_ns=started_ns,
         ),
         status_code=200,
+        headers=receipt_headers,
     )
 
 
