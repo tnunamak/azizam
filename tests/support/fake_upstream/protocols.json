@@ -113,7 +113,10 @@
       "/v1/chat/completions",
       "/v1/embeddings",
       "/chat/completions",
-      "/embeddings"
+      "/embeddings",
+      "/v1/audio/speech",
+      "/v1/audio/voices",
+      "/v1/audio/models"
     ],
     "framing": "none"
   }
