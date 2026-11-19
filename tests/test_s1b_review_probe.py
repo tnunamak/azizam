@@ -417,11 +417,12 @@ def test_a_recheck_with_fewer_or_no_voices_leaves_stale_observations(gateway, fa
     assert bare.status_code == 400 and "no field" in bare.text, bare.text
 
     # The write a working recheck would make: the check found no voices, so it sends no observations
-    # and the record keeps what it held.
+    # and the record keeps what it held. (build_raw never puts observations in raw; neither do we.)
     store = proxy.ADMIN_STORE
     actor = AdminContext(subject="review", roles=frozenset({"owner"}))
     stored = _record(gateway)
-    store.write_engine(service_id="garage-voice", raw=stored, actor=actor,
+    raw = {key: value for key, value in stored.items() if key != "observations"}
+    store.write_engine(service_id="garage-voice", raw=raw, actor=actor,
                        expected_generation=admin_store.service_registry_generation(path=gateway.path),
                        replace=True, existing=stored)
     record = _record(gateway)
@@ -430,7 +431,7 @@ def test_a_recheck_with_fewer_or_no_voices_leaves_stale_observations(gateway, fa
 
     # A recheck that finds fewer voices replaces the list, but a default the new answer did not name stays.
     stored = _record(gateway)
-    store.write_engine(service_id="garage-voice", raw=stored, actor=actor,
+    store.write_engine(service_id="garage-voice", raw=raw, actor=actor,
                        expected_generation=admin_store.service_registry_generation(path=gateway.path),
                        replace=True, existing=stored, observations={"voices": [{"id": "cc_cara"}]})
     record = _record(gateway)
