@@ -6,7 +6,7 @@ effective config gets one engine entry for each model of each enabled record tha
 The record is the one home of the engine; nothing is stored twice.
 
 An entry the owner wrote by hand in ``model_aliases.speech.engines`` wins when it has the same id: the two are never
-merged field by field. A derived entry never sets ``custom_voices`` (a cloned voice needs a server that accepts a
+merged field by field. A name the owner's speech section resolves by a stable name or an OpenAI pattern is the owner's too. A derived entry never sets ``custom_voices`` (a cloned voice needs a server that accepts a
 reference clip, which a record does not say), so a derived engine accepts no custom voice.
 
 Pure: no config loading, no network.
@@ -17,7 +17,7 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
-from gateway import domain_rows
+from gateway import domain_rows, stable_aliases
 
 # The capability word the speech route selects its service by (the same word ``proxy._SPEECH_CAPABILITY`` names).
 SPEECH_CAPABILITY = domain_rows.route_intent("/v1/audio/speech")
@@ -98,7 +98,10 @@ def with_derived_speech_engines(
 ) -> dict[str, Any]:
     """A copy of ``model_aliases`` whose ``speech.engines`` also holds the ``derived`` engines.
 
-    A hand-written entry with the same (case-folded) id wins whole. Nothing changes when ``derived`` is empty.
+    A hand-written entry with the same (case-folded) id wins whole, and so does a name the owner's own speech section
+    already resolves (a stable name, or a match of one of its OpenAI patterns): a derived id that equals such a name
+    is left out, because the engines table is read before the patterns and would take the name over. Nothing changes
+    when ``derived`` is empty.
     """
     out = copy.deepcopy(dict(_mapping(model_aliases)))
     if not derived:
@@ -106,6 +109,8 @@ def with_derived_speech_engines(
     speech = dict(_mapping(out.get("speech")))
     hand = dict(_mapping(speech.get("engines")))
     taken = {_norm(key) for key in hand}
-    speech["engines"] = {**{key: spec for key, spec in derived.items() if _norm(key) not in taken}, **hand}
+    free = {key: spec for key, spec in derived.items()
+            if _norm(key) not in taken and not stable_aliases.owner_resolves_name(out, "speech", key)}
+    speech["engines"] = {**free, **hand}
     out["speech"] = speech
     return out
