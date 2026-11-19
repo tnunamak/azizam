@@ -317,7 +317,13 @@ def test_a_base_url_with_no_port_gets_the_default_port_of_its_scheme():
 
 def test_a_base_url_with_an_explicit_port_is_stored_as_before():
     assert service_registry.split_base_url("http://voice.fk.test:8080/v1") == {"host": "voice.fk.test", "port": 8080, "base_path": "/v1"}
-    assert service_registry.split_base_url("https://voice.fk.test:8443") == {"host": "voice.fk.test", "port": 8443}
+    assert service_registry.split_base_url("https://voice.fk.test:8443") == {"host": "voice.fk.test", "port": 8443, "scheme": "https"}
+
+
+def test_an_https_url_with_an_explicit_port_is_addressed_as_https():
+    raw = service_registry.service_form_to_raw({"name": "garage-voice", "base_url": "https://voice.fk.test:8443", "protocol": "inline-tts"})
+
+    assert service_registry.engine_base_address(raw) == "https://voice.fk.test:8443"
 
 
 def test_the_default_port_gives_the_record_an_address_of_its_scheme():
