@@ -474,6 +474,14 @@
   {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.engine_admin.engine_process_preview",
+    "method": "POST",
+    "path": "/admin/api/engines/process-preview",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
     "handler": "gateway.engine_admin.engine_lifecycle",
     "method": "POST",
     "path": "/admin/api/engines/{service_id}/lifecycle",
@@ -693,6 +701,22 @@
     "handler": "gateway.admin_api.update_host_commands",
     "method": "PUT",
     "path": "/admin/api/operator/host-commands",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.admin_api.get_engine_folders",
+    "method": "GET",
+    "path": "/admin/api/operator/engine-folders",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.admin_api.update_engine_folders",
+    "method": "PUT",
+    "path": "/admin/api/operator/engine-folders",
     "schema": true
   },
   {
