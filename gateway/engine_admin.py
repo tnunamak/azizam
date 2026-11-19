@@ -1615,8 +1615,11 @@ class EngineService:
 
 
 def register_engine_routes(router: APIRouter, *, service: EngineService, guard: Callable[[Request], Any],
-                           read_json: Callable[[Request], Any]) -> None:
-    """Mount the Add engine routes on the admin router (owner and administrator)."""
+                           read_json: Callable[[Request], Any], lifecycle: Any = None) -> None:
+    """Mount the Add engine routes on the admin router (owner and administrator).
+
+    ``lifecycle`` is the ``EngineLifecycle`` that the owner's start, stop and restart route runs over.
+    """
     # Both endpoints consume one budget. Configure positive integers in the
     # gateway environment; changes take effect when the routes are registered.
     probe_limits = _EngineProbeLimiter(
@@ -1694,6 +1697,42 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
         return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"access": result})
+
+    @router.post("/engines/{service_id}/lifecycle")
+    async def engine_lifecycle(service_id: str, request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            if not _is_owner(ctx):
+                raise _owner_only("Only the owner can start or stop an engine.")
+            body = await read_json(request)
+            action = body.get("action") if isinstance(body, Mapping) else None
+            if action not in ("start", "stop", "restart"):
+                raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_action",
+                                       "action must be start, stop or restart.", field="action")
+            if service_id not in (service.store.get_service_registry().get("services") or {}):
+                raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+            if lifecycle is None:
+                raise EngineRouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "lifecycle_unavailable",
+                                       "This gateway cannot start or stop engines.")
+            answer = await lifecycle.apply(service_id, action)
+            # Each answer is a fact the owner can look up, including a refusal or a stop that was not confirmed.
+            await asyncio.to_thread(
+                admin_store.record_audit, f"engine.lifecycle.{action}",
+                actor_kind=ctx.actor_kind, actor_id=ctx.audit_actor_id, actor_label=ctx.actor_label,
+                target_kind="service", target_id=service_id,
+                metadata={"result": answer.result, "state": answer.state}, path=service.db_path)
+        except (EngineRouteError, DraftError, PermissionError) as exc:
+            return _error(exc)
+        except Exception as exc:  # noqa: BLE001
+            if hasattr(exc, "as_response"):
+                return exc.as_response()  # type: ignore[no-any-return]
+            raise
+        response = egress.plain_json_response(response_class="engine_lifecycle", status_code=answer.status_code,
+                                              content=answer.public())
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @router.get("/engines/{service_id}")
     async def get_engine(service_id: str, request: Request) -> JSONResponse:

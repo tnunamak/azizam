@@ -596,7 +596,13 @@ class ExternalDriver:
     ensure_ready  = health GET; no process spawn, ever.
     stop          = no-op.
     preflight     = no-op.
+
+    ``owns_process`` is False: the owner's start, stop and restart answer ``not_managed`` instead of
+    pretending to act (gateway/engine_lifecycle.py). A driver that starts and stops its engine says
+    nothing, and the owner action treats a missing attribute as True.
     """
+
+    owns_process = False
 
     # A short timeout for the initial health check is intentional: external
     # backends are expected to already be running, so if they don't respond

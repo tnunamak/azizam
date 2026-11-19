@@ -255,10 +255,12 @@ class TestExternalDriver(unittest.TestCase):
     # -- stop is a no-op — must never spawn a process -----------------------
 
     def test_stop_is_no_op(self):
-        """stop() is a no-op; subprocess.run must never be called."""
+        """stop() is a no-op; subprocess.run must never be called. The driver says it owns no process, so the
+        owner's stop answers not_managed (gateway/engine_lifecycle.py) instead of a silent success."""
         with patch("subprocess.run") as mock_run:
             self.driver.stop(self.svc)
             mock_run.assert_not_called()
+        self.assertIs(self.driver.owns_process, False)
 
     def test_ensure_ready_never_spawns_subprocess(self):
         """ensure_ready() must never call subprocess.run / subprocess.Popen."""
