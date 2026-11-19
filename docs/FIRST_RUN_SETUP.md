@@ -5,7 +5,8 @@ The first-run contract is web-first. A new self-hoster should be able to:
 1. Start the gateway with near-zero `.env`.
 2. Open `/setup/` in a browser.
 3. Claim or create the first local owner.
-4. Let the app seed sane defaults and mint the first App + `opk_...` runtime key.
+4. Let the app seed sane defaults, then create the first App and its `opk_...`
+   runtime key in **Apps & keys**.
 5. Manage the service/provider registry, OIDC, users, Apps, Profiles, keys,
    limits, and service availability from the web app (`/settings/`,
    `/people/`, `/apps/`, `/engines/`, `/providers/`).
@@ -27,8 +28,9 @@ The fastest path for a self-hosted deployment:
 docker compose up -d
 ```
 
-Then open `http://127.0.0.1:5000/setup/` to claim the first owner account and
-mint a runtime key. No `.env` file is required.
+Then open `http://127.0.0.1:5000/setup/` to claim the first owner account.
+Then create an app and its runtime key in **Apps & keys**. No `.env` file is
+required.
 
 Docker Compose starts two containers:
 
@@ -61,7 +63,7 @@ file in at build time, and no environment variable overrides this setting.
 Then publish the gateway behind TLS.
 
 On Linux, Compose also maps `host.docker.internal` to `host-gateway` for the
-gateway container. Docker Desktop (Mac, Windows) provides that name itself.
+`gateway` and `litellm` containers. Docker Desktop (Mac, Windows) provides that name itself.
 The engine must still listen on an address reachable from the container. If a local engine only binds to `127.0.0.1` on the host, either
 start it on `0.0.0.0` for local setup or use another host address the container
 can reach. Binding to `0.0.0.0` exposes the engine to your whole network; restrict
@@ -203,8 +205,9 @@ Inside the gateway container, `127.0.0.1` means the container itself. Use the
 name `host.docker.internal` instead.
 
 - Address: `http://host.docker.internal:8080/v1`. For Ollama, use
-  `http://host.docker.internal:11434`. Compose maps this name on Linux. Docker
-  Desktop provides it too.
+  `http://host.docker.internal:11434`. Compose maps this name on Linux, in
+  both the container that checks the address and the one that sends chat.
+  Docker Desktop provides it too.
 - Listener: start the engine so it accepts connections on all interfaces, not
   only loopback. Examples: llama.cpp `llama-server --host 0.0.0.0 --port 8080`,
   vLLM `--host 0.0.0.0`, LM Studio **Serve on Local Network**, Ollama
@@ -243,6 +246,24 @@ name `host.docker.internal` instead.
   code `401` or `403` means the engine answered and needs a key, so the path
   works. A timeout or `Connection refused` error means the listener or the
   firewall still blocks the path.
+- If Docker says `Pool overlaps with other one on this address space` when
+  Compose starts, set both `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY`
+  (the first address in that subnet) to unused values. Use the new subnet in
+  the firewall rule.
+
+### Engine in its own Docker container on the same computer
+
+A container published only on loopback, such as `-p 127.0.0.1:11434:11434`,
+answers "Connection refused" from the gateway's containers. Publish it on the
+host's Docker bridge address instead. On Linux, `ip addr show docker0` shows
+that address, and `host.docker.internal` resolves to it.
+
+- Run the engine with `-p <docker0-address>:11434:11434`, using the address
+  from `ip addr show docker0`.
+- Address in **Add engine**: `http://host.docker.internal:11434`.
+- Do not publish on all interfaces (`-p 11434:11434`) to make this work.
+  Docker opens published ports past ufw, so that exposes the engine to your
+  network.
 
 ### Engine on another computer on your network
 
@@ -327,8 +348,8 @@ If you just want a working gateway, in order:
 
 2. Open `http://127.0.0.1:5000/setup/`.
 3. Claim or create the first owner (see [Setup States](#setup-states)).
-4. Mint the first `opk_...` runtime key from the same page and configure your
-   client against `/openai/v1`.
+4. Open **Apps & keys**, choose **New app**, and save the first `opk_...`
+   runtime key it shows. Configure your client against `/openai/v1`.
 5. Add an engine from Gateway → Engines (`/engines/`). Choose the address for
    your layout in [Connect an engine by where it runs](#connect-an-engine-by-where-it-runs).
    Then keep the public model name the dialog suggests, or rename it. For

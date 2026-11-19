@@ -54,6 +54,10 @@ services:
       DISABLE_ADMIN_UI: "true"
       NO_DOCS: "true"
       NO_REDOC: "true"
+    # The chat call to an engine leaves from this service, so it needs the same
+    # host name the gateway uses to check the engine address.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - gateway-data:/app/data
       - ./gateway/litellm_launcher.py:/app/azizam-litellm-launcher.py:ro

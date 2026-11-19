@@ -57,6 +57,14 @@ def test_compose_has_exact_profile_without_database():
     assert compose['services']['gateway']['environment']['AZIZAM_LITELLM_COMPOSE_PROFILE'] == 'true'
 
 
+def test_compose_maps_the_host_name_for_every_service_that_dials_an_engine():
+    # The gateway checks an engine address, then the litellm service sends the
+    # chat call. An address that passes the check must also work for the chat.
+    compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
+    for name in ('gateway', 'litellm'):
+        assert 'host.docker.internal:host-gateway' in compose['services'][name].get('extra_hosts', []), name
+
+
 @pytest.mark.parametrize('flag', ['config_unsafe', 'key_unsafe', 'team_unsafe', None, 'malformed'])
 def test_database_check_is_read_only_and_only_returns_flags(monkeypatch, flag):
     calls = []

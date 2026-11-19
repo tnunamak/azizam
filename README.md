@@ -32,6 +32,8 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
 
    The first start builds the gateway image. This can take several minutes.
 
+   If Docker says `Pool overlaps with other one on this address space`, another network already uses the default subnet. Set both `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` (the first address in that subnet) to unused values, then run `docker compose up -d` again.
+
 2. Check that the gateway answers:
 
    ```bash
@@ -40,9 +42,9 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
 
    The first line of the reply should be `HTTP/1.1 200 OK`. If you set `AZIZAM_PORT`, use that port in every URL here.
 
-3. Create the owner account. Open `http://127.0.0.1:5000/setup/`. Enter an email address, a password, and the password again. This account owns the gateway.
+3. Create the owner account. Open `http://127.0.0.1:5000/setup/`. In **Email or username**, enter an email address. Then enter a password, and the password again. This account owns the gateway.
 
-4. Open **Apps & keys**. Choose **New app** to make an app and its first key, or open an app's menu and choose **Create key**. The key starts with `opk_`. Copy it now. It is shown only once.
+4. Open **Apps & keys** and choose **New app**. Name the app and choose who it acts as: **You** or **A service**. **Create app and key** stays off until you choose. To add a key to an app you already have, open its menu and choose **Create key** (**Create another key** if the app has a key). The key starts with `opk_`. Copy it now. It is shown only once.
 
 5. Add your engine. Open **Gateway → Engines**, then click **Add engine**.
    - For llama.cpp, vLLM, LM Studio or another OpenAI-compatible server, choose **Any OpenAI-compatible server**. Type an address that ends in `/v1`, such as `http://192.0.2.50:8080/v1`.
@@ -66,7 +68,7 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
      -H "Authorization: Bearer opk_YOUR_KEY_HERE"
    ```
 
-   Then send a message from your app. Open **Usage** to see its request record.
+   Then send a message from your app. Open **Usage**, choose **View recent requests**, then open the newest row to see its request record.
 
 Compose publishes the gateway only on `127.0.0.1`, using port `5000` by default. State and cache use the named volumes `gateway-data` and `gateway-cache`. See [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) for more detail.
 
@@ -136,7 +138,7 @@ Use **Try** for a small API check, **Library** for your generated media, and **U
 
 ## Share with family or friends
 
-Create an access plan first. Open **Gateway → People** and choose **Invite someone**. Set **Access plan** and **Link expires after**, then copy the link to the person. Invitation acceptance creates a personal App and shows its key once. Built-in email/password accounts work without an external identity provider. OIDC is also available.
+Create an access plan first. Open **Gateway → People** and choose **Invite someone**. Set **Access plan** and **Link expires after**. Type the person's email, or tick **Allow anyone with the link to create an account and receive an API key**. **Create invite link** stays off until you do one of the two. Copy the link to the person. If the link starts with `http://127.0.0.1`, replace that part with the gateway address the person can reach before you send it. Invitation acceptance creates a personal App and shows its key once. Built-in email/password accounts work without an external identity provider. OIDC is also available.
 
 The member opens Home, picks a connection recipe, and uses their own key. Give them the [member guide](docs/guides/FOR_MEMBERS.md). Invitation links are shared by the owner; the gateway does not send email or provide passkeys. [Account documentation](docs/PEOPLE_AND_ACCOUNTS.md) covers revocation and ownership rules.
 

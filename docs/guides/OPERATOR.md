@@ -18,7 +18,7 @@ Then open:
 http://127.0.0.1:5000/setup/
 ```
 
-`/setup/` creates or claims the first owner account. Open **Apps & keys**. Choose **New app** to make an app and its first key, or open an app's menu and choose **Create key**. Save the runtime key when it appears. It starts with `opk_` and is shown once. Use it in clients, and keep admin keys for administration.
+`/setup/` creates or claims the first owner account. Open **Apps & keys** and choose **New app**. Choose who the app acts as (**You** or **A service**); **Create app and key** stays off until you do. To add a key to an existing app, open its menu and choose **Create key** (**Create another key** if the app has a key). Save the runtime key when it appears. It starts with `opk_` and is shown once. Use it in clients, and keep admin keys for administration.
 
 Compose starts:
 
@@ -59,9 +59,12 @@ and protocol fields.
 5. Name the engine and select **Add engine**.
 
 When the gateway runs in Docker and an engine runs on the host, the engine
-must listen on an address that the container can reach. Compose maps
-`host.docker.internal` to the host gateway on Linux, but an engine bound only
-to host `127.0.0.1` is usually not reachable from inside the container.
+must listen on an address that the containers can reach. Compose maps
+`host.docker.internal` to the host gateway on Linux, for both the `gateway`
+container that checks the address and the `litellm` container that sends chat
+requests. An engine bound only to host `127.0.0.1`, or a container published
+only on `127.0.0.1`, answers "Connection refused" from inside the containers.
+See [Connect an engine by where it runs](../FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs).
 
 Engine-specific behavior belongs in service data, not gateway code. Use
 service records, model mappings, and configured transforms rather than code
@@ -103,7 +106,7 @@ registry records with provider-shaped config.
 
 Open **Gateway → Providers → Add provider** at `/providers/`. Select a
 preset or generic endpoint, enter a write-only key or an environment-variable
-name, and run **Gateway check**. Choose models, review prices, set caps, and
+name, and run **Check provider connection**. Choose models, review prices, set caps, and
 select allowed access plans before saving. The page also supports provider
 configuration changes and reports enabled state, reachability, key state,
 and spend totals.
@@ -168,9 +171,12 @@ An invite needs an access plan, so create one first. Then use the Invites tab to
 
 - choose **Invite someone** to create a single-use invite link;
 - in that dialog, choose the person's **Access plan**;
-- set **Email (optional)** to restrict who can accept it;
+- set **Email (optional)** to restrict who can accept it, or tick
+  **Allow anyone with the link to create an account and receive an API key**.
+  **Create invite link** stays off until you do one of the two;
 - choose **Link expires after**: 1 day, 7 days, or 30 days;
-- copy a pending invite link again;
+- copy a pending invite link again. If it starts with `http://127.0.0.1`,
+  replace that part with an address the person can reach;
 - revoke a pending invite.
 
 Invite links look like `/invite/#token=...` and password reset links like
@@ -287,7 +293,7 @@ models, protocols, workflows, engines, and remote providers.
 
 Replace the write-only key in Providers, or set the referenced variable in the
 gateway service environment and restart through the documented procedure.
-Check the saved endpoint and run Gateway check. See
+Check the saved endpoint and run **Check provider connection**. See
 [key custody](../REMOTE_PROVIDERS.md#key-custody-and-threat-model) for encrypted
 key storage and environment references.
 
