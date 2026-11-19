@@ -147,7 +147,7 @@ from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
-from gateway import engine_check
+from gateway import engine_check, engine_lifecycle
 from gateway.engine_connection import InferenceConnectionError, inference_connection
 from gateway import speech_stream
 from gateway.engine_protocol import inline_tts as tts_adapter
@@ -18128,6 +18128,11 @@ def _workflow_owner_entry_problems(entry) -> list[dict[str, Any]]:
     return [{"code": code} for code in workflow_projections.PROJECTIONS.entry_problems(entry, available)]
 
 
+# The owner's start, stop and restart of an engine. It reads the live backends and the serving leases per request.
+ADMIN_ENGINE_LIFECYCLE = engine_lifecycle.EngineLifecycle(
+    backends=lambda: config.get("backends") or {}, in_flight=lambda service_id: _swap_drain.in_flight(service_id))
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
@@ -18143,6 +18148,7 @@ app.include_router(
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
         engine_hop_timeout=upstream_read_timeout,
+        engine_lifecycle=ADMIN_ENGINE_LIFECYCLE,
         stt_measurements=STT_MEASUREMENTS,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
