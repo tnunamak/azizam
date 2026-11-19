@@ -483,6 +483,14 @@ IN_PROCESS_CLIENTS = {
      "httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=None), base_url='http://gateway.internal', timeout=None)"):
         "ASGITransport onto the gateway app",
 }
+# The one client whose transport is a remote capability's guard: every request it sends is one BoundTransport.send
+# (factory check, header allowlist, operation slot, checked address). Checked below to sit over _GuardedHttpx, whose
+# only way out is that send.
+REMOTE_BOUND_CLIENTS = {
+    ("gateway/engine_protocol/bound_wire.py", "client",
+     "httpx.AsyncClient(transport=_GuardedHttpx(bound), timeout=timeout, follow_redirects=False, trust_env=False)"):
+        "the remote capability's BoundTransport behind httpx's transport seam",
+}
 # The only place a transport is built for a client the factory then wraps with the hook.
 TRANSPORT_BUILDERS = {
     ("gateway/engine_check.py", "checked_transport", "httpx.AsyncHTTPTransport(retries=0)"):
@@ -611,7 +619,7 @@ def test_the_scan_covers_every_module_proxy_imports_not_only_the_gateway_package
 def test_no_module_refers_to_an_httpx_client_class_except_through_the_factory() -> None:
     """Failed before the fix: status_endpoint.py (5 raw clients), the default argument of EngineControlRuntime and
     ObservationReader, and the whole body of create_home_router were not scanned or were exempt."""
-    found = _unlisted_httpx(_HTTPX_CLIENTS, IN_PROCESS_CLIENTS, _parsed())
+    found = _unlisted_httpx(_HTTPX_CLIENTS, IN_PROCESS_CLIENTS | REMOTE_BOUND_CLIENTS, _parsed())
     assert not found, (
         "Build the client with gateway.engine_egress.async_client or .client, so every send passes the lease check. "
         f"A client over an in-process transport is listed in IN_PROCESS_CLIENTS, as one site. Found: {found}")
@@ -707,3 +715,25 @@ def test_the_cached_tree_is_never_mutated_by_a_scan() -> None:
     before = ast.dump(_repo_tree(path))
     _parsed()
     assert ast.dump(_repo_tree(path)) == before
+
+
+def test_the_remote_bound_client_sits_over_the_guard_and_the_guard_only_calls_bound_send() -> None:
+    for (relative, owner, site), _reason in REMOTE_BOUND_CLIENTS.items():
+        module = _by_relative(relative)
+        match = [node for node, own, text in module.httpx_references(_HTTPX_CLIENTS) if (own, text) == (owner, site)]
+        assert match, f"{relative}:{owner} no longer has the exempt site {site!r}; remove the exemption"
+        call = module.parent[match[0]]
+        transport = next(keyword.value for keyword in call.keywords if keyword.arg == "transport")
+        assert isinstance(transport, ast.Call) and _call_name(transport) == "_GuardedHttpx", (
+            f"{relative}:{owner} is listed as remote bound but its transport is {ast.unparse(transport)}")
+        guard = next(node for node in ast.walk(module.tree) if isinstance(node, ast.ClassDef) and node.name == "_GuardedHttpx")
+        handle = next(node for node in guard.body
+                      if isinstance(node, ast.AsyncFunctionDef) and node.name == "handle_async_request")
+        calls = {_call_name(node) for node in ast.walk(handle) if isinstance(node, ast.Call)}
+        sends = {name for name in calls if name.rsplit(".", 1)[-1] == "send"}
+        assert sends == {"self._bound.send"}, f"_GuardedHttpx must send only through self._bound.send, found {sends}"
+        made = {name for name in calls if name.split(".", 1)[0] in module.httpx_names}
+        assert made <= {"httpx.Response"}, f"_GuardedHttpx may only wrap the reply, found {made}"
+        refs = [text for node, _own, text in module.httpx_references(_HTTPX_CLIENTS | _HTTPX_TRANSPORTS)
+                if (_own, text) != (owner, site)]
+        assert not refs, f"{relative} builds another httpx client or transport: {refs}"
