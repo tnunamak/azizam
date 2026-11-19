@@ -61,7 +61,7 @@ def derive_speech_engines(
     """``{engine id: {service, model, voices?, default_voice?}}`` for the enabled speech records in ``services``.
 
     The engine id is the model's public name (``model_group``, else ``id``), the entry's ``model`` is the name the
-    server is called with (``upstream_model``, else the public name). A record with no model row gives no entry. When
+    server is called with (``upstream_model``, else the public name). A record with no model row gives no entry, nor does a wildcard ("*") row. When
     two records offer the same public name the lower service id keeps it. ``only`` limits the records to those ids.
     A disabled record is left out unless ``include_disabled`` (the validator asks for the names a record defines).
     """
@@ -79,7 +79,8 @@ def derive_speech_engines(
             row = _mapping(row)
             public = str(row.get("model_group") or row.get("id") or "").strip()
             upstream = str(row.get("upstream_model") or "").strip() or public
-            if not public or _norm(public) in seen:
+            # A "*" row exposes whatever the server serves (service_form_to_raw); a speech request names one model.
+            if not public or "*" in public or "*" in upstream or _norm(public) in seen:
                 continue
             seen.add(_norm(public))
             entry: dict[str, Any] = {"service": service_id, "model": upstream}

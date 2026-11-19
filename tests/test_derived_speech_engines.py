@@ -32,6 +32,15 @@ def _record(*models, enabled=True, capabilities=("audio", "speech"), **config):
 
 # ---- the pure derivation -------------------------------------------------------------------------------------------
 
+def test_a_wildcard_model_row_gives_no_engine():
+    # A "*" row exposes whatever the server serves; a speech request must name one model, so it is not an engine.
+    engines = derived_engines.derive_speech_engines({
+        "garage-voice": _record(("voice-a", "up-a"), ("voice-any", "*"), ("*", "*")),
+    })
+
+    assert engines == {"voice-a": {"service": "garage-voice", "model": "up-a"}}
+
+
 def test_an_enabled_speech_record_gives_an_engine_for_each_model_row():
     engines = derived_engines.derive_speech_engines({
         "garage-voice": _record(("voice-a", "up-a"), ("voice-b", "up-b")),
