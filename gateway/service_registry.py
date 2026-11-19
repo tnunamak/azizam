@@ -33,7 +33,7 @@ from pathlib import Path
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from typing import Any
 
-from gateway import admin_store, engine_check, native_lane, projection, record_carriers, registry_layers, url_binding, yaml_files
+from gateway import admin_store, derived_engines, engine_check, native_lane, projection, record_carriers, registry_layers, url_binding, yaml_files
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
@@ -1118,6 +1118,11 @@ def apply_service_registry_to_config(
         print(f"[service_registry] ERROR: service {service_id!r} is left out of the running config: {error}", flush=True)
         del backends[service_id]
     out["backends"] = backends
+    # A speech engine is its record: the speech route reads model_aliases.speech.engines, so the records that stay in
+    # the running config give their engines there (an owner's own entry with the same id wins).
+    derived = derived_engines.derive_speech_engines(registry.get("services"), only=set(backends))
+    if derived:
+        out["model_aliases"] = derived_engines.with_derived_speech_engines(out.get("model_aliases"), derived)
     return out
 
 

@@ -34,8 +34,9 @@ from __future__ import annotations
 import copy
 import fnmatch
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
+from gateway import derived_engines
 from gateway.compatibility import COMPATIBILITY
 
 from gateway.config_layers import DANGLING, INVALID, Problem
@@ -321,8 +322,11 @@ def _pointer(*parts: Any) -> str:
     return "".join("/" + str(part).replace("~", "~0").replace("/", "~1") for part in parts)
 
 
-def _alias_issues(cfg: Mapping[str, Any] | None) -> list[tuple[str, str]]:
-    """Structural problems as ``(JSON Pointer, text)``; the pointer is the entry the problem sits on ('' = the section)."""
+def _alias_issues(cfg: Mapping[str, Any] | None, derived_speech: Iterable[str] = ()) -> list[tuple[str, str]]:
+    """Structural problems as ``(JSON Pointer, text)``; the pointer is the entry the problem sits on ('' = the section).
+
+    ``derived_speech`` are the ids of the speech engines the service records give (gateway/derived_engines.py): a tier
+    or an OpenAI-name pattern may name one, though the stored table does not hold it."""
     issues: list[tuple[str, str]] = []
     if not isinstance(cfg, Mapping):
         return [("", "model_aliases must be a mapping")]
@@ -338,6 +342,7 @@ def _alias_issues(cfg: Mapping[str, Any] | None) -> list[tuple[str, str]]:
             continue
         stable = _stable_map(section)
         engines = _engine_map(section)
+        known = {*engines, *(_norm(engine) for engine in derived_speech)} if operation == "speech" else set(engines)
         if engines and operation not in ENGINE_OPERATIONS:
             issues.append((_pointer(operation, "engines"),
                            f"{operation}: engines are only valid for speech/transcriptions/rerank/decisions"))
@@ -357,7 +362,7 @@ def _alias_issues(cfg: Mapping[str, Any] | None) -> list[tuple[str, str]]:
                 if operation not in ENGINE_OPERATIONS:
                     issues.append((where, f"{operation}.stable.{name}: engine list not allowed here"))
                 for cand in spec:
-                    if _norm(cand) not in engines:
+                    if _norm(cand) not in known:
                         issues.append((where, f"{operation}.stable.{name}: unknown engine {cand!r}"))
             elif not isinstance(spec, str) or not spec.strip():
                 issues.append((where, f"{operation}.stable.{name}: target must be a non-empty string"))
@@ -375,7 +380,7 @@ def _alias_issues(cfg: Mapping[str, Any] | None) -> list[tuple[str, str]]:
                 target = _norm(pattern.get("to"))
                 if not target:
                     issues.append((where, f"{operation}.openai[{pattern['match']}]: missing to"))
-                elif target not in stable and target not in engines:
+                elif target not in stable and target not in known:
                     issues.append((where, f"{operation}.openai[{pattern['match']}]: "
                                           f"to={target!r} is not a stable alias or engine"))
         # Loop check: follow every string chain.
@@ -408,9 +413,10 @@ def alias_problems(candidate: Mapping[str, Any] | None, context: Mapping[str, An
     (the release self-check at start) only the structure is judged. A stable name's string target (a role, a workflow,
     a model id) cannot be checked here: what it may name depends on the operation and on what runs.
     """
-    problems = [Problem(pointer or None, "alias_invalid", INVALID, text) for pointer, text in _alias_issues(candidate)]
     registry = (context or {}).get("registry")
     services = registry.get("services") if isinstance(registry, Mapping) else None
+    derived = derived_engines.derive_speech_engines(services, include_disabled=True)
+    problems = [Problem(pointer or None, "alias_invalid", INVALID, text) for pointer, text in _alias_issues(candidate, derived)]
     if isinstance(candidate, Mapping) and isinstance(services, Mapping):
         for operation in OPERATIONS:
             for engine_id, spec in _engine_map(_section(candidate, operation)).items():
