@@ -700,3 +700,10 @@ def test_the_scan_catches_every_spelling_of_a_raw_client(tmp_path) -> None:
         f"rogue.py:{line['return hx.Client()']} aliased", f"rogue.py:{line['return AC()']} imported",
         f"rogue.py:{line[indirect]} indirect"]
     assert _unlisted(_WEBSOCKETS, {}, _parsed([rogue])) == [f"rogue.py:{line[listening]} listen builds ws_connect"]
+
+
+def test_the_cached_tree_is_never_mutated_by_a_scan() -> None:
+    path = next(p for p in _MODULES if _relative(p) == "proxy.py")
+    before = ast.dump(_repo_tree(path))
+    _parsed()
+    assert ast.dump(_repo_tree(path)) == before

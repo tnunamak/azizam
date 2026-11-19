@@ -22,7 +22,7 @@ from tests.test_stt_round4_planner import config
 def test_multitrack_decode_uses_probed_track_and_reservation(tmp_path, rates, shared):
     source = tmp_path / "two-tracks.mkv"
     # Scale media and planning limits together: still chunked, and native PCM
-    # still exceeds the source-fallback cap.
+    # still exceeds the source-fallback cap when not shared.
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
         f"sine=frequency=440:sample_rate={rates[0]}:duration=70", "-f", "lavfi", "-i",
         f"sine=frequency=880:sample_rate={rates[1]}:duration=70",
