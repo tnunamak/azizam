@@ -238,7 +238,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
   await page.reload();
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(
-    page.getByText("Couldn’t load changes"),
+    page.getByRole("heading", { name: "Couldn’t load changes" }),
   ).toBeVisible();
   await page.unroute("**/admin/api/audit?**");
   await page.getByRole("button", { name: /try again|retry/i }).click();
