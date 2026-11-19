@@ -23,6 +23,7 @@ import copy
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import time
 from datetime import datetime
@@ -2072,7 +2073,26 @@ def _valid_host_port(config: Mapping[str, Any]) -> tuple[str, int, str]:
     return bare, number, scheme
 
 
-def engine_base_address(config: Mapping[str, Any]) -> str:
+BASE_URL_ENV_KEYS = ("base_url_env", "api_base_env")
+
+
+def environment_base_url(config: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> str:
+    """The address the process environment gives a record: the value of the variable ``base_url_env`` (else
+    ``api_base_env``) names, trimmed; ``""`` when the record names no variable or the variable is unset or empty.
+
+    A deployment fixes where the gateway reaches a service (Compose: a container name; ``start.sh``: loopback), so
+    the record carries the variable's *name* and its ``default_base_url`` for the case where it is unset. This is the
+    one reader of that variable. It gives the address a request or a probe *dials* (``checked_engine_base_address``).
+    It is never stored, and no credential binds to it: ``service_base_url`` and ``engine_origin`` stay the record's
+    own address, so a changed variable moves no key to a new host without the owner's approval.
+    """
+    env_name = next(filter(None, (str(config.get(key) or "").strip() for key in BASE_URL_ENV_KEYS)), "")
+    if not env_name:
+        return ""
+    return str((os.environ if environ is None else environ).get(env_name) or "").strip()
+
+
+def engine_base_address(config: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> str:
     """The full base URL an engine's record names, or ``""`` when it names none or names an invalid one.
 
     Never raises: startup, derived config and dispatch read every record through it, so one malformed record leaves
@@ -2080,19 +2100,27 @@ def engine_base_address(config: Mapping[str, Any]) -> str:
     lower-priority address. Pages that show why use ``checked_engine_base_address``.
     """
     try:
-        return checked_engine_base_address(config)
+        return checked_engine_base_address(config, environ)
     except EngineAddressError:
         return ""
 
 
-def checked_engine_base_address(config: Mapping[str, Any]) -> str:
+def checked_engine_base_address(config: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> str:
     """The full base URL an engine's record names, keeping the scheme, the port and any path prefix; ``""`` when none.
 
-    For dispatch and for probes written relative to that base. Host and port name a bare ``scheme://host:port``. A
+    For dispatch and for probes written relative to that base. The address its ``base_url_env`` variable holds wins
+    over the record's own (``environment_base_url``); ``environ`` is the environment to read (the process's by
+    default). Host and port name a bare ``scheme://host:port``. A
     base URL, ``connection.address`` or standalone ``address`` is kept whole (no trailing slash), so ``https://203.0.113.9:8443/prefix`` posts to
     ``/prefix/...``. ``engine_origin`` is the origin only: use it for credential-origin comparisons and for endpoints
     defined against the origin. A named invalid URL raises EngineAddressError instead of choosing another address.
     """
+    from_environment = environment_base_url(config, environ)
+    if from_environment:
+        if not origin_of(from_environment):
+            # Name only the field: the variable's value can contain a credential.
+            raise EngineAddressError("service record base_url_env names a variable that is not a valid HTTP(S) address")
+        return _trim_path_slash(from_environment)
     if names_host_port(config):
         _require_valid_host_port(config)
         return host_port_origin(config)
