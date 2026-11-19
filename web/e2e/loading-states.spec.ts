@@ -24,13 +24,19 @@ interface Capture {
   loadingLabel: string;
   /** The tab to open once the page is up, when the route has tabs. */
   tab?: string;
+  /**
+   * The route's data is the signed-in snapshot itself. The document head asks for it once and the shell takes
+   * that answer; the route asks again, and that second request is the one held (gate trace of train 89: the
+   * Apps loader stood for the 40 ms of its own session request only).
+   */
+  holdsSession?: boolean;
 }
 
 const CAPTURES: Capture[] = [
   { group: "home", url: "/", scope: "signed-in", loadingLabel: "Loading recent work" },
   { group: "activity-audit", url: "/activity/", scope: "signed-in", tab: "Changes", loadingLabel: "Loading changes" },
   { group: "activity-requests", url: "/activity/", scope: "signed-in", loadingLabel: "Loading requests" },
-  { group: "apps", url: "/apps/", scope: "signed-in", loadingLabel: "Loading apps" },
+  { group: "apps", url: "/apps/", scope: "signed-in", loadingLabel: "Loading apps", holdsSession: true },
   { group: "status-engines-services", url: "/engines/", scope: "signed-in", loadingLabel: "Loading engines" },
   { group: "people-invite", url: "/invite/#token=loading-state", scope: "public", loadingLabel: "Loading invitation" },
   { group: "library", url: "/library/", scope: "signed-in", loadingLabel: "Loading library" },
@@ -55,6 +61,8 @@ const PUBLIC_DATA = /\/(auth|setup)\/api\//;
 
 interface Hold {
   scope: Scope;
+  holdsSession: boolean;
+  sessions: number;
   held: number;
   released: Promise<void>;
   release: () => void;
@@ -70,12 +78,18 @@ interface Hold {
 async function routeHolds(page: Page) {
   let current: Hold | undefined;
   await page.route(
-    (url) => !SESSION.test(url.pathname + url.search),
+    () => true,
     async (route: Route) => {
       const hold = current;
       const url = new URL(route.request().url());
+      const path = url.pathname + url.search;
+      if (SESSION.test(path)) {
+        // The first signed-in snapshot is the shell's; only a route that holds its own asks a second time.
+        const own = hold?.holdsSession && path.startsWith("/me/") && route.request().method() === "GET" && hold.sessions++ > 0;
+        if (!own) return route.fallback();
+      }
       const data = hold?.scope === "public" ? PUBLIC_DATA : SIGNED_IN_DATA;
-      if (!hold || !data.test(url.pathname + url.search)) return route.fallback();
+      if (!hold || !data.test(path)) return route.fallback();
       if (hold.scope === "signed-in" && route.request().method() !== "GET") return route.fallback();
       hold.held += 1;
       await hold.released;
@@ -92,12 +106,12 @@ async function routeHolds(page: Page) {
   );
   return {
     /** Holds the data requests of one capture until its release. */
-    hold(scope: Scope) {
+    hold(scope: Scope, holdsSession = false) {
       let release!: () => void;
       const released = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const hold: Hold = { scope, held: 0, released, release };
+      const hold: Hold = { scope, holdsSession, sessions: 0, held: 0, released, release };
       current = hold;
       return {
         count: () => hold.held,
@@ -117,7 +131,7 @@ async function capture(
   theme: (typeof themes)[number],
   width: number,
 ) {
-  const { count, release } = holds.hold(item.scope);
+  const { count, release } = holds.hold(item.scope, item.holdsSession);
   try {
     await page.goto(item.url, { waitUntil: "domcontentloaded" });
     // The shell's own wait for the account is not the route's loading state.
