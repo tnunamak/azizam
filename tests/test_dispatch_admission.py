@@ -149,6 +149,61 @@ def test_configured_resource_class_blocks_dispatch(dispatch_env, monkeypatch, na
     assert decision['reasons']
 
 
+EXTRA_ROUTES = [
+    ('/v1/completions', {'model': 'test', 'prompt': 'hi'}),
+    ('/api/embeddings', {'model': 'test', 'prompt': 'hi'}),
+    ('/ollama/api/embeddings', {'model': 'test', 'prompt': 'hi'}),
+    ('/ollama/api/embed', {'model': 'test', 'input': 'hi'}),
+    ('/ollama/api/chat', {'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'stream': False}),
+    ('/ollama/api/generate', {'model': 'test', 'prompt': 'hi', 'stream': False}),
+    ('/ollama/api/generate', {'model': 'test', 'prompt': 'hi', 'stream': True}),
+    ('/v1/images/edits', {}),
+    ('/v1/images/variations', {}),
+    ('/v1/audio/generate', {}),
+    ('/v1/audio/transcriptions', {}),
+    ('/v1/audio/translations', {}),
+]
+
+
+@pytest.mark.parametrize('path,body', EXTRA_ROUTES)
+def test_additional_routes_block_dispatch(dispatch_env, monkeypatch, path, body):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {
+        'disabled_resource_classes': ['chat', 'embeddings', 'image', 'audio', 'video'],
+    })
+    monkeypatch.setattr(proxy, '_stt_execution_snapshot', lambda *a: SimpleNamespace(
+        service_id='test-service', deadline_seconds=60))
+    response = client.post(path, json=body)
+    assert response.status_code == 503, response.text
+    assert not calls
+    payload = response.json()
+    if path.startswith(('/api/', '/ollama/api/')):
+        assert isinstance(payload['error'], str)
+        assert payload['decision']['reasons']
+    else:
+        assert payload['error']['code'] == 'resource_admission_denied'
+        assert payload['error']['decision']['reasons']
+    assert 'resource_class_disabled' in payload['admission']['reason_codes']
+
+
+def test_rerank_is_refused_before_its_engine_starts(dispatch_env, monkeypatch):
+    client, _calls = dispatch_env
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_resource_classes': ['embeddings']})
+    monkeypatch.setattr(proxy, 'resolve_stable_alias', lambda *_a: SimpleNamespace(
+        engine='test-rerank', engine_spec={}, service='test-service', upstream_model='test-rerank'))
+    started = []
+
+    async def ready(*_a, **_kw):
+        started.append('engine')
+
+    monkeypatch.setattr(proxy, '_ensure_speech_service_ready', ready)
+    response = client.post('/v1/rerank', json={'model': 'test', 'query': 'q', 'documents': ['a', 'b']})
+    assert response.status_code == 503, response.text
+    assert response.json()['error']['code'] == 'resource_admission_denied'
+    assert 'resource_class_disabled' in response.json()['admission']['reason_codes']
+    assert started == []
+
+
 @pytest.mark.parametrize('protocol', ['openai', 'anthropic', 'ollama'])
 @pytest.mark.parametrize('cfg,override,code', [
     ({'disabled_intents': ['chat.generate']}, {}, 'intent_disabled'),
@@ -381,3 +436,18 @@ def test_empty_stored_overrides_keep_default_responses(dispatch_env, monkeypatch
     assert calls, 'the comparison must reach a backend executor'
     fixture = Path(__file__).with_name('fixtures') / 'dispatch_admission_baseline.json'
     assert snapshot(response) == json.loads(fixture.read_text())['responses'][name]
+
+
+@pytest.mark.parametrize('path,body', [
+    ('/v1/videos', {'prompt': 'hi'}),
+])
+def test_video_refusal_names_its_admission_reasons(dispatch_env, monkeypatch, path, body):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_resource_classes': ['video']})
+    response = client.post(path, json=body)
+    assert response.status_code == 503, response.text
+    assert not calls
+    payload = response.json()
+    assert payload['error']['code'] == 'resource_admission_denied'
+    assert payload['error']['decision']['reasons']
+    assert 'resource_class_disabled' in payload['admission']['reason_codes']

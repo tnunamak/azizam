@@ -65,9 +65,14 @@ Each target row in the JSON file has:
 | `continue` | Continue | coding-agent | OpenAI chat/completions/embeddings | P0 | unverified |
 | `cline` | Cline | coding-agent | OpenAI chat, Anthropic messages | P1 | unverified |
 | `sillytavern` | SillyTavern | roleplay-frontend | OpenAI chat, Anthropic messages | P1 | unverified |
-| `vercel-ai-sdk` | Vercel AI SDK | sdk-framework | OpenAI chat/responses, Anthropic messages | P0 | unverified |
+| `vercel-ai-sdk` | Vercel AI SDK | sdk-framework | OpenAI chat/responses, Anthropic messages | P0 | automated-probe (5 of 6 cases; Anthropic streaming not covered) |
 | `n8n` | n8n | automation | OpenAI chat/embeddings/images/audio | P1 | unverified |
 | `home-assistant-extended-openai` | HA Extended OpenAI Conversation | voice-assistant | OpenAI chat | P2 | unverified |
+
+The Vercel AI SDK row rests on `tests/compat/node/vercel-ai-sdk.test.mjs`: its chat,
+streaming, forced tool call, structured output and Responses API cases passed against a
+live gateway on 2026-11-18. It runs by hand, not in the gate. Anthropic Messages
+streaming needs the `@ai-sdk/anthropic` package and is not covered.
 
 `models.list` (`GET /v1/models`) appears in nearly every row. That
 endpoint is load-bearing for almost every self-hosted frontend's

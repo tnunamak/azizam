@@ -634,6 +634,11 @@ class OpenAIVideoCreate(VideoViews, Shape):
 
     async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
         if isinstance(outcome, RunRefused):
+            # The gateway already built the client body of an admission refusal (``refusal_body``): this wire serves
+            # the gateway's own vocabulary, so the refusal names its admission reasons there, as every other route
+            # does, instead of the bare message the row's error vocabulary would leave.
+            if outcome.refusal_body is not None:
+                return _wire.refused_body_response(outcome)
             return await super().to_response(outcome, row, jobs=jobs, caller=caller, request=request)
         facts = dict(getattr(getattr(request, "state", None), "video_facts", None) or {})
         recorded = getattr(jobs, "request_facts", lambda *_: None)(outcome.job_id, caller)
