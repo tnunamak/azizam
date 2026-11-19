@@ -1816,7 +1816,7 @@ A transcription alias row also carries `limits`, so a caller learns what the ali
 ```json
 {"model": "stt-quality", "intent": "speech.transcription",
  "limits": {"response_formats": ["json", "text"], "prompt_supported": false,
-            "max_audio_seconds": 40, "split_response_formats": ["json", "text"]}}
+            "max_audio_seconds": 40, "split_response_formats": ["json"]}}
 ```
 
 `response_formats` and `prompt_supported` are what the engine record declares (`null`: it declares nothing, and the

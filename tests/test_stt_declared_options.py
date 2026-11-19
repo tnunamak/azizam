@@ -221,14 +221,14 @@ class CapabilitiesTests(SttCase):
 
     def test_the_split_list_follows_request_supports_chunking(self) -> None:
         _declare(self, PARAKEET, enabled=True, target_seconds=30, threshold_seconds=40, search_seconds=2, max_segment_seconds=40)
-        self.assertEqual(self._row("stt-quality")["limits"]["split_response_formats"], ["json"])
+        self.assertEqual(self._row("stt-quality")["limits"]["split_response_formats"], ["json", "verbose_json"])
         real = stt_chunking.request_supports_chunking
 
-        def also_verbose(fields, *, file_count):
-            return real(fields, file_count=file_count) or dict(fields).get("response_format") == "verbose_json"
+        def json_only(fields, *, file_count):
+            return real(fields, file_count=file_count) and dict(fields).get("response_format") == "json"
 
-        with patch.object(stt_chunking, "request_supports_chunking", also_verbose):
-            self.assertEqual(self._row("stt-quality")["limits"]["split_response_formats"], ["json", "verbose_json"])
+        with patch.object(stt_chunking, "request_supports_chunking", json_only):
+            self.assertEqual(self._row("stt-quality")["limits"]["split_response_formats"], ["json"])
         with patch.object(stt_chunking, "request_supports_chunking", return_value=False):
             self.assertEqual(self._row("stt-quality")["limits"]["split_response_formats"], [])
 
