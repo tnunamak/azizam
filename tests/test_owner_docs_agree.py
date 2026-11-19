@@ -27,3 +27,16 @@ def test_owner_docs_name_the_people_and_engine_controls():
     engines = _section(operator, "Add local engines")
     assert "Add engine" in engines and "Continue" in engines
     assert "Add a service record" not in engines
+
+
+def test_readme_says_the_loopback_base_url_is_only_for_the_gateway_computer():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    step = readme.split("6. Connect your app", 1)[1].split("\n## ", 1)[0]
+    assert "only on the computer that runs the gateway" in step
+    assert "docs/guides/FOR_MEMBERS.md" in step
+
+
+def test_operator_invite_steps_open_the_dialog_before_choosing_its_plan():
+    operator = (ROOT / "docs/guides/OPERATOR.md").read_text(encoding="utf-8")
+    people = _section(operator, "Manage people and access plans")
+    assert people.index("Invite someone") < people.index("**Access plan**")
