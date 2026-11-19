@@ -1684,7 +1684,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
         real_async_client = httpx.AsyncClient
         for kind, fields in (
             ("short", (("model", "whisper-1"),)),
-            ("ineligible", (("model", "whisper-1"), ("response_format", "verbose_json"))),
+            ("ineligible", (("model", "whisper-1"), ("response_format", "srt"))),
         ):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
@@ -1755,7 +1755,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir)
             config = _config(root, threshold_seconds=40, target_seconds=30, max_segment_seconds=40)
             body, content_type = _multipart_body(content=b"RIFF-long", fields=(("model", "whisper-1"),
-                                                                              ("response_format", "verbose_json")))
+                                                                              ("response_format", "srt")))
             sent = False
 
             async def receive():
@@ -1853,7 +1853,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 if status == 400:
                     self.assertEqual(payload["message"], "Audio file might be corrupted or unsupported")
                 else:
-                    self.assertIn("recorded or measured 40-second maximum", payload["message"])
+                    self.assertIn("40-second maximum declared by the engine record", payload["message"])
                     self.assertNotIn("longer than", payload["message"])
                 self.assertNotIn("secret-path", response.body.decode())
                 self.assertNotIn("sk-1234", response.body.decode())
