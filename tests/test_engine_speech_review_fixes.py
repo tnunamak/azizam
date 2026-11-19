@@ -325,7 +325,7 @@ def test_a_server_that_needs_a_key_is_told_plainly_that_this_kind_cannot_be_give
     text = " ".join(str(finding.get(part) or "") for part in ("title", "what", "why", "fix")).lower()
     assert "without a key" in text and "cannot be added" in text, finding
     assert "paste the key" not in text, finding
-    assert {f["key"] for f in definition["fields"]} == {"address", "models"}
+    assert {f["key"] for f in definition["fields"]} == {"address", "where", "network_trusted", "models"}
 
 
 # ---- finding 6: the owner's names win over a derived engine id ----------------------------------------------------

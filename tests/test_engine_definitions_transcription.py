@@ -102,7 +102,7 @@ def test_the_seed_definition_is_valid_and_named_for_the_dialect():
     assert definition["record"]["protocol"] == "chunked-stt"
     assert definition["probes"]["route_proves"] is True
     # No key field: a transcription server of this kind is used without a key, as a speech server is.
-    assert [field["key"] for field in definition["fields"]] == ["address", "models"]
+    assert [field["key"] for field in definition["fields"]] == ["address", "where", "network_trusted", "models"]
 
 
 @pytest.mark.parametrize("change,needle", [
@@ -251,7 +251,7 @@ def test_other_answers_fail_the_multipart_real_test_with_a_reason(answer, needle
 
 # ---- (d) add, check, save and transcribe, through the gateway ---------------------------------------------------------
 
-def _transcription_server(fakes):
+def _transcription_server(fakes, host=None):
     """An OpenAI-shaped transcription server on a real port: Speaches-style routes, no key."""
     not_found = {"status": 404, "json": {"detail": "Not Found"}}
 
@@ -275,7 +275,7 @@ def _transcription_server(fakes):
             ex("transcription", "POST", "/v1/audio/transcriptions", {"status": 200, "json": {"text": "hello from the fake"}}),
         ],
     }, token=TOKEN)
-    return fakes.loopback(scenario)
+    return fakes.loopback(scenario) if host is None else fakes.asgi(scenario, host=host)   # a named host: another computer
 
 
 def _write_headers(client):
