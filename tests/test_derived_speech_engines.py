@@ -171,9 +171,10 @@ def test_a_pattern_naming_an_engine_no_record_and_no_table_gives_is_shown_dangli
 
 
 def test_an_unknown_engine_of_another_operation_is_still_refused_with_a_registry():
+    # An operation no record gives engines for (transcriptions did, once; tests/test_derived_transcription_engines.py).
     context = {"registry": _registry(**{"garage-voice": _record(("voice-a", "up-a"))})}
 
-    problems = stable_aliases.alias_problems({"transcriptions": {"stable": {"stt": ["nowhere"]}}}, context)
+    problems = stable_aliases.alias_problems({"rerank": {"stable": {"rr": ["nowhere"]}}}, context)
 
     assert [(p.code, p.severity) for p in problems] == [("alias_invalid", "invalid")]
 
