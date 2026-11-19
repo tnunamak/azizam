@@ -42,6 +42,7 @@ import { FormField, Note, Tag, focusFirstInvalid } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, kindRefusal, modelsBody, type ModelDraft } from "../parts/models-block";
 import { AccessAsk, accessModels } from "../parts/access-answer";
 import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } from "./draft";
+import { NetworkTrust, trustPending } from "./network-trust";
 import { ConnectionFields, SummaryLine, type ConnectionDraft, type FieldErrors } from "./step-address";
 import { StepKind } from "./step-kind";
 import { StepSlots } from "./step-slots";
@@ -152,7 +153,7 @@ function Wizard({
   const [step, setStep] = useState<Step>("kind");
   const [def, setDef] = useState<EngineDefinition | null>(null);
   const [query, setQuery] = useState("");
-  const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "" });
+  const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "", where: "this" });
   const [protocol, setProtocol] = useState<ProtocolDraft>({ dispatch: "", protocol: "" });
   const [tasks, setTasks] = useState<string[]>([]);
   const [protocolError, setProtocolError] = useState<string | null>(null);
@@ -160,6 +161,9 @@ function Wizard({
   const validProtocol = !protocolCatalogFetching && !protocolCatalogError && protocolCatalog?.protocols.some((row) => row.id === protocol.protocol && row.dispatch_supported) === true;
   const [errors, setErrors] = useState<FieldErrors>({});
   const [check, setCheck] = useState<CheckResult | null>(null);
+  /** "I trust this network" for the network the last check named. A new check asks again. */
+  const [trusted, setTrusted] = useState(false);
+  const [trustError, setTrustError] = useState<string | null>(null);
   const [finding, setFinding] = useState<Finding | null>(null);
   const [revealed, setRevealed] = useState<CheckResult | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -224,6 +228,7 @@ function Wizard({
       values.protocol_description = protocol.protocol;
     }
     if (owner) {
+      if (draft.where === "network" && fieldOf(def ?? undefined, "where")) values.where = "network";
       if (draft.envOpen) {
         if (draft.envName.trim()) values.api_key_env = draft.envName.trim();
       } else if (draft.key) values.api_key = draft.key;
@@ -232,7 +237,9 @@ function Wizard({
   }
 
   function allValues(): EngineValues {
-    return connectionValues();
+    const values = connectionValues();
+    if (values.where === "network" && trusted) values.network_trusted = true;
+    return values;
   }
 
   function pickKind(d: EngineDefinition) {
@@ -266,6 +273,8 @@ function Wizard({
 
   function applyCheck(result: CheckResult, untick = false) {
     setCheck(result);
+    setTrusted(false);
+    setTrustError(null);
     setTicked(new Set(untick ? [] : result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
     setModels(draftsFromCheck(result.models));
     setTests({});
@@ -324,7 +333,7 @@ function Wizard({
         const message = error instanceof Error ? error.message : "The check could not run.";
         announce(`Check finished: ${message}`);
         focusInvalid();
-        if (field && ["address", "api_key", "api_key_env"].includes(field)) setErrors({ [field]: message });
+        if (field && ["address", "where", "api_key", "api_key_env"].includes(field)) setErrors({ [field]: message });
         else if (error instanceof ApiError && error.code === "owner_required") setErrors({ api_key: message });
         else setErrors({ address: `Azizam could not run the check. ${message}` });
         setStep("address");
@@ -398,7 +407,7 @@ function Wizard({
       body = { definition: def.definition, name: finalName, values: {}, slots: slotsBody(def, slotValues) };
       if (options.acknowledge || acknowledged) body.acknowledge_warnings = true;
     } else if (options.keepOff) {
-      body = { definition: def.definition, name: finalName, values: connectionValues(), disabled: true };
+      body = { definition: def.definition, name: finalName, values: allValues(), disabled: true };
       if (protocol.dispatch === "protocol" && tasks.length) body.capabilities = tasks;
       if (options.needKey) body.keep_off_reason = "needkey";
     } else {
@@ -425,8 +434,18 @@ function Wizard({
       const refused = checkFromError(error);
       const first = refused?.findings.find((f) => f.severity === "error") ?? refused?.findings[0];
       const field = fieldFromError(error);
+      const message = error instanceof Error ? error.message : "Azizam could not use this value.";
       const refusedKind = kindRefusal(field, error instanceof Error ? error.message : "");
-      if (def.process_slots && field && field in def.process_slots) {
+      if (field === "network_trusted") {
+        setTrustError(message);
+        if (check?.remote) setStep("caps");
+        else setErrors({ where: message });
+        focusInvalid();
+      } else if (field === "where") {
+        setErrors({ where: message });
+        focusInvalid();
+        setStep("address");
+      } else if (def.process_slots && field && field in def.process_slots) {
         setSlotErrors({ [field]: error instanceof Error ? error.message : "Azizam could not use this value." });
         setStep("slots");
       } else if (first && (first.code === "dup" || first.severity === "warning")) {
@@ -523,7 +542,7 @@ function Wizard({
   const stepName = step === "slots" ? "Start" : (def.steps[STEP_NUMBER[step] - 1] ?? "");
   const empty = !conn.address.trim();
   const keepOffButton = (label = "Add but keep off", needKey = false) => (
-    <Button type="button" variant="outline" size="md" disabled={creating} onClick={() => void create({ keepOff: true, needKey })}>
+    <Button type="button" variant="outline" size="md" disabled={creating || trustPending(check?.remote, trusted)} onClick={() => void create({ keepOff: true, needKey })}>
       {label}
     </Button>
   );
@@ -688,13 +707,14 @@ function Wizard({
           draft={conn}
           onChange={(patch) => {
             setConn((c) => ({ ...c, ...patch }));
-            const edited = ["address", "key", "envName"].some((k) => k in patch);
+            const edited = ["address", "key", "envName", "where"].some((k) => k in patch);
             // A finding belongs to the values that were checked; an edit makes it stale.
             if (edited && finding) {
               setFinding(null);
               setAcknowledged(false);
             }
             if (patch.address !== undefined) setErrors((e) => ({ ...e, address: undefined }));
+            if (patch.where !== undefined) setErrors((e) => ({ ...e, where: undefined }));
           }}
           owner={owner}
           finding={f}
@@ -721,8 +741,9 @@ function Wizard({
   }
 
   const noneTicked = ticked.size === 0;
+  const waitingForTrust = trustPending(check?.remote, trusted);
   const addNowButton = (disabled: boolean) => (
-    <Button type="button" variant="outline" size="md" disabled={disabled || creating} onClick={addNow}>
+    <Button type="button" variant="outline" size="md" disabled={disabled || creating || waitingForTrust} onClick={addNow}>
       Add engine now
     </Button>
   );
@@ -740,7 +761,7 @@ function Wizard({
             right={
               <>
                 {noneTicked ? keepOffButton() : addNowButton(false)}
-                <Button type="button" size="md" disabled={noneTicked} onClick={next}>
+                <Button type="button" size="md" disabled={noneTicked || waitingForTrust} onClick={next}>
                   Continue
                 </Button>
               </>
@@ -766,6 +787,18 @@ function Wizard({
           <Note tone="ok">
             {`Reached the server. ${keyWord}. Found ${check.models.length} models.`}
           </Note>
+        )}
+        {check.remote && (
+          <NetworkTrust
+            remote={check.remote}
+            label={fieldOf(def, "network_trusted")?.label ?? "I trust this network"}
+            trusted={trusted}
+            error={trustError}
+            onTrust={(on) => {
+              setTrusted(on);
+              setTrustError(null);
+            }}
+          />
         )}
         <CapabilityList
           rows={rows}
@@ -874,7 +907,7 @@ function Wizard({
             <Button
               type="button"
               size="md"
-              disabled={isDup || !engineName || creating || noneTicked}
+              disabled={isDup || !engineName || creating || noneTicked || waitingForTrust}
               onClick={() => void create({ acknowledge: isWarning })}
             >
               {creating && <Loader2 aria-hidden="true" className="animate-spin" />}

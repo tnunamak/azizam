@@ -6,7 +6,7 @@ import type { EngineDefinition, Finding, FindingAction } from "@/lib/engines-api
 import { Input } from "@/components/ui/input";
 import { CallLine } from "../parts/call-line";
 import { FindingCard } from "../parts/finding-card";
-import { FormField, LinkButton, Note, OwnerOnlyTag } from "../parts/form";
+import { FormField, LinkButton, NativeSelect, Note, OwnerOnlyTag } from "../parts/form";
 import { fieldOf } from "./draft";
 
 /** Under the variable-name box, after a refused key: where to look, besides the server's own reason. */
@@ -18,10 +18,13 @@ export interface ConnectionDraft {
   key: string;
   envOpen: boolean;
   envName: string;
+  /** Only an owner sees the choice, and only a definition with a "where" field offers it. */
+  where: "this" | "network";
 }
 
 export interface FieldErrors {
   address?: string;
+  where?: string;
   api_key?: string;
   api_key_env?: string;
 }
@@ -57,6 +60,7 @@ export function ConnectionFields({
   const address = fieldOf(definition, "address");
   const key = fieldOf(definition, "api_key");
   const env = fieldOf(definition, "api_key_env");
+  const where = owner ? fieldOf(definition, "where") : undefined;
   // One finding shows at a time, so one id names its text for whichever control it is about.
   const findingText = useId();
   const card = (field: Finding["field"], context?: string) =>
@@ -113,6 +117,24 @@ export function ConnectionFields({
               spellCheck={false}
               onChange={(event) => onChange({ address: event.target.value })}
             />
+          )}
+        </FormField>
+      )}
+      {where && (
+        <FormField label={where.label} help={where.help} error={errors.where}>
+          {(control) => (
+            <NativeSelect
+              {...control}
+              value={draft.where}
+              disabled={disabled}
+              onChange={(event) => onChange({ where: event.target.value === "network" ? "network" : "this" })}
+            >
+              {(where.options ?? []).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </NativeSelect>
           )}
         </FormField>
       )}
