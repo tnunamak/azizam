@@ -54,11 +54,6 @@ class EngineCatalog:
     def capability(self, capability_id: str) -> dict[str, Any]:
         return copy.deepcopy(self.data["capabilities"][capability_id])
 
-    def real_test_id(self, definition: Mapping[str, Any], capability_id: str) -> str | None:
-        """The real test this kind of server runs for a capability: its own choice, else the capability's, else none."""
-        chosen = (definition.get("real_test_for") or {}).get(capability_id)
-        return chosen or self.data["capabilities"][capability_id].get("real_test")
-
     def metadata_row(self, row_id: str) -> dict[str, Any]:
         for row in self.data["metadata_rows"]:
             if row["id"] == row_id:
@@ -161,6 +156,12 @@ _EXPECT_KEYS = {
 }
 # What a kind of test may also say about what it expects, without having to.
 _OPTIONAL_EXPECT_KEYS = {"get_probe": ("json_key",)}
+
+
+def real_test_id(catalog: Any, definition: Mapping[str, Any], capability_id: str) -> str | None:
+    """The real test this kind of server runs for a capability: its own choice, else the capability's, else none."""
+    chosen = (definition.get("real_test_for") or {}).get(capability_id)
+    return chosen or catalog.capability(capability_id).get("real_test")
 
 
 def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:

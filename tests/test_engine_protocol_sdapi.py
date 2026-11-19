@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import media_jobs, receipt_store
 from gateway.engine_protocol import description, executor, inventory, transport
+from gateway.engine_definitions import real_test_id
 from tests.support.access import authenticated
 from tests.support.fake_upstream import HandlerTransport
 from tests.support.protocol_upstream import png
@@ -259,6 +260,7 @@ def test_the_definition_lists_checkpoints_from_a_fake_sd_models_reply(monkeypatc
     assert check['outcome'] == 'ok', check['findings']
     assert [row['id'] for row in check['models']] == [ALPHA, BETA]
     assert [(row['id'], row['ticked']) for row in check['capabilities']] == [('images', True)]
+    assert 'real_test' not in check['capabilities'][0]  # the node-graph status read is not a test of this kind of server
     # Nothing here can start a generation: the check reads two lists and sends empty requests to a made-up path only.
     assert ('POST', '/sdapi/v1/txt2img') not in seen and ('POST', '/sdapi/v1/options') not in seen
     assert {path for method, path in seen if method == 'POST'} <= {f'/zz-not-a-route-{TOKEN}'}
@@ -497,3 +499,60 @@ def test_the_check_says_before_save_that_only_this_computer_works(gateway, fake_
         'capabilities': ['images'], 'models': added.picked})
     assert created.status_code == 422 and created.json()['error']['code'] == 'engine_check_failed', created.text
     assert 'lan-pictures' not in admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']
+
+
+# -- a server of this kind and a node-graph engine share the "images" capability ------------------------------------
+
+NODE_GRAPH = {'capabilities': ['images', 'generations', 'videos', 'audio.generate'], 'protocol': 'node-graph',
+              'enabled': True, 'host': '127.0.0.1', 'port': 8188}
+
+
+def test_a_saved_sdapi_record_is_never_a_graph_service_and_never_takes_graph_work(gateway, fake_upstreams, monkeypatch, tmp_path):
+    from gateway import service_registry
+    from gateway.service_priority import selected_service
+    _owner_adds(gateway, fake_upstreams, monkeypatch, tmp_path)
+    registry = admin_store.get_service_registry_with_generation(path=gateway.path)['value']
+    backends = service_registry.runtime_backends(registry)
+    saved = backends['garage-pictures']
+    # The shared capability gives the record the words the node-graph engine's record has for pictures ...
+    assert {'images', 'generations'} <= set(saved['capabilities'])
+    # ... and still, with no reviewed adapter behind its protocol, no graph family selects it.
+    assert {family: view.service_id for family, view in proxy._graph_services_of(backends).items()} == {
+        'images': '', 'videos': '', 'audio.generate': ''}
+    # A node-graph engine added beside it serves every graph family, even when the sdapi record is first by id and priority.
+    backends = {**backends, 'garage-pictures': {**saved, 'priority': 0}, 'workflow-engine': NODE_GRAPH}
+    assert selected_service(backends, 'images')[0] == 'garage-pictures'  # the plain capability order alone would pick it
+    assert {family: view.service_id for family, view in proxy._graph_services_of(backends).items()} == {
+        'images': 'workflow-engine', 'videos': 'workflow-engine', 'audio.generate': 'workflow-engine'}
+
+
+def test_adding_an_sdapi_server_never_warns_that_it_shadows_a_node_graph_engine():
+    from gateway import engine_admin
+    catalog = load_engine_catalog()
+    registry = {'schema_version': 2, 'services': {'workflow-engine': {
+        'id': 'workflow-engine', 'name': 'Workflow engine', 'enabled': True, 'capabilities': NODE_GRAPH['capabilities'],
+        'config': {'connection': {'transport': 'http', 'dispatch': 'native', 'protocol': 'node-graph',
+                                  'address': 'http://127.0.0.1:8188'}}}}}
+    sdapi = catalog.definition('sdapi')
+    workflow = catalog.definition('workflow-image-engine')
+    ask = dict(service_id='new-pictures', name='New pictures', capabilities=['images'], enabled=True)
+    # The same capability on a node-graph engine does warn, so the silence below is the protocol's, not an empty registry's.
+    assert engine_admin.shadowing_finding(catalog, workflow, registry, **ask) is not None
+    assert engine_admin.shadowing_finding(catalog, sdapi, registry, **ask) is None
+
+
+def test_the_real_test_is_the_definitions_choice_and_an_sdapi_server_has_none():
+    catalog = load_engine_catalog()
+    workflow, sdapi = catalog.definition('workflow-image-engine'), catalog.definition('sdapi')
+    assert [real_test_id(catalog, workflow, cap) for cap in workflow['capabilities']] == ['graph_ready'] * 3
+    assert real_test_id(catalog, sdapi, 'images') is None
+    # The capability both kinds share carries no node-graph test of its own.
+    assert 'real_test' not in catalog.capability('images')
+
+    async def never(*args, **kwargs):
+        raise AssertionError('a real test that has no test sent a request')
+
+    with pytest.raises(engine_check.DraftError) as caught:
+        asyncio.run(engine_check.run_real_test(catalog, sdapi, {'address': 'http://127.0.0.1:7860'}, 'images',
+                                               key=KeyInput(), fetch=never))
+    assert caught.value.field == 'capability'

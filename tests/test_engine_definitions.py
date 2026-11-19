@@ -16,6 +16,7 @@ from gateway.engine_definitions import (
     EngineDefinitionError,
     load_engine_catalog,
     parse_engine_catalog,
+    real_test_id,
 )
 
 SEED = json.loads(DEFINITIONS_PATH.read_text(encoding="utf-8"))
@@ -231,7 +232,7 @@ def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
                 # A kind that proves itself by reading a list sends no empty POST: a POST could start work.
                 if definition["probes"]["route_probes"]:
                     assert any(call[0] == "POST" and any(call[1].endswith(route) for route in routes) for call in calls)
-                if not catalog.real_test_id(definition, definition["capabilities"][0]):
+                if not real_test_id(catalog, definition, definition["capabilities"][0]):
                     continue
                 for reply_s, expected in ((None, test_s), (3, 3), (600, test_s), ("bad", test_s)):
                     calls.clear()
@@ -303,3 +304,12 @@ def test_whole_check_timeout_uses_definition_and_cancels_pending_probes(monkeypa
         assert configured == [37, None]
 
     asyncio.run(exercise())
+
+
+def test_a_definitions_real_test_choice_names_its_own_capability_and_a_real_test():
+    for bad, what in (({"videos": "graph_ready"}, "not one of this kind's capabilities"), ({"images": "no_such_test"}, "no real test named")):
+        data = copy.deepcopy(SEED)
+        definition = next(row for row in data["definitions"] if row["definition"] == "sdapi")
+        definition["real_test_for"] = bad
+        with pytest.raises(EngineDefinitionError, match=what):
+            _parse(data)

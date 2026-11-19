@@ -42,7 +42,7 @@ import httpx
 
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
-from gateway.engine_definitions import LIST_SHAPES, UPLOAD_SAMPLES, EngineCatalog
+from gateway.engine_definitions import LIST_SHAPES, UPLOAD_SAMPLES, EngineCatalog, real_test_id
 from gateway.engine_readiness import safe_probe_path
 from gateway import engine_egress
 
@@ -1536,7 +1536,7 @@ async def _run_check(
                                "ticked": level == "likely"}
         if why:
             row["why"] = why
-        test_id = catalog.real_test_id(definition, cap_id)
+        test_id = real_test_id(catalog, definition, cap_id)
         if test_id:
             row["real_test"] = test_id
         if cap.get("route"):
@@ -1675,7 +1675,7 @@ async def run_real_test(
         raise DraftError("This kind of server does not offer that.", field="capability")
     address = normalize_address(values.get("address"))
     cap = catalog.capability(capability_id)
-    test_id = catalog.real_test_id(definition, capability_id)
+    test_id = real_test_id(catalog, definition, capability_id)
     if test_id is None:
         raise DraftError("This kind of server has no real test for that.", field="capability")
     test = catalog.data["real_tests"][test_id]
