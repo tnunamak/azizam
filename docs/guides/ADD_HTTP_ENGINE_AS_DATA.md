@@ -276,8 +276,8 @@ A Tailscale or other mesh address (`100.64.0.0/10`, shared address space) is acc
 when the owner ticks the trust box after the dialog says what that trusts: internet
 providers also use this range for shared networks, so the gateway cannot tell your mesh from
 someone else's. Saving then also writes `"shared_space": true` beside `private_cidrs`; without
-it a policy that names a shared-space network is refused. The cloud metadata address
-`100.100.100.200` sits in this range and stays refused.
+it a policy that names a shared-space network is refused. A cloud metadata address sits
+inside this range and stays refused.
 
 `tasks` limits which work the engine may do on another computer. A definition lists
 them in `record.remote.tasks`, and only for work that arrives in one buffered answer
