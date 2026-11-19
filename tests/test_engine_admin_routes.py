@@ -183,6 +183,82 @@ def test_a_warning_blocks_once_and_acknowledge_warnings_adds_it(gateway, fake_up
     assert record["config"]["engine_check"]["status"] == "ok"
 
 
+def test_a_server_that_lists_no_models_warns_empty_models_and_can_still_be_added(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    scenario = scenario_from_data({
+        "protocol": "engine-probe",
+        "name": "empty-model-list",
+        "description": "An OpenAI-compatible server whose model list answers 200 with no rows. The chat route validates an empty request, so the server is recognised and the empty list is the empty_models warning.",
+        "provenance": {
+            "source": "hand-written",
+            "reference": "the empty_models advice row in registry/engine_definitions.json (models_count 0, recognised true)",
+        },
+        "exchanges": [
+            {
+                "id": "baseline-get",
+                "match": {"method": "GET", "path": "/v1/zz-not-a-route-{{token}}"},
+                "response": {"status": 404, "json": {"detail": "Not Found"}},
+                "repeat": True, "required": False,
+            },
+            {
+                "id": "baseline-post",
+                "match": {"method": "POST", "path": "/v1/zz-not-a-route-{{token}}"},
+                "response": {"status": 404, "json": {"detail": "Not Found"}},
+                "repeat": True, "required": False,
+            },
+            {
+                "id": "models",
+                "match": {"method": "GET", "path": "/v1/models"},
+                "response": {"status": 200, "json": {"object": "list", "data": []}},
+                "repeat": True, "required": False,
+            },
+            {
+                "id": "openapi",
+                "match": {"method": "GET", "path": "/openapi.json"},
+                "response": {"status": 404, "json": {"detail": "Not Found"}},
+                "repeat": True, "required": False,
+            },
+            {
+                "id": "capability-document",
+                "match": {"method": "GET", "path": "/v1/models/capabilities"},
+                "response": {"status": 404, "json": {"detail": "Not Found"}},
+                "repeat": True, "required": False,
+            },
+            {
+                "id": "chat",
+                "match": {"method": "POST", "path": "/v1/chat/completions"},
+                "response": {"status": 400, "json": {"error": {"message": "'messages' is required"}}},
+                "repeat": True, "required": False,
+            },
+            {
+                "id": "embeddings",
+                "match": {"method": "POST", "path": "/v1/embeddings"},
+                "response": {"status": 404, "json": {"detail": "Not Found"}},
+                "repeat": True, "required": False,
+            },
+        ],
+    }, token=TOKEN)
+    fake = fake_upstreams.asgi(scenario, host="empty-list.fk.test")
+    address = f"{fake.base_url}/v1"
+    checked = owner.post("/admin/api/engines/check", headers=csrf_for(owner),
+                         json={"definition": "openai-compatible", "values": {"address": address}})
+    assert checked.status_code == 200, checked.text
+    check = checked.json()["check"]
+    assert [finding["code"] for finding in check["findings"]] == ["empty_models"]
+    assert check["findings"][0]["severity"] == "warning"
+    assert check["models"] == []
+    body = {"definition": "openai-compatible", "name": "warming-up", "values": {"address": address}}
+    first = _create(owner, body)
+    assert first.status_code == 409, first.text
+    assert first.json()["error"]["code"] == "engine_check_warnings"
+    assert "warming-up" not in _registry(gateway)["services"]
+    second = _create(owner, {**body, "acknowledge_warnings": True, "capabilities": ["chat"]})
+    assert second.status_code == 201, second.text
+    record = _record(gateway, "warming-up")
+    assert "chat" in record["capabilities"]
+    assert not (record["config"].get("models") or []), "the engine was added with no models"
+
+
 def test_an_engine_added_turned_on_needs_at_least_one_capability_and_one_added_off_does_not(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
     fake = _chat_server(fake_upstreams, host="needs-one.fk.test")
