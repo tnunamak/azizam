@@ -1335,6 +1335,7 @@ class AdminSQLiteStore:
         observations: Mapping[str, Any] | None = None,
         process: Mapping[str, Any] | None = None,
         residency: Mapping[str, Any] | None = None,
+        audit_extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
 
@@ -1390,7 +1391,7 @@ class AdminSQLiteStore:
             service_id=service_id,
             expected_generation=expected_generation,
             # A record that names a program to run says so in its audit line, with the command and its port.
-            extra={"definition": str(raw.get("definition") or ""),
+            extra={"definition": str(raw.get("definition") or ""), **(audit_extra or {}),
                    **({"process_start": list(process.get("start") or ()),
                        "process_port": (process.get("port") or {}).get("fixed")} if process else {})},
             _trusted_engine_evidence=True,

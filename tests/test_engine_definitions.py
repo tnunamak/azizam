@@ -73,6 +73,8 @@ FIELDS_THE_GATEWAY_READS = {
     "lifecycle_stop": "the command lifecycle driver",
     "lifecycle_ready_s": "driver_config.health_timeout_s",
     "models": "the router's model list",
+    "where": "connection.remote_dispatch, read by the remote boundary (test_remote_add_engine)",
+    "network_trusted": "remote_dispatch.transport, read by the remote boundary (test_remote_add_engine)",
     "context_window": "model listing (_annotate_model_context_windows)",
 }
 

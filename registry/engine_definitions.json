@@ -1512,6 +1512,29 @@
           "help": "Where the server listens, with its port. Do not add /sdapi."
         },
         {
+          "key": "where",
+          "label": "Where does it run?",
+          "type": "select",
+          "default": "this",
+          "order": 2,
+          "options": [
+            {"value": "this", "label": "On this computer"},
+            {"value": "network", "label": "On another computer on my network"}
+          ],
+          "owner_only": true,
+          "help": "Another computer must be on your own private network. Azizam shows the network it will call and asks you to confirm it."
+        },
+        {
+          "key": "network_trusted",
+          "label": "I trust this network",
+          "type": "boolean",
+          "default": false,
+          "order": 3,
+          "show_if": {"field": "where", "equals": "network"},
+          "owner_only": true,
+          "help": "Needed for a server reached with plain http. Anyone on that network can read what Azizam and the server send each other. A server that needs a key must use https."
+        },
+        {
           "key": "models",
           "label": "Checkpoints",
           "type": "multiselect",
@@ -1566,7 +1589,7 @@
           "title": "Only a server on this computer can be added this way",
           "what": "This kind of server can be added only when it runs on this computer.",
           "why": "{address} is not an address on this computer. Azizam does not yet call a server of this kind at another address, and it refuses such a request instead of sending it.",
-          "fix": "Start the server on this computer and use its local address, for example http://127.0.0.1:7860."
+          "fix": "Start the server on this computer and use its local address, for example http://127.0.0.1:7860. If it runs on another computer on your network, choose that under Where does it run?"
         },
         {
           "code": "needkey",
@@ -1584,6 +1607,7 @@
         "protocol": "sdapi",
         "native_passthrough": false,
         "base_path": "",
+        "remote": {"tasks": ["image"]},
         "dispatch": {
           "protocol": "sdapi",
           "offering": {
