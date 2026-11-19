@@ -139,9 +139,20 @@ def _list_probe_errors(where: str, definition: Mapping[str, Any]) -> list[str]:
             errors.append(f"{here}.list.inner: the shape nested needs the key of the list inside each entry")
         if shape == "tuple_first" and "select" not in read:
             errors.append(f"{here}.list.select: the shape tuple_first needs a pointer to the tuple")
+        if "where" in read and shape not in _SHAPES_WITH_ID_KEYS | {"tuple_first", "nested"}:
+            errors.append(f"{here}.list.where: the shape {shape} reads no objects, so it has nothing to filter")
         if "default_select" in read and probe["offers"] != "voice":
             errors.append(f"{here}.list.default_select: only a voice list names a default")
     return errors
+
+
+# The clips a multipart real test may upload. Each is generated in code (gateway.engine_check.SAMPLE_CLIPS), never recorded.
+UPLOAD_SAMPLES = ("tone_wav",)
+# What each kind of real test says it expects, and what only that kind carries.
+_EXPECT_KEYS = {
+    "binary_post": ("status", "content_type_prefix", "min_bytes"),
+    "multipart_post": ("status", "json_string"),
+}
 
 
 def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
@@ -149,12 +160,22 @@ def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
     for test_id, test in real_tests.items():
         kind = test.get("kind", "json_post")
         expect = test.get("expect")
-        if kind == "binary_post":
-            for key in ("status", "content_type_prefix", "min_bytes"):
+        if kind in _EXPECT_KEYS:
+            for key in _EXPECT_KEYS[kind]:
                 if not isinstance(expect, Mapping) or key not in expect:
-                    errors.append(f"real_tests.{test_id}.expect.{key}: a binary_post test says what it expects, including {key}")
+                    errors.append(f"real_tests.{test_id}.expect.{key}: a {kind} test says what it expects, including {key}")
+            if isinstance(expect, Mapping):
+                errors += [f"real_tests.{test_id}.expect.{key}: a {kind} test does not use it" for key in expect if key not in _EXPECT_KEYS[kind]]
         elif expect is not None:
-            errors.append(f"real_tests.{test_id}.expect: only a binary_post test has expect; this one is {kind}")
+            errors.append(f"real_tests.{test_id}.expect: only a {' or '.join(_EXPECT_KEYS)} test has expect; this one is {kind}")
+        upload = test.get("file")
+        if kind == "multipart_post":
+            if not isinstance(upload, Mapping):
+                errors.append(f"real_tests.{test_id}.file: a multipart_post test uploads a file, so it says which")
+            elif upload.get("sample") not in UPLOAD_SAMPLES:
+                errors.append(f"real_tests.{test_id}.file.sample: {upload.get('sample')!r} is not a sample clip; use one of {', '.join(UPLOAD_SAMPLES)}")
+        elif upload is not None:
+            errors.append(f"real_tests.{test_id}.file: only a multipart_post test uploads a file; this one is {kind}")
     return errors
 
 

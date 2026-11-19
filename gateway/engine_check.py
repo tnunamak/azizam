@@ -19,13 +19,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import io
 import ipaddress
 import json
+import math
 import re
 import secrets
 import socket
 import ssl
+import struct
 import time
+import wave
 import zlib
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -37,7 +41,7 @@ import httpx
 
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
-from gateway.engine_definitions import LIST_SHAPES, EngineCatalog
+from gateway.engine_definitions import LIST_SHAPES, UPLOAD_SAMPLES, EngineCatalog
 from gateway.engine_readiness import safe_probe_path
 from gateway import engine_egress
 
@@ -701,8 +705,12 @@ def _entry_ids(items: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for item in items if isinstance(items, list) else ():
         if isinstance(item, str) and item.strip():
-            out.append((item.strip(), item.strip()))
+            if not read.get("where"):
+                out.append((item.strip(), item.strip()))
         elif isinstance(item, Mapping):
+            where = read.get("where")
+            if where and item.get(where["key"]) != where["equals"]:
+                continue
             ident = _first_text(item, read.get("id_keys") or ("id",))
             if ident:
                 out.append((ident, _first_text(item, read.get("name_keys") or ()) or ident))
@@ -1414,6 +1422,36 @@ def _substitute(value: Any, slots: Mapping[str, Any]) -> Any:
     return value
 
 
+def _tone_wav() -> bytes:
+    """Half a second of a quiet 440 Hz tone, 16 kHz mono: a clip that is not speech, made here and never recorded."""
+    rate = 16000
+    frames = b"".join(struct.pack("<h", int(2000 * math.sin(2 * math.pi * 440 * n / rate))) for n in range(rate // 2))
+    out = io.BytesIO()
+    with wave.open(out, "wb") as clip:
+        clip.setnchannels(1)
+        clip.setsampwidth(2)
+        clip.setframerate(rate)
+        clip.writeframes(frames)
+    return out.getvalue()
+
+
+# One generator for each clip a definition may name (gateway.engine_definitions.UPLOAD_SAMPLES).
+SAMPLE_CLIPS: dict[str, Callable[[], bytes]] = {"tone_wav": _tone_wav}
+assert tuple(SAMPLE_CLIPS) == UPLOAD_SAMPLES, "every upload sample needs one generator"
+
+
+def _multipart(fields: Mapping[str, Any], upload: Mapping[str, Any], clip: bytes) -> tuple[bytes, str]:
+    """A multipart/form-data body of text fields and one file, and its content type with the boundary."""
+    boundary = "azizam-" + secrets.token_hex(12)
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+    parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="{upload["field"]}"; filename="{upload["filename"]}"\r\n'
+                  f'Content-Type: {upload["content_type"]}\r\n\r\n').encode() + clip + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
 async def run_real_test(
     catalog: EngineCatalog,
     definition: Mapping[str, Any],
@@ -1472,11 +1510,16 @@ async def run_real_test(
                     "finding": {"what": what,
                                 "why": "The engine runs every request through its request adjustments; this one is not known here or refused the request.",
                                 "fix": "Check the adjustment under More options, then test again.", "raw": str(exc)}}
-    content = json.dumps(body).encode()
-    headers["content-type"] = "application/json"
     shape = "a small JSON request in the OpenAI shape" + (", with your request adjustments applied" if specs else "")
-    if test.get("kind") == "binary_post":
-        shape = "a short JSON request in the OpenAI shape, and read the bytes that came back"
+    if test.get("kind") == "multipart_post":
+        upload = test["file"]
+        content, headers["content-type"] = _multipart(body, upload, SAMPLE_CLIPS[upload["sample"]]())
+        shape = "a short generated audio clip in an OpenAI-style upload form, and read the JSON that came back"
+    else:
+        content = json.dumps(body).encode()
+        headers["content-type"] = "application/json"
+        if test.get("kind") == "binary_post":
+            shape = "a short JSON request in the OpenAI shape, and read the bytes that came back"
     # The definition caps the draft's reply time; absent data keeps the two-minute cap.
     test_timeout_s = definition.get("timeouts", {}).get("real_test_s", TEST_TIMEOUT_S)
     timeout_s = min(_number(values.get("reply_timeout_s"), test_timeout_s, low=1, high=600), test_timeout_s)
@@ -1487,7 +1530,9 @@ async def run_real_test(
         "request": {"method": "POST", "url": url,
                     "headers": {name: "Bearer [redacted]" if name.lower() == "authorization" else value
                                 for name, value in headers.items()},
-                    "body": body, "timeout_s": timeout_s},
+                    "body": body, "timeout_s": timeout_s,
+                    **({"file": {"field": test["file"]["field"], "filename": test["file"]["filename"],
+                                 "content_type": test["file"]["content_type"], "form_bytes": len(content)}} if test.get("kind") == "multipart_post" else {})},
     }
     ok, reply = _judge(test, answer)
     if answer.withheld:
@@ -1526,11 +1571,25 @@ def _judge_binary(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]
     return True, f"{content_type}, {len(answer.body)} bytes"
 
 
+def _judge_multipart(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
+    """A form upload passes on the status and a JSON string at the expected key. An empty string counts: the clip is no speech."""
+    if answer.status != expect["status"]:
+        if answer.status // 100 != 2:
+            return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
+        return False, f"The server answered HTTP {answer.status}; Azizam expected HTTP {expect['status']}."
+    value = _at(answer.json, expect["json_string"])
+    if not isinstance(value, str):
+        return False, f"An answer without “{expect['json_string']}” as text: {_excerpt(answer.text, 120)}"
+    return True, f"“{_excerpt(value, 120)}”" if value else "An empty transcript, as expected for a clip that is not speech"
+
+
 def _judge(test: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
     if answer.transport != "ok" or answer.status is None:
         return False, answer.detail or "No answer"
     if test.get("kind") == "binary_post":
         return _judge_binary(test["expect"], answer)
+    if test.get("kind") == "multipart_post":
+        return _judge_multipart(test["expect"], answer)
     if answer.status // 100 != 2:
         return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
     if test.get("pass_json") and _at(answer.json, test["pass_json"]) in (None, [], ""):

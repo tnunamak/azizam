@@ -111,14 +111,27 @@
       "additionalProperties": false,
       "required": ["sent", "cost"],
       "properties": {
-        "kind": {"enum": ["json_post", "binary_post"], "description": "json_post (the default) reads a JSON reply. binary_post reads bytes: it passes when the reply holds the status, the content type prefix and the number of bytes in expect."},
+        "kind": {"enum": ["json_post", "binary_post", "multipart_post"], "description": "json_post (the default) reads a JSON reply. binary_post reads bytes: it passes when the reply holds the status, the content type prefix and the number of bytes in expect. multipart_post sends body as form fields with one generated file, and passes when the reply has the status and a JSON string at expect.json_string (an empty string counts)."},
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "filename", "content_type", "sample"],
+          "description": "multipart_post only: the one file the form carries. The sample names a clip generated in code (gateway/engine_definitions.py UPLOAD_SAMPLES).",
+          "properties": {
+            "field": {"type": "string", "minLength": 1},
+            "filename": {"type": "string", "minLength": 1},
+            "content_type": {"type": "string", "minLength": 1},
+            "sample": {"type": "string", "minLength": 1}
+          }
+        },
         "expect": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "status": {"type": "integer", "minimum": 100, "maximum": 599},
             "content_type_prefix": {"type": "string", "minLength": 1},
-            "min_bytes": {"type": "integer", "minimum": 1}
+            "min_bytes": {"type": "integer", "minimum": 1},
+            "json_string": {"type": "string", "minLength": 1, "description": "multipart_post: the key of a string in the JSON reply, as a dotted path."}
           }
         },
         "sent": {"type": "string"},
@@ -257,7 +270,14 @@
         "inner": {"type": "string", "description": "nested: the key of the list inside each entry of the selected list."},
         "id_keys": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
         "name_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "default_select": {"type": "string", "description": "A JSON pointer to the id the server names as its default."}
+        "default_select": {"type": "string", "description": "A JSON pointer to the id the server names as its default."},
+        "where": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["key", "equals"],
+          "description": "Keep only the entries (objects) whose key holds exactly this text. An entry without the key is dropped; a list with no kept entry is empty, so a later probe may read the whole list.",
+          "properties": {"key": {"type": "string", "minLength": 1}, "equals": {"type": "string", "minLength": 1}}
+        }
       }
     },
     "listProbe": {
