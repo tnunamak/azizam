@@ -157,9 +157,97 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertFalse(stt_chunking.request_supports_chunking(
             [("response_format", "json"), ("chunking_strategy", "auto")], file_count=1
         ))
-        self.assertFalse(stt_chunking.request_supports_chunking(
+        self.assertTrue(stt_chunking.request_supports_chunking(
             [("response_format", "verbose_json")], file_count=1
         ))
+
+    def test_one_place_says_which_requests_are_cut_and_names_what_blocks_the_rest(self) -> None:
+        cases = (
+            ([("response_format", "json")], True, ()),
+            ([("response_format", "verbose_json")], True, ()),
+            ([], True, ()),
+            ([("response_format", "srt")], False, ("response_format=srt",)),
+            ([("response_format", "VTT")], False, ("response_format=vtt",)),
+            ([("response_format", "text")], False, ("response_format=text",)),
+            ([("response_format", "evil <script> /srv/x")], False, ("response_format",)),
+            ([("response_format", "verbose_json"), ("timestamp_granularities[]", "word")], False, ("timestamp_granularities",)),
+            ([("response_format", "json"), ("include[]", "logprobs")], False, ("include",)),
+            ([("response_format", "json"), ("chunking_strategy", "auto")], False, ("chunking_strategy",)),
+            ([("response_format", "verbose_json"), ("stream", "true")], False, ("stream",)),
+            ([("response_format", "srt"), ("stream", "true"), ("include", "x")], False, ("response_format=srt", "stream", "include")),
+        )
+        for fields, supported, blockers in cases:
+            with self.subTest(fields=fields):
+                self.assertEqual(stt_chunking.chunking_blockers(fields, file_count=1), blockers)
+                self.assertEqual(stt_chunking.request_supports_chunking(fields, file_count=1), supported)
+        self.assertEqual(stt_chunking.chunking_blockers([], file_count=2), ("more than one file",))
+        self.assertFalse(stt_chunking.request_supports_chunking([], file_count=2))
+
+    def _verbose(self, text: str, segments: list[dict], **extra) -> dict:
+        return {"text": text, "segments": segments, **extra}
+
+    def test_verbose_json_segments_land_on_the_source_timeline(self) -> None:
+        first = self._verbose("one two", [
+            {"id": 0, "start": 0.0, "end": 1.5, "text": "one"}, {"id": 1, "start": 1.5, "end": 3.0, "text": "two"}],
+            language="en", task="transcribe", duration=3.0,
+            words=[{"word": "one", "start": 0.0, "end": 1.5}])
+        second = self._verbose("three", [
+            {"id": 0, "start": 0.25, "end": 2.0, "text": "three", "words": [{"word": "three", "start": 0.25, "end": 2.0}]}],
+            language="fr", duration=4.0, words=[{"word": "three", "start": 0.25, "end": 2.0}])
+        merged = stt_chunking.merge_transcription_payloads(
+            [first, second], pieces=[(0.0, 3.0), (25.0, 29.0)], duration_seconds=29.0)
+        self.assertEqual(merged["text"], "one two three")
+        self.assertEqual(merged["language"], "en")
+        self.assertEqual(merged["duration"], 29.0)
+        self.assertEqual([segment["id"] for segment in merged["segments"]], [0, 1, 2])
+        self.assertEqual([(segment["start"], segment["end"]) for segment in merged["segments"]],
+                         [(0.0, 1.5), (1.5, 3.0), (25.25, 27.0)])
+        self.assertEqual([segment["text"] for segment in merged["segments"]], ["one", "two", "three"])
+        self.assertEqual(merged["segments"][2]["words"], [{"word": "three", "start": 25.25, "end": 27.0}])
+        self.assertEqual(merged["words"], [{"word": "one", "start": 0.0, "end": 1.5},
+                                           {"word": "three", "start": 25.25, "end": 27.0}])
+        # The inputs are not changed.
+        self.assertEqual(second["segments"][0]["start"], 0.25)
+
+    def test_verbose_json_pieces_never_overlap_because_each_segment_stays_inside_its_own_piece(self) -> None:
+        # The planner tiles the source (no overlap), so a segment belongs to the piece that produced it. A time an
+        # engine reports past its piece is clamped to the piece's end, so the merged timeline never runs backwards.
+        first = self._verbose("a b", [{"id": 0, "start": 0.0, "end": 10.0, "text": "a"}, {"id": 1, "start": 10.0, "end": 12.5, "text": "b"}])
+        second = self._verbose("c", [{"id": 0, "start": 0.0, "end": 5.0, "text": "c"}])
+        merged = stt_chunking.merge_transcription_payloads(
+            [first, second], pieces=[(0.0, 12.0), (12.0, 17.0)], duration_seconds=17.0)
+        times = [(segment["start"], segment["end"]) for segment in merged["segments"]]
+        self.assertEqual(times, [(0.0, 10.0), (10.0, 12.0), (12.0, 17.0)])
+        for (_, previous_end), (next_start, _) in zip(times, times[1:]):
+            self.assertLessEqual(previous_end, next_start)
+
+    def test_planned_pieces_tile_the_source_without_overlap(self) -> None:
+        for quiet_at in ([], [25.0, 95.0], [28.0, 61.0, 118.0]):
+            with self.subTest(quiet_at=quiet_at):
+                reader = self._quietest(125.0, quiet_at)
+                pieces = stt_chunking.plan_quietest_frame_segments(
+                    duration_seconds=125.0, quietest_frame=reader, target_seconds=30.0, search_seconds=10.0,
+                    max_segment_seconds=40.0, max_segments=8)
+                self.assertGreater(len(pieces), 1)
+                self.assertEqual(pieces[0][0], 0.0)
+                self.assertEqual(pieces[-1][1], 125.0)
+                for (_, end), (start, _) in zip(pieces, pieces[1:]):
+                    self.assertEqual(end, start)
+
+    def test_verbose_json_reply_without_segments_fails_the_request(self) -> None:
+        for body in (b'{"text":"x"}', b'{"text":"x","segments":null}', b'{"text":"x","segments":"no"}'):
+            with self.subTest(body=body), self.assertRaises(stt_chunking.SttChunkResponseError) as caught:
+                stt_chunking._parse_mergeable_chunk_payload(body, verbose=True)
+            self.assertIn("segments", str(caught.exception))
+        for body in (b'{"text":"x","segments":[{"start":"0","end":1}]}', b'{"text":"x","segments":[{"start":2,"end":1}]}',
+                     b'{"text":"x","segments":[{"start":0,"end":1}],"words":[{"word":"x"}]}'):
+            with self.subTest(body=body), self.assertRaises(stt_chunking.SttChunkResponseError):
+                stt_chunking._parse_mergeable_chunk_payload(body, verbose=True)
+        # A silent piece may legitimately have no segments.
+        self.assertEqual(stt_chunking._parse_mergeable_chunk_payload(b'{"text":"","segments":[]}', verbose=True)["segments"], [])
+        # Without verbose_json asked, segments stay unmergeable as before.
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking._parse_mergeable_chunk_payload(b'{"text":"x","segments":[]}')
 
     def _quietest(self, duration: float, quiet_at=(), **kwargs):
         directory = tempfile.TemporaryDirectory()
@@ -524,6 +612,97 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(outcome.merged_payload, {"text": "repeat repeat repeat repeat"})
                 self.assertFalse(any(root.glob("planning-*")))
 
+    async def test_verbose_json_request_is_cut_and_its_segments_come_back_on_one_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"original")
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, search_seconds=10,
+                             max_duration_seconds=150, max_segment_seconds=40)
+            extracted: list[tuple[float, float]] = []
+            sent_fields: list[str] = []
+
+            async def extract(_source, destination, *, start_seconds, end_seconds, **_kwargs):
+                extracted.append((start_seconds, end_seconds))
+                Path(destination).write_bytes(b"chunk")
+
+            async def post(_path, filename):
+                index = len(sent_fields)
+                sent_fields.append(filename)
+                start, end = extracted[index]
+                body = {"task": "transcribe", "language": "en", "duration": end - start, "text": f"piece{index}",
+                        "segments": [{"id": 0, "start": 0.0, "end": 1.0, "text": f"a{index}"},
+                                     {"id": 1, "start": 1.0, "end": end - start, "text": f"b{index}"}]}
+                return stt_chunking.UpstreamResponse(200, json.dumps(body).encode(), {})
+
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), \
+                    planning_pcm(125, [25.0, 95.0]), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
+                outcome = await stt_chunking.execute_chunking(
+                    source_path=source, source_stem="source", fields=[("response_format", "verbose_json")], config=config,
+                    cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None, post_file=post)
+            self.assertEqual(outcome.mode, "chunked")
+            merged = outcome.merged_payload
+            self.assertEqual(merged["text"], " ".join(f"piece{index}" for index in range(len(extracted))))
+            self.assertEqual(merged["language"], "en")
+            self.assertAlmostEqual(merged["duration"], 125.0, delta=0.01)
+            segments = merged["segments"]
+            self.assertEqual([segment["id"] for segment in segments], list(range(2 * len(extracted))))
+            for index, (start, end) in enumerate(extracted):
+                first, second = segments[2 * index: 2 * index + 2]
+                self.assertAlmostEqual(first["start"], start, delta=1e-4)
+                self.assertAlmostEqual(first["end"], start + 1.0, delta=1e-4)
+                self.assertAlmostEqual(second["end"], end, delta=1e-4)
+            previous_end = 0.0
+            for segment in segments:
+                self.assertGreaterEqual(segment["start"], previous_end - 1e-9)
+                previous_end = segment["end"]
+
+    async def test_verbose_json_piece_without_segments_fails_instead_of_returning_text_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"original")
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, search_seconds=10,
+                             max_duration_seconds=150, max_segment_seconds=40)
+
+            async def extract(_source, destination, **_kwargs):
+                Path(destination).write_bytes(b"chunk")
+
+            async def post(_path, _filename):
+                return stt_chunking.UpstreamResponse(200, b'{"text":"words"}', {})
+
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), \
+                    planning_pcm(125, [25.0, 95.0]), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
+                with self.assertRaises(stt_chunking.SttChunkResponseError):
+                    await stt_chunking.execute_chunking(
+                        source_path=source, source_stem="source", fields=[("response_format", "verbose_json")], config=config,
+                        cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None, post_file=post)
+
+    async def test_a_long_file_refused_for_its_format_names_the_option_the_duration_and_the_maximum(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"original")
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=40,
+                             max_duration_seconds=3000)
+            deadline = asyncio.get_running_loop().time() + 10
+            for fields, blocked in (
+                ([("response_format", "srt")], ("response_format=srt",)),
+                ([("response_format", "verbose_json"), ("timestamp_granularities[]", "word")], ("timestamp_granularities",)),
+            ):
+                with self.subTest(fields=fields), patch.object(stt_chunking, "probe_audio",
+                        new=AsyncMock(return_value=stt_chunking.ProbedAudio(180, 16000, 1))), planning_pcm(180):
+                    with self.assertRaises(stt_chunking.SttAudioNotSplittable) as caught:
+                        await stt_chunking.guard_uncut_uploads(
+                            [source], config=config, cancellation_waiters=(), deadline_at=deadline, on_cancel=None, fields=fields)
+                    error = caught.exception
+                    self.assertEqual((error.reason, error.blocked_by, error.duration_seconds), ("unsupported_request", blocked, 180.0))
+                    message = json.loads(client_errors.stt_audio_cannot_be_split(
+                        error.reason, error.limit_seconds, duration_seconds=error.duration_seconds, blocked_by=error.blocked_by).body)["error"]["message"]
+                    self.assertIn("about 180 seconds long", message)
+                    self.assertIn("40-second maximum declared by the engine record", message)
+                    self.assertIn(blocked[0], message)
+
     async def _run_unplannable(self, *, probed, decode_error=None, probe_error=None, **limits):
         """Run execute_chunking on a file whose planning fails; return (outcome or raised error, posts)."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -600,10 +779,10 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 422)
         message = json.loads(response.body)["error"]["message"]
         self.assertIn("could not determine", message)
-        self.assertIn("40-second maximum", message)
+        self.assertIn("40-second maximum declared by the engine record", message)
         self.assertNotIn("longer than", message)
         self.assertNotIn("secret", message)
-        self.assertIn("recorded or measured", message)
+        self.assertNotIn("measured", message)
         self.assertNotIn("just now", message)
 
     async def test_missing_declared_maximum_does_not_refuse_a_request_that_cannot_be_cut(self) -> None:
@@ -1932,3 +2111,47 @@ class AdmissionEvidenceRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["decision"]["next_actions"][0]["action"], "wait")
         self.assertEqual(finalize.call_count, 1)
         self.assertEqual(receipt.resource_decision["facts"][0]["value"], 20)
+
+
+class SplitRefusalMessageTests(unittest.TestCase):
+    def _message(self, reason: str = "unsupported_request", limit: float = 40.0, **kwargs) -> tuple[int, str]:
+        response = client_errors.stt_audio_cannot_be_split(reason, limit, **kwargs)
+        error = json.loads(response.body)["error"]
+        self.assertEqual(error["code"], "stt_audio_cannot_be_split")
+        return response.status_code, error["message"]
+
+    def test_unsupported_request_names_duration_maximum_source_option_and_what_to_do(self) -> None:
+        status, message = self._message(duration_seconds=180.0, blocked_by=("response_format=srt",))
+        self.assertEqual(status, 422)
+        self.assertIn("This audio is about 180 seconds long", message)
+        self.assertIn("40-second maximum declared by the engine record", message)
+        self.assertIn("response_format=srt", message)
+        self.assertIn("response_format=json or verbose_json", message)
+        self.assertIn("40 seconds or less", message)
+        _, several = self._message(blocked_by=("stream", "include", "timestamp_granularities"))
+        self.assertIn("stream, include and timestamp_granularities", several)
+        self.assertNotIn("seconds long", several)
+
+    def test_other_reasons_keep_their_status_and_say_where_the_maximum_comes_from(self) -> None:
+        status, message = self._message("split_failed", duration_seconds=180.0)
+        self.assertEqual(status, 502)
+        self.assertIn("about 180 seconds long", message)
+        self.assertIn("declared by the engine record", message)
+        self.assertIn("could not cut it into pieces", message)
+        status, message = self._message("unknown_duration")
+        self.assertEqual(status, 422)
+        self.assertIn("could not determine this audio's duration", message)
+        self.assertIn("40-second maximum declared by the engine record", message)
+
+    def test_only_listed_option_names_are_ever_printed(self) -> None:
+        hostile = "response_format=srt; secret-path /srv/x sk-1234"
+        _, message = self._message(blocked_by=(hostile, "stream"))
+        self.assertNotIn("secret", message)
+        self.assertNotIn("sk-1234", message)
+        self.assertIn("stream", message)
+        _, none = self._message(blocked_by=(hostile,))
+        self.assertNotIn("secret", none)
+        self.assertNotIn("srt", none)
+        error = stt_chunking.SttAudioNotSplittable("unsupported_request", limit_seconds=40, blocked_by=(hostile, "include"))
+        self.assertEqual(error.blocked_by, ("include",))
+        self.assertEqual(set(stt_chunking.CHUNKING_BLOCKERS), set(client_errors.STT_SPLIT_BLOCKERS))
