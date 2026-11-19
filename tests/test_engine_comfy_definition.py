@@ -271,7 +271,8 @@ def add_named(service: engine_admin.EngineService, folder: Path, name: str, **ex
 
 
 def saved_ids(service: engine_admin.EngineService) -> set[str]:
-    return set((service.store.get_service_registry().get("services") or {}))
+    """The saved engines (the registry always holds the model router's own record, which is not one)."""
+    return set((service.store.get_service_registry().get("services") or {})) - {"litellm"}
 
 
 @pytest.mark.parametrize("name, service_id, serves_after", [
