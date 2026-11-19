@@ -35,7 +35,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import log_scrub
+from gateway import log_scrub, process_template
 from gateway import admin_store, category_enforcement, egress, projection, protocol_description_store, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.compat import positive_int_env
 from gateway.access_plans import PlanError, plan_from_document
@@ -55,6 +55,7 @@ from gateway.engine_check import (
     join_url,
     run_check,
     run_real_test,
+    GATEWAY_PORTS,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
 from gateway.engine_connection import inference_base_url
@@ -1031,8 +1032,12 @@ class EngineService:
 
     def __init__(self, store: Any, *, catalog_loader: Callable[[], EngineCatalog] = load_engine_catalog,
                  fetch: Fetch | None = None, env: Callable[[str], str | None] | None = None,
-                 hop_timeout: Callable[[], float] | None = None) -> None:
+                 hop_timeout: Callable[[], float] | None = None,
+                 gateway_ports: Callable[[], Iterable[int]] | None = None,
+                 port_free: Callable[[int], bool] = process_template.port_is_free) -> None:
         self.store = store
+        self.gateway_ports = gateway_ports or (lambda: GATEWAY_PORTS)
+        self.port_free = port_free
         self.catalog_loader = catalog_loader
         self.fetch = fetch or make_http_fetch()
         self.env = env or (lambda name: os.environ.get(name) or None)
@@ -1307,6 +1312,15 @@ class EngineService:
             raise DraftError("Give the engine a name.", field="name")
         _header_credentials_are_the_owners(ctx, body.get("values"))
         _refuse_reserved_texts(values)
+        resolved = None
+        if definition.get("process_template") is not None:
+            # An engine Azizam starts: the slot values become the literal process block now, with the address they imply.
+            if not _is_owner(ctx):
+                raise _owner_only("Only the owner can add an engine that Azizam starts.")
+            resolved = self._resolve_process(definition, body.get("slots"))
+            if values.get("address") not in (None, "", resolved.address):
+                raise DraftError("Azizam gives this engine its address from the port. Leave the address out.", field="address")
+            values = {**values, "address": resolved.address}
         clean = clean_values(definition, values)
         _admin_limits(ctx, {**values, **clean}, definition, before=None)
         registry = self.store.get_service_registry()
@@ -1315,11 +1329,13 @@ class EngineService:
         while service_id in (registry.get("services") or {}):
             service_id, n = f"{base_id}-{n}", n + 1
         disabled = bool(body.get("disabled"))
+        # An engine Azizam has not started yet has nothing to check: it is saved, and the first start proves it.
+        unchecked = disabled or resolved is not None
         if not disabled:
             _refuse_protocol_probe(clean)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=None, db_path=self.db_path, env=self.env)
         check: dict[str, Any] | None = None
-        if disabled:
+        if unchecked:
             # A server kept off is not checked, but an address already in use still stops.
             dup = duplicate_finding(catalog, definition, clean, _existing_engines(registry),
                                     viewer_role="owner" if _is_owner(ctx) else "admin")
@@ -1334,6 +1350,8 @@ class EngineService:
         capabilities = body.get("capabilities")
         if capabilities is None:
             capabilities = [c["id"] for c in (check or {}).get("capabilities") or () if c.get("ticked")]
+            if resolved is not None:
+                capabilities = list(definition["capabilities"])
         if not isinstance(capabilities, list):
             raise DraftError("capabilities must be a list of ids.", field="capabilities")
         if disabled and body.get("capabilities") is None:
@@ -1345,11 +1363,69 @@ class EngineService:
             models = check.get("models") or []
         record = self._write(ctx, catalog, definition, clean, service_id=service_id, name=name, capabilities=capabilities,
                              models=models, enabled=not disabled,
-                             check=_check_summary(check, address=clean["address"], disabled=disabled, reason=str(body.get("keep_off_reason") or "")),
+                             check=_check_summary(check, address=clean["address"], disabled=unchecked, reason=str(body.get("keep_off_reason") or "")),
                              tests={}, key=key, existing=None,
                              expected_generation=expected_generation, action="create",
-                             observations=observations_from_check(check))
+                             observations=resolved.observations() if resolved is not None else observations_from_check(check),
+                             process=resolved.process_block() if resolved is not None else None,
+                             residency=resolved.residency() if resolved is not None else None)
         return {**record, "service_id": service_id}
+
+    # -- engines Azizam starts: a definition's process template ------------------------------------
+
+    def _reserved_ports(self, registry: Mapping[str, Any]) -> set[int]:
+        """Ports a new engine may not take: this gateway's own and the ones saved engines already name."""
+        from urllib.parse import urlsplit
+
+        taken = {int(port) for port in self.gateway_ports()}
+        for record in (registry.get("services") or {}).values():
+            config = record.get("config") if isinstance(record, Mapping) else None
+            for holder in (record, config):
+                if not isinstance(holder, Mapping):
+                    continue
+                if isinstance(holder.get("port"), int):
+                    taken.add(holder["port"])
+                for source in (holder.get("address"), (holder.get("connection") or {}).get("address")):
+                    try:
+                        port = urlsplit(source).port if isinstance(source, str) else None
+                    except ValueError:
+                        port = None
+                    if port:
+                        taken.add(port)
+                fixed = ((holder.get("process") or {}).get("port") or {}).get("fixed")
+                if isinstance(fixed, int):
+                    taken.add(fixed)
+        return taken
+
+    def _resolve_process(self, definition: Mapping[str, Any], slots: Any) -> process_template.Resolved:
+        """The literal process block for these slot values; a refusal is a 422 that names the first reason."""
+        try:
+            return process_template.resolve(
+                definition["process_template"], slots if slots is not None else {},
+                allowed_folders=process_template.allowed_folders(self.db_path), port_free=self.port_free,
+                reserved_ports=self._reserved_ports(self.store.get_service_registry()))
+        except process_template.TemplateRefused as refused:
+            raise EngineRouteError(status.HTTP_422_UNPROCESSABLE_CONTENT, "process_template_refused", str(refused),
+                                   field=refused.problems[0].slot or "slots") from None
+
+    def process_preview(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """A dry run: the command these slot values make, or every reason they do not. Stores and runs nothing."""
+        definition = _definition(self.catalog(), body.get("definition"))
+        template = definition.get("process_template")
+        if template is None:
+            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "no_process_template",
+                                   "Azizam does not start this kind of engine.", field="definition")
+        slots = body.get("slots")
+        if slots is not None and not isinstance(slots, Mapping):
+            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_slots", "slots must be an object.", field="slots")
+        try:
+            resolved = process_template.resolve(
+                template, slots or {}, allowed_folders=process_template.allowed_folders(self.db_path),
+                port_free=self.port_free, reserved_ports=self._reserved_ports(self.store.get_service_registry()))
+        except process_template.TemplateRefused as refused:
+            return {"argv": [], "cwd": None, "env_names": list(template.get("env") or ()), "port": None,
+                    "ready": dict(template["ready"]), "problems": [p.public() for p in refused.problems]}
+        return {**resolved.preview(), "problems": []}
 
     async def update(self, ctx: Any, service_id: str, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
         if body.get("recheck") is True and not _is_owner(ctx):
@@ -1493,7 +1569,9 @@ class EngineService:
                keep_lifecycle: bool = False, keep_timeout: bool = False, probe_connection_changed: bool = False,
                extra_capabilities: Iterable[str] = (),
                record_capabilities: list[str] | None = None,
-               observations: Mapping[str, Any] | None = None) -> dict[str, Any]:
+               observations: Mapping[str, Any] | None = None,
+               process: Mapping[str, Any] | None = None,
+               residency: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
         written: list[str] = []
         retired: list[str] = []
@@ -1590,7 +1668,8 @@ class EngineService:
                                                  replace=existing is not None, existing=existing,
                                                  drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")),
                                                  **({"in_transaction": recheck} if recheck is not None else {}),
-                                                 **({"observations": observations} if observations is not None else {}))
+                                                 **({"observations": observations} if observations is not None else {}),
+                                                 **({"process": process, "residency": residency} if process is not None else {}))
             except protocol_description_store.DescriptionRefused as refused:
                 raise EngineRouteError(status.HTTP_409_CONFLICT, "protocol_description_changed", str(refused),
                                        field="protocol_description") from None
@@ -1697,6 +1776,28 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
         return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"access": result})
+
+    @router.post("/engines/process-preview")
+    async def engine_process_preview(request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            if not _is_owner(ctx):
+                raise _owner_only("Only the owner can preview how Azizam starts an engine.")
+            body = await read_json(request)
+            if not isinstance(body, Mapping):
+                raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_body", "Send a JSON object.")
+            answer = await asyncio.to_thread(service.process_preview, body)
+        except (EngineRouteError, DraftError, PermissionError) as exc:
+            return _error(exc)
+        except Exception as exc:  # noqa: BLE001
+            if hasattr(exc, "as_response"):
+                return exc.as_response()  # type: ignore[no-any-return]
+            raise
+        response = egress.plain_json_response(response_class="engine_process_preview", content=answer)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @router.post("/engines/{service_id}/lifecycle")
     async def engine_lifecycle(service_id: str, request: Request) -> JSONResponse:

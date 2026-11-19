@@ -1333,6 +1333,8 @@ class AdminSQLiteStore:
         drop_inference_secret_ref: bool = False,
         in_transaction: Callable[[sqlite3.Connection], None] | None = None,
         observations: Mapping[str, Any] | None = None,
+        process: Mapping[str, Any] | None = None,
+        residency: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
 
@@ -1342,6 +1344,9 @@ class AdminSQLiteStore:
         ``raw``. ``None`` means no check ran: the record keeps what it holds. A mapping, empty or not, is the latest
         check's answer: it replaces the voices and the default voice the record holds (an empty one clears them) and
         leaves any other observation as stored.
+
+        ``process`` and ``residency`` are the literal blocks a definition's ``process_template`` resolved to
+        (gateway/process_template.py); they are record fields like ``observations``, set here and not in ``raw``.
 
         ``raw`` is the whole record, already built and checked; the credential and
         lifecycle rules for administrators are applied here as for every write.
@@ -1353,6 +1358,10 @@ class AdminSQLiteStore:
         )
         if isinstance(raw.get("lifecycle"), Mapping):
             record["process"] = service_registry._v2_process(raw["lifecycle"])
+        if process is not None:
+            record["process"] = copy.deepcopy(dict(process))
+        if residency is not None:
+            record["residency"] = copy.deepcopy(dict(residency))
         if observations is not None:
             kept = {key: value for key, value in ((existing or {}).get("observations") or {}).items()
                     if key not in engine_check.OBSERVED_LIST_KEYS}
@@ -1366,6 +1375,9 @@ class AdminSQLiteStore:
             named = {key: True for key in raw if key in ("process", "observations", "residency", "resources")}
             if observations is not None:
                 named["observations"] = True
+            for field, block in (("process", process), ("residency", residency)):
+                if block is not None:
+                    named[field] = True
             if "lifecycle" in raw and raw["lifecycle"] != dict(service_registry.legacy_lifecycle_from_service(existing)):
                 named["lifecycle"] = True  # a lifecycle the page changed; one it sent back as stored is not a change
             service_registry.carry_unnamed_record_fields(existing, record, named=named)
