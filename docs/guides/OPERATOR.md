@@ -73,7 +73,8 @@ Only the owner can do this.
 
 1. Open **Settings → Engine folders**. Type the full path of each folder
    that engines may run from and press **Add folder**. Azizam saves the
-   folder's actual location, even if you choose it through a shortcut.
+   folder's actual location, even if the path you type goes through a
+   symbolic link.
    Azizam refuses the whole computer as a folder. Removing a folder stops
    new engines from being saved from it. It does not change an engine you
    already saved. To stop one of those, remove the engine or turn off
