@@ -1868,10 +1868,10 @@ resolved model or workflow, policy decision summary, manifest ID/version/hash
 when one participated, warnings, status, and latency.
 
 At `client` audience, backend identity, raw policy sources, and gateway
-filesystem details are redacted. Today, observational receipts are emitted
-for `/v1/images/generations`, `/v1/images/edits`, and `/v1/images/variations`
-(which reuses the edit route's receipt end-to-end) only; coverage will
-expand as more handlers route through `gateway/receipts.py`.
+filesystem details are redacted. Chat and image requests leave a receipt.
+
+OpenAI chat, Anthropic Messages, and Ollama chat and generate replies carry
+`X-Azizam-Receipt-Id`. Use its value with the receipt lookup route above.
 
 Agents debugging a "why did this fail?" should:
 

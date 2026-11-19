@@ -58,6 +58,14 @@
           "req_00000000000000000000000000000001"
         ],
         [
+          "x-azizam-request-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
+          "x-azizam-receipt-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
           "content-length",
           "235"
         ],
@@ -88,6 +96,14 @@
           "req_00000000000000000000000000000001"
         ],
         [
+          "x-azizam-request-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
+          "x-azizam-receipt-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
           "content-type",
           "text/event-stream; charset=utf-8"
         ],
@@ -101,6 +117,14 @@
     "ollama-chat": {
       "status": 200,
       "headers": [
+        [
+          "x-azizam-request-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
+          "x-azizam-receipt-id",
+          "req_00000000000000000000000000000001"
+        ],
         [
           "content-length",
           "279"
@@ -119,6 +143,14 @@
     "ollama-generate": {
       "status": 200,
       "headers": [
+        [
+          "x-azizam-request-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
+          "x-azizam-receipt-id",
+          "req_00000000000000000000000000000001"
+        ],
         [
           "content-length",
           "246"
@@ -144,6 +176,14 @@
         [
           "x-accel-buffering",
           "no"
+        ],
+        [
+          "x-azizam-request-id",
+          "req_00000000000000000000000000000001"
+        ],
+        [
+          "x-azizam-receipt-id",
+          "req_00000000000000000000000000000001"
         ],
         [
           "content-type",
