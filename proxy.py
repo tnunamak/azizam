@@ -6225,7 +6225,11 @@ async def proxy_stt_request(
                     lease.workspace = workspace
                     receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
             effective_model = model_resolution.effective_model or execution.default_model or stt_backend_model()
-            if model_resolution.is_openai_alias and execution.default_model:
+            named_alias = model_resolution.alias
+            # An engine the request names (hand or derived) sends its own model, when the call goes to that engine's service;
+            # the record's default fills a name that carries no engine model.
+            names_this_service = named_alias is not None and bool(named_alias.engine) and bool(named_alias.upstream_model) and named_alias.service == execution.service_id
+            if model_resolution.is_openai_alias and execution.default_model and not names_this_service:
                 effective_model = execution.default_model
             fields = stt_chunking.replace_model_field(fields, model=effective_model)
             engine_spec = (model_resolution.alias.engine_spec if model_resolution.alias is not None else None) or {}
