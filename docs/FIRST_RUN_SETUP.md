@@ -12,9 +12,9 @@ The first-run contract is web-first. A new self-hoster should be able to:
    `/people/`, `/apps/`, `/engines/`, `/providers/`).
 
 `/setup/` is intentionally small. It does not configure backends, edit OIDC, or
-create policy abstractions. It only answers: "Can this browser administer the
-gateway, and does this operator have one working `opk_...` key to test a
-client?"
+create policy abstractions, and it does not create keys. It only answers:
+"Can this browser administer the gateway?" The first `opk_...` key comes from
+**Apps & keys**.
 
 The server-rendered operator setup console (the old `/setup?operator=1`) is at
 `/setup/console`. The setup forms post to `/setup/claim`, `/setup/local-owner`,
@@ -159,8 +159,9 @@ Then follow these steps. Each step has one command or one action.
 
    The first line of the reply should be `HTTP/1.1 200 OK`.
 
-5. Create the owner account. Open `http://127.0.0.1:5000/setup/`, then enter
-   an email address, a password, and the password again.
+5. Create the owner account. Open `http://127.0.0.1:5000/setup/`. In
+   **Email or username**, enter an email address. Then enter a password, and
+   the password again.
 
 6. Add an engine. Go to [Connect an engine by where it runs](#connect-an-engine-by-where-it-runs).
 
@@ -485,8 +486,8 @@ owner row, Apps, and Profiles survive `docker compose down`.
 `/setup/` shows one primary action: sign in with OIDC.
 
 The first allowed OIDC login becomes `owner` when no owner/admin exists yet.
-After the callback, the browser lands back on `/setup/`, shows the signed-in
-account, and can mint the first key for the user's Personal App.
+After the callback, the browser lands back on `/setup/` and shows the
+signed-in account. Create the first key in **Apps & keys**.
 
 ### No OIDC, No Owner
 
@@ -503,10 +504,11 @@ gateway.
 
 ### Signed-In Owner/Admin
 
-`/setup/` shows:
+`/setup/` asks the owner to sign in. The first key comes from **Apps & keys**.
+The server-rendered setup console at `/setup/console` shows:
 
 - links to the account portal, admin dashboard, and operator status;
-- a compact "Connect a client" card that creates or reuses the signed-in
+- a "Mint a key from the console" card that creates or reuses the signed-in
   user's Personal App and mints an `opk_...` key shown once;
 - the OpenAI-compatible base URL for new clients: `/openai/v1`;
 - a small setup doctor for owner/admin state, browser session, runtime key
