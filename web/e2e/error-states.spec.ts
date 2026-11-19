@@ -88,10 +88,9 @@ async function settle(page: Page, count: () => number, where: string) {
         const now = count();
         const quiet = now > 0 && now === last;
         last = now;
-        await page.waitForTimeout(1200);
         return quiet && (await page.locator('[data-slot="skeleton"]').count()) === 0;
       },
-      { message: `${where}: the failed requests and their retries settle`, timeout: 30_000, intervals: [0] },
+      { message: `${where}: the failed requests and their retries settle`, timeout: 30_000, intervals: [1200] },
     )
     .toBe(true);
 }

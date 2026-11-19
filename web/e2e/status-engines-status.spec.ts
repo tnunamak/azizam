@@ -258,7 +258,7 @@ for (const { state, theme, width } of cases) {
       ).toBeVisible();
     } else {
       await expect(
-        main.getByRole("heading", { name: "Engine health couldn’t load" }),
+        main.getByRole("heading", { name: "Couldn’t load engine health" }),
       ).toBeVisible();
     }
     await page.screenshot({

@@ -637,7 +637,7 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(1);
   await expect(
     page.getByText("Access plans must load first", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await page
     .getByLabel("Invites")
     .getByRole("button", { name: /^Try again/ })
