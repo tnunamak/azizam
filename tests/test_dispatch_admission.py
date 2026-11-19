@@ -436,3 +436,18 @@ def test_empty_stored_overrides_keep_default_responses(dispatch_env, monkeypatch
     assert calls, 'the comparison must reach a backend executor'
     fixture = Path(__file__).with_name('fixtures') / 'dispatch_admission_baseline.json'
     assert snapshot(response) == json.loads(fixture.read_text())['responses'][name]
+
+
+@pytest.mark.parametrize('path,body', [
+    ('/v1/videos', {'prompt': 'hi'}),
+])
+def test_video_refusal_names_its_admission_reasons(dispatch_env, monkeypatch, path, body):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_resource_classes': ['video']})
+    response = client.post(path, json=body)
+    assert response.status_code == 503, response.text
+    assert not calls
+    payload = response.json()
+    assert payload['error']['code'] == 'resource_admission_denied'
+    assert payload['error']['decision']['reasons']
+    assert 'resource_class_disabled' in payload['admission']['reason_codes']
