@@ -411,3 +411,28 @@ def test_a_tier_naming_a_derived_engine_the_owners_own_pattern_shadows_is_shown_
 
     assert [(p.pointer, p.severity) for p in problems] == [(f"/{operation}/stable/x", "dangling")]
     assert "ear-a" in problems[0].message
+
+
+# ---- a record with a default model still sends the engine's own model --------------------------------------------------
+
+def test_a_request_naming_an_engine_sends_that_engines_model_not_the_records_default(gateway, fake_upstreams, monkeypatch, tmp_path):
+    """Every alias counted as an OpenAI alias, so a record's ``default_model`` replaced the model of the engine asked for."""
+    for module in (receipt_store, media_jobs):
+        db = tmp_path / f"{module.__name__}.db"
+        module.init_db(db)
+        monkeypatch.setattr(module, "DB_PATH", db)
+    monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "images")
+    fake = fake_upstreams.loopback(load_scenario("openai-compatible/transcription-json"))
+    owner, owner_id, *_ = owner_and_admin(gateway)
+    key = _app_key(gateway, owner_id)
+    etag = owner.get("/admin/api/operator/service-registry").headers.get("etag", '"os-0"')
+    added = owner.post(
+        "/admin/api/operator/services", headers={**csrf_for(owner), "If-Match": etag},
+        json={"name": "garage-stt", "base_url": fake.base_url, "protocol": "chunked-stt", "capabilities": TRANSCRIPTION_WORDS,
+              "default_model": "record-default", "models": [{"public": ADDED_MODEL, "upstream": "fake-stt-2"}]})
+    assert added.status_code == 201, added.text
+
+    heard = _transcribe(owner, key, ADDED_MODEL)
+
+    assert heard.status_code == 200, heard.text
+    assert [_model_field(call) for call in fake.calls("transcription")] == ["fake-stt-2"]

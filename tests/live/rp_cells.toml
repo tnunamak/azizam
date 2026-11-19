@@ -73,3 +73,11 @@ status = "pending"
 owner = "azizam maintainers"
 reason = "the openai-speech engine definition (train 86) speaks inline-tts upstream; a recording against a local OpenAI-compatible speech server needs a recorder protocol entry for binary audio replies"
 expires_on = 2027-01-08
+
+[[cell]]
+protocol = "chunked-stt"
+set = "transcription"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the openai-transcription engine definition speaks chunked-stt upstream; a recording against a local OpenAI-compatible transcription server needs a recorder step that uploads a multipart audio file, and the recorder sends JSON steps only"
+expires_on = 2027-01-08

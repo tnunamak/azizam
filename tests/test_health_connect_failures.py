@@ -67,6 +67,18 @@ def _registry(residency: str) -> dict:
                                     "config": config}}}
 
 
+# These tests judge the cause of a failed connection, not its speed. Under a loaded host a TLS handshake against the
+# loopback server can take longer than a probe's own deadline, which reads as a timeout; a long deadline keeps the
+# verdict on the cause.
+_SLOW_HOST_SECONDS = 15.0
+
+
+@pytest.fixture(autouse=True)
+def _long_probe_deadlines(monkeypatch):
+    monkeypatch.setattr(proxy, "_CATALOG_HEALTH_PROBE_TIMEOUT_S", _SLOW_HOST_SECONDS)
+    monkeypatch.setattr(status_endpoint, "_HTTP_TIMEOUT", httpx.Timeout(_SLOW_HOST_SECONDS))
+
+
 def _catalog_evidence(monkeypatch, url: str, residency: str) -> dict:
     monkeypatch.setattr(proxy, "_runtime_health_endpoint", lambda service: url)
     monkeypatch.setattr(proxy, "_HEALTH_EVIDENCE_CACHE", {})

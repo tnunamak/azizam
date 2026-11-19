@@ -40,6 +40,19 @@
         "path": "/audio/speech"
       },
       "real_test": "speech"
+    },
+    "transcription": {
+      "label": "Transcription",
+      "noun": "transcription",
+      "record_capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/audio/transcriptions"
+      },
+      "real_test": "transcription"
     }
   },
   "evidence_text": {
@@ -61,7 +74,8 @@
     "none_nothing_recognised": "The server answered every standard request with “not supported” or “not found”.",
     "needs_key": "The route exists, but it is locked: it answered “{status_text}”.",
     "needs_key_why": "Add the key, then check again.",
-    "none_unlisted": "Nothing the server publishes mentions it."
+    "none_unlisted": "Nothing the server publishes mentions it.",
+    "none_listed": "Its model list names no {noun} model. Add one on the server, then check again."
   },
   "metadata_rows": [
     {
@@ -75,7 +89,8 @@
       "paths": {
         "/chat/completions": "chat",
         "/embeddings": "embeddings",
-        "/audio/speech": "speech"
+        "/audio/speech": "speech",
+        "/audio/transcriptions": "transcription"
       },
       "name_from": {
         "json": "info.title",
@@ -247,6 +262,25 @@
         "min_bytes": 256
       },
       "cost": "A few seconds of speech"
+    },
+    "transcription": {
+      "kind": "multipart_post",
+      "sent": "One short generated clip (half a second of a quiet tone, not speech) to be transcribed",
+      "body": {
+        "model": "{model}",
+        "response_format": "json"
+      },
+      "file": {
+        "field": "file",
+        "filename": "check.wav",
+        "content_type": "audio/wav",
+        "sample": "tone_wav"
+      },
+      "expect": {
+        "status": 200,
+        "json_string": "text"
+      },
+      "cost": "A moment of the server's time. The transcript may be empty, because the clip is not speech"
     }
   },
   "advice": [
@@ -1165,6 +1199,120 @@
       ],
       "record": {
         "protocol": "inline-tts",
+        "native_passthrough": false,
+        "base_path": ""
+      }
+    },
+    {
+      "definition": "openai-transcription",
+      "timeouts": {"probe_s": 5, "real_test_s": 120},
+      "definition_version": 1,
+      "title": "Transcription server with an OpenAI-style audio route",
+      "example": "For example, Speaches",
+      "summary": "Turns audio into text. Azizam asks the server for its models.",
+      "keywords": [
+        "transcription",
+        "transcribe",
+        "speech to text",
+        "stt",
+        "whisper",
+        "audio",
+        "speaches",
+        "faster-whisper"
+      ],
+      "flow": "detect",
+      "steps": [
+        "Kind",
+        "Address",
+        "What it can do",
+        "Models",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.50:8000",
+          "help": "Where the server listens, with its port. Do not add /v1."
+        },
+        {
+          "key": "models",
+          "label": "Models",
+          "type": "multiselect",
+          "order": 60,
+          "options_from": "models"
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "model_list",
+          "method": "GET",
+          "path": "/v1/models",
+          "from": "origin",
+          "kind": "model_list",
+          "list_keys": [
+            "data",
+            "models"
+          ],
+          "id_keys": [
+            "id",
+            "model",
+            "name"
+          ]
+        },
+        "metadata": [
+          "openapi"
+        ],
+        "lists": [
+          {
+            "id": "asr_models",
+            "offers": "model",
+            "method": "GET",
+            "path": "/v1/models",
+            "from": "origin",
+            "capability": "transcription",
+            "list": {
+              "shape": "array_of_objects",
+              "select": "/data",
+              "id_keys": ["id"],
+              "where": {"key": "task", "equals": "automatic-speech-recognition"}
+            }
+          }
+        ],
+        "route_probes": true,
+        "route_proves": true,
+        "route_base": "/v1"
+      },
+      "capabilities": [
+        "transcription"
+      ],
+      "default_ticked": "likely",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Listing its models",
+        "Finding what it can do"
+      ],
+      "name_fallback": "{host_label}",
+      "models_note": "Azizam shows the models the server reports. It does not send a key to this kind of server.",
+      "advice": [
+        {
+          "code": "needkey",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {"status_in": [401, 403], "key_sent": false},
+          "title": "This server asks for a key",
+          "what": "This server asks for a key, and this kind of server is used without a key.",
+          "why": "It answered “{status_text}”. Azizam sends no key to a transcription server of this kind, so it cannot be added this way.",
+          "fix": "Turn the key off on the server, or use a server that needs none. A server that needs a key cannot be added this way."
+        }
+      ],
+      "record": {
+        "protocol": "chunked-stt",
         "native_passthrough": false,
         "base_path": ""
       }
