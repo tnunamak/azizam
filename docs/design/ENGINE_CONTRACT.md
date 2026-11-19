@@ -535,8 +535,10 @@ when a reload fails.
 - **Mounting.** `gateway/frontend_mount.py` builds the table. Builtin rows are
   placed first, so a package row can never take a path a builtin row holds. A
   row that collides or names an unknown translator is skipped and logged, and
-  its frontend is reported as broken (`GET /admin/api/operator/frontends`, and
-  the Overview attention list); the gateway keeps serving. A reload builds the
+  its frontend is reported as broken in the admin overview's `frontends` list
+  (a row whose `status` is `broken`, with its `errors`) and in the overview's
+  `attention` list (a `frontend` item whose title says it could not be
+  mounted); the gateway keeps serving. A reload builds the
   new table before it publishes any config, then swaps it in one step at the
   old rows' position. A build or swap that fails leaves the old config and
   routes serving, and the manager's own route list is put back too. Each row is
