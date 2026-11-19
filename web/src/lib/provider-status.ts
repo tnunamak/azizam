@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
 import { networkFetch } from "@/lib/network-error";
 
 export type ProviderTone = "ok" | "warn" | "bad" | "neutral";
@@ -43,6 +44,8 @@ export type OptionalProviderStatus =
       providers: [];
       raw: null;
       message: string;
+      /** What the query threw; carries the status so a page can tell an outage. */
+      error: unknown;
       refetch: () => void;
     }
   | {
@@ -196,7 +199,11 @@ export async function fetchProviderStatus(): Promise<
       payload && typeof payload === "object"
         ? (payload as { error?: { message?: string } }).error?.message
         : null;
-    throw new Error(message || `Provider status failed (${response.status})`);
+    throw new ApiError(
+      "provider_status_failed",
+      message || `Provider status failed (${response.status})`,
+      response.status,
+    );
   }
   assertProviderPayload(payload);
   return payload;
@@ -257,6 +264,7 @@ export function useOptionalProviderStatus(
       raw: null,
       message:
         error instanceof Error ? error.message : "Provider status failed.",
+      error,
       refetch,
     };
   if (data === null)

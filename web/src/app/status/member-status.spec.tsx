@@ -309,8 +309,8 @@ it.each([null, "unknown", "unexpected"])("labels an unrecorded receipt outcome: 
 it("offers Retry for a successful response without status", async () => {
   vi.spyOn(productApi, "status").mockResolvedValue(null as unknown as Snapshot);
   mount();
-  expect(await screen.findByText("The gateway returned no status. Try again.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  expect(await screen.findByText("We couldn’t load your status. Nothing was changed. Try again.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Try again to load your status" })).toBeVisible();
   expect(screen.queryByText("No requests yet.")).toBeNull();
 });
 

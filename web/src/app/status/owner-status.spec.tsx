@@ -512,7 +512,7 @@ it("does not trust stale health after a status error", async () => {
     chatRegistry,
     true,
   );
-  await screen.findByText("Engine health couldn’t load");
+  await screen.findByRole("heading", { name: "Couldn’t load engine health" });
   expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check status");
   expect(screen.queryByText("Everything works")).toBeNull();
 });
@@ -848,7 +848,7 @@ it.each(["loading", "error"])("never calls a %s provider read an empty setup", a
   providerState.state = state;
   mount({ current_health: { state: "empty", services: [], observation_available: true } } as unknown as StatusPayload, { schema_version: 1, services: {} });
   await waitFor(() => expect(api.status).toHaveBeenCalled());
-  expect(await screen.findByText(state === "loading" ? "Checking providers…" : "Provider status couldn’t load.")).toBeVisible();
+  expect(await screen.findByText(state === "loading" ? "Checking providers…" : "Couldn’t load provider status")).toBeVisible();
   expect(screen.queryByText("No engines yet")).toBeNull();
 });
 
@@ -861,9 +861,9 @@ it.each(["pending", "error"])("does not turn %s activity into no failures", asyn
   await screen.findByRole("heading", { name: "Data provider is down" });
   expect(screen.getByText("Open Providers to check its address and key, then try the connection again.")).toBeVisible();
   expect(document.body.textContent).not.toMatch(/None in the latest/);
-  expect(screen.getAllByText(state === "pending" ? "Checking recent requests…" : /Recent requests couldn’t load/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(state === "pending" ? "Checking recent requests…" : /Couldn’t load recent requests/).length).toBeGreaterThan(0);
   if (state === "error") {
-    await userEvent.click(screen.getByRole("button", { name: "Retry recent requests" }));
+    await userEvent.click(screen.getByRole("button", { name: "Try again to load recent requests" }));
     expect(activityState.refetch).toHaveBeenCalledOnce();
   }
 });
@@ -905,10 +905,10 @@ it.each([new TypeError("Failed to fetch"), new ApiError("failed", "private excep
   mount();
   vi.mocked(api.services.registry).mockRejectedValue(error);
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  const title = await screen.findByRole("heading", { name: "Engine list couldn’t load" });
-  const card = title.closest("article")!;
-  expect(within(card).getByText(error instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again.")).toBeVisible();
-  expect(within(card).getByRole("button", { name: "Retry" })).toBeVisible();
+  const title = await screen.findByRole("heading", { name: "Couldn’t load your engine list" });
+  const card = title.closest<HTMLElement>('[role="alert"]')!;
+  expect(within(card).getByText("We couldn’t load your engine list. Nothing was changed. Try again.")).toBeVisible();
+  expect(within(card).getByRole("button", { name: "Try again to load your engine list" })).toBeVisible();
   expect(screen.queryByText("private exception")).toBeNull();
   expect(screen.queryByText("No engines yet")).toBeNull();
 });
@@ -1111,7 +1111,7 @@ it("removes stale idle copy and check times after a failed refresh", async () =>
   expect(within(row).getByText("Idle, starts when needed")).toBeVisible();
   vi.mocked(api.status).mockRejectedValue(new Error("offline"));
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  await screen.findByRole("heading", { name: "Couldn’t load engine health" });
   const refreshed = await visibleChatRow();
   expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
   expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
@@ -1149,8 +1149,8 @@ it.each([
   await screen.findByText("Everything works");
   vi.mocked(api.status).mockRejectedValue(error);
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  const card = (await screen.findByRole("heading", { name: "Engine health couldn’t load" })).closest("article")!;
-  expect(within(card).getByText(error instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again.")).toBeVisible();
+  const card = (await screen.findByRole("heading", { name: "Couldn’t load engine health" })).closest<HTMLElement>('[role="alert"]')!;
+  expect(within(card).getByText("We couldn’t load engine health. Nothing was changed. Try again.")).toBeVisible();
   expect(screen.queryByText(/private transport detail|private server detail/)).toBeNull();
   expect(screen.queryByText("Everything works")).toBeNull();
   const refreshed = await visibleChatRow();
@@ -1159,11 +1159,11 @@ it.each([
   const statusCalls = vi.mocked(api.status).mock.calls.length;
   const registryCalls = vi.mocked(api.services.registry).mock.calls.length;
   vi.mocked(api.status).mockResolvedValue(engineSnapshot());
-  await userEvent.click(within(card).getByRole("button", { name: "Retry" }));
+  await userEvent.click(within(card).getByRole("button", { name: "Try again to load engine health" }));
   await screen.findByText("Everything works");
   expect(api.status).toHaveBeenCalledTimes(statusCalls + 1);
   expect(api.services.registry).toHaveBeenCalledTimes(registryCalls);
-  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Couldn’t load engine health" })).toBeNull();
   expect(within(await visibleChatRow()).getByText("Ready", { exact: true })).toBeVisible();
 });
 
@@ -1195,16 +1195,16 @@ it("honesty: a failed refresh removes stale ready state and recovers after retry
   expect(within(row).getByText("Ready", { exact: true })).toBeVisible();
   vi.mocked(api.status).mockRejectedValue(new Error("offline"));
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  const heading = await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  const heading = await screen.findByRole("heading", { name: "Couldn’t load engine health" });
   expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check status");
   const refreshed = await visibleChatRow();
   expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
   expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
   expect(within(refreshed).queryByText("Ready", { exact: true })).toBeNull();
   vi.mocked(api.status).mockResolvedValue(status);
-  await userEvent.click(within(heading.closest("article")!).getByRole("button", { name: "Retry" }));
+  await userEvent.click(within(heading.closest<HTMLElement>('[role="alert"]')!).getByRole("button", { name: "Try again to load engine health" }));
   await waitFor(() => expect(within(screen.getByRole("button", { name: "Local chat" }).closest("tr")!).getByText("Ready", { exact: true })).toBeVisible());
-  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Couldn’t load engine health" })).toBeNull();
 });
 
 it("honesty: a slow engine stays degraded without claiming its capability is unavailable", async () => {

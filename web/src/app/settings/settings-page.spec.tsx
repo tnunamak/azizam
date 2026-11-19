@@ -331,26 +331,38 @@ describe("settings page states", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("offers a retry in every section when the gateway is down (error)", async () => {
+  it("shows one error and one Try again when the gateway is down (error)", async () => {
     seed("error");
     mount();
+    const page = await screen.findByRole("heading", { name: "Couldn’t load settings" });
+    // Every section says what did not load; only the page offers a retry.
     expect(
       await within(
         await screen.findByRole("region", { name: "Receipts" }),
-      ).findByText("Couldn’t load receipt settings"),
+      ).findByText("Couldn’t load receipt settings."),
     ).toBeVisible();
-    await waitFor(() =>
-      expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
-        8,
-      ),
-    );
-    for (const name of ["People and access"]) {
-      const retry = within(region(name)).getByRole("button", {
-        name: "Try again",
-      });
-      // 44 px target: the production wrapper forces min-h-11 on its buttons.
-      expect(retry.closest("[class*='[&_button]:min-h-11']")).not.toBeNull();
-    }
+    expect(
+      within(region("People and access")).getByText("Couldn’t load access plans."),
+    ).toBeVisible();
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
+    const retry = within(page.closest('[role="alert"]') as HTMLElement).getByRole("button", {
+      name: "Try again",
+    });
+    expect(screen.getAllByRole("button", { name: /^Try again/ })).toEqual([retry]);
+    // The server's own words stay behind "Technical details".
+    expect(screen.queryByText("Couldn’t load this")).toBeNull();
+    // 44 px target: the production wrapper forces min-h-11 on its buttons.
+    expect(retry.closest("[class*='[&_button]:min-h-11']")).not.toBeNull();
+  });
+
+  it("asks every failed section again from the one Try again", async () => {
+    seed("error");
+    mount();
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    seed("seeded");
+    await userEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Couldn’t load settings" })).toBeNull());
+    expect(await screen.findByText("Our gateway")).toBeVisible();
   });
 });
 
@@ -404,7 +416,7 @@ describe("settings loading and failure", () => {
     const user = userEvent.setup();
     failing = false;
     await user.click(
-      await within(section).findByRole("button", { name: "Try again" }),
+      await within(section).findByRole("button", { name: "Try again to load instance settings" }),
     );
     await user.click(
       await within(section).findByRole("button", { name: "Edit Instance" }),

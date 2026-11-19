@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionLoadFailed } from "./load-failed";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetch } from "@/lib/api";
@@ -45,6 +46,7 @@ export function ReceiptsSection() {
     refetch: queryRefetch,
   } = useQuery({
     queryKey: receiptsKey,
+    meta: { page: "settings" },
     queryFn: () =>
       adminFetch<RetentionResponse>("/admin/api/settings/receipts"),
     enabled: owner,
@@ -64,13 +66,11 @@ export function ReceiptsSection() {
           Loading receipt settings…
         </p>
       ) : queryIsError ? (
-        <div className="p-4">
-          <ErrorState
-            heading="Couldn’t load receipt settings"
-            error={queryError}
-            onRetry={() => void queryRefetch()}
-          />
-        </div>
+        <SectionLoadFailed
+          thing="receipt settings"
+          error={queryError}
+          onRetry={() => void queryRefetch()}
+        />
       ) : (
         <RetentionForm key={queryData.revision} initial={queryData} />
       )}

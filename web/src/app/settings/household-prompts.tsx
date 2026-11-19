@@ -1,12 +1,12 @@
 "use client";
 
+import { SectionLoadFailed } from "./load-failed";
 import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
-import { ErrorState } from "@/components/product/error-state";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -48,6 +48,7 @@ export function HouseholdPromptsSection() {
   const [pending, setPending] = useState<Pending | null>(null);
   const { data, isPending, isError, error, refetch, isRefetching } = useQuery({
     queryKey: householdKey,
+    meta: { page: "settings" },
     queryFn: householdPromptMemoryApi.get,
     refetchInterval: (query) =>
       query.state.data?.prompt_purge?.pending ? 15_000 : false,
@@ -97,15 +98,12 @@ export function HouseholdPromptsSection() {
             Only the owner can change this.
           </p>
         ) : isError || !data?.prompt_memory ? (
-          <div className="p-4">
-            <ErrorState
-              heading="Couldn’t load these settings"
-              error={error}
-              viewerRole="owner"
-              onRetry={() => void refetch()}
-              retrying={isRefetching}
-            />
-          </div>
+          <SectionLoadFailed
+            thing="saved words and chats settings"
+            error={error}
+            onRetry={() => void refetch()}
+            retrying={isRefetching}
+          />
         ) : (
           <Rows
             value={data.prompt_memory}

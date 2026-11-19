@@ -1532,7 +1532,7 @@ describe("Library honesty and access", () => {
     renderLibrary();
     expect(await screen.findByText("Couldn’t load your library")).toBeVisible();
     expect(screen.queryByText(/could not be loaded/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again to load your library" })).toBeVisible();
     expect(screen.getByPlaceholderText("Search your creations")).toBeVisible();
     // The filter button names itself at every width.
     const filters = screen.getByRole("button", { name: "Filters" });
@@ -1730,7 +1730,7 @@ describe("Library response and media boundaries", () => {
         : Response.json(kind === "null" ? null : { assets: [{}] })
       : undefined);
     const { queryClient } = renderLibrary();
-    expect(await screen.findByText("We couldn't read the response. Try again.")).toBeVisible();
+    expect(await screen.findByText("We couldn’t read the response. Try again.")).toBeVisible();
     const query = queryClient.getQueryCache().findAll().find((query) => query.queryKey[0] === "library" && typeof query.queryKey[1] === "object");
     expect(query?.state.error).toMatchObject({ stage: "library", reason: "unreadable" });
     queryClient.clear();
@@ -1764,8 +1764,8 @@ describe("Library response and media boundaries", () => {
       : undefined);
     renderLibrary();
     expect(await screen.findByText("Couldn’t load your library")).toBeVisible();
-    expect(screen.getByText("We couldn't load your library. Try again.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByText("Your creations are safe. Try again.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Try again to load your library" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Recovered list, ") })).not.toBeNull(), { onTimeout: (error) => error });
     expect(screen.queryByText("Couldn’t load your library")).toBeNull();
     expect(attempts).toBe(2);
@@ -1956,8 +1956,8 @@ describe("Library response and media boundaries", () => {
     await screen.findByRole("heading", { name: "Library" });
     expect(screen.queryByText(new RegExp(`couldn’t load ${label}`))).toBeNull();
     await act(async () => reject(new Error("network")));
-    fireEvent.click(await screen.findByRole("button", { name: `Retry ${label}` }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: `Retry ${label}` })).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: `Try again to load ${label}` }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: `Try again to load ${label}` })).toBeNull());
     queryClient.clear();
   });
 
@@ -2723,7 +2723,7 @@ describe("Library items whose files are gone", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing entries" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 entry" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(STALE));
-    expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
+    expect(toast.error).not.toHaveBeenCalledWith("We couldn’t delete this creation. Try again.");
     expect(calls).toEqual(["confirm"]);
     expect(await within(screen.getByRole("dialog")).findByText(/244 of 845 checked items are missing/)).toBeVisible();
     expect(within(screen.getByRole("dialog")).queryByText(/243 of 845 checked items are missing/)).toBeNull();
@@ -2737,7 +2737,7 @@ describe("Library items whose files are gone", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing entries" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 entry" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(STALE));
-    expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
+    expect(toast.error).not.toHaveBeenCalledWith("We couldn’t delete this creation. Try again.");
     expect(calls).toEqual(["confirm", "remove"]);
     expect(screen.getByRole("dialog")).toBeVisible();
     await waitFor(() => expect(seen.mediaPaths.length).toBeGreaterThan(1));

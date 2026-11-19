@@ -160,7 +160,7 @@ async function open(page: Page, surface: Surface, state: State) {
     await expect(
       page
         .getByRole("alert")
-        .filter({ hasText: /Couldn’t load (this|sign-in)|Something didn’t load/ }),
+        .filter({ hasText: /Couldn’t load (this|sign-in|people|invites|access plans)|Something didn’t load/ }),
     ).toBeVisible();
   else if (surface === "people")
     await expect(
@@ -632,14 +632,15 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await page.route("**/admin/api/invites", (route) =>
     fulfilJson(route, { invites: [invitation], access_plans: [planChoice] }),
   );
-  // The plans request also fails in the error state, so the header explains
-  // why Invite is unavailable and offers its own Try again.
+  // The plans request also fails in the error state: the gateway is down, so
+  // the page says so once, and its one Try again asks every read again.
+  await expect(page.getByRole("main").getByRole("alert")).toHaveCount(1);
   await expect(
-    page.getByText("Access plans couldn’t be loaded", { exact: true }),
+    page.getByText("Access plans must load first", { exact: true }),
   ).toBeVisible();
   await page
     .getByLabel("Invites")
-    .getByRole("button", { name: "Try again", exact: true })
+    .getByRole("button", { name: /^Try again/ })
     .click();
   await expect(page.getByText(invitation.email, { exact: true })).toBeVisible();
   let revoked = false;
