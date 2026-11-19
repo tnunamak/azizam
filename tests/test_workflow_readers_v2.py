@@ -15,6 +15,8 @@ For a reviewed additive workflow, capture with
 Save WORKFLOW_READERS_JSON as sorted, two-space JSON with a final newline, compressed with gzip mtime=0.
 Review every existing entry that changes before replacing it.
 
+Re-captured 2026-11-18 for train 81: the TRELLIS threshold choice is named White-background cutout; only that
+choice name and the TRELLIS manifest hash in two summaries moved.
 Re-captured 2026-11-18 for train 80: the TRELLIS background-removal choices are named Simple cutout and AI cutout;
 only those two choice_labels in the member catalog and the TRELLIS manifest hash in two summaries moved.
 Re-captured 2026-11-18 for train 77, second step: six more workflows (TRELLIS, PIXAL3D, RIFE, SeedVR2, SDXL tile,

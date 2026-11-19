@@ -37,7 +37,7 @@ inputs:
     help: Choose how the background is cut away, or leave it empty to let the service choose.
     type: string
     enum: [threshold, birefnet]
-    choice_labels: {"threshold": "Simple cutout", "birefnet": "AI cutout"}
+    choice_labels: {"threshold": "White-background cutout", "birefnet": "AI cutout"}
   extensions:
     label: extensions
     help: Reserved. Supplying it is refused until a service option is mapped to it.
