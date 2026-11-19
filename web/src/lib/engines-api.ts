@@ -157,6 +157,16 @@ export interface DetectedModel {
   kind?: string | null;
 }
 
+/** What "another computer on my network" means for a checked address: the network Azizam will call, and how. */
+export interface RemotePlan {
+  /** The private network computed from the address, such as 10.0.0.0/24. */
+  network: string;
+  transport: "tls" | "private_plaintext";
+  /** True for plain http: the owner must say they trust the network before the engine is saved. */
+  trust_needed: boolean;
+  trusted: boolean;
+}
+
 export interface CheckResult {
   definition: string;
   definition_version: number;
@@ -176,6 +186,8 @@ export interface CheckResult {
   suggested_name: string;
   name_source: "server" | "address" | "";
   steps: { label: string; result: string }[];
+  /** Present when the check was for a server on another computer. */
+  remote?: RemotePlan;
 }
 
 export interface TestResult {
@@ -249,6 +261,9 @@ export interface EngineValues {
   lifecycle_start?: string | string[];
   lifecycle_stop?: string | string[];
   lifecycle_ready_s?: number | string;
+  /** A definition with a "where" field only: this computer, or another computer on the owner's network. */
+  where?: "this" | "network";
+  network_trusted?: boolean;
 }
 
 export interface StoredTest {
