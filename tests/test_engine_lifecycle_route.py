@@ -8,6 +8,7 @@ whole gateway to prove the wiring in the proxy and the real sign-in roles.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import time
@@ -198,6 +199,40 @@ def test_a_running_execution_makes_stop_and_restart_busy_and_stops_nothing(rig):
     assert answers(rig.port) and rig.pid() == pid
     lease.release()
     assert rig.post("fixture", "stop").json()["result"] == "done"
+
+
+def test_a_stop_waits_out_a_held_residency_lock_and_holds_it_for_the_whole_stop(rig, monkeypatch):
+    """A request mints its lease inside a hold of the domain lock, so the stop holds that lock from its busy check to
+    its end: a request that arrives after the check queues behind the stop instead of being cut off by it."""
+    from gateway import engine_lifecycle
+
+    started(rig)
+    monkeypatch.setattr(engine_lifecycle, "_LOCK_WAIT_S", 0.2)
+
+    async def scenario():
+        lock = asyncio.Lock()
+        lifecycle = EngineLifecycle(backends=lambda: rig.backends, in_flight=rig.drain.in_flight,
+                                    lock_for=lambda _service_id: lock, commands_allowed=lambda: True, verify_s=3.0)
+        await lock.acquire()  # a request making its target ready
+        held = await lifecycle.apply("fixture", "stop")
+        lock.release()
+        seen_locked: list[bool] = []
+
+        async def watch():
+            while not stop.done():
+                seen_locked.append(lock.locked())
+                await asyncio.sleep(0.01)
+
+        stop = asyncio.ensure_future(lifecycle.apply("fixture", "stop"))
+        await watch()
+        return held, await stop, seen_locked, lock.locked()
+
+    held, stopped, seen_locked, locked_after = asyncio.run(scenario())
+    assert (held.result, held.state) == ("busy", "running")
+    assert (stopped.result, stopped.state) == ("done", "stopped")
+    # Samples before the stop task first runs may see the lock free; from the first hold to the end it stays held.
+    assert True in seen_locked and all(seen_locked[seen_locked.index(True):]) and not locked_after
+    assert not answers(rig.port)
 
 
 def test_with_host_commands_off_start_and_restart_are_refused_and_start_nothing(rig):

@@ -18130,7 +18130,8 @@ def _workflow_owner_entry_problems(entry) -> list[dict[str, Any]]:
 
 # The owner's start, stop and restart of an engine. It reads the live backends and the serving leases per request.
 ADMIN_ENGINE_LIFECYCLE = engine_lifecycle.EngineLifecycle(
-    backends=lambda: config.get("backends") or {}, in_flight=lambda service_id: _swap_drain.in_flight(service_id))
+    backends=lambda: config.get("backends") or {}, in_flight=lambda service_id: _swap_drain.in_flight(service_id),
+    lock_for=swap_lock_for)
 
 
 app.include_router(

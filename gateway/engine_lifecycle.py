@@ -38,6 +38,8 @@ _MAX_START_S = 120.0
 _DEFAULT_STOP_S = 5.0
 _MAX_STOP_S = 30.0
 _CONNECT_S = 0.25
+# How long a stop waits for the engine's residency lock (a request making its target ready, or a swap) before it answers busy.
+_LOCK_WAIT_S = 5.0
 _POLL_S = 0.05
 
 
@@ -66,12 +68,16 @@ def _number(value: Any, default: float, low: float, high: float) -> float:
 
 class EngineLifecycle:
     """Owner lifecycle actions. ``backends`` is the live ``config["backends"]``; ``in_flight`` counts the serving
-    leases the request path holds on an engine (``SwapDrain.in_flight``)."""
+    leases the request path holds on an engine (``SwapDrain.in_flight``); ``lock_for`` is the residency domain's swap
+    lock (``proxy.swap_lock_for``). The request path mints its lease inside a hold of that lock, so a stop that holds
+    it from the busy check to the end of the stop cannot cut off a request that arrived after the check."""
 
     def __init__(self, *, backends: Callable[[], Mapping[str, Any]], in_flight: Callable[[str], int],
+                 lock_for: Callable[[str], asyncio.Lock] | None = None,
                  commands_allowed: Callable[[], bool] | None = None, verify_s: float | None = None) -> None:
         self._backends = backends
         self.in_flight = in_flight
+        self._lock_for = lock_for
         self._commands_allowed = commands_allowed or host_commands.commands_allowed
         self._verify_s = verify_s
         self._locks: dict[str, asyncio.Lock] = {}
@@ -110,12 +116,23 @@ class EngineLifecycle:
             # Refuse a restart before it stops anything: an engine Azizam cannot start again is not left down.
             return answer("refused", await self._state(driver, svc), COMMANDS_OFF_WHY)
         if action in ("stop", "restart"):
-            running = self.in_flight(service_id)
-            if running > 0:
-                return answer("busy", await self._state(driver, svc),
-                              f"{running} request{'s are' if running != 1 else ' is'} still running on this engine; "
-                              "stop it when they finish.")
-            stopped = await self._stop(driver, svc, answer)
+            lock = self._lock_for(service_id) if self._lock_for is not None else None
+            if lock is not None:
+                try:
+                    await asyncio.wait_for(lock.acquire(), timeout=_LOCK_WAIT_S)
+                except asyncio.TimeoutError:
+                    return answer("busy", await self._state(driver, svc),
+                                  "This engine is busy making a model ready; stop it when that finishes.")
+            try:
+                running = self.in_flight(service_id)
+                if running > 0:
+                    return answer("busy", await self._state(driver, svc),
+                                  f"{running} request{'s are' if running != 1 else ' is'} still running on this engine; "
+                                  "stop it when they finish.")
+                stopped = await self._stop(driver, svc, answer)
+            finally:
+                if lock is not None:
+                    lock.release()
             if stopped.result != "done" or action == "stop":
                 return stopped
         return await self._start(driver, svc, answer)
