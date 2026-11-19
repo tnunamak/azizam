@@ -149,6 +149,7 @@ Put remote access behind TLS, keep secure cookies enabled there, and back up dur
 ## Contributing
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md). It covers local setup, hermetic tests and data-based engine integrations. See [the contributor docs](docs/README.md#contributor) for architecture and design references. Keep changes small and include evidence for the behavior you change.
+Everyone who takes part follows [the code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
