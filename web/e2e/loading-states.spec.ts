@@ -51,20 +51,32 @@ const SESSION = /\/(me|admin)\/api\/session(\?|$)/;
 const SIGNED_IN_DATA = /\/(me|admin)\/api\//;
 const PUBLIC_DATA = /\/(auth|setup)\/api\//;
 
-/** Holds data requests until the capture releases them. */
-async function holdData(page: Page, scope: Scope) {
-  const data = scope === "public" ? PUBLIC_DATA : SIGNED_IN_DATA;
-  let held = 0;
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+interface Hold {
+  scope: Scope;
+  held: number;
+  released: Promise<void>;
+  release: () => void;
+}
+
+/**
+ * One route for the page's whole test, which holds the data requests of the
+ * capture that is current until that capture releases them. Removing the route
+ * and adding a new one between captures left the next page's requests unrouted
+ * (gate run of train 88: no route call at all after the second navigation), so
+ * the route stays and only the hold changes.
+ */
+async function routeHolds(page: Page) {
+  let current: Hold | undefined;
   await page.route(
-    (url) => data.test(url.pathname + url.search) && !SESSION.test(url.pathname + url.search),
+    (url) => !SESSION.test(url.pathname + url.search),
     async (route: Route) => {
-      if (scope === "signed-in" && route.request().method() !== "GET") return route.fallback();
-      held += 1;
-      await released;
+      const hold = current;
+      const url = new URL(route.request().url());
+      const data = hold?.scope === "public" ? PUBLIC_DATA : SIGNED_IN_DATA;
+      if (!hold || !data.test(url.pathname + url.search)) return route.fallback();
+      if (hold.scope === "signed-in" && route.request().method() !== "GET") return route.fallback();
+      hold.held += 1;
+      await hold.released;
       try {
         await route.fallback();
       } catch (error) {
@@ -76,11 +88,34 @@ async function holdData(page: Page, scope: Scope) {
       }
     },
   );
-  return { count: () => held, release };
+  return {
+    /** Holds the data requests of one capture until its release. */
+    hold(scope: Scope) {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const hold: Hold = { scope, held: 0, released, release };
+      current = hold;
+      return {
+        count: () => hold.held,
+        release: () => {
+          if (current === hold) current = undefined;
+          hold.release();
+        },
+      };
+    },
+  };
 }
 
-async function capture(page: Page, item: Capture, theme: (typeof themes)[number], width: number) {
-  const { count, release } = await holdData(page, item.scope);
+async function capture(
+  page: Page,
+  holds: Awaited<ReturnType<typeof routeHolds>>,
+  item: Capture,
+  theme: (typeof themes)[number],
+  width: number,
+) {
+  const { count, release } = holds.hold(item.scope);
   try {
     await page.goto(item.url, { waitUntil: "domcontentloaded" });
     // The shell's own wait for the account is not the route's loading state.
@@ -118,7 +153,6 @@ async function capture(page: Page, item: Capture, theme: (typeof themes)[number]
     }
   } finally {
     release();
-    await page.unrouteAll({ behavior: "wait" });
   }
 }
 
@@ -130,17 +164,19 @@ for (const theme of themes) {
       await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
       await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
       const cookies = await context.cookies();
+      const holds = await routeHolds(page);
       for (const item of CAPTURES) {
         await test.step(item.group, async () => {
           // Public routes are seen with no session, as a visitor sees them.
           if (item.scope === "public") await context.clearCookies();
           try {
-            await capture(page, item, theme, width);
+            await capture(page, holds, item, theme, width);
           } finally {
             if (item.scope === "public") await context.addCookies(cookies);
           }
         });
       }
+      await page.unrouteAll({ behavior: "wait" });
     });
   }
 }
