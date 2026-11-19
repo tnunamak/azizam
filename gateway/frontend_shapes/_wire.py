@@ -120,6 +120,14 @@ def refused_response(refused: RunRefused, words: Mapping[str, str] | None = None
     return error_response(refused.http_status, refused.message, kind=kind, code=refused.code, headers=headers, **extra)
 
 
+def refused_body_response(refused: RunRefused) -> Response:
+    """A refusal whose client body the gateway already built (its admission refusal, ``refusal_body``): sent intact,
+    not re-worded in the wire's error vocabulary, with the ``Retry-After`` the refusal carries."""
+    seconds = client_errors.retry_after(str(refused.retry_after_s)) if refused.retry_after_s is not None else None
+    headers = {"Retry-After": seconds} if seconds else None
+    return JSONResponse(refused.refusal_body, status_code=refused.http_status, headers=headers)
+
+
 async def json_object(request: Request, *, not_object: str = "The request body must be a JSON object") -> dict[str, Any] | Response:
     """The request body as a JSON object, or a 400 in the shape's vocabulary."""
     try:

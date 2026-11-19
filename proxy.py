@@ -27529,14 +27529,23 @@ def _workflow_binding_problem(binding: Any) -> str | None:
 
 def _refused_from_response(response: Response) -> RunRefused:
     try:
-        error = (json.loads(response.body) or {}).get("error") or {}
+        payload = json.loads(response.body) or {}
     except (TypeError, ValueError):
-        error = {}
+        payload = {}
+    error = payload.get("error") or {}
     retry = response.headers.get("retry-after")
+    # The gateway's own admission refusal names its reasons in the body it built (``error.decision`` and the
+    # ``admission`` object). Keep that body with the refusal so the wire that serves the gateway's vocabulary can
+    # send it intact, the way _upstream_admission_response keeps it across a loopback hop.
+    intact = payload if (
+        isinstance(payload, dict) and isinstance(error, dict)
+        and error.get("code") == "resource_admission_denied" and "decision" in error
+    ) else None
     return RunRefused(
         response.status_code, str(error.get("code") or error.get("type") or "refused"),
         str(error.get("message") or "The gateway cannot take this run now."),
-        retry_after_s=int(retry) if retry and retry.isdigit() else None)
+        retry_after_s=int(retry) if retry and retry.isdigit() else None,
+        refusal_body=intact)
 
 
 def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDecision | None:

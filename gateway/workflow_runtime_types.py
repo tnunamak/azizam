@@ -583,13 +583,16 @@ class RunJobView:
 
 @dataclass(frozen=True)
 class RunRefused:
-    """``submit_run`` refused before creating a job. The frontend renders it in its own error vocabulary."""
+    """``submit_run`` refused before creating a job. The frontend renders it in its own error vocabulary, unless the
+    gateway already built this refusal's client body (``refusal_body``: an admission refusal names its reasons in a
+    body the caller can read): a frontend that serves the gateway's own vocabulary then sends that body intact."""
 
     http_status: int
     code: str
     message: str
     problems: tuple[ContractError, ...] = ()
     retry_after_s: int | None = None
+    refusal_body: Mapping[str, Any] | None = None
 
 
 RecoveryOutcome = Literal["terminal", "replay", "poll", "submission_unknown", "resume", "interrupted_before_submit",
