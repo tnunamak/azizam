@@ -54,6 +54,11 @@ class EngineCatalog:
     def capability(self, capability_id: str) -> dict[str, Any]:
         return copy.deepcopy(self.data["capabilities"][capability_id])
 
+    def real_test_id(self, definition: Mapping[str, Any], capability_id: str) -> str | None:
+        """The real test this kind of server runs for a capability: its own choice, else the capability's, else none."""
+        chosen = (definition.get("real_test_for") or {}).get(capability_id)
+        return chosen or self.data["capabilities"][capability_id].get("real_test")
+
     def metadata_row(self, row_id: str) -> dict[str, Any]:
         for row in self.data["metadata_rows"]:
             if row["id"] == row_id:
@@ -191,6 +196,30 @@ def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
     return errors
 
 
+def _dispatch_errors(dispatch: Mapping[str, Any]) -> list[str]:
+    """The record a definition writes dispatches through an installed description: the description must exist and
+    declare the operations the offering's selection names."""
+    from gateway.engine_protocol import description
+
+    doc = description.load_registry().get(dispatch["protocol"])
+    if doc is None or doc.executor != "http-v1":
+        return [f"protocol: no installed http-v1 description named {dispatch['protocol']!r}"]
+    errors: list[str] = []
+    selection = dispatch["offering"]["selection"]
+    if selection.get("mode") == "switch":
+        switch = selection.get("switch") or {}
+        call = doc.operations.get(switch.get("call"))
+        if call is None or call.op_class != "control":
+            errors.append(f"offering.selection.switch.call: {switch.get('call')!r} is not a control operation of {doc.id}")
+        if switch.get("observe_selected") not in (dispatch.get("observations") or {}):
+            errors.append(f"offering.selection.switch.observe_selected: {switch.get('observe_selected')!r} is not in observations")
+    for name, observation in (dispatch.get("observations") or {}).items():
+        op = (observation or {}).get("op")
+        if op is not None and (doc.operations.get(op) is None):
+            errors.append(f"observations.{name}.op: {doc.id} declares no operation {op!r}")
+    return errors
+
+
 def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     """Rules a JSON Schema cannot say: references between rows, unique ids, regexes that compile."""
     errors: list[str] = []
@@ -229,6 +258,8 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
                 validate_facts(definition["retention_facts"])
             except ValueError as exc:
                 errors.append(f"{where}.{exc}")
+        if "dispatch" in definition["record"]:
+            errors += [f"{where}.record.dispatch.{message}" for message in _dispatch_errors(definition["record"]["dispatch"])]
         if "process_template" in definition:
             from gateway.process_template import template_errors
 
@@ -248,6 +279,11 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for cap_id in definition["capabilities"]:
             if cap_id not in capabilities:
                 errors.append(f"{where}.capabilities: no capability named {cap_id!r}")
+        for cap_id, test in (definition.get("real_test_for") or {}).items():
+            if cap_id not in definition["capabilities"]:
+                errors.append(f"{where}.real_test_for: {cap_id!r} is not one of this kind's capabilities")
+            if test not in data["real_tests"]:
+                errors.append(f"{where}.real_test_for.{cap_id}: no real test named {test!r}")
         if definition["probes"]["primary"]["method"] != "GET":
             # The primary read doubles as the engine's readiness read (gateway/engine_readiness.py), so it must not change state.
             errors.append(f"{where}.probes.primary.method: the primary probe is the readiness read and must be GET")

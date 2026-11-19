@@ -1519,8 +1519,9 @@ async def _run_check(
                                "ticked": level == "likely"}
         if why:
             row["why"] = why
-        if cap.get("real_test"):
-            row["real_test"] = cap["real_test"]
+        test_id = catalog.real_test_id(definition, cap_id)
+        if test_id:
+            row["real_test"] = test_id
         if cap.get("route"):
             route_base = join_url(ctx.origin, definition["probes"]["route_base"]) if definition["probes"].get("route_base") else ctx.address
             row["sent_to"] = f"{cap['route']['method']} {join_url(route_base, cap['route']['path'])}"
@@ -1657,7 +1658,10 @@ async def run_real_test(
         raise DraftError("This kind of server does not offer that.", field="capability")
     address = normalize_address(values.get("address"))
     cap = catalog.capability(capability_id)
-    test = catalog.data["real_tests"][cap["real_test"]]
+    test_id = catalog.real_test_id(definition, capability_id)
+    if test_id is None:
+        raise DraftError("This kind of server has no real test for that.", field="capability")
+    test = catalog.data["real_tests"][test_id]
     if test.get("kind") == "get_probe":
         return await _run_get_probe(definition, values, capability_id, cap, test, address=address, key=key, fetch=fetch, now=now)
     headers = _auth_headers(key.value, values)

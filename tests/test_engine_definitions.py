@@ -28,7 +28,7 @@ def _parse(data):
 
 def test_the_seed_holds_its_definitions_with_any_openai_compatible_server_first():
     catalog = load_engine_catalog()
-    assert catalog.ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription", "workflow-image-engine"]
+    assert catalog.ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription", "workflow-image-engine", "sdapi"]
     first = catalog.public()["definitions"][0]
     assert first["title"] == "Any OpenAI-compatible server"
     assert first["fields"][0]["key"] == "address" and first["fields"][1]["key"] == "api_key"
@@ -93,7 +93,8 @@ def test_every_field_is_one_the_running_gateway_reads():
 def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
     """Chat and embeddings go through the model router to the engine. Speech, transcription and the node-graph work (pictures,
     video, sound) go to the reviewed adapters, which read the engine's record (the engines derived from service records).
-    Reranking and live voice go to fixed built-in services, so ticking them would save nothing the gateway uses
+    Pictures also go to an added engine through a definition whose record dispatches by an installed protocol description
+    (``record.dispatch``). Reranking and live voice go to fixed built-in services, so ticking them would save nothing the gateway uses
     (add-engine-spec.md section 8, v2)."""
     served = {"chat", "embeddings", "speech", "transcription", "images", "videos", "audio_generate"}
     assert set(SEED["capabilities"]) == served
@@ -196,7 +197,7 @@ def test_definition_timeouts_are_optional_positive_bounded_numbers():
     data = copy.deepcopy(SEED)
     for definition in data["definitions"]:
         definition.pop("timeouts", None)
-    assert _parse(data).ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription", "workflow-image-engine"]
+    assert _parse(data).ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription", "workflow-image-engine", "sdapi"]
 
 
 def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
@@ -227,8 +228,11 @@ def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
                 assert len(calls) > 3
                 assert all(call[2] == probe_s for call in calls)
                 routes = [row["route"]["path"] for row in map(catalog.capability, definition["capabilities"]) if "route" in row]
-                # A definition whose capabilities have no route of its own (node-graph work) sends no route probe.
-                assert not routes or any(call[0] == "POST" and any(call[1].endswith(route) for route in routes) for call in calls)
+                # A kind that proves itself by reading a list sends no empty POST: a POST could start work.
+                if definition["probes"]["route_probes"]:
+                    assert any(call[0] == "POST" and any(call[1].endswith(route) for route in routes) for call in calls)
+                if not catalog.real_test_id(definition, definition["capabilities"][0]):
+                    continue
                 for reply_s, expected in ((None, test_s), (3, 3), (600, test_s), ("bad", test_s)):
                     calls.clear()
                     draft = dict(values)

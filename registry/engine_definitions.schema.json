@@ -396,6 +396,11 @@
           }
         },
         "capabilities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}},
+        "real_test_for": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "The real test this kind of server runs for a capability it lists, by capability id. It overrides the capability's own real_test, and a capability that names neither has no real test. A test written for one kind of server (a read of an engine's status page) belongs here, not on a capability that several kinds share."
+        },
         "default_ticked": {"const": "likely"},
         "check_rows": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "name_fallback": {"type": "string"},
@@ -410,7 +415,26 @@
             "protocol": {"type": "string"},
             "native_passthrough": {"type": "boolean"},
             "transforms": {"type": "array", "items": {"type": "string"}},
-            "base_path": {"type": "string"}
+            "base_path": {"type": "string"},
+            "dispatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["protocol", "offering"],
+              "description": "The saved record calls the engine through an installed HTTP protocol description, not a reviewed adapter. Each model the owner ticks becomes one offering of the described task. A string value {upstream} inside the selection or the observations is replaced by that model's name on the server.",
+              "properties": {
+                "protocol": {"$ref": "#/$defs/id", "description": "The id of a description in registry/protocols."},
+                "offering": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["task", "selection"],
+                  "properties": {
+                    "task": {"type": "string", "minLength": 1, "description": "The offering task the description's generate operation serves, for example image."},
+                    "selection": {"type": "object", "description": "The offering's selection block (contract section 3). Checked against the description when the file loads."}
+                  }
+                },
+                "observations": {"type": "object", "description": "The record's observations the selection verifies against, for example selected."}
+              }
+            }
           }
         }
       }

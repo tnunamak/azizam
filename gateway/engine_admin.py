@@ -518,6 +518,23 @@ def described_operations(values: Mapping[str, Any]) -> set[str]:
     return set(doc.operations) if doc is not None and doc.executor == "http-v1" else set()
 
 
+def _dispatch_offerings(template: Mapping[str, Any], models: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """One offering per model row, from the definition's offering template. ``{upstream}`` is the model's name on the server."""
+    def fill(node: Any, upstream: str) -> Any:
+        if isinstance(node, str):
+            return upstream if node == "{upstream}" else node
+        if isinstance(node, list):
+            return [fill(item, upstream) for item in node]
+        if isinstance(node, Mapping):
+            return {key: fill(value, upstream) for key, value in node.items()}
+        return node
+
+    return [{"id": row["model_group"], "kind": "model", "upstream": row["upstream_model"],
+             "tasks": [{"task": template["task"], "evidence": "declared"}],
+             "selection": fill(template["selection"], row["upstream_model"])}
+            for row in models]
+
+
 def build_raw(
     catalog: EngineCatalog,
     definition: Mapping[str, Any],
@@ -537,6 +554,10 @@ def build_raw(
 ) -> dict[str, Any]:
     """The raw service record for ``service_from_backend_config``. ``keep`` holds config keys to carry over."""
     caps = list(dict.fromkeys(capabilities))
+    dispatch = definition["record"].get("dispatch")
+    if dispatch:
+        # A definition whose record calls the engine through an installed description chooses it; the owner chooses nothing.
+        values = {**values, "dispatch": "protocol", "protocol_description": dispatch["protocol"]}
     described = described_operations(values)
     for position, cap_id in enumerate(caps, start=1):
         if cap_id not in definition["capabilities"] and cap_id not in described:
@@ -603,6 +624,8 @@ def build_raw(
         raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)
     else:
         raw.pop("models", None)
+    if dispatch:
+        raw["offerings"] = _dispatch_offerings(dispatch["offering"], models_config)
     if tests:
         raw["engine_tests"] = dict(tests)
     else:
@@ -1674,6 +1697,10 @@ class EngineService:
                process: Mapping[str, Any] | None = None,
                residency: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
+        dispatch = definition["record"].get("dispatch")
+        if dispatch and dispatch.get("observations"):
+            # The observations the offerings' selection verifies against are part of the record this definition writes.
+            observations = {**(observations or {}), **copy.deepcopy(dispatch["observations"])}
         written: list[str] = []
         retired: list[str] = []
         old_config = (existing or {}).get("config") or {}

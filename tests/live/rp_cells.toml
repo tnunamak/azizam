@@ -89,3 +89,11 @@ status = "pending"
 owner = "azizam maintainers"
 reason = "the workflow image engine definition speaks node-graph upstream; a recording needs a real node-graph engine on the recording host and the owner's recorder protocol entry for it"
 expires_on = 2027-01-08
+
+[[cell]]
+protocol = "sdapi"
+set = "images"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the sdapi engine definition speaks sdapi upstream; a recording needs a local Stable Diffusion web API server and the operator's choice to queue one generation, which this build did not do"
+expires_on = 2027-01-08

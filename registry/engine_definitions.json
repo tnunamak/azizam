@@ -60,24 +60,21 @@
       "record_capabilities": [
         "images",
         "generations"
-      ],
-      "real_test": "graph_ready"
+      ]
     },
     "videos": {
       "label": "Video",
       "noun": "video",
       "record_capabilities": [
         "videos"
-      ],
-      "real_test": "graph_ready"
+      ]
     },
     "audio_generate": {
       "label": "Sound and music",
       "noun": "sound",
       "record_capabilities": [
         "audio.generate"
-      ],
-      "real_test": "graph_ready"
+      ]
     }
   },
   "evidence_text": {
@@ -1421,6 +1418,11 @@
         "videos",
         "audio_generate"
       ],
+      "real_test_for": {
+        "images": "graph_ready",
+        "videos": "graph_ready",
+        "audio_generate": "graph_ready"
+      },
       "default_ticked": "likely",
       "check_rows": [
         "Reaching the engine",
@@ -1471,6 +1473,126 @@
         "protocol": "node-graph",
         "native_passthrough": false,
         "base_path": ""
+      }
+    },
+    {
+      "definition": "sdapi",
+      "timeouts": {"probe_s": 5, "real_test_s": 120},
+      "definition_version": 1,
+      "title": "Stable Diffusion web API server",
+      "example": "For example, AUTOMATIC1111 or Forge, started with the web API on",
+      "summary": "Makes images from a prompt. Azizam asks the server for its checkpoints, and you pick the ones to offer.",
+      "keywords": [
+        "images",
+        "image generation",
+        "stable diffusion",
+        "txt2img",
+        "sdapi",
+        "automatic1111",
+        "a1111",
+        "forge",
+        "checkpoint"
+      ],
+      "flow": "detect",
+      "steps": [
+        "Kind",
+        "Address",
+        "What it can do",
+        "Models",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://127.0.0.1:7860",
+          "help": "Where the server listens, with its port. Do not add /sdapi."
+        },
+        {
+          "key": "models",
+          "label": "Checkpoints",
+          "type": "multiselect",
+          "order": 60,
+          "options_from": "models"
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "options_read",
+          "method": "GET",
+          "path": "/sdapi/v1/options",
+          "from": "origin",
+          "kind": "model_list"
+        },
+        "metadata": [],
+        "lists": [
+          {
+            "id": "checkpoints",
+            "offers": "model",
+            "method": "GET",
+            "path": "/sdapi/v1/sd-models",
+            "from": "origin",
+            "capability": "images",
+            "list": {
+              "shape": "array_of_objects",
+              "select": "",
+              "id_keys": ["title"]
+            }
+          }
+        ],
+        "route_probes": false
+      },
+      "capabilities": [
+        "images"
+      ],
+      "default_ticked": "likely",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Listing its checkpoints",
+        "Finding what it can do"
+      ],
+      "name_fallback": "{host_label}",
+      "models_note": "Azizam shows the checkpoints the server reports. It does not send a key to this kind of server. Azizam asks the server to switch to the checkpoint a request names, reads the selection back, and sends the image request only when the server confirms it.",
+      "advice": [
+        {
+          "code": "needkey",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {"status_in": [401, 403], "key_sent": false},
+          "title": "This server asks for a key",
+          "what": "This server asks for a key, and this kind of server is used without a key.",
+          "why": "It answered “{status_text}”. Azizam sends no key to an image server of this kind, so it cannot be added this way.",
+          "fix": "Turn the key off on the server, or use a server that needs none. A server that needs a key cannot be added this way."
+        }
+      ],
+      "record": {
+        "protocol": "sdapi",
+        "native_passthrough": false,
+        "base_path": "",
+        "dispatch": {
+          "protocol": "sdapi",
+          "offering": {
+            "task": "image",
+            "selection": {
+              "mode": "switch",
+              "switch": {
+                "call": "choose",
+                "args": {"sd_model_checkpoint": "{upstream}"},
+                "observe_selected": "selected",
+                "exclusive_scope": "engine",
+                "drain_timeout_s": 60,
+                "queue_wait_s": 120,
+                "on_failure": "fail"
+              }
+            }
+          },
+          "observations": {"selected": {"op": "selected"}}
+        }
       }
     }
   ]

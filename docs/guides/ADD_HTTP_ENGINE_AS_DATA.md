@@ -171,6 +171,19 @@ from gateway request metadata. Model creation time is 0 (unknown). Tool calls,
 non-text messages and base64 embeddings need additional mappings or a reviewed
 adapter. Use native pass-through when you need the full native API.
 
+## Add a server from the Engines dialog with `record.dispatch`
+
+A definition in `registry/engine_definitions.json` can carry a `record.dispatch`
+block. The saved record then dispatches through the named protocol description,
+and each ticked model becomes one offering built from the block's `offering`
+template. A `{upstream}` string in the template is replaced by the model's name
+on the server. The `observations` map is copied into the record. The
+`sdapi` definition uses this: its offering switches the server's checkpoint with
+the `choose` control call, reads it back with `selected`, and returns 503 with no
+generation call if the read-back differs. A checkpoint that the server did not
+list is never sent. Editing the models of a saved dispatch record is not yet
+covered by a test.
+
 ## Attach an encrypted stored key
 
 1. As the owner, add or edit the engine in the Engines page. Enter the engine
