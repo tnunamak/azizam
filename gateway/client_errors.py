@@ -341,23 +341,67 @@ def client_error(
 
 
 _STT_SPLIT_REASONS = {
-    "unknown_duration": (422, "its duration could not be determined"),
-    "split_failed": (502, "could not be cut by the gateway"),
-    "unsupported_request": (422, "uses request options that cannot be preserved across pieces"),
+    "unknown_duration": 422,
+    "split_failed": 502,
+    "unsupported_request": 422,
+}
+
+# The only option names a split refusal may print, each with what to do about it. A name outside this table is
+# dropped, so no client text or tool output reaches the message.
+STT_SPLIT_BLOCKERS = {
+    "more than one file": "send one file",
+    "response_format=text": "use response_format=json or verbose_json",
+    "response_format=srt": "use response_format=json or verbose_json",
+    "response_format=vtt": "use response_format=json or verbose_json",
+    "response_format": "use response_format=json or verbose_json",
+    "stream": "remove stream",
+    "chunking_strategy": "remove chunking_strategy",
+    "include": "remove include",
+    "timestamp_granularities": "remove timestamp_granularities",
+    "chunking disabled": "ask the owner to turn on chunking for this engine",
 }
 
 
-def stt_audio_cannot_be_split(reason: str, limit_seconds: float) -> Response:
-    """A plain refusal built from the validated service limit and a fixed local reason, never media-tool text."""
-    status, why = _STT_SPLIT_REASONS[reason]
+def _stt_seconds(value: float) -> str:
+    return f"{round(value, 1):g}"
+
+
+def _stt_list(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
+
+
+def stt_audio_cannot_be_split(
+    reason: str, limit_seconds: float, *, duration_seconds: float | None = None, blocked_by: Collection[str] = (),
+) -> Response:
+    """A plain refusal built from the validated service limit and a fixed local reason, never media-tool text.
+
+    The limit always comes from the engine record's declared maximum (a record with none is never refused).
+    ``duration_seconds`` is the file's length when it is known; ``blocked_by`` names the request options that
+    prevented cutting, kept only when they are keys of ``STT_SPLIT_BLOCKERS``.
+    """
+    status = _STT_SPLIT_REASONS[reason]
     if not math.isfinite(limit_seconds) or limit_seconds <= 0:
         raise ValueError("The STT hard maximum must be finite and positive")
+    limit = _stt_seconds(limit_seconds)
+    declared = f"{limit}-second maximum declared by the engine record"
     if reason == "unknown_duration":
-        message = (f"The gateway could not determine this audio's duration, so it could not verify the recorded or "
-                   f"measured {limit_seconds:g}-second maximum. The audio was not sent to the transcription engine.")
+        message = (f"The gateway could not determine this audio's duration, so it could not verify the {declared}. "
+                   "The audio was not sent to the transcription engine.")
     else:
-        message = (f"This audio exceeds the recorded or measured {limit_seconds:g}-second maximum and {why}, "
-                   f"so the gateway did not send it whole.")
+        known = duration_seconds is not None and math.isfinite(duration_seconds) and duration_seconds > 0
+        subject = f"This audio is about {_stt_seconds(duration_seconds)} seconds long, which exceeds the {declared}" if known \
+            else f"This audio exceeds the {declared}"
+        options = [name for name in dict.fromkeys(blocked_by) if name in STT_SPLIT_BLOCKERS]
+        if reason == "split_failed":
+            message = (f"{subject}, and the gateway could not cut it into pieces, so it did not send it whole. "
+                       f"Try again, or send audio of {limit} seconds or less.")
+        elif options:
+            advice = _stt_list(list(dict.fromkeys(STT_SPLIT_BLOCKERS[name] for name in options)))
+            message = (f"{subject}, and the request uses {_stt_list(options)}, which cannot be preserved across pieces, "
+                       f"so the gateway did not send it whole. To transcribe it, {advice}, or send audio of {limit} seconds or less.")
+        else:
+            message = (f"{subject}, and the request cannot be preserved across pieces, so the gateway did not send it "
+                       f"whole. Send audio of {limit} seconds or less.")
     return _response(status, {
         "message": message,
         "type": "api_error" if status >= 500 else "invalid_request_error",

@@ -415,7 +415,7 @@ class ChunkedSttAdapter:
                 [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
                 config=execution, cancellation_waiters=run.cancellation_waiters,
                 deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
-                resource_lease=run.resource_lease,
+                resource_lease=run.resource_lease, fields=run.fields,
             )
         if run.on_whole_file_attempt is not None:
             run.on_whole_file_attempt()

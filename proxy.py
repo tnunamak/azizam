@@ -6074,7 +6074,8 @@ async def _stt_terminal_response(
 
 def _stt_audio_not_splittable_response(error: stt_chunking.SttAudioNotSplittable) -> Response:
     """Turn an unverified or uncut upload into a plain gateway refusal."""
-    return client_errors.stt_audio_cannot_be_split(error.reason, error.limit_seconds)
+    return client_errors.stt_audio_cannot_be_split(
+        error.reason, error.limit_seconds, duration_seconds=error.duration_seconds, blocked_by=error.blocked_by)
 
 
 def _stt_error(message: str, *, status_code: int, code: str) -> Response:
