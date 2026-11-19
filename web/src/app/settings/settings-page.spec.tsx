@@ -121,6 +121,9 @@ function seed(state: State) {
   routes.set("/admin/api/operator/host-commands", () => ({
     json: { enabled: false, revision: "0" },
   }));
+  routes.set("/admin/api/operator/engine-folders", () => ({
+    json: { folders: ["/srv/engines"], revision: "3" },
+  }));
   routes.set(
     "/admin/api/extensions",
     reply({
@@ -251,6 +254,7 @@ const SECTIONS = [
   "Receipts",
   "Media admission",
   "Computer commands",
+  "Engine folders",
   "Extensions",
 ];
 
@@ -279,6 +283,92 @@ describe("computer command permission", () => {
     const { section } = await editSection("Computer commands");
     expect(within(section).getByText("Only the owner can change this.")).toBeVisible();
     expect(within(section).queryByRole("switch")).not.toBeInTheDocument();
+  });
+});
+
+describe("engine folders", () => {
+  const folders = (list: string[], revision: string) => ({ json: { folders: list, revision } });
+
+  it("lists the saved folders and adds one against the revision it read", async () => {
+    seed("seeded");
+    routes.set("/admin/api/operator/engine-folders", (request) =>
+      request.method === "PUT" ? folders(["/srv/engines", "/opt/more"], "4") : folders(["/srv/engines"], "3"),
+    );
+    mount();
+    const { user, section } = await editSection("Engine folders");
+    expect(within(section).getByRole("list", { name: "Engine folders" })).toHaveTextContent("/srv/engines");
+    await user.type(within(section).getByLabelText("Add a folder"), "/opt/more");
+    await user.click(within(section).getByRole("button", { name: "Add folder" }));
+    await waitFor(() =>
+      expect(sent("PUT", "/admin/api/operator/engine-folders")).toEqual([
+        { method: "PUT", path: "/admin/api/operator/engine-folders", body: { folders: ["/srv/engines", "/opt/more"] }, ifMatch: "3" },
+      ]),
+      { timeout: 4000 },
+    );
+    expect(await within(section).findByText("/opt/more")).toBeVisible();
+    expect(within(section).getByLabelText("Add a folder")).toHaveValue("");
+  });
+
+  it("shows the gateway's refusal beside the field and keeps what was typed", async () => {
+    seed("seeded");
+    routes.set("/admin/api/operator/engine-folders", (request) =>
+      request.method === "PUT"
+        ? {
+            status: 400,
+            json: { error: { code: "invalid_engine_folders", message: "Azizam cannot run engines from the whole computer. Choose one folder." } },
+          }
+        : folders(["/srv/engines"], "3"),
+    );
+    mount();
+    const { user, section } = await editSection("Engine folders");
+    const field = within(section).getByLabelText("Add a folder");
+    await user.type(field, "/");
+    await user.click(within(section).getByRole("button", { name: "Add folder" }));
+    const refusal = await within(section).findByRole("alert", undefined, { timeout: 4000 });
+    expect(refusal).toHaveTextContent("Azizam cannot run engines from the whole computer. Choose one folder.");
+    expect(field).toBeInvalid();
+    expect(field).toHaveAccessibleDescription(/whole computer/);
+    expect(field).toHaveValue("/");
+    await user.type(field, "x");
+    expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("says when the gateway saved the real path of what was typed", async () => {
+    seed("seeded");
+    routes.set("/admin/api/operator/engine-folders", (request) =>
+      request.method === "PUT" ? folders(["/srv/engines", "/data/real"], "4") : folders(["/srv/engines"], "3"),
+    );
+    mount();
+    const { user, section } = await editSection("Engine folders");
+    await user.type(within(section).getByLabelText("Add a folder"), "/shortcut/link/");
+    await user.click(within(section).getByRole("button", { name: "Add folder" }));
+    expect(await within(section).findByRole("status", undefined, { timeout: 4000 })).toHaveTextContent("Saved as /data/real.");
+  });
+
+  it("removes a folder by saving the list without it, and says what removal does", async () => {
+    seed("seeded");
+    routes.set("/admin/api/operator/engine-folders", (request) =>
+      request.method === "PUT" ? folders([], "4") : folders(["/srv/engines"], "3"),
+    );
+    mount();
+    const { user, section } = await editSection("Engine folders");
+    expect(within(section).getByText(/does not change engines you already saved/)).toBeVisible();
+    await user.click(within(section).getByRole("button", { name: "Remove /srv/engines" }));
+    await waitFor(() =>
+      expect(sent("PUT", "/admin/api/operator/engine-folders")[0]).toMatchObject({ body: { folders: [] }, ifMatch: "3" }),
+      { timeout: 4000 },
+    );
+    expect(await within(section).findByText(/No folders yet/, undefined, { timeout: 4000 })).toBeVisible();
+  });
+
+  it("is read-only for an administrator, who never asks the gateway for the list", async () => {
+    seed("seeded");
+    mocks.role = "admin";
+    mount();
+    const section = await screen.findByRole("region", { name: "Engine folders" });
+    expect(within(section).getByText("Only the owner can change this.")).toBeVisible();
+    expect(within(section).queryByLabelText("Add a folder")).not.toBeInTheDocument();
+    expect(sent("GET", "/admin/api/operator/engine-folders")).toHaveLength(0);
   });
 });
 

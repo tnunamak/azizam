@@ -63,6 +63,39 @@ export interface EngineDefinition {
   /** What the engine can do. `kinds` are the model kinds that work serves: a model's Capability can only be one of them. */
   capabilities: { id: string; label: string; kinds: string[] }[];
   models_note?: string;
+  /**
+   * Set when Azizam starts this kind of engine: what the owner gives (a folder, a port). The command itself comes
+   * from `enginesApi.processPreview`. Null when the owner points Azizam at a server that already runs.
+   */
+  process_slots?: Record<string, ProcessSlot> | null;
+}
+
+/** One value the owner gives for an engine Azizam starts. A path slot may name files the folder must hold (`locate`). */
+export interface ProcessSlot {
+  type: "path" | "port";
+  kind: "dir" | "file" | null;
+  locate: string[];
+}
+
+/** One reason the slot values do not make a safe command. `slot` is "" when the reason is about the whole command. */
+export interface ProcessProblem {
+  code: string;
+  slot: string;
+  why: string;
+}
+
+/** The dry run of an engine start: the exact command, working folder and port, or why not. Nothing is saved or run. */
+export interface ProcessPreview {
+  argv: string[];
+  cwd: string | null;
+  port: number | null;
+  problems: ProcessProblem[];
+}
+
+/** The folders Azizam may start engines from, each stored as its real path. */
+export interface EngineFolders {
+  folders: string[];
+  revision: string;
 }
 
 export interface EngineDefinitions {
@@ -417,7 +450,9 @@ export interface EngineRecordV2 {
 export interface CreateEngineBody {
   definition: string;
   name: string;
-  values: EngineValues;
+  /** An engine Azizam starts sends `slots` and no address; the gateway derives the address from the port. */
+  values: EngineValues | Record<string, never>;
+  slots?: Record<string, string | number>;
   capabilities?: string[];
   models?: { id: string; public_name: string; context_window?: number | null; enabled?: boolean; kind?: string | null }[];
   tests?: Record<string, { ok: boolean; at: number; seconds?: number; evidence_token?: string }>;
@@ -445,6 +480,19 @@ export function fieldFromError(error: unknown): string | null {
   return payload?.error?.field ?? null;
 }
 
+export const engineFoldersKey = ["engineFolders"] as const;
+
+export const engineFoldersApi = {
+  get: () => adminFetch<EngineFolders>("/admin/api/operator/engine-folders"),
+  /** The whole list, saved against the revision it was read at. The gateway refuses a folder with a plain reason. */
+  put: (folders: string[], revision: string) =>
+    adminFetch<EngineFolders>("/admin/api/operator/engine-folders", {
+      method: "PUT",
+      body: { folders },
+      headers: { "If-Match": revision },
+    }),
+};
+
 export const enginesApi = {
   definitions: () => adminFetch<EngineDefinitions>("/admin/api/engine-definitions"),
   check: (body: { definition: string; values: EngineValues; service_id?: string }, signal?: AbortSignal) =>
@@ -457,6 +505,9 @@ export const enginesApi = {
     models?: CreateEngineBody["models"];
     service_id?: string;
   }) => adminFetch<{ test: TestResult }>("/admin/api/engines/test", { method: "POST", body }).then((r) => r.test),
+  /** A dry run of how Azizam would start the engine. Owner only; saves and runs nothing. */
+  processPreview: (body: { definition: string; slots: Record<string, string | number> }, signal?: AbortSignal) =>
+    adminFetch<ProcessPreview>("/admin/api/engines/process-preview", { method: "POST", body, signal }),
   /** Who could use these models (capability ids and public names). Saves nothing. */
   /** A model is its public name, or the name with the work the check found it does. */
   access: (body: { capabilities: string[]; models: AccessModel[] }) =>
