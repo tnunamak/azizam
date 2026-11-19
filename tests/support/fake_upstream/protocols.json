@@ -116,7 +116,8 @@
       "/embeddings",
       "/v1/audio/speech",
       "/v1/audio/voices",
-      "/v1/audio/models"
+      "/v1/audio/models",
+      "/v1/audio/transcriptions"
     ],
     "framing": "none"
   }
