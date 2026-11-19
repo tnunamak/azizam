@@ -10,6 +10,7 @@ import hashlib
 import ipaddress
 import json
 import math
+import re
 import asyncio
 import time
 import threading
@@ -26,6 +27,7 @@ import yaml
 
 from gateway.engine_contract_view import connection_config, offerings_config
 from gateway.engine_protocol.errors import ProtocolError
+from gateway.engine_protocol.types import CREDENTIAL_HEADER
 
 _FACTORIES = weakref.WeakSet()
 _FACTORY_LOCK = threading.Lock()
@@ -63,9 +65,15 @@ class PlainRefusal(ProtocolError):
         super().__init__(message, code='protocol_dispatch_refused')
 
 
-def refuse_unbound(service: Mapping[str, Any]) -> None:
-    """Legacy clients have no remote authority, even for owner-enabled records."""
-    if remote_enabled(connection_config(service)):
+def refuse_unbound(service: Mapping[str, Any], *, bound_adapter_ok: bool = False) -> None:
+    """Legacy clients have no remote authority, even for owner-enabled records.
+
+    ``bound_adapter_ok`` is for a caller whose engine calls go through a reviewed adapter that takes every client from the
+    guarded transport: a record that names such an adapter is not refused here, because the adapter refuses a call that
+    carries no authority.
+    """
+    connection = connection_config(service)
+    if remote_enabled(connection) and not (bound_adapter_ok and _names_a_bound_adapter(connection)):
         raise refused()
 
 
@@ -126,6 +134,29 @@ def authority_record(record):
 
 TRANSPORTS = ('tls', 'private_plaintext')
 _KEY_FIELDS = ('api_key_secret_id', 'api_key_env', 'api_key_ref')
+_PRIVATE_POOLS = {4: ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'), 6: ('fc00::/7',)}
+# RFC 6598 shared address space: the range Tailscale and NetBird give their members, and the range an internet provider
+# shares between its customers. It is approved only by an owner's explicit choice (``remote_dispatch.shared_space``).
+SHARED_SPACE = ipaddress.ip_network('100.64.0.0/10')
+_CREDENTIAL_VALUE = re.compile(r'^\s*(bearer|basic|token|digest|apikey|api-key)\s+\S|\b(sk|pk|rk)[-_][A-Za-z0-9]{12,}|\b(ghp|gho|xox[abp])[-_][A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{12,}',
+                              re.IGNORECASE)
+
+
+def is_shared_space(network) -> bool:
+    network = ipaddress.ip_network(str(network), strict=False)
+    return network.version == 4 and network.subnet_of(SHARED_SPACE)
+
+
+def _static_headers(service, connection):
+    """Every ``(name, value)`` a record would send on each request: its own header rows, in any place a record keeps them."""
+    config = service.get('config') if isinstance(service.get('config'), Mapping) else {}
+    for carrier in (service, config, connection):
+        rows = carrier.get('headers')
+        if isinstance(rows, Mapping):
+            rows = [{'name': name, 'value': value} for name, value in rows.items()]
+        for row in rows if isinstance(rows, (list, tuple)) else ():
+            if isinstance(row, Mapping):
+                yield str(row.get('name') or ''), str(row.get('value') if row.get('value') is not None else '')
 
 
 def _require_plaintext_is_safe(service, connection, approved, cidrs):
@@ -143,6 +174,11 @@ def _require_plaintext_is_safe(service, connection, approved, cidrs):
             or any(carrier.get('secret_refs') for carrier in (service, config))):
         raise PlainRefusal('A key cannot be sent over plain http, even on your own network. '
                            'Put the server behind a reverse proxy that uses https, or remove the key.')
+    for name, value in _static_headers(service, connection):
+        # A header carries a key as well as a field does: by what it is called, or by what its value looks like.
+        if CREDENTIAL_HEADER.search(name) or _CREDENTIAL_VALUE.search(value):
+            raise PlainRefusal('A header that carries a key cannot be sent over plain http, even on your own network. '
+                               'Put the server behind a reverse proxy that uses https, or remove the header.')
     try:
         literal = ipaddress.ip_address(urlsplit(approved).hostname.strip('[]'))
     except ValueError:
@@ -154,17 +190,20 @@ def _require_plaintext_is_safe(service, connection, approved, cidrs):
 def network_around(addresses) -> str:
     """The private network an owner is asked to approve for these addresses: the /24 of an IPv4 one, the /64 of an IPv6 one.
 
-    Every address must sit in that one network and in private space. Anything else is refused in plain words, so
-    that approving a network can never approve a public host, this computer, a link-local or a metadata address.
+    Every address must sit in that one network and in private space (or, for an owner who names one, the shared address
+    space of a mesh network, ``SHARED_SPACE``). Anything else is refused in plain words, so that approving a network can
+    never approve a public host, this computer, a link-local or a metadata address.
     """
+    from gateway import engine_check
     found = [ipaddress.ip_address(str(a)) for a in addresses]
     if not found:
         raise PlainRefusal('That name does not point to an address.')
     first = found[0]
     network = ipaddress.ip_network(f'{first}/{24 if first.version == 4 else 64}', strict=False)
-    pools = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16') if first.version == 4 else ('fc00::/7',)
-    if not any(network.subnet_of(ipaddress.ip_network(pool)) for pool in pools):
-        raise PlainRefusal('That address is not on a private network (10.x.x.x, 172.16 to 172.31, 192.168.x.x, or fd00::/8). '
+    pools = tuple(ipaddress.ip_network(pool) for pool in _PRIVATE_POOLS[first.version]) + ((SHARED_SPACE,) if first.version == 4 else ())
+    if not any(network.subnet_of(pool) for pool in pools) or any(a in engine_check._METADATA_ADDRESSES for a in found):
+        raise PlainRefusal('That address is not on a private network (10.x.x.x, 172.16 to 172.31, 192.168.x.x, an IPv6 address '
+                           'in fc00::/7, or a Tailscale address 100.64 to 100.127). '
                            'Azizam does not call a server on a public address without https.')
     if any(a.version != first.version or a not in network for a in found):
         raise PlainRefusal('That name points to addresses on more than one network. Use the server\'s own address.')
@@ -176,6 +215,14 @@ def limit_catalog():
     return yaml.safe_load((Path(__file__).resolve().parents[1] / 'registry/remote_egress.yml').read_text())['limits']
 
 
+def _names_a_bound_adapter(connection: Mapping[str, Any]) -> bool:
+    """A record with no protocol dispatch is remote only when it names a reviewed adapter that sends through the guard."""
+    if connection.get('dispatch') is not None or not isinstance(connection.get('protocol'), str):
+        return False
+    from gateway.engine_protocol import reviewed
+    return reviewed.sends_through_remote_guard(connection['protocol'])
+
+
 def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tuple[str, ...], tuple[tuple[str, float | int], ...]]:
     from gateway import service_registry as sr
 
@@ -184,13 +231,14 @@ def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tu
     if (not isinstance(raw, Mapping) or type(raw.get('enabled')) is not bool
             or (require_enabled and raw.get('enabled') is not True)):
         raise refused()
-    if (set(raw) - {'enabled', 'version', 'private_cidrs', 'limits', 'transport', 'tasks'}
-            or type(raw.get('version', 1)) is not int or raw.get('version', 1) != 1):
+    if (set(raw) - {'enabled', 'version', 'private_cidrs', 'limits', 'transport', 'tasks', 'shared_space'}
+            or type(raw.get('version', 1)) is not int or raw.get('version', 1) != 1
+            or type(raw.get('shared_space', False)) is not bool):
         raise refused()
     transport = raw.get('transport', 'tls')
     if transport not in TRANSPORTS:
         raise refused()
-    if connection.get('dispatch') != 'protocol':
+    if connection.get('dispatch') != 'protocol' and not _names_a_bound_adapter(connection):
         raise refused()
     config = service.get('config') or {}
     if config.get('native_passthrough') or service.get('native_passthrough'):
@@ -230,11 +278,11 @@ def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tu
         except (ValueError, TypeError):
             raise refused() from None
         minimum = 24 if network.version == 4 else 64
-        if network.prefixlen < minimum or not network.is_private:
+        shared = raw.get('shared_space') is True and is_shared_space(network)
+        if network.prefixlen < minimum or not (network.is_private or shared):
             raise refused()
-        # Exceptions can only describe RFC1918/ULA space, never special-use ranges.
-        pools = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16') if network.version == 4 else ('fc00::/7',)
-        if not any(network.subnet_of(ipaddress.ip_network(pool)) for pool in pools):
+        # Exceptions can only describe RFC1918/ULA space, or the shared space an owner approved by name; never special-use ranges.
+        if not shared and not any(network.subnet_of(ipaddress.ip_network(pool)) for pool in _PRIVATE_POOLS[network.version]):
             raise refused()
         parsed.append(str(network))
     if transport == 'private_plaintext':

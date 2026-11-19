@@ -370,6 +370,21 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
     return out
 
 
+def _remote_block(connection: Mapping[str, Any], plan: Mapping[str, Any], definition: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``remote_dispatch`` block the owner's yes writes. Limits an owner set on an earlier save stay."""
+    remote = definition["record"]["remote"]
+    earlier = connection.get("remote_dispatch") or {}
+    block = {**earlier, "enabled": True, "version": 1, "transport": plan["transport"], "private_cidrs": [plan["network"]],
+             "tasks": list(remote["tasks"])}
+    if remote.get("limits"):
+        block["limits"] = {**remote["limits"], **(earlier.get("limits") or {})}
+    if plan.get("shared_space"):
+        block["shared_space"] = True
+    else:
+        block.pop("shared_space", None)
+    return block
+
+
 async def remote_plan(definition: Mapping[str, Any], clean: Mapping[str, Any], key: KeyInput, *, confirmed: bool,
                       resolve: Any = None) -> dict[str, Any] | None:
     """What "another computer on my network" means for this address, or ``None`` for this computer.
@@ -402,14 +417,20 @@ async def remote_plan(definition: Mapping[str, Any], clean: Mapping[str, Any], k
     except remote_engine.PlainRefusal as refusal:
         raise DraftError(str(refusal), field="address") from None
     plaintext = parts.scheme == "http"
+    shared = remote_engine.is_shared_space(network)
     if plaintext and key.source != "none":
         raise DraftError("A key cannot be sent over plain http, even on your own network. "
                          "Put the server behind a reverse proxy that uses https, or remove the key.", field="api_key")
-    if plaintext and confirmed and clean.get("network_trusted") is not True:
+    if (plaintext or shared) and confirmed and clean.get("network_trusted") is not True:
+        if shared:
+            raise DraftError(f"Confirm that {network} is your own Tailscale network. That address range is shared: Tailscale uses it "
+                             "for your computers, and some internet providers use it between their customers. "
+                             + ("This server is reached with plain http, so on any other network " if plaintext else "On any other network ")
+                             + "your provider can see what Azizam and the server send each other.", field="network_trusted")
         raise DraftError(f"Confirm that you trust the network {network}. This server is reached with plain http, so anyone "
                          "on that network can read what Azizam and the server send each other.", field="network_trusted")
     return {"network": network, "transport": "private_plaintext" if plaintext else "tls",
-            "trust_needed": plaintext, "trusted": clean.get("network_trusted") is True}
+            "trust_needed": plaintext or shared, "trusted": clean.get("network_trusted") is True, "shared_space": shared}
 
 
 def _existing_engines(registry: Mapping[str, Any], *, exclude: str | None = None) -> list[dict[str, Any]]:
@@ -664,23 +685,32 @@ def build_raw(
     for alias in ("base_url", "api_base", "default_base_url"):
         raw.pop(alias, None)
     raw.update(_split_address(values["address"], definition, (values.get("path_prefix") or "") if "path_prefix" in has else ""))
+    plan = values.get("remote_plan")
     if values.get("dispatch") == "protocol":
         connection = copy.deepcopy(raw.get("connection") or {})
         connection.update(dispatch="protocol", protocol=values["protocol_description"], address=values["address"], transport="http")
-        plan = values.get("remote_plan")
         if plan:
             # Another computer: the owner-approved network, written as the remote block the gateway already enforces.
-            # Limits an owner set on an earlier save stay.
-            block = {**(connection.get("remote_dispatch") or {}), "enabled": True, "version": 1,
-                     "transport": plan["transport"], "private_cidrs": [plan["network"]],
-                     "tasks": list(definition["record"]["remote"]["tasks"])}
-            connection["remote_dispatch"] = block
+            connection["remote_dispatch"] = _remote_block(connection, plan, definition)
             raw["cost_class"] = "free-local"
         else:
             connection.pop("remote_dispatch", None)
         raw["connection"] = connection
-    elif "dispatch" in values and isinstance(raw.get("connection"), dict):
-        raw["connection"].pop("dispatch", None)
+    elif plan:
+        # A reviewed adapter on another computer: the same block, on a record that names the adapter's protocol and
+        # opts into no protocol dispatch. The adapter sends every request through the guarded transport.
+        connection = copy.deepcopy(raw.get("connection") or {})
+        connection.update(protocol=definition["record"]["protocol"], address=values["address"], transport="http")
+        connection["remote_dispatch"] = _remote_block(connection, plan, definition)
+        raw["connection"] = connection
+        raw["cost_class"] = "free-local"
+    elif isinstance(raw.get("connection"), dict):
+        if "where" in has:
+            raw["connection"].pop("remote_dispatch", None)      # moved back to this computer
+        if "dispatch" in values:
+            raw["connection"].pop("dispatch", None)
+        if "where" in has and not set(raw["connection"]) - {"address", "transport", "protocol"}:
+            raw.pop("connection")      # nothing is left of what the remote choice wrote
     raw.update({
         "name": name,
         "enabled": enabled,
