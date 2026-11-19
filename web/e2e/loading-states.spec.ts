@@ -146,9 +146,10 @@ async function capture(
     );
 
     const where = `${item.group} ${theme} ${width}`;
-    // first(): a route may show its loader in two places (a list and a panel) while both wait.
-    const loader = page.getByLabel(item.loadingLabel, { exact: true }).first();
-    await expect(loader, `${where}: the route's labeled loading state`).toBeVisible();
+    // A route may show its loader in two places (a list and a panel) while both wait, and one may be hidden:
+    // at least one must be seen, and every one must be gone once the data arrives.
+    const loaders = page.getByLabel(item.loadingLabel, { exact: true });
+    await expect(loaders.filter({ visible: true }).first(), `${where}: the route's labeled loading state`).toBeVisible();
     await expect.soft(page.getByRole("heading", { level: 1 }), `${where}: the page title stays`).toBeVisible();
     if (item.absent) {
       await expect.soft(page.getByText(item.absent, { exact: true }), `${where}: no "${item.absent}" line`).toHaveCount(0);
@@ -199,7 +200,7 @@ async function capture(
     await page.screenshot({ path: `test-results/screens/${file}.png`, fullPage: true });
     if (item.group === "status" && theme === "light" && width === 1440) {
       release();
-      await expect(loader).toHaveCount(0, { timeout: 15_000 });
+      await expect(loaders).toHaveCount(0, { timeout: 15_000 });
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     }
   } finally {

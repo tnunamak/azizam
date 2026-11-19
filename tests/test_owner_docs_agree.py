@@ -26,6 +26,11 @@ def test_owner_docs_name_the_people_and_engine_controls():
     assert "Link expires after" in _section(operator, "Manage people and access plans")
     engines = _section(operator, "Add local engines")
     assert "Add engine" in engines and "Continue" in engines
+    # README teaches the same flow in quick start step 5; both must name the same controls.
+    readme_engines = readme.split("5. Add your engine.", 1)[1].split("\n6. ", 1)[0]
+    for label in ("Gateway → Engines", "Add engine", "Continue"):
+        assert label in readme_engines, label
+    assert "Gateway → Engines" in engines
     assert "Add a service record" not in engines
 
 
