@@ -37,7 +37,7 @@ import httpx
 
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
-from gateway.engine_definitions import EngineCatalog
+from gateway.engine_definitions import LIST_SHAPES, EngineCatalog
 from gateway.engine_readiness import safe_probe_path
 from gateway import engine_egress
 
@@ -662,8 +662,105 @@ def _raw(answer: Answer) -> str:
         head += f"\ncontent-type: {content_type}"
     if answer.location:
         head += f"\nlocation: {answer.location}"
-    body = WITHHELD_TEXT if answer.withheld else answer.text[:800]
+    if answer.withheld:
+        body = WITHHELD_TEXT
+    elif (content_type or "").lower().startswith(("audio/", "image/", "video/", "application/octet-stream")):
+        body = f"[{len(answer.body)} bytes]"
+    else:
+        body = answer.text[:800]
     return f"{head}\n\n{body}" if body else head
+
+
+# ---------------------------------------------------------------------------
+# Lists a server reports (probes.lists)
+# ---------------------------------------------------------------------------
+
+MAX_LIST_ENTRIES = 2000
+_MISSING = object()
+
+
+def _pointer(value: Any, pointer: str) -> Any:
+    """The part of ``value`` a JSON pointer names, or ``_MISSING``."""
+    for part in pointer.split("/")[1:] if pointer else ():
+        part = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(value, Mapping) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return _MISSING
+    return value
+
+
+def _first_text(item: Mapping[str, Any], keys: Iterable[str]) -> str:
+    return next((item[key].strip() for key in keys if isinstance(item.get(key), str) and item[key].strip()), "")
+
+
+def _entry_ids(items: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """``(id, name)`` for each entry of a list: a string is its own id, an object names its id by ``id_keys``."""
+    out: list[tuple[str, str]] = []
+    for item in items if isinstance(items, list) else ():
+        if isinstance(item, str) and item.strip():
+            out.append((item.strip(), item.strip()))
+        elif isinstance(item, Mapping):
+            ident = _first_text(item, read.get("id_keys") or ("id",))
+            if ident:
+                out.append((ident, _first_text(item, read.get("name_keys") or ()) or ident))
+    return out
+
+
+def _read_array_of_strings(node: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
+    return [(item.strip(), item.strip()) for item in node if isinstance(item, str) and item.strip()] if isinstance(node, list) else []
+
+
+def _read_array_of_objects(node: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
+    return _entry_ids([item for item in node if isinstance(item, Mapping)] if isinstance(node, list) else [], read)
+
+
+def _read_object_keys(node: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
+    return [(key.strip(), key.strip()) for key in node if isinstance(key, str) and key.strip()] if isinstance(node, Mapping) else []
+
+
+def _read_tuple_first(node: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
+    return _entry_ids(node[0], read) if isinstance(node, list) and node and isinstance(node[0], list) else []
+
+
+def _read_nested(node: Any, read: Mapping[str, Any]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for entry in node if isinstance(node, list) else ():
+        if isinstance(entry, Mapping):
+            out += _entry_ids(entry.get(read.get("inner", "")), read)
+    return out
+
+
+# One reader for each shape the definitions may name (gateway.engine_definitions.LIST_SHAPES).
+_LIST_READERS: dict[str, Callable[[Any, Mapping[str, Any]], list[tuple[str, str]]]] = {
+    "array_of_strings": _read_array_of_strings,
+    "array_of_objects": _read_array_of_objects,
+    "object_keys": _read_object_keys,
+    "tuple_first": _read_tuple_first,
+    "nested": _read_nested,
+}
+assert tuple(_LIST_READERS) == LIST_SHAPES, "every list shape needs one reader"
+
+
+def read_list(body: Any, read: Mapping[str, Any]) -> dict[str, Any]:
+    """Read one JSON answer as a list of ids by the shape ``read`` names.
+
+    ``{"ids": [{"id", "name"}, ...], "default": str | None}``: ids without repeats, in the server's order. An answer that
+    does not have the shape gives no ids; nothing here raises on a stranger's JSON.
+    """
+    reader = _LIST_READERS.get(read.get("shape", ""))
+    node = _pointer(body, read.get("select", ""))
+    pairs = reader(node, read) if reader is not None and node is not _MISSING else []
+    seen: set[str] = set()
+    ids = []
+    for ident, name in pairs:
+        if ident not in seen and len(ids) < MAX_LIST_ENTRIES:
+            seen.add(ident)
+            ids.append({"id": ident, "name": name})
+    default = _pointer(body, read["default_select"]) if read.get("default_select") else _MISSING
+    return {"ids": ids, "default": default.strip() if isinstance(default, str) and default.strip() else None}
 
 
 # ---------------------------------------------------------------------------
@@ -867,6 +964,49 @@ def _context_window(entry: Mapping[str, Any], keys: Iterable[str]) -> int | None
     return None
 
 
+def _model_row(catalog: EngineCatalog, model_id: str, model_caps: list[str], taken: set[str], window: int | None) -> dict[str, Any]:
+    """One model of the check's list, with the work the server's own words say it does."""
+    data = catalog.data
+    row = {
+        "id": model_id,
+        "public_name": _unique(public_name(model_id, data.get("public_name_rules") or ()), taken),
+        "context_window": window,
+        "capabilities": model_caps,
+        "use": ", ".join(catalog.capability(c)["label"] for c in model_caps if c in data["capabilities"]) or "Not known yet",
+    }
+    # The kind is suggested only when the server's answer names exactly one; otherwise the row is as before.
+    kind = suggested_model_kind(model_caps, catalog)
+    if kind:
+        row["kind"] = kind
+    return row
+
+
+async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Run the definition's list probes. For each ``offers`` kind, the first probe that finds ids wins.
+
+    Two probes may read one URL (a server answers one JSON for two shapes); it is fetched once. An answer that fails,
+    is not JSON or has no ids is skipped: a server without a list is not an error, the owner just sees no list.
+    """
+    probes = list(probes)
+    urls: dict[str, str] = {}
+    for probe in probes:
+        url = _route_url(ctx, probe["path"], probe["from"])
+        if safe_probe_path(probe["path"]) is not None and _plain_route(url):
+            urls[probe["id"]] = url
+    answers = dict(zip(dict.fromkeys(urls.values()), await asyncio.gather(
+        *(_get(ctx, url, cap=MODEL_LIST_CAP_BYTES) for url in dict.fromkeys(urls.values())))))
+    chosen: dict[str, dict[str, Any]] = {}
+    for probe in probes:
+        answer = answers.get(urls.get(probe["id"], ""))
+        if probe["offers"] in chosen or answer is None or answer.transport != "ok" or answer.status != 200:
+            continue
+        found = read_list(answer.json, probe["list"])
+        if found["ids"]:
+            chosen[probe["offers"]] = {"id": probe["id"], "offers": probe["offers"], "path": probe["path"],
+                                       "capability": probe.get("capability"), **found}
+    return list(chosen.values())
+
+
 def _classify_route(answer: Answer, baseline: Answer, against_body: str) -> str:
     """One route's empty POST, read against the made-up path (spec 5a)."""
     if answer.transport != "ok" or answer.status is None:
@@ -1055,19 +1195,8 @@ async def _run_check(
         obs["shape"] = shape
         taken: set[str] = set()
         for item in entries:
-            model_caps = _model_caps(item["entry"], data["model_rules"])
-            row = {
-                "id": item["id"],
-                "public_name": _unique(public_name(item["id"], data.get("public_name_rules") or ()), taken),
-                "context_window": _context_window(item["entry"], data.get("context_window_keys") or ()),
-                "capabilities": model_caps,
-                "use": ", ".join(catalog.capability(c)["label"] for c in model_caps if c in data["capabilities"]) or "Not known yet",
-            }
-            # The kind is suggested only when the server's answer names exactly one; otherwise the row is as before.
-            kind = suggested_model_kind(model_caps, catalog)
-            if kind:
-                row["kind"] = kind
-            models.append(row)
+            models.append(_model_row(catalog, item["id"], _model_caps(item["entry"], data["model_rules"]), taken,
+                                     _context_window(item["entry"], data.get("context_window_keys") or ())))
         result["shapes"].append(probe["id"])
     elif probe["kind"] == "model_list" and primary.status is not None and primary.status != 200:
         obs["shape"] = "none"
@@ -1080,9 +1209,12 @@ async def _run_check(
 
     # Metadata reads, all at once.
     rows = [catalog.metadata_row(row_id) for row_id in definition["probes"]["metadata"]]
-    meta_answers = await asyncio.gather(*(
-        _get(ctx, _route_url(ctx, row["path"], row["from"]), cap=row.get("cap_bytes", DEFAULT_CAP_BYTES)) for row in rows
-    ))
+    meta_answers, lists_found = await asyncio.gather(
+        asyncio.gather(*(
+            _get(ctx, _route_url(ctx, row["path"], row["from"]), cap=row.get("cap_bytes", DEFAULT_CAP_BYTES)) for row in rows
+        )),
+        _read_lists(ctx, definition["probes"].get("lists") or ()),
+    )
     listed: dict[str, tuple[str, str]] = {}  # capability -> (document, path)
     documented: dict[str, list[str]] = {}  # capability -> model ids from a capability document
     name_candidates: list[str] = []
@@ -1128,6 +1260,20 @@ async def _run_check(
         for (cap_id, _), answer in zip(targets, answers):
             route_levels[cap_id] = (_classify_route(answer, route_baseline, data["against_body"]), answer)
 
+    listed_by_list: dict[str, tuple[str, int]] = {}  # capability -> (document, entries)
+    for found in lists_found:
+        result["shapes"].append(found["id"])
+        if found["capability"]:
+            listed_by_list.setdefault(found["capability"], (f"{found['offers']} list", len(found["ids"])))
+        if found["offers"] == "model":
+            # The server's own model list for this work replaces the general one: every row is for that work.
+            taken = set()
+            models = [_model_row(catalog, row["id"], [found["capability"]] if found["capability"] else [], taken, None)
+                      for row in found["ids"]]
+        else:
+            result["voices"] = found["ids"]
+            result["default_voice"] = found["default"]
+
     by_model_rule: dict[str, list[str]] = {}
     for model in models:
         for cap_id in model["capabilities"]:
@@ -1150,6 +1296,9 @@ async def _run_check(
             names = documented[cap_id]
             template = evidence_text["likely_model_field_many"] if len(names) > 1 else evidence_text["likely_model_field"]
             level, evidence = "likely", _fill(template, {"model": names[0], "others": len(names) - 1, "noun": noun})
+        elif cap_id in listed_by_list:
+            document, count = listed_by_list[cap_id]
+            level, evidence = "likely", _fill(evidence_text["likely_list"], {"document": document, "count": count})
         elif cap_id in listed and route_level in ("possible", "none_server_error"):
             document, path = listed[cap_id]
             level, evidence = "likely", _fill(evidence_text["likely_metadata"], {"document": document, "path": path})
@@ -1266,10 +1415,14 @@ async def run_real_test(
     key: KeyInput,
     fetch: Fetch,
     model: str | None = None,
+    voice: str | None = None,
     viewer_role: str = "owner",
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
-    """One tiny real request of one kind, from the gateway's computer, to the draft address."""
+    """One tiny real request of one kind, from the gateway's computer, to the draft address.
+
+    ``model`` and ``voice`` fill the slots the test body names; an empty slot is left out of the request.
+    """
     fetch = guarded_fetch(fetch, key, viewer_role=viewer_role)
     if capability_id not in definition["capabilities"]:
         raise DraftError("This kind of server does not offer that.", field="capability")
@@ -1286,7 +1439,7 @@ async def run_real_test(
         url = join_url(base, cap["route"]["path"])
     if not _plain_route(url):
         raise DraftError("This kind of server declares a route that cannot be tested safely.", field="capability")
-    slots = {"model": model or ""}
+    slots = {"model": model or "", "voice": voice or ""}
     body = _substitute(test.get("body") or {}, slots)
     # The request adjustments the engine will run with: the draft's, or the kind's default for a new engine.
     specs = values.get("transforms")
@@ -1314,6 +1467,8 @@ async def run_real_test(
     content = json.dumps(body).encode()
     headers["content-type"] = "application/json"
     shape = "a small JSON request in the OpenAI shape" + (", with your request adjustments applied" if specs else "")
+    if test.get("kind") == "binary_post":
+        shape = "a short JSON request in the OpenAI shape, and read the bytes that came back"
     # The definition caps the draft's reply time; absent data keeps the two-minute cap.
     test_timeout_s = definition.get("timeouts", {}).get("real_test_s", TEST_TIMEOUT_S)
     timeout_s = min(_number(values.get("reply_timeout_s"), test_timeout_s, low=1, high=600), test_timeout_s)
@@ -1348,9 +1503,26 @@ async def run_real_test(
     return result
 
 
+def _judge_binary(expect: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
+    """A binary reply passes on the status, the content type prefix and the number of bytes the test expects."""
+    if answer.status != expect["status"]:
+        if answer.status // 100 != 2:
+            return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
+        return False, f"The server answered HTTP {answer.status}; Azizam expected HTTP {expect['status']}."
+    content_type = str(answer.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if not content_type.startswith(expect["content_type_prefix"].lower()):
+        return False, (f"The server answered with {content_type or 'no content type'}, not {expect['content_type_prefix']}*. "
+                       f"Its own words: {_excerpt(answer.text, 120)}")
+    if len(answer.body) < expect["min_bytes"]:
+        return False, f"The answer was only {len(answer.body)} bytes; at least {expect['min_bytes']} are expected."
+    return True, f"{content_type}, {len(answer.body)} bytes"
+
+
 def _judge(test: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
     if answer.transport != "ok" or answer.status is None:
         return False, answer.detail or "No answer"
+    if test.get("kind") == "binary_post":
+        return _judge_binary(test["expect"], answer)
     if answer.status // 100 != 2:
         return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
     if test.get("pass_json") and _at(answer.json, test["pass_json"]) in (None, [], ""):

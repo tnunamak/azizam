@@ -1332,10 +1332,14 @@ class AdminSQLiteStore:
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
         drop_inference_secret_ref: bool = False,
         in_transaction: Callable[[sqlite3.Connection], None] | None = None,
+        observations: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
 
         ``in_transaction(conn)`` runs inside the registry write's own transaction; it may raise to refuse the write.
+        ``observations`` is what the check read from the server's own lists (its voices). The record keeps it as its
+        ``observations``, which is a record field and not a config key, so it is set here beside ``process`` and not in
+        ``raw``. On an edit it lays over the observations the record already holds.
 
         ``raw`` is the whole record, already built and checked; the credential and
         lifecycle rules for administrators are applied here as for every write.
@@ -1347,11 +1351,16 @@ class AdminSQLiteStore:
         )
         if isinstance(raw.get("lifecycle"), Mapping):
             record["process"] = service_registry._v2_process(raw["lifecycle"])
+        if observations:
+            record["observations"] = {**copy.deepcopy(dict((existing or {}).get("observations") or {})),
+                                      **copy.deepcopy(dict(observations))}
         if existing is not None:
             # An edit through the engine page names the engine's own settings. Everything else the record holds (its
             # process and observations, its residency and resources, its secret references, its kind and provenance)
             # stays as stored, secret entries included.
             named = {key: True for key in raw if key in ("process", "observations", "residency", "resources")}
+            if observations:
+                named["observations"] = True
             if "lifecycle" in raw and raw["lifecycle"] != dict(service_registry.legacy_lifecycle_from_service(existing)):
                 named["lifecycle"] = True  # a lifecycle the page changed; one it sent back as stored is not a change
             service_registry.carry_unnamed_record_fields(existing, record, named=named)
