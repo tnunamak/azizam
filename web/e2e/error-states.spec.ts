@@ -91,8 +91,10 @@ for (const theme of themes) {
                 () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
                 { message: `${where}: fits the viewport` },
               ).toBeLessThanOrEqual(0);
-              const error = page.getByRole("alert")
-                .or(page.getByRole("button", { name: new RegExp("try again", "i") }))
+              // Inside main: the shell keeps its own alert region (the route announcer), which says nothing about the route.
+              const main = page.getByRole("main");
+              const error = main.getByRole("alert")
+                .or(main.getByRole("button", { name: /try again|refresh|retry/i }))
                 .first();
               await expect(error, `${where}: actionable error`).toBeVisible();
               await page.screenshot({
