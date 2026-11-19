@@ -999,7 +999,9 @@ async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[di
     """Run the definition's list probes. For each ``offers`` kind, the first probe that finds ids wins.
 
     Two probes may read one URL (a server answers one JSON for two shapes); it is fetched once. An answer that fails,
-    is not JSON or has no ids is skipped: a server without a list is not an error, the owner just sees no list.
+    is not JSON or has no ids is skipped: a server without a list is not an error, the owner just sees no list. One
+    exception: a list whose ``where`` drops every entry it read is the server's own answer that it has nothing for
+    this work, so it wins with no ids and ``filtered_out`` set.
     """
     probes = list(probes)
     urls: dict[str, str] = {}
@@ -1015,9 +1017,11 @@ async def _read_lists(ctx: _Ctx, probes: Iterable[Mapping[str, Any]]) -> list[di
         if probe["offers"] in chosen or answer is None or answer.transport != "ok" or answer.status != 200:
             continue
         found = read_list(answer.json, probe["list"])
-        if found["ids"]:
+        filtered_out = not found["ids"] and "where" in probe["list"] and bool(
+            read_list(answer.json, {key: value for key, value in probe["list"].items() if key != "where"})["ids"])
+        if found["ids"] or filtered_out:
             chosen[probe["offers"]] = {"id": probe["id"], "offers": probe["offers"], "path": probe["path"],
-                                       "capability": probe.get("capability"), **found}
+                                       "capability": probe.get("capability"), "filtered_out": filtered_out, **found}
     return list(chosen.values())
 
 
@@ -1275,10 +1279,16 @@ async def _run_check(
             route_levels[cap_id] = (_classify_route(answer, route_baseline, data["against_body"]), answer)
 
     listed_by_list: dict[str, tuple[str, int]] = {}  # capability -> (document, entries)
+    own_list: set[str] = set()  # capabilities a definition list speaks for
+    listed_none: set[str] = set()  # capabilities whose own list kept no entry
     for found in lists_found:
         result["shapes"].append(found["id"])
         if found["capability"]:
-            listed_by_list.setdefault(found["capability"], (f"{found['offers']} list", len(found["ids"])))
+            own_list.add(found["capability"])
+            if found["ids"]:
+                listed_by_list.setdefault(found["capability"], (f"{found['offers']} list", len(found["ids"])))
+            elif found["filtered_out"]:
+                listed_none.add(found["capability"])
         if found["offers"] == "model":
             # The server's own model list for this work replaces the general one: every row is for that work.
             taken = set()
@@ -1302,6 +1312,11 @@ async def _run_check(
             level, evidence, why = "against", _fill(evidence_text["against"], {"noun": noun, "excerpt": _error_message(answer)}), evidence_text["against_why"]
         elif route_level == "needs_key" and answer is not None:
             level, evidence, why = "needs_key", _fill(evidence_text["needs_key"], {"status_text": answer.status_text}), evidence_text.get("needs_key_why", "")
+        elif cap_id in listed_none:
+            evidence, why = _fill(evidence_text.get("none_listed", evidence_text["none_why"]), {"noun": noun}), evidence_text["none_why"]
+        elif route_level == "none" and answer is not None and cap_id in own_list:
+            # A list that names no task keeps every model; the route that answered like a missing path decides.
+            evidence, why = _fill(evidence_text["none"], {"status_text": answer.status_text}), evidence_text["none_why"]
         elif cap_id in by_model_rule:
             names = by_model_rule[cap_id]
             template = evidence_text["likely_model_field_many"] if len(names) > 1 else evidence_text["likely_model_field"]
@@ -1350,7 +1365,8 @@ async def _run_check(
     for model in models:
         model.pop("capabilities", None)
     result["models"] = models
-    recognised = bool(models) or any(row["level"] in ("likely", "possible") for row in caps.values())
+    # A server whose own list for this work came back empty still answered as this kind of server.
+    recognised = bool(models) or bool(listed_none) or any(row["level"] in ("likely", "possible") for row in caps.values())
     if not recognised:
         for row in result["capabilities"]:
             if row["level"] in ("none",):

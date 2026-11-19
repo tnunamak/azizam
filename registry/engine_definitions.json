@@ -74,7 +74,8 @@
     "none_nothing_recognised": "The server answered every standard request with “not supported” or “not found”.",
     "needs_key": "The route exists, but it is locked: it answered “{status_text}”.",
     "needs_key_why": "Add the key, then check again.",
-    "none_unlisted": "Nothing the server publishes mentions it."
+    "none_unlisted": "Nothing the server publishes mentions it.",
+    "none_listed": "Its model list names no {noun} model. Add one on the server, then check again."
   },
   "metadata_rows": [
     {

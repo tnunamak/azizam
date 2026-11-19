@@ -144,6 +144,47 @@ def test_the_definitions_one_model_probe_keeps_speech_recognition_models_only():
     assert engine_check.read_list(speech_only, probe["list"])["ids"] == []
 
 
+def _checked(models_body: dict, route_status: int) -> dict:
+    """The check against a server whose model list is ``models_body`` and whose transcription route answers an empty
+    request with ``route_status``; every other path answers 404, as a path that does not exist."""
+    catalog = load_engine_catalog()
+
+    async def fetch(method, url, **_):
+        if method == "GET" and url.endswith("/v1/models"):
+            return Answer(method, url, status=200, body=json.dumps(models_body).encode())
+        if method == "POST" and url.endswith("/v1/audio/transcriptions"):
+            return Answer(method, url, status=route_status, body=b'{"detail": "field required"}')
+        return Answer(method, url, status=404, body=b'{"detail": "Not Found"}')
+
+    result = asyncio.run(engine_check.run_check(catalog, catalog.definition("openai-transcription"),
+                                                {"address": "http://203.0.113.9:8000"}, key=KeyInput(), fetch=fetch))
+    (row,) = [row for row in result["capabilities"] if row["id"] == "transcription"]
+    return {"row": row, "models": [model["id"] for model in result["models"]]}
+
+
+def test_the_check_offers_a_speaches_servers_speech_recognition_models_and_ticks_transcription():
+    checked = _checked(SPEACHES_MODELS, 422)
+    assert checked["row"]["ticked"] and checked["models"] == [ASR_ID]
+
+
+def test_the_check_of_a_speech_only_speaches_offers_no_model_and_leaves_transcription_unticked():
+    speech_only = {"object": "list", "data": [row for row in SPEACHES_MODELS["data"] if row["task"] != "automatic-speech-recognition"]}
+
+    checked = _checked(speech_only, 422)
+
+    assert (checked["row"]["level"], checked["models"]) == ("none", [])
+    assert checked["row"]["evidence"].startswith("Its model list names no transcription model.")
+
+
+def test_the_check_of_a_server_that_names_no_task_and_has_no_transcription_route_leaves_it_unticked():
+    # A chat-only server lists its models with no task, so every one is kept; the route answering 404 decides.
+    chat_only = {"object": "list", "data": [{"id": "qwen-chat", "object": "model"}]}
+
+    checked = _checked(chat_only, 404)
+
+    assert checked["row"]["level"] == "none" and not checked["row"]["ticked"]
+
+
 # ---- (c) the multipart real test -----------------------------------------------------------------------------------
 
 def _real_test(answer_for, *, model: str | None = ASR_ID):
