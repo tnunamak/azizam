@@ -18,6 +18,7 @@ Features:
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway.service_priority import service_priority
 from gateway import engine_egress, engine_record_defaults, status_words
+from gateway.image_size import SIZE_REFUSAL, read_size
 
 _GRAPH_WORDS = status_words.words("images")
 from gateway.frontend_shapes import media_job as media_job_shape
@@ -154,7 +155,7 @@ from gateway.engine_protocol import inline_tts as tts_adapter
 from gateway.engine_protocol import audio_graph, node_graph
 from gateway.engine_protocol import reviewed as reviewed_adapters
 from gateway.engine_protocol.types import JobRef, JobState
-from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError,
+from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError, ValueRefused as ProtocolValueRefused,
     MalformedResponse as ProtocolMalformedResponse, UpstreamError as ProtocolUpstreamError)
 from gateway.engine_protocol.types import StreamReply as ProtocolStreamReply
 from gateway.engine_switch import SwitchUnavailable as ProtocolSwitchUnavailable
@@ -9766,20 +9767,11 @@ async def proxy_graph_image_edit_request(
     size = requested_size
     requested_dimensions: tuple[int, int] | None = None
     if size is not None and size != "auto":
-        try:
-            # Accept the spellings that worked before strict validation: "512X768", "512 x 768".
-            normalized = re.sub(r"\s*[xX]\s*", "x", size.strip()) if isinstance(size, str) else None
-            if normalized is None or not re.fullmatch(r"[0-9]+x[0-9]+", normalized):
-                raise ValueError
-            width, height = (int(part) for part in normalized.split("x"))
-            if width <= 0 or height <= 0:
-                raise ValueError
-            requested_dimensions = (width, height)
-        except (TypeError, ValueError, OverflowError):
+        parsed_size = read_size(size)
+        if parsed_size is False:
             _record_image_input(receipt, "size", rejected_reason="invalid_dimensions")
-            return openai_error_response(
-                "size must be 'auto' or WIDTHxHEIGHT with positive integers", param="size",
-            )
+            return openai_error_response(SIZE_REFUSAL, param="size")
+        requested_dimensions = parsed_size
     if receipt is not None:
         receipt.requested_model = str(requested_model) if requested_model is not None else None
     _record_image_input(receipt, "model")
@@ -34808,6 +34800,8 @@ def _protocol_failure(error: ProtocolError) -> Response:
             message = error.advice
     elif isinstance(error, TransportFailure) and error.kind == "timeout":
         status = 504
+    elif isinstance(error, ProtocolValueRefused):
+        return openai_error_response(str(error), param=error.param)
     elif isinstance(error, ProtocolMappingError):
         status = 400
     elif error.code in {"unknown_operation", "ambiguous_model"}:
@@ -34995,6 +34989,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
         # Check this operation's key before a selection call can change state.
         await asyncio.to_thread(runtime.connection_for, op)
+        await runtime.check_request(op, body)  # a value the map refuses is a 400 before any switch
         transition = _transition_policy(target.engine_id)
         if transition.enabled:
             # A transition-enabled domain is pass-through in step T1.1: no selection

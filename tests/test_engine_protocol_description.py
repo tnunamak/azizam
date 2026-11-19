@@ -204,6 +204,7 @@ def test_all_rule_kinds_are_accepted() -> None:
         {"enum": {"from": "/body/voice", "to": "/speaker", "table": {"a": "b"}, "unmapped": "pass"}},
         {"clamp": {"path": "/temperature", "min": 0, "max": 1}},
         {"stringify": {"from": "/body/params", "to": "/action"}},
+        {"size": {"from": "/body/size", "width": "/w", "height": "/h"}},
         {"when": {"if": {"path": "/body/seed", "present": True}, "then": [{"copy": {"from": "/body/seed", "to": "/seed"}}]}},
     ]
     description.parse_description(_with_body_map(rules), source="tiny.yml")
@@ -219,6 +220,8 @@ def test_all_rule_kinds_are_accepted() -> None:
         ({"enum": {"from": "/body/a", "to": "/a", "table": {}, "unmapped": "pass"}}, "table"),
         ({"enum": {"from": "/body/a", "to": "/a", "table": {"x": "y"}, "unmapped": "guess"}}, "unmapped"),
         ({"clamp": {"path": "/t", "min": 2, "max": 1}}, "min"),
+        ({"size": {"from": "/body/size", "width": "/w"}}, "height"),
+        ({"size": {"from": "/elsewhere/size", "width": "/w", "height": "/h"}}, "source"),
         ({"when": {"if": {"path": "/body/a"}, "then": []}}, "predicate"),
         ({"when": {"if": {"path": "/body/a", "present": True, "equals": 1}, "then": []}}, "predicate"),
         ({"set": {"to": "/a", "value": {"$ref": "#/x"}}}, None),  # constants are plain JSON; a $ref is only text

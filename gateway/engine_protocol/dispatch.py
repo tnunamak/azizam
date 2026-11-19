@@ -211,6 +211,12 @@ class Runtime:
                 return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
         return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
 
+    async def check_request(self, op: str, body: Mapping[str, Any]) -> None:
+        """Map the caller's request as ``invoke`` would, without sending it, so a value the map refuses is refused
+        before a selection call changes the engine. A job operation maps its own submit request; it is not checked here."""
+        if self.target.description.operations[op].job is None:
+            await self.adapter.check_request(self.connection_for(op), op, self.request(op, body))
+
     async def lease(self, *, drain, lock_for, may_switch: bool = True):
         if self._remote_capability is not None:
             async with self._transport.operation():

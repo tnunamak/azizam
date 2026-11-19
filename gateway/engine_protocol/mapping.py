@@ -2,7 +2,8 @@
 
 A map is a list of rules that builds one JSON object from a source document.
 The scalar rules are: ``copy``, ``rename``, ``set`` (constant),
-``default``, ``drop``, ``enum`` (table), ``clamp``, ``stringify`` and ``when``
+``default``, ``drop``, ``enum`` (table), ``clamp``, ``stringify``, ``size``
+(an OpenAI ``WIDTHxHEIGHT`` string into two integers) and ``when``
 (a condition on presence, equality or membership). A rule names JSON pointers
 and plain values. ``each`` maps a bounded array into fresh objects, with lexical
 ``/item`` and ``/index`` roots. There are no expressions or general loops.
@@ -26,7 +27,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 from gateway.engine_protocol import pointer
 from gateway.engine_protocol.budgets import DEFAULT_BUDGETS, Budgets
-from gateway.engine_protocol.errors import BudgetExceeded, DescriptionError, MappingError
+from gateway.engine_protocol.errors import BudgetExceeded, DescriptionError, MappingError, ValueRefused
+from gateway.image_size import SIZE_REFUSAL, read_size
 
 REQUEST_ROOTS = frozenset({"body", "params", "files"})
 RESPONSE_ROOTS = frozenset({"body", "status", "headers", "params", "event"})
@@ -49,6 +51,7 @@ _RULE_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "enum": (frozenset({"from", "to", "table", "unmapped"}), frozenset()),
     "clamp": (frozenset({"path"}), frozenset({"min", "max"})),
     "stringify": (frozenset({"from", "to"}), frozenset()),
+    "size": (frozenset({"from", "width", "height"}), frozenset()),
     "when": (frozenset({"if", "then"}), frozenset({"else"})),
 }
 _EACH_RUNNING: ContextVar[list[int] | None] = ContextVar("engine_protocol_each_selected", default=None)
@@ -248,7 +251,7 @@ def _compile_rule(rule: Any, ctx: _Ctx, place: str, depth: int) -> Step | None:
             ctx.bad(ctx.place, f"more than {ctx.budgets.max_rules} rules in one map")
         return None
     if not isinstance(rule, dict) or len(rule) != 1:
-        ctx.bad(place, "a rule is an object with exactly one key (copy, rename, set, default, drop, enum, clamp, stringify, when or each)")
+        ctx.bad(place, "a rule is an object with exactly one key (copy, rename, set, default, drop, enum, clamp, stringify, size, when or each)")
         return None
     kind, spec = next(iter(rule.items()))
     if kind not in _RULE_KEYS:
@@ -470,6 +473,28 @@ def _c_stringify(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     return stringify_rule
 
 
+def _c_size(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
+    src = _source(spec["from"], ctx, place)
+    width, height = _target(spec["width"], ctx, place, "width"), _target(spec["height"], ctx, place, "height")
+    if src is None or width is None or height is None:
+        return None
+    ctx.writes += [width, height]
+    read, write_width, write_height = _getter(src), _setter(width), _setter(height)
+    param = src[-1]
+
+    def size_rule(source: Mapping[str, Any], out: dict) -> None:
+        value = read(source)
+        if value is MISSING:
+            return
+        parsed = read_size(value)
+        if parsed is False:  # the refusal the image edit route gives, so one client sees one answer
+            raise ValueRefused(SIZE_REFUSAL, param=param)
+        if parsed is not None:  # "auto" or null: the engine keeps its own size
+            write_width(out, parsed[0])
+            write_height(out, parsed[1])
+    return size_rule
+
+
 def compile_predicate(spec: Any, ctx_roots: frozenset[str], place: str, problems: list[str]) -> Predicate | None:
     """A condition on presence, equality or membership: ``{path, present | equals | in}``."""
     ctx = _Ctx(place, ctx_roots, problems, DEFAULT_BUDGETS)
@@ -603,5 +628,5 @@ def _c_each(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
 _COMPILERS: dict[str, Callable[[dict, _Ctx, str, int], Step | None]] = {
     "each": _c_each,
     "copy": _c_copy, "rename": _c_rename, "set": _c_set, "default": _c_default, "drop": _c_drop,
-    "enum": _c_enum, "clamp": _c_clamp, "stringify": _c_stringify, "when": _c_when,
+    "enum": _c_enum, "clamp": _c_clamp, "stringify": _c_stringify, "size": _c_size, "when": _c_when,
 }

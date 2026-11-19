@@ -52,8 +52,8 @@ operations:
           - copy: {from: /body/steps, to: /steps}
           - copy: {from: /body/seed, to: /seed}
           - copy: {from: /body/cfg_scale, to: /cfg_scale}
-          - copy: {from: /body/width, to: /width}
-          - copy: {from: /body/height, to: /height}
+          # OpenAI clients send `size` ("1024x1024"), never width and height.
+          - size: {from: /body/size, width: /width, height: /height}
           - copy: {from: /body/n, to: /batch_size}
           - set: {to: /send_images, value: true}
           - set: {to: /save_images, value: false}
