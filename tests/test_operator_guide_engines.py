@@ -39,6 +39,8 @@ def test_operator_guide_names_the_settings_and_the_dialog_the_owner_uses():
 def test_operator_guide_says_folders_are_saved_by_actual_location_and_never_the_whole_computer():
     workflow = _words(_workflow_subsection())
     assert "saves the folder's actual location" in workflow
+    # The owner types the path; there is no picker, so the guide must not suggest choosing one.
+    assert "the path you type goes through a symbolic link" in workflow and "shortcut" not in workflow
     assert "whole computer" in workflow and "refuses" in workflow
 
 
@@ -72,3 +74,10 @@ def test_operator_guide_says_health_check_not_status_path():
     workflow = _words(_workflow_subsection())
     assert "health check" in workflow
     assert "status path" not in workflow
+
+
+def test_operator_guide_says_removing_a_folder_leaves_a_saved_engine_and_how_to_stop_it():
+    workflow = _words(_workflow_subsection())
+    assert "removing a folder stops new engines from being saved from it" in workflow
+    assert "it does not change an engine you already saved" in workflow
+    assert re.search(r"to stop one of those, remove the engine or turn off \*\*computer commands\*\*", workflow)

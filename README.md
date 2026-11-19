@@ -42,7 +42,7 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
 
 3. Create the owner account. Open `http://127.0.0.1:5000/setup/`. Enter an email address, a password, and the password again. This account owns the gateway.
 
-4. Create an App key. Open **Apps & keys**, find your app, and select **Add key** under it (or **New app** to make an app and its key together). The key starts with `opk_`. Copy it now. It is shown only once.
+4. Open **Apps & keys**. Choose **New app** to make an app and its first key, or open an app's menu and choose **Create key**. The key starts with `opk_`. Copy it now. It is shown only once.
 
 5. Add your engine. Open **Gateway → Engines**, then click **Add engine**.
    - For llama.cpp, vLLM, LM Studio or another OpenAI-compatible server, choose **Any OpenAI-compatible server**. Type an address that ends in `/v1`, such as `http://192.0.2.50:8080/v1`.
@@ -56,6 +56,8 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
    - Base URL: `http://127.0.0.1:5000/openai/v1`
    - API key: your App key (`opk_…`)
    - Model: the public model name from step 5
+
+   This base URL works only on the computer that runs the gateway. Members use the gateway's address instead; see the [member guide](docs/guides/FOR_MEMBERS.md).
 
    Check the key and the model list with one request:
 
@@ -134,7 +136,7 @@ Use **Try** for a small API check, **Library** for your generated media, and **U
 
 ## Share with family or friends
 
-Create an access plan, then create an invite from **Gateway → People**. Choose the plan and expiry; copy the link to the person. Invitation acceptance creates a personal App and shows its key once. Built-in email/password accounts work without an external identity provider; OIDC is also available.
+Create an access plan first. Open **Gateway → People** and choose **Invite someone**. Set **Access plan** and **Link expires after**, then copy the link to the person. Invitation acceptance creates a personal App and shows its key once. Built-in email/password accounts work without an external identity provider. OIDC is also available.
 
 The member opens Home, picks a connection recipe, and uses their own key. Give them the [member guide](docs/guides/FOR_MEMBERS.md). Invitation links are shared by the owner; the gateway does not send email or provide passkeys. [Account documentation](docs/PEOPLE_AND_ACCOUNTS.md) covers revocation and ownership rules.
 

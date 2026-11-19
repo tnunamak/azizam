@@ -18,7 +18,7 @@ Then open:
 http://127.0.0.1:5000/setup/
 ```
 
-`/setup/` creates or claims the first owner account. Continue to Home, choose an app, and use **Create key for** that app. Save the runtime key when it appears; it starts with `opk_` and is shown once. Use it in clients, and keep admin keys for administration.
+`/setup/` creates or claims the first owner account. Open **Apps & keys**. Choose **New app** to make an app and its first key, or open an app's menu and choose **Create key**. Save the runtime key when it appears. It starts with `opk_` and is shown once. Use it in clients, and keep admin keys for administration.
 
 Compose starts:
 
@@ -52,17 +52,11 @@ and protocol fields.
 
 ## Add local engines
 
-Open `/engines/` to manage local services. For an engine you run yourself,
-create a service record for an engine the gateway can already reach.
-
-For a generic OpenAI-compatible chat engine:
-
-1. Add a service record.
-2. Set the OpenAI-compatible base URL as seen by the gateway.
-3. Set a health endpoint such as `/v1/models`.
-4. Add at least one model mapping from public model name to upstream model
-   name.
-5. Test the service.
+1. Open **Gateway → Engines** and choose **Add engine**.
+2. Choose the server kind and type the address as the gateway sees it.
+3. Select **Continue**, then tick the abilities you want.
+4. Keep or rename the model names the dialog found.
+5. Name the engine and select **Add engine**.
 
 When the gateway runs in Docker and an engine runs on the host, the engine
 must listen on an address that the container can reach. Compose maps
@@ -79,7 +73,8 @@ Only the owner can do this.
 
 1. Open **Settings → Engine folders**. Type the full path of each folder
    that engines may run from and press **Add folder**. Azizam saves the
-   folder's actual location, even if you choose it through a shortcut.
+   folder's actual location, even if the path you type goes through a
+   symbolic link.
    Azizam refuses the whole computer as a folder. Removing a folder stops
    new engines from being saved from it. It does not change an engine you
    already saved. To stop one of those, remove the engine or turn off
@@ -159,7 +154,7 @@ For example, set an OpenRouter key credit limit that matches the gateway cap.
 
 ## Manage people and access plans
 
-Open `/people/`.
+Open **Gateway**, then **People** (`/people/`).
 
 Use the People tab to:
 
@@ -169,11 +164,12 @@ Use the People tab to:
 - create a password reset link for a built-in account;
 - remove a person.
 
-Use the Invites tab to:
+An invite needs an access plan, so create one first. Then use the Invites tab to:
 
-- create a single-use invite link;
-- set an optional email restriction;
-- choose an expiry of 1 day, 7 days, or 30 days;
+- choose **Invite someone** to create a single-use invite link;
+- in that dialog, choose the person's **Access plan**;
+- set **Email (optional)** to restrict who can accept it;
+- choose **Link expires after**: 1 day, 7 days, or 30 days;
 - copy a pending invite link again;
 - revoke a pending invite.
 
