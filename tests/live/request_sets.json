@@ -41,5 +41,10 @@
     "speech": {"feature": "audio.speech", "steps": [
       {"method": "POST", "path": "/v1/audio/speech", "stream": false,
        "json": {"model": "{{model}}", "input": "hi", "response_format": "wav"}}]}
+  },
+  "chunked-stt": {
+    "transcription": {"feature": "audio.transcriptions", "steps": [
+      {"method": "POST", "path": "/v1/audio/transcriptions", "stream": false,
+       "json": {"model": "{{model}}", "response_format": "json"}}]}
   }
 }
