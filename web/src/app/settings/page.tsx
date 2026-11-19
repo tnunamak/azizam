@@ -766,9 +766,10 @@ function EngineFoldersSection() {
       ) : isPending ? (
         <Loading label="Loading engine folders" />
       ) : isError ? (
-        <SettingsError
+        <SectionLoadFailed
+          thing="engine folders"
+          className=""
           error={error}
-          message="Engine folders could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
