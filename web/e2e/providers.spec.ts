@@ -206,7 +206,7 @@ for (const [state, theme, width] of [
     await setViewport(page, theme, width);
     await routeProviders(page, state);
     await page.goto("/providers/");
-    await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Providers", exact: true })).toBeVisible();
     if (state === "seeded") {
       await expect(page.getByRole("heading", { name: "OpenRouter" })).toBeVisible();
       await page.getByText("Manage", { exact: true }).click();
