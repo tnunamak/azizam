@@ -123,7 +123,7 @@ def refused_response(refused: RunRefused, words: Mapping[str, str] | None = None
 def refused_body_response(refused: RunRefused) -> Response:
     """A refusal whose client body the gateway already built (its admission refusal, ``refusal_body``): sent intact,
     not re-worded in the wire's error vocabulary, with the ``Retry-After`` the refusal carries."""
-    seconds = client_errors.retry_after(str(refused.retry_after_s)) if refused.retry_after_s is not None else None
+    seconds = client_errors.retry_after(None if refused.retry_after_s is None else str(refused.retry_after_s))
     headers = {"Retry-After": seconds} if seconds else None
     return JSONResponse(refused.refusal_body, status_code=refused.http_status, headers=headers)
 
