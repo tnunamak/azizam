@@ -197,6 +197,10 @@ class ProcessDriver:
     def stop(self, svc: Mapping[str, Any]) -> None:
         self._stop(svc, reset_budget=True)
 
+    async def stop_async(self, svc: Mapping[str, Any]) -> None:
+        """``stop`` for a caller on the event loop: the wait for the process group runs off the loop."""
+        await self._stop_async(svc, reset_budget=True)
+
     def _stop(self, svc: Mapping[str, Any], *, reset_budget: bool) -> None:
         parts = self._prepare_stop(svc)
         if parts is None:

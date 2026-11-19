@@ -8,6 +8,7 @@ that another comparison must see (a template request, the multipart form, a poli
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import shutil
 import sys
@@ -53,9 +54,23 @@ def trees(tmp_path_factory):
     return {"before_v1": make_tree(base / "v1", workflows=V1), "same": make_tree(base / "same")}
 
 
+def _inputs_fingerprint(root: Path) -> bytes:
+    """The tree's own copies of what a dump reads: its workflow manifests, extensions and registry entries."""
+    digest = hashlib.sha256()
+    for sub in ("manifests", "extensions", "registry"):
+        for path in sorted((root / sub).rglob("*")):
+            if path.is_file():
+                digest.update(str(path.relative_to(root)).encode())
+                digest.update(path.read_bytes())
+    return digest.digest()
+
+
 @contextmanager
 def reuse_unchanged_dump(root: Path):
-    """Reuse only this root's dump inside a block that doesn't change its inputs.
+    """Reuse only this root's dump while its inputs stay the same.
+
+    The key holds a fingerprint of the tree's manifests, extensions and registry, so an edit to the
+    root inside the block makes a fresh dump instead of returning a stale one.
 
     Other roots (including fresh copies) still run independently. The cache is
     discarded on exit, so filesystem, process and corpus state aren't shared
@@ -67,7 +82,7 @@ def reuse_unchanged_dump(root: Path):
     def dump(candidate, corpus_file, python=None):
         if candidate != root:
             return dump_tree(candidate, corpus_file, python)
-        key = (corpus_file.read_bytes(), python or sys.executable)
+        key = (_inputs_fingerprint(candidate), corpus_file.read_bytes(), python or sys.executable)
         if key not in cache:
             cache[key] = dump_tree(candidate, corpus_file, python)
         return copy.deepcopy(cache[key])
@@ -75,6 +90,23 @@ def reuse_unchanged_dump(root: Path):
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(eq, "dump_tree", dump)
         yield
+
+
+def test_the_reused_dump_is_made_again_after_the_root_changes(tmp_path, monkeypatch):
+    """A reused dump keyed on the corpus alone came back stale after an edit to the root's own files."""
+    root = tmp_path / "t"
+    (root / "manifests" / "workflows").mkdir(parents=True)
+    workflow = root / "manifests" / "workflows" / "w.yml"
+    workflow.write_text("id: one\n", encoding="utf-8")
+    corpus = tmp_path / "corpus.json"
+    corpus.write_text("[]", encoding="utf-8")
+    made: list[str] = []
+    monkeypatch.setattr(eq, "dump_tree", lambda candidate, corpus_file, python=None: made.append(workflow.read_text()) or {"n": len(made)})
+    with reuse_unchanged_dump(root):
+        assert eq.dump_tree(root, corpus) == eq.dump_tree(root, corpus) == {"n": 1}
+        workflow.write_text("id: two\n", encoding="utf-8")
+        assert eq.dump_tree(root, corpus) == {"n": 2}
+    assert made == ["id: one\n", "id: two\n"]
 
 
 def run(before: Path, after: Path, tmp_path: Path, checks=eq.CHECKS):

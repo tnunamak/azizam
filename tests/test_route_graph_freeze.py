@@ -20,6 +20,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/admin/api/engines/{service_id}/lifecycle": "the owner starts, stops or restarts one engine over its lifecycle driver; owner only, audited; "
+                                                 "tests/test_engine_lifecycle_route.py covers it",
     "/admin/api/workflow-choices": "owner choice freshness and refresh, outside the public schema; tests/test_choice_owner_review.py covers the routes and binding resolution",
     "/admin/api/problem-reports": "owner-only list, read and edit of agent problem reports and their webhook destinations "
                                   "(docs/design/MCP_PROBLEM_REPORTS.md); tests/test_problem_reports.py covers auth, scrubbing and the round trip",
@@ -303,7 +305,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-18 (train 77, six more workflows name their choices): the help of TRELLIS background removal,
         # RIFE frame multiplier and both SeedVR2 choices was reworded; only those input descriptions moved. Before it the
         # digest was 40470f3ba556610ade5e4b5affc39033b8662a2d08fe4a9cbcaefab37d3914cb.
-        assert route_graph.openapi_digest(proxy.app) == "72d2606fff75483a26f6158165473007fbaedd115acb454d80a510b8905c97df"
+        # Re-captured 2026-11-19 for POST /admin/api/engines/{service_id}/lifecycle (see ADDED_PATHS): only that path is new
+        # (tests/fixtures/headless_openapi.json shows the same addition and nothing else). Before it the digest was
+        # 72d2606fff75483a26f6158165473007fbaedd115acb454d80a510b8905c97df.
+        assert route_graph.openapi_digest(proxy.app) == "ae29ca8c59c34f568113a516bccbf63d98b6cc52642771b8a28fc3bcf3e88361"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.

@@ -1356,6 +1356,12 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.engine_lifecycle",
+      "method": "POST",
+      "path": "/admin/api/engines/{service_id}/lifecycle",
+      "access": "operational"
+    },
+    {
       "handler": "gateway.engine_admin.register_engine_routes.<locals>.get_engine",
       "method": "GET",
       "path": "/admin/api/engines/{service_id}",
