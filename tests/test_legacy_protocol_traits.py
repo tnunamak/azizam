@@ -27,6 +27,7 @@ def test_shipped_traits_golden():
         "node-graph": ("graph_submission", "", (), {}),
         "ollama-native": ("", "", (), {}),
         "openai-compatible": ("", "chat.completions", ("openai-chat", "anthropic-messages"), {}),
+        "sdapi": ("", "", (), {}),
     }
 
 

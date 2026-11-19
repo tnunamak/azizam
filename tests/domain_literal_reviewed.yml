@@ -258,3 +258,28 @@ sites:
     reason: The first two sites are the identity sidecar's HTTP multipart contract (field
       and filename); the next two are a field of Azizam's own public identity API request
       shape.
+  - file: gateway/a1111_api.py
+    literal: "; see GET /sdapi/v1/sd-models"
+    count: 1
+    category: wire_enum
+    reason: "The A1111 facade's own published route prefix and discovery text (a wire name clients call); the word became a protocol id when the sdapi description was added, and this site selects no protocol, engine or workflow."
+  - file: gateway/a1111_api.py
+    literal: "/sdapi/v1"
+    count: 1
+    category: wire_enum
+    reason: "The A1111 facade's own published route prefix and discovery text (a wire name clients call); the word became a protocol id when the sdapi description was added, and this site selects no protocol, engine or workflow."
+  - file: gateway/discovery_metadata.py
+    literal: "- A1111 /sdapi/v1 subset at host root for SillyTavern's SD WebUI source: "
+    count: 1
+    category: wire_enum
+    reason: "The A1111 facade's own published route prefix and discovery text (a wire name clients call); the word became a protocol id when the sdapi description was added, and this site selects no protocol, engine or workflow."
+  - file: gateway/discovery_metadata.py
+    literal: "/sdapi/v1/txt2img, options, sd-models, samplers, schedulers, upscalers, progress, interrupt. Put `user:API_KEY` in its Authentication box."
+    count: 1
+    category: wire_enum
+    reason: "The A1111 facade's own published route prefix and discovery text (a wire name clients call); the word became a protocol id when the sdapi description was added, and this site selects no protocol, engine or workflow."
+  - file: gateway/request_body_limits.py
+    literal: "/sdapi/v1"
+    count: 1
+    category: wire_enum
+    reason: "The A1111 facade's own published route prefix and discovery text (a wire name clients call); the word became a protocol id when the sdapi description was added, and this site selects no protocol, engine or workflow."

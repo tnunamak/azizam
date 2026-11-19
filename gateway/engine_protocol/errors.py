@@ -37,6 +37,15 @@ class MappingError(ProtocolError):
     code = "mapping_failed"
 
 
+class ValueRefused(MappingError):
+    """A request value the caller sent is not one the map can use. The message is fixed text, safe to show the caller;
+    ``param`` names the request field, as OpenAI's own errors do."""
+
+    def __init__(self, message: str, *, param: str) -> None:
+        super().__init__(message)
+        self.param = param
+
+
 class BudgetExceeded(ProtocolError):
     """A size, depth, count or time budget ran out. ``budget`` names which."""
 

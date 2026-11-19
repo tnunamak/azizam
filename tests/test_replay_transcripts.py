@@ -612,7 +612,7 @@ def _local_definitions(root: Path, *protocols: str | None) -> None:
 
 
 def test_the_shipped_engine_definitions_are_read_as_data() -> None:
-    assert replay_scan.local_upstream_protocols(ROOT) == {"chunked-stt", "inline-tts", "node-graph", "openai-compatible"}
+    assert replay_scan.local_upstream_protocols(ROOT) == {"chunked-stt", "inline-tts", "node-graph", "openai-compatible", "sdapi"}
 
 
 def test_a_not_applicable_cell_holds_only_while_no_engine_definition_speaks_its_protocol(tmp_path: Path) -> None:

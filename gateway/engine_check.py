@@ -42,7 +42,7 @@ import httpx
 
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
-from gateway.engine_definitions import LIST_SHAPES, UPLOAD_SAMPLES, EngineCatalog
+from gateway.engine_definitions import LIST_SHAPES, UPLOAD_SAMPLES, EngineCatalog, real_test_id
 from gateway.engine_readiness import safe_probe_path
 from gateway import engine_egress
 
@@ -1221,6 +1221,17 @@ def duplicate_finding(
     return None
 
 
+def _served_dispatch_address(address: str) -> bool:
+    """True when protocol dispatch would serve this address: the rule a saved record is held to, one place."""
+    from gateway.service_registry import validate_protocol_dispatch_local_only
+
+    try:
+        validate_protocol_dispatch_local_only({"config": {"connection": {"dispatch": "protocol", "address": address}}})
+    except ValueError:
+        return False
+    return True
+
+
 async def run_check(
     catalog: EngineCatalog,
     definition: Mapping[str, Any],
@@ -1315,6 +1326,12 @@ async def _run_check(
     dup = duplicate_finding(catalog, definition, values, existing, viewer_role=viewer_role)
     if dup is not None:
         result["findings"].append(dup)
+        return finish("error")
+    # A definition that has the gateway call the engine through an installed description serves only this computer's
+    # addresses for now. Say so here, before any request and before a save, not when the first generation fails.
+    if definition["record"].get("dispatch") and not _served_dispatch_address(address):
+        row = next(r for r in advice if r["code"] == "local_only")
+        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=None, key_sent=False))
         return finish("error")
 
     baseline_path = f"/{_BASELINE_PREFIX}{ctx.token}"
@@ -1519,8 +1536,9 @@ async def _run_check(
                                "ticked": level == "likely"}
         if why:
             row["why"] = why
-        if cap.get("real_test"):
-            row["real_test"] = cap["real_test"]
+        test_id = real_test_id(catalog, definition, cap_id)
+        if test_id:
+            row["real_test"] = test_id
         if cap.get("route"):
             route_base = join_url(ctx.origin, definition["probes"]["route_base"]) if definition["probes"].get("route_base") else ctx.address
             row["sent_to"] = f"{cap['route']['method']} {join_url(route_base, cap['route']['path'])}"
@@ -1657,7 +1675,10 @@ async def run_real_test(
         raise DraftError("This kind of server does not offer that.", field="capability")
     address = normalize_address(values.get("address"))
     cap = catalog.capability(capability_id)
-    test = catalog.data["real_tests"][cap["real_test"]]
+    test_id = real_test_id(catalog, definition, capability_id)
+    if test_id is None:
+        raise DraftError("This kind of server has no real test for that.", field="capability")
+    test = catalog.data["real_tests"][test_id]
     if test.get("kind") == "get_probe":
         return await _run_get_probe(definition, values, capability_id, cap, test, address=address, key=key, fetch=fetch, now=now)
     headers = _auth_headers(key.value, values)

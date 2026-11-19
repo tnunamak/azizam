@@ -407,8 +407,9 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   - one async pattern: submit, then poll a status path, then fetch an
     artifact, with typed id, status and asset selectors
 
-  The **mapping language** has ten rules: copy, rename, set
-  (constant), default, drop, enum (table), clamp, stringify, `when`, and
+  The **mapping language** has eleven rules: copy, rename, set
+  (constant), default, drop, enum (table), clamp, stringify, `size` (an OpenAI
+  `WIDTHxHEIGHT` string into two integers), `when`, and
   bounded `each` (D23 amends D14). Conditions use `present`, `equals` and `in`.
   `each` maps one selected list with nested rules; it shares size, depth, rule,
   iteration and time budgets. There is no other iteration, arbitrary

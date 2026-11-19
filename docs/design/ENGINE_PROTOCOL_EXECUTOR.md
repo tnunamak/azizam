@@ -127,7 +127,7 @@ headers; `body`.
 - `multipart`: `parts`, each `{name, kind: field | json | file, from, required,
   default}`. A `file` part reads `/files/<name>`, a canonical asset.
 
-**Mapping language.** Ten rules, each an object with exactly one key:
+**Mapping language.** Eleven rules, each an object with exactly one key:
 
 | Rule | Does |
 |---|---|
@@ -139,6 +139,7 @@ headers; `body`.
 | `enum {from, to, table, unmapped}` | map by table; `unmapped` is `pass`, `drop` or `error` |
 | `clamp {path, min, max}` | limit a number |
 | `stringify {from, to}` | put compact JSON inside a string |
+| `size {from, width, height}` | read an OpenAI `WIDTHxHEIGHT` string into two integers; `auto` or absent writes nothing; any other value is a 400 naming the field |
 | `when {if, then, else}` | run rules if a condition holds; `if` is `{path, present \| equals \| in}` |
 | `each {from, to, map}` | map every element of one selected list into an object |
 

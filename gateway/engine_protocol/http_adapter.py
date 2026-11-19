@@ -73,6 +73,10 @@ class HttpV1Adapter:
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
         return await self._executor.invoke(conn, dataclasses.replace(request, op=op))
 
+    async def check_request(self, conn: Connection, op: str, request: CanonicalRequest) -> None:
+        """Build the request an ``invoke`` would send, and send nothing. A value the map refuses raises here."""
+        await self._executor.preview(conn, dataclasses.replace(request, op=op))
+
     async def submit(self, conn: Connection, op: str, request: CanonicalRequest) -> JobRef:
         return await self._executor.submit(conn, dataclasses.replace(request, op=op))
 

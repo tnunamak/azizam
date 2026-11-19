@@ -518,6 +518,48 @@ def described_operations(values: Mapping[str, Any]) -> set[str]:
     return set(doc.operations) if doc is not None and doc.executor == "http-v1" else set()
 
 
+def _dispatch_offerings(template: Mapping[str, Any], models: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """One offering per model row, from the definition's offering template. ``{upstream}`` is the model's name on the server."""
+    def fill(node: Any, upstream: str) -> Any:
+        if isinstance(node, str):
+            return upstream if node == "{upstream}" else node
+        if isinstance(node, list):
+            return [fill(item, upstream) for item in node]
+        if isinstance(node, Mapping):
+            return {key: fill(value, upstream) for key, value in node.items()}
+        return node
+
+    return [{"id": row["model_group"], "kind": "model", "upstream": row["upstream_model"],
+             "tasks": [{"task": template["task"], "evidence": "declared"}],
+             "selection": fill(template["selection"], row["upstream_model"])}
+            for row in models if row.get("enabled") is not False]  # an unticked row is not offered
+
+
+def _owns_dispatch(definition: Mapping[str, Any]) -> bool:
+    """True when the definition's record template chooses how the engine is called, and builds its offerings."""
+    return bool(definition["record"].get("dispatch"))
+
+
+def _without_dispatch(definition: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, Any]:
+    """Values for a definition that owns its dispatch: the owner chooses none, so the record's own are dropped here and
+    ``build_raw`` writes them back from the template. The check then runs the definition's probes, as an add does."""
+    if not _owns_dispatch(definition):
+        return dict(values)
+    return {key: value for key, value in values.items() if key not in ("dispatch", "protocol_description")}
+
+
+def _offerings_are_the_definitions(definition: Mapping[str, Any], record: Mapping[str, Any]) -> bool:
+    """True when the saved offerings are exactly what the definition's template builds from the saved model rows, so
+    an edit of the models can rebuild them. Offerings changed by hand are not."""
+    if not _owns_dispatch(definition):
+        return False
+    from gateway.engine_contract_view import offerings_config
+
+    config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
+    built = _dispatch_offerings(definition["record"]["dispatch"]["offering"], model_rows(config.get("models")))
+    return [dict(row) for row in offerings_config(record)] == built
+
+
 def build_raw(
     catalog: EngineCatalog,
     definition: Mapping[str, Any],
@@ -537,6 +579,10 @@ def build_raw(
 ) -> dict[str, Any]:
     """The raw service record for ``service_from_backend_config``. ``keep`` holds config keys to carry over."""
     caps = list(dict.fromkeys(capabilities))
+    dispatch = definition["record"].get("dispatch")
+    if dispatch:
+        # A definition whose record calls the engine through an installed description chooses it; the owner chooses nothing.
+        values = {**values, "dispatch": "protocol", "protocol_description": dispatch["protocol"]}
     described = described_operations(values)
     for position, cap_id in enumerate(caps, start=1):
         if cap_id not in definition["capabilities"] and cap_id not in described:
@@ -603,6 +649,8 @@ def build_raw(
         raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)
     else:
         raw.pop("models", None)
+    if dispatch:
+        raw["offerings"] = _dispatch_offerings(dispatch["offering"], models_config)
     if tests:
         raw["engine_tests"] = dict(tests)
     else:
@@ -763,7 +811,8 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         caps = _caps_from_record(catalog, definition, record)
     field_keys = {f["key"] for f in definition["fields"]}
     schema_matches = not config.get("protocol") or config["protocol"] == definition["record"]["protocol"]
-    declared_offerings = isinstance(record.get("offerings"), list) or isinstance(config.get("offerings"), list)
+    declared_offerings = ((isinstance(record.get("offerings"), list) or isinstance(config.get("offerings"), list))
+                          and not _offerings_are_the_definitions(definition, record))
     unsupported_fields = {} if schema_matches else {
         key: "This saved protocol does not match the settings this form supports, so these fields are read-only."
         for key in field_keys
@@ -1164,7 +1213,7 @@ class EngineService:
     def _saved_test_inputs(self, catalog: EngineCatalog, definition: Mapping[str, Any], record: Mapping[str, Any],
                            ctx: Any) -> tuple[dict[str, Any], KeyInput]:
         shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
-        values = {**shown["values"], **_no_headers_sent(definition)}
+        values = _without_dispatch(definition, {**shown["values"], **_no_headers_sent(definition)})
         clean = clean_values(definition, values, stored_headers=(record.get("config") or {}).get("headers") or ())
         key = resolve_key(clean, ctx, record=record, db_path=self.db_path, env=self.env)
         return clean, key
@@ -1182,6 +1231,7 @@ class EngineService:
             values = {**shown["values"], **values}
             if values.get("headers") == shown["values"].get("headers"):
                 values.update(_no_headers_sent(definition))
+        values = _without_dispatch(definition, values)
         _refuse_protocol_probe(values)
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
@@ -1215,6 +1265,7 @@ class EngineService:
             values = {**shown["values"], **values}
             if values.get("headers") == shown["values"].get("headers"):
                 values.update(_no_headers_sent(definition))
+        values = _without_dispatch(definition, values)
         _refuse_protocol_probe(values)
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
@@ -1527,6 +1578,17 @@ class EngineService:
                     "ready": dict(template["ready"]), "problems": [p.public() for p in refused.problems]}
         return {**resolved.preview(), "problems": []}
 
+    def edits_declared_offerings(self, service_id: str, body: Mapping[str, Any]) -> bool:
+        """True when a body that names models or capabilities is for a record that declares offerings. Such an edit
+        goes through ``update``, which rebuilds the offerings from the models or refuses, never a name-only edit
+        that would leave the offerings as they were."""
+        if "models" not in body and "capabilities" not in body:
+            return False
+        from gateway.engine_contract_view import offerings_config
+
+        record = (self.store.get_service_registry().get("services") or {}).get(service_id)
+        return isinstance(record, Mapping) and bool(offerings_config(record))
+
     async def update(self, ctx: Any, service_id: str, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
         if body.get("recheck") is True and not _is_owner(ctx):
             raise _owner_only("Only the owner can recheck service settings.")
@@ -1552,7 +1614,7 @@ class EngineService:
         for field, reason in before["unsupported_fields"].items():
             if field in sent and sent[field] != before["values"].get(field):
                 raise DraftError(reason, field=field)
-        values = {**before["values"], **sent}
+        values = _without_dispatch(definition, {**before["values"], **sent})
         # What the page was shown for a header or a start and stop command is a read of entries, not text to save:
         # headers are changed only when the body names them, and the commands only when their text differs.
         if "headers" not in sent or sent["headers"] == before["values"].get("headers"):
@@ -1590,8 +1652,9 @@ class EngineService:
         moved = comparable_address(clean["address"]) != comparable_address(before["values"]["address"] or clean["address"])
         connection_changed = (
             moved
-            or clean.get("dispatch", "") != before["values"].get("dispatch", "")
-            or (clean.get("dispatch") == "protocol" and clean.get("protocol_description") != before["values"].get("protocol_description"))
+            or (not _owns_dispatch(definition) and (
+                clean.get("dispatch", "") != before["values"].get("dispatch", "")
+                or (clean.get("dispatch") == "protocol" and clean.get("protocol_description") != before["values"].get("protocol_description"))))
             or (values.get("api_key") not in ("", SECRET_MASK, None))
             or clean.get("api_key_env") != (before["key"].get("env_name") or "")
             or clean.get("path_prefix", "") != (before["values"].get("path_prefix") or "")
@@ -1674,6 +1737,10 @@ class EngineService:
                process: Mapping[str, Any] | None = None,
                residency: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
+        dispatch = definition["record"].get("dispatch")
+        if dispatch and dispatch.get("observations"):
+            # The observations the offerings' selection verifies against are part of the record this definition writes.
+            observations = {**(observations or {}), **copy.deepcopy(dispatch["observations"])}
         written: list[str] = []
         retired: list[str] = []
         old_config = (existing or {}).get("config") or {}
