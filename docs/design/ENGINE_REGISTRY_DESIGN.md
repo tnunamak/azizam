@@ -615,6 +615,14 @@ The current code is already partway: generic health exists, `LLM_BACKEND_HOSTS` 
 - **Cross-host scheduling / GPU placement.** The gateway routes and idle-unloads; it is not a cluster scheduler. Multi-GPU budget logic (today's `gpu_budget.sh`) is an operator concern surfaced via `${env:...}`, not modeled.
 - **Auto-discovery of new engines on the network.** `origin: discovered` exists for records the gateway populates from a backend's own catalog, but network scanning for engines is deferred — operators declare their endpoints.
 
+## Add four engines from data
+
+An owner can add four kinds of engine to one gateway with no gateway code that knows the product: a speech server (`openai-speech`), a transcription server (`openai-transcription`), a Stable Diffusion web API server (`sdapi`) and a workflow image engine (`workflow-image-engine`). Each one is a shipped definition in `registry/engine_definitions.json`. The owner checks, tests and saves through the same admin routes the Add engine dialog uses.
+
+The proof is `tests/test_engines_as_data_journey.py::test_four_engines_added_without_code`. In one gateway, as the owner, it adds all four against fake servers on this computer. Then it makes one public request per engine: a speech request, a transcription, and an image from the chosen checkpoint. For the workflow engine it reads the check result that lists the shipped workflows the engine can run, and it checks that this engine is the graph service while the picture server keeps its own checkpoint. A first image through the workflow engine is proved by `tests/test_engine_comfy_definition.py::test_a_first_image_goes_through_the_added_record_to_the_engine`.
+
+A ratchet keeps it so: `TestFourEnginesStayData` in `tests/test_engine_knowledge_boundary.py` fails if `proxy.py` or a module under `gateway/` branches on one of the four definition ids, a protocol word they save, or a product name they were written for.
+
 ---
 
 The final design is saved at `docs/design/ENGINE_REGISTRY_DESIGN.md`.
