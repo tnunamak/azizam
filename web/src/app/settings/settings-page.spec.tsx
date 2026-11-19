@@ -121,9 +121,10 @@ function seed(state: State) {
   routes.set("/admin/api/operator/host-commands", () => ({
     json: { enabled: false, revision: "0" },
   }));
-  routes.set("/admin/api/operator/engine-folders", () => ({
-    json: { folders: ["/srv/engines"], revision: "3" },
-  }));
+  routes.set(
+    "/admin/api/operator/engine-folders",
+    reply({ folders: ["/srv/engines"], revision: "3" }),
+  );
   routes.set(
     "/admin/api/extensions",
     reply({
@@ -434,6 +435,9 @@ describe("settings page states", () => {
     expect(
       within(region("People and access")).getByText("Couldn’t load access plans."),
     ).toBeVisible();
+    expect(
+      await within(region("Engine folders")).findByText("Couldn’t load engine folders."),
+    ).toBeVisible();
     await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
     const retry = within(page.closest('[role="alert"]') as HTMLElement).getByRole("button", {
       name: "Try again",
@@ -453,6 +457,8 @@ describe("settings page states", () => {
     await userEvent.click(retry);
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Couldn’t load settings" })).toBeNull());
     expect(await screen.findByText("Our gateway")).toBeVisible();
+    // Engine folders reads with its own query; the page's one Try again asks it again too.
+    expect(await within(region("Engine folders")).findByText("1 folder")).toBeVisible();
   });
 });
 

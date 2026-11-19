@@ -241,13 +241,18 @@ Implement these top-level functions; run `python -m pytest <full node IDs>`.
    | --- | --- | --- |
    | Legacy switch/residency control | engine_control.EngineControlRuntime observe/invoke/select/load/unload/sleep/wake refuse | test_remote_legacy_switch_refuses_before_client_or_credential |
    | Lifecycle readiness/health and standalone observation | lifecycle_drivers driver selection, ensure_ready and _poll_health; engine_observations.ObservationReader.read refuse | test_remote_legacy_health_refuses_before_client_or_credential |
-   | Buffered/chunked transcription and speech | chunked_stt/inline_tts invoke refuse marked Connection | test_remote_unbound_adapters_refused |
+   | Buffered/chunked transcription and speech | chunked_stt/inline_tts invoke refuse a marked Connection that holds no authority; with authority (slice S7) every request is one BoundTransport.send through bound_wire | test_remote_unbound_adapters_refused, tests/test_remote_adapter_binding.py |
    | Node graph HTTP sessions, attached sessions and WebSocket events | node_graph open/_use/GraphSession/watch refuse marked Connection | test_remote_unbound_adapters_refused |
    | Realtime WebSocket | proxy._handle_realtime refuses the record before readiness or upgrade | GateRefusalTests.test_remote_enabled_service_refuses_before_readiness_or_websocket |
    | Other legacy proxy inference, metadata, health, capacity and transition HTTP reads/writes | engine_egress project records remote destinations even without transition policy; sync/async send hooks require bound authority, including probes | test_remote_unbound_egress_hook_refuses_probe_and_inference |
 
    AdapterRegistry also refuses every reviewed custom adapter for remote
    capabilities: only the generic HTTP executor accepts the bound transport.
+   Slice S7 adds one reviewed path beside it: the speech and transcription
+   adapters (``reviewed.sends_through_remote_guard``) take the bound transport
+   from ``Connection.remote_transport`` and build every client through
+   ``bound_wire.client``. The proxy binds it per call (``_remote_binding``), so
+   an owner change or a revoke applies to the next call and cancels one in flight.
    Connection conversion retains the remote-enabled marker for direct adapter
    callers. Destination checks also cover connections constructed without the
    service marker, including graph event subscriptions. A default HTTP client

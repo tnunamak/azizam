@@ -64,6 +64,24 @@ _BUILTIN_FACTORIES: dict[str, AdapterFactory] = {
 }
 
 
+# The reviewed implementations that take every HTTP client from ``bound_wire`` (tests/test_remote_adapter_binding.py reads
+# their source for any other way to reach the network). A record that names one of these may be marked remote. The node
+# graph adapter keeps its own sockets and websocket, so a remote record naming it is refused.
+_REMOTE_BOUND_IMPLEMENTATIONS = frozenset({"inline_speech", "chunked_transcription"})
+
+
+def sends_through_remote_guard(protocol_id: str) -> bool:
+    """Whether the adapter that ``protocol_id`` names sends every request through the remote guarded transport."""
+    for directory in (None, description.REGISTRY_DIR):
+        doc = _documents(directory).get(protocol_id)
+        if doc is not None and doc.adapter_id is not None:
+            implementation = doc.implementation or next(
+                (row.implementation for row in _documents(description.REGISTRY_DIR).values()
+                 if row.adapter_id == doc.adapter_id and row.implementation), "")
+            return implementation in _REMOTE_BOUND_IMPLEMENTATIONS
+    return False
+
+
 def is_reviewed_implementation(name: str) -> bool:
     """Whether a description may select this code, including the separate binding runner."""
     return name in _BUILTIN_FACTORIES or name == "multipart_post"

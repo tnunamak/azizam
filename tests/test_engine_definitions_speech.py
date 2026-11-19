@@ -217,7 +217,7 @@ def test_a_wrong_status_fails_the_binary_real_test():
 
 # ---- (b) add, check, save and speak, through the gateway ----------------------------------------------------------
 
-def _speech_server(fakes):
+def _speech_server(fakes, host=None):
     """An OpenAI-shaped speech server on a real port: Kokoro-style routes, no key, one audio answer."""
     not_found = {"status": 404, "json": {"detail": "Not Found"}}
     audio = {"status": 200, "headers": {"content-type": "audio/wav"}, "body": [{"hex": _wav_long().hex()}]}
@@ -241,7 +241,7 @@ def _speech_server(fakes):
             ex("speech", "POST", "/v1/audio/speech", audio),
         ],
     }, token=TOKEN)
-    return fakes.loopback(scenario)
+    return fakes.loopback(scenario) if host is None else fakes.asgi(scenario, host=host)   # a named host: another computer
 
 
 def _wav_long() -> bytes:

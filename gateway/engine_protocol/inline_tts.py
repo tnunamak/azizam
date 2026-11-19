@@ -36,13 +36,13 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from gateway.engine_protocol import bound_wire
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
 from gateway.engine_protocol.errors import TransportFailure, UnknownOperation, UnsupportedByAdapter
 from gateway.engine_protocol.httpx_wire import failure, reply_from
 from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
-from gateway import engine_egress
 from gateway.service_registry import join_base_path
 
 SPEECH_PATH = "/v1/audio/speech"
@@ -70,41 +70,41 @@ class InlineTtsAdapter:
         raise UnsupportedByAdapter("The speech adapter lists no inventory.")
 
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
-        from gateway.remote_engine import refuse_unbound_connection
-        refuse_unbound_connection(conn)
+        bound_wire.bound_transport(conn)    # a connection with no authority for an address marked remote is refused here
         if op not in OPERATIONS:
             raise UnknownOperation(f"The speech adapter has no operation '{op}'.")
-        if op in _JSON_ROUTES:
-            return await self._posted_json(join_base_path(conn.address, _JSON_ROUTES[op]), request.body, conn)
-        url = join_base_path(conn.address, SPEECH_PATH)
-        body = request.raw_body if request.raw_body is not None else json.dumps(request.body).encode()
-        headers = request.headers
-        timeout = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
-        if op == "speech.synthesize":
-            return await self._buffered(url, headers, body, timeout)
-        return await self._streamed(url, headers, body, timeout)
+        async with bound_wire.operation(conn):
+            if op in _JSON_ROUTES:
+                return await self._posted_json(join_base_path(conn.address, _JSON_ROUTES[op]), request.body, conn)
+            url = join_base_path(conn.address, SPEECH_PATH)
+            body = request.raw_body if request.raw_body is not None else json.dumps(request.body).encode()
+            headers = request.headers
+            timeout = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
+            if op == "speech.synthesize":
+                return await self._buffered(url, headers, body, timeout, conn)
+            return await self._streamed(url, headers, body, timeout, conn)
 
     @staticmethod
     async def _posted_json(url: str, payload: Any, conn: Connection) -> Reply:
         try:
-            async with engine_egress.async_client(timeout=httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)) as client:
+            async with bound_wire.client(conn, timeout=httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)) as client:
                 resp = await client.post(url, json=payload)
         except httpx.HTTPError as error:
             raise failure(error) from error
         return reply_from(resp)
 
     @staticmethod
-    async def _buffered(url: str, headers: Any, body: bytes, timeout: httpx.Timeout) -> Reply:
+    async def _buffered(url: str, headers: Any, body: bytes, timeout: httpx.Timeout, conn: Connection) -> Reply:
         try:
-            async with engine_egress.async_client(timeout=timeout) as client:
+            async with bound_wire.client(conn, timeout=timeout) as client:
                 resp = await client.post(url, headers=headers, content=body)
         except Exception as error:  # noqa: BLE001 - every failure surfaces typed, with the original text
             raise _failure(error) from error
         return Reply(resp.status_code, _lower(resp.headers), raw=resp.content)
 
     @staticmethod
-    async def _streamed(url: str, headers: Any, body: bytes, timeout: httpx.Timeout) -> Reply | StreamReply:
-        client = engine_egress.async_client(timeout=timeout)
+    async def _streamed(url: str, headers: Any, body: bytes, timeout: httpx.Timeout, conn: Connection) -> Reply | StreamReply:
+        client = bound_wire.client(conn, timeout=timeout)
         upstream: httpx.Response | None = None
         handed_over = False
         reply: Reply | None = None

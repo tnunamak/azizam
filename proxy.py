@@ -1218,6 +1218,20 @@ def _tts_adapter(service_id: str):
     return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(service_id) or {}, "speech")
 
 
+def _remote_binding(service_id: str) -> dict[str, Any]:
+    """The remote authority of a speech or transcription engine its owner marked as another computer; none for one on this computer.
+
+    The capability is admitted from the registry now, so a call that follows an owner's change is judged by the new policy,
+    and the adapter sends every request through the guarded transport that comes with it (``engine_protocol.bound_wire``)."""
+    from gateway import remote_engine
+    from gateway.engine_contract_view import connection_config
+    if not remote_engine.remote_enabled(connection_config((config.get("backends") or {}).get(service_id) or {})):
+        return {}
+    factory = remote_engine.factory_from_store()
+    capability = factory.admit(service_id)
+    return {"remote_capability": capability, "remote_transport": factory.transport(capability)}
+
+
 def _tts_connection(address: str, read_s: float | None = None, *, service_id: str) -> AdapterConnection:
     """The speech engine at ``address``; the read timeout is every speech call's own unless a call names its own.
 
@@ -1225,7 +1239,8 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
     per-route refusals)."""
     _require_egress_lease(service_id)
     read = read_s or DERIVED.TTS_TIMEOUT
-    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
+    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read),
+                             **_remote_binding(service_id))
 
 # The embeddings, ComfyUI (graph engine) and speech/transcription addresses, timeouts, workflow directories and default
 # model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
@@ -4900,7 +4915,8 @@ async def _reference_transcript(
         _require_egress_lease(stt_service_id)
         resp = await _stt_adapter(stt).invoke(
             AdapterConnection(address=service_registry.engine_base_address(stt),
-                              timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
+                              timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120),
+                              **_remote_binding(stt_service_id)),
             "stt.transcribe", clip,
         )
         text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
@@ -5032,7 +5048,7 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     so a transition-enabled domain refuses them here (fail closed).
     """
     from gateway.remote_engine import refuse_unbound
-    refuse_unbound((config.get("backends") or {}).get(service_id) or {})
+    refuse_unbound((config.get("backends") or {}).get(service_id) or {}, bound_adapter_ok=True)
     refusal = _unleased_path_refusal(service_id)
     if refusal is not None:
         return refusal
@@ -5555,7 +5571,7 @@ def _stt_connection(execution: stt_chunking.SttExecutionConfig) -> AdapterConnec
     _require_egress_lease(execution.service_id)
     return AdapterConnection(address=execution.host, timeouts=AdapterTimeouts(
         connect_s=min(10.0, execution.timeout_seconds), first_byte_s=execution.timeout_seconds,
-        total_s=execution.timeout_seconds))
+        total_s=execution.timeout_seconds), **_remote_binding(execution.service_id))
 
 
 def _stt_execution_snapshot(

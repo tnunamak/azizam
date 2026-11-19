@@ -238,8 +238,9 @@ disable it. Other edits and re-enabling it must pass the current check. Use the
 existing provider route for those records.
 
 An owner can also add an http-v1 engine that runs on another computer on the same
-private network. Today the Stable Diffusion web API (`sdapi`) definition offers this, and
-so does any hand-written http-v1 record that opts in (speech, for example). In the Add engine dialog choose **Where does it run? → On another computer on
+private network. Today the Stable Diffusion web API (`sdapi`), the speech server
+(`openai-speech`) and the transcription server (`openai-transcription`) definitions offer
+this, and so does any hand-written http-v1 record that opts in. In the Add engine dialog choose **Where does it run? → On another computer on
 my network**. The dialog computes the network from the address you typed (the /24 around
 an IPv4 host, the /64 around an IPv6 host) and asks you to confirm it. You never type a
 network range. Only the owner can make this choice; a member or an app key is refused.
@@ -262,19 +263,32 @@ plain message:
 
 - every address the name resolves to lies inside the approved private network;
 - no key is bound to the record, so a key cannot be sent over plain http, even on your
-  own network (put the server behind a reverse proxy that uses https, or remove the key);
+  own network (put the server behind a reverse proxy that uses https, or remove the key).
+  A fixed header counts as a key when its name says so (`Authorization`, `X-Api-Key`,
+  `Cookie`) or its value looks like one (`Bearer …`, `sk-…`);
 - the owner ticked "this network is trusted".
 
 Loopback, link-local, cloud-metadata and this computer's own addresses are refused
-whatever the network says. A public address is never approved for plain http.
+whatever the network says. A public address is never approved for plain http. The private
+pools are `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and `fc00::/7`.
+
+A Tailscale or other mesh address (`100.64.0.0/10`, shared address space) is accepted only
+when the owner ticks the trust box after the dialog says what that trusts: internet
+providers also use this range for shared networks, so the gateway cannot tell your mesh from
+someone else's. Saving then also writes `"shared_space": true` beside `private_cidrs`; without
+it a policy that names a shared-space network is refused. A cloud metadata address sits
+inside this range and stays refused.
 
 `tasks` limits which work the engine may do on another computer. A definition lists
 them in `record.remote.tasks`, and only for work that arrives in one buffered answer
 (buffered speech, a synchronous picture, buffered transcription). A chunked or
 streamed answer is refused on this path, and an offering for a task outside the list is
-refused at save. The `sdapi` definition allows `image`. Definitions served by reviewed
-adapters (node-graph engines, inline speech, chunked transcription) stay on this
-computer for now; the dialog says so in plain words when you pick another computer.
+refused at save. The `sdapi` definition allows `image`, `openai-speech` allows `speech` and
+`openai-transcription` allows `transcription`. The speech and transcription adapters send
+every request through the same guarded transport as an http-v1 engine (one client
+function, `gateway/engine_protocol/bound_wire.py`; the adapters hold no client of their
+own). Node-graph engines keep their own sockets and a WebSocket, so they stay on this
+computer; the dialog says so in plain words when you pick another computer.
 
 At every HTTP exchange the gateway resolves the hostname once, checks all answers, and
 dials only those checked addresses. It never follows redirects, refuses

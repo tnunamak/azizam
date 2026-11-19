@@ -351,7 +351,7 @@ def test_probe_join_keeps_base_query():
 
 
 def test_inline_tts_url_keeps_base_query():
-    from gateway.engine_protocol import inline_tts
+    from gateway.engine_protocol import bound_wire, inline_tts
     seen = []
 
     class _Client:
@@ -366,7 +366,7 @@ def test_inline_tts_url_keeps_base_query():
             raise inline_tts.httpx.ConnectError("stop")
 
     conn = _query_conn()
-    with patch.object(inline_tts.engine_egress, "async_client", lambda **_k: _Client()):
+    with patch.object(bound_wire.engine_egress, "async_client", lambda **_k: _Client()):
         for op in ("speech.synthesize", "speech.voice_check"):
             with pytest.raises(Exception):
                 asyncio.run(inline_tts.InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body={})))
@@ -377,7 +377,7 @@ def test_chunked_stt_url_keeps_base_query():
     from gateway.engine_protocol import chunked_stt
     seen = []
 
-    async def post_once(url, timeout, request):
+    async def post_once(url, timeout, request, conn=None):
         seen.append(url)
         return None
 

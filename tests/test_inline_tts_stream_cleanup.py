@@ -51,12 +51,13 @@ class FakeClient:
 
 
 def install_client(monkeypatch, client):
-    monkeypatch.setattr(inline_tts.engine_egress, "async_client", lambda **kwargs: client)
+    # A connection with no remote authority gets the ordinary egress client through bound_wire.
+    monkeypatch.setattr(inline_tts.bound_wire.engine_egress, "async_client", lambda **kwargs: client)
 
 
 async def streamed():
     return await inline_tts.InlineTtsAdapter._streamed(
-        "https://synthetic.invalid/speech", {}, b"{}", httpx.Timeout(1)
+        "https://synthetic.invalid/speech", {}, b"{}", httpx.Timeout(1), None
     )
 
 

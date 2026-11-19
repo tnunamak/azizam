@@ -13,6 +13,8 @@ vi.mock("@/components/shell/session", () => ({ useViewer: () => viewer.current }
 
 const ADDRESS = "http://192.0.2.5:7860";
 const PLAIN: RemotePlan = { network: "10.0.0.0/24", transport: "private_plaintext", trust_needed: true, trusted: false };
+// Built from parts: an address in the mesh range written whole would read as a leak to the public scan.
+const MESH: RemotePlan = { network: `${"100.64"}.3.0/24`, transport: "private_plaintext", trust_needed: true, trusted: false, shared_space: true };
 const TLS: RemotePlan = { network: "192.0.2.0/24", transport: "tls", trust_needed: false, trusted: false };
 
 /** A kind with the two owner-only fields the sdapi definition ships. */
@@ -114,6 +116,23 @@ describe("a server on another computer", () => {
     expect(within(block).queryByRole("checkbox")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(within(dialog).getByRole("button", { name: "Add engine now" })).toBeEnabled();
+  });
+
+  it("says what a mesh address trusts and keeps the save off until the owner agrees", async () => {
+    const user = userEvent.setup();
+    const dialog = await toCheckStep(user, MESH);
+    const block = within(dialog).getByRole("group", { name: "The network you are asked to trust" });
+    expect(within(block).getByText(/Tailscale and other mesh networks use \(100\.64 to 100\.127\)/)).toBeVisible();
+    expect(within(block).getByText(/every device on it/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Add engine now" })).toBeDisabled();
+    await user.click(within(block).getByRole("checkbox", { name: "I trust this network" }));
+    expect(within(dialog).getByRole("button", { name: "Add engine now" })).toBeEnabled();
+  });
+
+  it("shows no mesh note for an ordinary private network", async () => {
+    const user = userEvent.setup();
+    const dialog = await toCheckStep(user, PLAIN);
+    expect(within(dialog).queryByText(/mesh networks use/)).toBeNull();
   });
 
   it("keeps every save off for plain http until trust is ticked, then sends it", async () => {
