@@ -57,6 +57,8 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
    - API key: your App key (`opk_…`)
    - Model: the public model name from step 5
 
+   This base URL works only on the computer that runs the gateway. Members use the gateway's address instead; see the [member guide](docs/guides/FOR_MEMBERS.md).
+
    Check the key and the model list with one request:
 
    ```bash

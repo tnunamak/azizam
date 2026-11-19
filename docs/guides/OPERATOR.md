@@ -153,8 +153,7 @@ For example, set an OpenRouter key credit limit that matches the gateway cap.
 
 ## Manage people and access plans
 
-Open **Gateway**, then **People**.
-Open `/people/`.
+Open **Gateway**, then **People** (`/people/`).
 
 Use the People tab to:
 
@@ -164,10 +163,11 @@ Use the People tab to:
 - create a password reset link for a built-in account;
 - remove a person.
 
-Use the Invites tab to:
-- choose the person's **Access plan**. Create one first if needed;
-- open **Invite someone** to create a single-use invite link;
-- set **Email (optional)** if you want to restrict the invitation;
+An invite needs an access plan, so create one first. Then use the Invites tab to:
+
+- choose **Invite someone** to create a single-use invite link;
+- in that dialog, choose the person's **Access plan**;
+- set **Email (optional)** to restrict who can accept it;
 - choose **Link expires after**: 1 day, 7 days, or 30 days;
 - copy a pending invite link again;
 - revoke a pending invite.
