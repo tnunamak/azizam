@@ -322,67 +322,74 @@ def _pointer(*parts: Any) -> str:
     return "".join("/" + str(part).replace("~", "~0").replace("/", "~1") for part in parts)
 
 
-def _alias_issues(cfg: Mapping[str, Any] | None, derived_speech: Iterable[str] = ()) -> list[tuple[str, str]]:
-    """Structural problems as ``(JSON Pointer, text)``; the pointer is the entry the problem sits on ('' = the section).
+def _alias_issues(
+    cfg: Mapping[str, Any] | None, derived_speech: Iterable[str] = (), *, registry_known: bool = False,
+) -> list[tuple[str, str, str]]:
+    """Problems as ``(JSON Pointer, text, severity)``; the pointer is the entry the problem sits on ('' = the section).
 
     ``derived_speech`` are the ids of the speech engines the service records give (gateway/derived_engines.py): a tier
-    or an OpenAI-name pattern may name one, though the stored table does not hold it."""
-    issues: list[tuple[str, str]] = []
+    or an OpenAI-name pattern may name one, though the stored table does not hold it. When the registry is known
+    (``registry_known``), a speech tier or pattern naming an id that is neither a table entry nor derived is not a
+    structure fault: a deleted record's engine looks the same as a typo, so it is shown dangling like an entry whose
+    service is gone, and the tier skips it. With no registry the same name stays an unknown engine."""
+    issues: list[tuple[str, str, str]] = []
     if not isinstance(cfg, Mapping):
-        return [("", "model_aliases must be a mapping")]
+        return [("", "model_aliases must be a mapping", INVALID)]
     for operation in cfg:
         if operation not in OPERATIONS:
-            issues.append((_pointer(operation), f"unknown operation section: {operation}"))
+            issues.append((_pointer(operation), f"unknown operation section: {operation}", INVALID))
     for operation in OPERATIONS:
         section = cfg.get(operation)
         if section is None:
             continue
         if not isinstance(section, Mapping):
-            issues.append((_pointer(operation), f"{operation}: must be a mapping"))
+            issues.append((_pointer(operation), f"{operation}: must be a mapping", INVALID))
             continue
         stable = _stable_map(section)
         engines = _engine_map(section)
         known = {*engines, *(_norm(engine) for engine in derived_speech)} if operation == "speech" else set(engines)
+        # An engine id no table entry and no record gives: dangling where a record could have given it (see above).
+        absent_severity = DANGLING if registry_known and operation == "speech" else INVALID
         if engines and operation not in ENGINE_OPERATIONS:
             issues.append((_pointer(operation, "engines"),
-                           f"{operation}: engines are only valid for speech/transcriptions/rerank/decisions"))
+                           f"{operation}: engines are only valid for speech/transcriptions/rerank/decisions", INVALID))
         for engine_id, spec in engines.items():
             where = _pointer(operation, "engines", engine_id)
             if not spec.get("service"):
-                issues.append((where, f"{operation}.engines.{engine_id}: missing service"))
+                issues.append((where, f"{operation}.engines.{engine_id}: missing service", INVALID))
             if not spec.get("model"):
-                issues.append((where, f"{operation}.engines.{engine_id}: missing model"))
+                issues.append((where, f"{operation}.engines.{engine_id}: missing model", INVALID))
         for name, spec in stable.items():
             where = _pointer(operation, "stable", name)
             if spec is None:
                 continue  # exists, not configured: a request answers alias_not_configured
             if isinstance(spec, list):
                 if not spec:
-                    issues.append((where, f"{operation}.stable.{name}: engine list must not be empty"))
+                    issues.append((where, f"{operation}.stable.{name}: engine list must not be empty", INVALID))
                 if operation not in ENGINE_OPERATIONS:
-                    issues.append((where, f"{operation}.stable.{name}: engine list not allowed here"))
+                    issues.append((where, f"{operation}.stable.{name}: engine list not allowed here", INVALID))
                 for cand in spec:
                     if _norm(cand) not in known:
-                        issues.append((where, f"{operation}.stable.{name}: unknown engine {cand!r}"))
+                        issues.append((where, f"{operation}.stable.{name}: unknown engine {cand!r}", absent_severity))
             elif not isinstance(spec, str) or not spec.strip():
-                issues.append((where, f"{operation}.stable.{name}: target must be a non-empty string"))
+                issues.append((where, f"{operation}.stable.{name}: target must be a non-empty string", INVALID))
             elif operation in ENGINE_OPERATIONS:
-                issues.append((where, f"{operation}.stable.{name}: must be an engine list"))
+                issues.append((where, f"{operation}.stable.{name}: must be an engine list", INVALID))
         for pattern in _patterns(section):
             where = _pointer(operation, "openai")
             if not pattern.get("match"):
-                issues.append((where, f"{operation}.openai: entry without match"))
+                issues.append((where, f"{operation}.openai: entry without match", INVALID))
             elif not pattern.get("passthrough"):
                 for published in pattern_names(pattern):
                     if not fnmatch.fnmatchcase(_norm(published), _norm(pattern["match"])):
                         issues.append((where, f"{operation}.openai[{pattern['match']}]: "
-                                              f"name {published!r} does not match the pattern"))
+                                              f"name {published!r} does not match the pattern", INVALID))
                 target = _norm(pattern.get("to"))
                 if not target:
-                    issues.append((where, f"{operation}.openai[{pattern['match']}]: missing to"))
+                    issues.append((where, f"{operation}.openai[{pattern['match']}]: missing to", INVALID))
                 elif target not in stable and target not in known:
                     issues.append((where, f"{operation}.openai[{pattern['match']}]: "
-                                          f"to={target!r} is not a stable alias or engine"))
+                                          f"to={target!r} is not a stable alias or engine", absent_severity))
         # Loop check: follow every string chain.
         for name in stable:
             seen = {name}
@@ -392,7 +399,7 @@ def _alias_issues(cfg: Mapping[str, Any] | None, derived_speech: Iterable[str] =
                 if nxt == cur or nxt not in stable:
                     break
                 if nxt in seen:
-                    issues.append((_pointer(operation, "stable", name), f"{operation}.stable.{name}: alias loop"))
+                    issues.append((_pointer(operation, "stable", name), f"{operation}.stable.{name}: alias loop", INVALID))
                     break
                 seen.add(nxt)
                 cur = nxt
@@ -401,7 +408,7 @@ def _alias_issues(cfg: Mapping[str, Any] | None, derived_speech: Iterable[str] =
 
 def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
     """Return structural problems in a ``model_aliases`` mapping (empty = ok)."""
-    return [text for _pointer_, text in _alias_issues(cfg)]
+    return [text for _pointer_, text, _severity in _alias_issues(cfg)]
 
 
 def alias_problems(candidate: Mapping[str, Any] | None, context: Mapping[str, Any] | None = None) -> list[Problem]:
@@ -409,14 +416,19 @@ def alias_problems(candidate: Mapping[str, Any] | None, context: Mapping[str, An
 
     A loop, an unknown engine or an empty target would break resolution, so the layer refuses it on write and skips it
     on load. An engine whose ``service`` the registry no longer holds is the owner's data that is true, but its
-    target is gone: it is applied and shown dangling, never refused (design 3.5). With no registry in the context
+    target is gone: it is applied and shown dangling, never refused (design 3.5). A speech tier or pattern that names
+    an engine no table entry and no record gives is the same case (a record deleted after the owner named its engine
+    looks like a typo), so it dangles too, and the tier skips that engine. With no registry in the context
     (the release self-check at start) only the structure is judged. A stable name's string target (a role, a workflow,
     a model id) cannot be checked here: what it may name depends on the operation and on what runs.
     """
     registry = (context or {}).get("registry")
     services = registry.get("services") if isinstance(registry, Mapping) else None
     derived = derived_engines.derive_speech_engines(services, include_disabled=True)
-    problems = [Problem(pointer or None, "alias_invalid", INVALID, text) for pointer, text in _alias_issues(candidate, derived)]
+    problems = [
+        Problem(pointer or None, "alias_invalid" if severity == INVALID else "service_gone", severity, text)
+        for pointer, text, severity in _alias_issues(candidate, derived, registry_known=isinstance(services, Mapping))
+    ]
     if isinstance(candidate, Mapping) and isinstance(services, Mapping):
         for operation in OPERATIONS:
             for engine_id, spec in _engine_map(_section(candidate, operation)).items():

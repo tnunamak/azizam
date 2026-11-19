@@ -143,13 +143,29 @@ def test_the_stable_tts_tier_may_name_a_derived_engine_id():
     assert stable_aliases.alias_problems(tier, context) == []
 
 
-def test_a_tier_naming_an_engine_no_record_and_no_table_gives_is_still_refused():
+def test_a_tier_naming_an_engine_no_record_and_no_table_gives_is_shown_dangling_not_refused():
     context = {"registry": _registry(**{"garage-voice": _record(("voice-a", "up-a"))})}
 
     problems = stable_aliases.alias_problems({"speech": {"stable": {"tts": ["nowhere"]}}}, context)
 
-    assert [problem.code for problem in problems] == ["alias_invalid"]
-    assert "unknown engine" in problems[0].message
+    assert [(p.pointer, p.code, p.severity) for p in problems] == [("/speech/stable/tts", "service_gone", "dangling")]
+    assert "nowhere" in problems[0].message
+
+
+def test_a_pattern_naming_an_engine_no_record_and_no_table_gives_is_shown_dangling_too():
+    context = {"registry": _registry()}
+    aliases = {"speech": {"openai": [{"match": "tts-1", "to": "gone-voice"}]}}
+
+    assert [(p.pointer, p.severity) for p in stable_aliases.alias_problems(aliases, context)] == [("/speech/openai", "dangling")]
+    assert [p.severity for p in stable_aliases.alias_problems(aliases, None)] == ["invalid"], "no registry: judged by structure"
+
+
+def test_an_unknown_engine_of_another_operation_is_still_refused_with_a_registry():
+    context = {"registry": _registry(**{"garage-voice": _record(("voice-a", "up-a"))})}
+
+    problems = stable_aliases.alias_problems({"transcriptions": {"stable": {"stt": ["nowhere"]}}}, context)
+
+    assert [(p.code, p.severity) for p in problems] == [("alias_invalid", "invalid")]
 
 
 def test_a_tier_naming_a_derived_engine_stays_valid_while_its_record_is_disabled():
@@ -214,6 +230,70 @@ def test_a_hand_entry_for_the_same_id_beats_the_record_through_the_real_gateway(
 
     assert spoken.status_code == 200, spoken.text
     assert [call.json["model"] for call in fake.calls("speech")] == ["hand-chosen-model"]
+
+
+# ---- a tier that names a derived engine whose record is later deleted ----------------------------------------------
+
+def _set_tier(owner, value):
+    revision = owner.get("/admin/api/config/sections/model_aliases", headers=csrf_for(owner)).json()["revision"]
+    written = owner.patch(
+        "/admin/api/config/changes",
+        headers=csrf_for(owner),
+        json={"items": [{"section": "model_aliases", "pointer": "/speech/stable/tts", "op": "set", "value": value}],
+              "if_match": {"model_aliases": revision}},
+    )
+    assert written.status_code == 200, written.text
+
+
+def _add_second_record(owner, fake, model):
+    etag = owner.get("/admin/api/operator/service-registry").headers["etag"]
+    added = owner.post(
+        "/admin/api/operator/services",
+        headers={**csrf_for(owner), "If-Match": etag},
+        json={"name": "second-voice", "base_url": fake.base_url, "protocol": "inline-tts",
+              "capabilities": ["audio", "speech"], "models": [{"public": model, "upstream": "fake-speech-2"}]},
+    )
+    assert added.status_code == 201, added.text
+
+
+def _delete_record(owner, service_id):
+    etag = owner.get("/admin/api/operator/service-registry").headers["etag"]
+    removed = owner.delete(f"/admin/api/operator/services/{service_id}", headers={**csrf_for(owner), "If-Match": etag})
+    assert removed.status_code == 200, removed.text
+
+
+def test_a_tier_that_named_a_derived_engine_is_served_by_its_other_engines_once_the_record_is_deleted(
+    gateway, fake_upstreams, monkeypatch, tmp_path,
+):
+    owner, key, fake = _rig(gateway, fake_upstreams, monkeypatch, tmp_path)
+    _add_second_record(owner, fake, "second-voice-model")
+    _set_tier(owner, [ADDED_MODEL, "second-voice-model"])
+
+    _delete_record(owner, "garage-voice")
+
+    section = owner.get("/admin/api/config/sections/model_aliases", headers=csrf_for(owner)).json()
+    assert section["problems"] and all(problem["severity"] == "dangling" for problem in section["problems"]), section["problems"]
+    assert [problem["pointer"] for problem in section["problems"]] == ["/speech/stable/tts"]
+    spoken = _speak(owner, key, "tts")
+    assert spoken.status_code == 200, spoken.text
+    assert [call.json["model"] for call in fake.calls("speech")] == ["fake-speech-2"]
+
+
+def test_a_tier_that_named_only_the_deleted_engine_answers_the_existing_no_engine_error(
+    gateway, fake_upstreams, monkeypatch, tmp_path,
+):
+    owner, key, fake = _rig(gateway, fake_upstreams, monkeypatch, tmp_path)
+    fake.waive("speech")  # the point of this case: nothing may reach the speech server
+    _set_tier(owner, [ADDED_MODEL])
+
+    _delete_record(owner, "garage-voice")
+
+    section = owner.get("/admin/api/config/sections/model_aliases", headers=csrf_for(owner)).json()
+    assert [(problem["pointer"], problem["code"], problem["severity"]) for problem in section["problems"]] == [
+        ("/speech/stable/tts", "service_gone", "dangling")], section["problems"]
+    assert section["effective"]["speech"]["stable"]["tts"] == [ADDED_MODEL], "the owner's tier is kept, not skipped"
+    spoken = _speak(owner, key, "tts")
+    assert spoken.status_code == 503 and "TTS not enabled" in spoken.text and fake.calls("speech") == [], spoken.text
 
 
 # ---- a record with no port (a finding of the S0 note; not fixed here) ------------------------------------------------
