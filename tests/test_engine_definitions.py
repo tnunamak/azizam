@@ -26,9 +26,9 @@ def _parse(data):
     return parse_engine_catalog(data, schema=SCHEMA, source="test.json")
 
 
-def test_the_seed_holds_the_two_definitions_with_any_openai_compatible_server_first():
+def test_the_seed_holds_its_definitions_with_any_openai_compatible_server_first():
     catalog = load_engine_catalog()
-    assert catalog.ids() == ["openai-compatible", "own-model-list"]
+    assert catalog.ids() == ["openai-compatible", "own-model-list", "openai-speech"]
     first = catalog.public()["definitions"][0]
     assert first["title"] == "Any OpenAI-compatible server"
     assert first["fields"][0]["key"] == "address" and first["fields"][1]["key"] == "api_key"
@@ -91,12 +91,13 @@ def test_every_field_is_one_the_running_gateway_reads():
 
 
 def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
-    """Chat and embeddings go through the model router to the engine. Images, speech,
-    transcription, reranking and live voice go to fixed built-in services, so ticking
-    them would save nothing the gateway uses (add-engine-spec.md section 8, v2)."""
-    assert set(SEED["capabilities"]) == {"chat", "embeddings"}
+    """Chat and embeddings go through the model router to the engine. Speech goes to the reviewed speech adapter, which
+    reads the engine's record (the speech engines derived from service records). Images, transcription, reranking and
+    live voice go to fixed built-in services, so ticking them would save nothing the gateway uses
+    (add-engine-spec.md section 8, v2)."""
+    assert set(SEED["capabilities"]) == {"chat", "embeddings", "speech"}
     for definition in SEED["definitions"]:
-        assert set(definition["capabilities"]) <= {"chat", "embeddings"}, definition["definition"]
+        assert set(definition["capabilities"]) <= {"chat", "embeddings", "speech"}, definition["definition"]
         assert definition["flow"] == "detect"
         # Probe implications must refer to catalog capabilities, not arbitrary names.
         known = set(SEED["capabilities"])
@@ -194,7 +195,7 @@ def test_definition_timeouts_are_optional_positive_bounded_numbers():
     data = copy.deepcopy(SEED)
     for definition in data["definitions"]:
         definition.pop("timeouts", None)
-    assert _parse(data).ids() == ["openai-compatible", "own-model-list"]
+    assert _parse(data).ids() == ["openai-compatible", "own-model-list", "openai-speech"]
 
 
 def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
@@ -224,13 +225,14 @@ def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
                                              key=engine_check.KeyInput(), fetch=fetch)
                 assert len(calls) > 3
                 assert all(call[2] == probe_s for call in calls)
-                assert any(call[0] == "POST" and call[1].endswith("/embeddings") for call in calls)
+                routes = [catalog.capability(cap)["route"]["path"] for cap in definition["capabilities"]]
+                assert any(call[0] == "POST" and any(call[1].endswith(route) for route in routes) for call in calls)
                 for reply_s, expected in ((None, test_s), (3, 3), (600, test_s), ("bad", test_s)):
                     calls.clear()
                     draft = dict(values)
                     if reply_s is not None:
                         draft["reply_timeout_s"] = reply_s
-                    await engine_check.run_real_test(catalog, definition, draft, "chat",
+                    await engine_check.run_real_test(catalog, definition, draft, definition["capabilities"][0],
                                                      key=engine_check.KeyInput(), fetch=fetch, model="fixture")
                     assert len(calls) == 1
                     assert calls[0][2] == expected

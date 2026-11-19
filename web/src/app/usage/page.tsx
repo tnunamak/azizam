@@ -1100,7 +1100,9 @@ function receiptOutcome(status: string | null) {
 function UsageSkeleton() {
   return (
     <div
-      aria-hidden="true"
+      role="group"
+      aria-label="Loading usage"
+      aria-busy="true"
       className="space-y-6"
     >
       <div className="grid gap-4 md:grid-cols-3">

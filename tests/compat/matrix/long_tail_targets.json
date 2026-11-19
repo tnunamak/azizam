@@ -92,7 +92,7 @@
         "Tool-call support varies by endpoint definition; gateway must return OpenAI-shaped tool_calls."
       ],
       "priority": "P0",
-      "status": "unverified",
+      "status": "manual-smoke",
       "references": [
         "https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/custom_endpoint",
         "https://github.com/danny-avila/LibreChat"

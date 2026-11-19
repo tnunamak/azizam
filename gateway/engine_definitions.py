@@ -24,6 +24,13 @@ DEFINITIONS_PATH = _REGISTRY_DIR / "engine_definitions.json"
 SCHEMA_PATH = _REGISTRY_DIR / "engine_definitions.schema.json"
 
 
+# How a list probe reads one JSON answer as a list of ids. The vocabulary is closed: a definition names one of these, and
+# ``gateway.engine_check.read_list`` has one reader for each. A shape that is not here is refused when the file loads.
+LIST_SHAPES = ("array_of_strings", "array_of_objects", "object_keys", "tuple_first", "nested")
+# The shapes that read ids out of objects, so the definition must say which keys hold the id.
+_SHAPES_WITH_ID_KEYS = frozenset({"array_of_objects"})
+
+
 class EngineDefinitionError(ValueError):
     """The definitions file cannot be used. The message names the file and the place."""
 
@@ -98,6 +105,59 @@ def _where(path: Any) -> str:
     return out or "(top level)"
 
 
+def _valid_pointer(pointer: Any) -> bool:
+    """An RFC 6901 JSON pointer: empty, or segments each led by ``/`` with ``~`` only as ``~0`` or ``~1``."""
+    return isinstance(pointer, str) and (pointer == "" or (pointer.startswith("/") and re.search(r"~(?![01])", pointer) is None))
+
+
+def _list_probe_errors(where: str, definition: Mapping[str, Any]) -> list[str]:
+    from gateway.engine_readiness import safe_probe_path
+
+    errors: list[str] = []
+    seen: set[str] = set()
+    for probe in definition["probes"].get("lists") or ():
+        here = f"{where}.probes.lists.{probe['id']}"
+        if probe["id"] in seen:
+            errors.append(f"{where}.probes.lists: two probes share an id ({probe['id']!r})")
+        seen.add(probe["id"])
+        if safe_probe_path(probe["path"]) is None:
+            errors.append(f"{here}.path: {probe['path']!r} is not a plain server-root path")
+        capability = probe.get("capability")
+        if capability and capability not in definition["capabilities"]:
+            errors.append(f"{here}.capability: the definition does not offer {capability!r}")
+        read = probe["list"]
+        shape = read["shape"]
+        if shape not in LIST_SHAPES:
+            errors.append(f"{here}.list.shape: {shape!r} is not a list shape; use one of {', '.join(LIST_SHAPES)}")
+            continue
+        for key in ("select", "default_select"):
+            if key in read and not _valid_pointer(read[key]):
+                errors.append(f"{here}.list.{key}: {read[key]!r} is not a JSON pointer (it starts with /)")
+        if shape in _SHAPES_WITH_ID_KEYS and not read.get("id_keys"):
+            errors.append(f"{here}.list.id_keys: the shape {shape} needs the keys that hold the id")
+        if shape == "nested" and not read.get("inner"):
+            errors.append(f"{here}.list.inner: the shape nested needs the key of the list inside each entry")
+        if shape == "tuple_first" and "select" not in read:
+            errors.append(f"{here}.list.select: the shape tuple_first needs a pointer to the tuple")
+        if "default_select" in read and probe["offers"] != "voice":
+            errors.append(f"{here}.list.default_select: only a voice list names a default")
+    return errors
+
+
+def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    for test_id, test in real_tests.items():
+        kind = test.get("kind", "json_post")
+        expect = test.get("expect")
+        if kind == "binary_post":
+            for key in ("status", "content_type_prefix", "min_bytes"):
+                if not isinstance(expect, Mapping) or key not in expect:
+                    errors.append(f"real_tests.{test_id}.expect.{key}: a binary_post test says what it expects, including {key}")
+        elif expect is not None:
+            errors.append(f"real_tests.{test_id}.expect: only a binary_post test has expect; this one is {kind}")
+    return errors
+
+
 def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     """Rules a JSON Schema cannot say: references between rows, unique ids, regexes that compile."""
     errors: list[str] = []
@@ -109,6 +169,7 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         test = cap.get("real_test")
         if test and test not in data["real_tests"]:
             errors.append(f"capabilities.{cap_id}.real_test: no real test named {test!r}")
+    errors += _real_test_errors(data["real_tests"])
     for index, rule in enumerate(data["model_rules"]):
         if rule["capability"] not in capabilities:
             errors.append(f"model_rules[{index}].capability: no capability named {rule['capability']!r}")
@@ -153,6 +214,7 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         if definition["probes"]["primary"]["method"] != "GET":
             # The primary read doubles as the engine's readiness read (gateway/engine_readiness.py), so it must not change state.
             errors.append(f"{where}.probes.primary.method: the primary probe is the readiness read and must be GET")
+        errors += _list_probe_errors(where, definition)
         for row_id in definition["probes"]["metadata"]:
             if row_id not in metadata_ids:
                 errors.append(f"{where}.probes.metadata: no metadata row named {row_id!r}")

@@ -36,5 +36,10 @@
   "comfyui": {
     "observe": {"feature": "observe", "steps": [
       {"method": "GET", "path": "/queue", "stream": false}]}
+  },
+  "inline-tts": {
+    "speech": {"feature": "audio.speech", "steps": [
+      {"method": "POST", "path": "/v1/audio/speech", "stream": false,
+       "json": {"model": "{{model}}", "input": "hi", "response_format": "wav"}}]}
   }
 }

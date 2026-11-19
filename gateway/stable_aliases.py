@@ -209,6 +209,22 @@ def _pick_engine(
     return None
 
 
+def owner_resolves_name(cfg: Mapping[str, Any] | None, operation: str, name: Any) -> bool:
+    """Whether the owner's own section already gives ``name`` a meaning without any engine entry: a stable name, or a
+    match of one of the section's OpenAI patterns (a pattern that passes the name through counts)."""
+    key = _norm(name)
+    section = _section(cfg, operation)
+    if not key or not section:
+        return False
+    if key in _stable_map(section):
+        return True
+    return any(
+        _norm(pattern.get("match")) and fnmatch.fnmatchcase(key, _norm(pattern.get("match")))
+        and (pattern.get("passthrough") or _norm(pattern.get("to")))
+        for pattern in _patterns(section)
+    )
+
+
 def resolve_alias(
     cfg: Mapping[str, Any] | None,
     operation: str,

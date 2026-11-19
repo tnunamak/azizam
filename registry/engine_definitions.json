@@ -27,6 +27,19 @@
         "path": "/embeddings"
       },
       "real_test": "embeddings"
+    },
+    "speech": {
+      "label": "Voice",
+      "noun": "speech",
+      "record_capabilities": [
+        "audio",
+        "speech"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/audio/speech"
+      },
+      "real_test": "speech"
     }
   },
   "evidence_text": {
@@ -35,6 +48,8 @@
     "likely_metadata": "Its {document} lists {path}, and the route answered.",
     "likely_metadata_only": "Its {document} lists {path}.",
     "likely_test": "A real test passed at {time}. That shows the server can do this.",
+    "likely_list": "Its {document} answered with {count} entries.",
+    "likely_route": "The {noun} route answered an empty request with “{status_text}”. This kind of server only serves {noun}, so the route is there.",
     "possible": "The {noun} route answered an empty request with “{status_text}”. That shows the route exists.",
     "possible_why": "A “{status_short}” answer shows the route exists, not that a model can do this. Run a real test to find out.",
     "against": "It answered the {noun} route with “{excerpt}”.",
@@ -59,7 +74,8 @@
       "kind": "openapi_paths",
       "paths": {
         "/chat/completions": "chat",
-        "/embeddings": "embeddings"
+        "/embeddings": "embeddings",
+        "/audio/speech": "speech"
       },
       "name_from": {
         "json": "info.title",
@@ -216,6 +232,21 @@
       "reply_count_json": "data.0.embedding",
       "reply_count_text": "A list of {count} numbers",
       "cost": "About one token"
+    },
+    "speech": {
+      "kind": "binary_post",
+      "sent": "One short sentence, “Hello.”, to be spoken",
+      "body": {
+        "model": "{model}",
+        "voice": "{voice}",
+        "input": "Hello."
+      },
+      "expect": {
+        "status": 200,
+        "content_type_prefix": "audio/",
+        "min_bytes": 256
+      },
+      "cost": "A few seconds of speech"
     }
   },
   "advice": [
@@ -966,6 +997,176 @@
           "reasoning-effort-final-chat"
         ],
         "base_path": "/v1"
+      }
+    },
+    {
+      "definition": "openai-speech",
+      "timeouts": {"probe_s": 5, "real_test_s": 120},
+      "definition_version": 1,
+      "title": "Speech server with an OpenAI-style voice route",
+      "example": "For example, Kokoro-FastAPI, Speaches or Orpheus-FastAPI",
+      "summary": "Reads text aloud. Azizam asks the server for its models and its voices.",
+      "keywords": [
+        "speech",
+        "tts",
+        "text to speech",
+        "voice",
+        "audio",
+        "kokoro",
+        "speaches",
+        "orpheus"
+      ],
+      "flow": "detect",
+      "steps": [
+        "Kind",
+        "Address",
+        "What it can do",
+        "Models",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.50:8880",
+          "help": "Where the server listens, with its port. Do not add /v1."
+        },
+        {
+          "key": "models",
+          "label": "Models",
+          "type": "multiselect",
+          "order": 60,
+          "options_from": "models"
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "model_list",
+          "method": "GET",
+          "path": "/v1/models",
+          "from": "origin",
+          "kind": "model_list",
+          "list_keys": [
+            "data",
+            "models"
+          ],
+          "id_keys": [
+            "id",
+            "model",
+            "name"
+          ]
+        },
+        "metadata": [
+          "openapi"
+        ],
+        "lists": [
+          {
+            "id": "audio_models",
+            "offers": "model",
+            "method": "GET",
+            "path": "/v1/audio/models",
+            "from": "origin",
+            "capability": "speech",
+            "list": {
+              "shape": "array_of_objects",
+              "select": "/models",
+              "id_keys": ["id"]
+            }
+          },
+          {
+            "id": "voices_objects",
+            "offers": "voice",
+            "method": "GET",
+            "path": "/v1/audio/voices",
+            "from": "origin",
+            "capability": "speech",
+            "list": {
+              "shape": "array_of_objects",
+              "select": "/voices",
+              "id_keys": ["id", "voice_id", "name"],
+              "name_keys": ["name"],
+              "default_select": "/default_voice"
+            }
+          },
+          {
+            "id": "voices_strings",
+            "offers": "voice",
+            "method": "GET",
+            "path": "/v1/audio/voices",
+            "from": "origin",
+            "capability": "speech",
+            "list": {
+              "shape": "array_of_strings",
+              "select": "/voices"
+            }
+          },
+          {
+            "id": "voices_in_models",
+            "offers": "voice",
+            "method": "GET",
+            "path": "/v1/audio/models",
+            "from": "origin",
+            "capability": "speech",
+            "list": {
+              "shape": "nested",
+              "select": "/models",
+              "inner": "voices",
+              "id_keys": ["id", "voice_id", "name"],
+              "name_keys": ["name"]
+            }
+          },
+          {
+            "id": "voices_in_data",
+            "offers": "voice",
+            "method": "GET",
+            "path": "/v1/audio/voices",
+            "from": "origin",
+            "capability": "speech",
+            "list": {
+              "shape": "nested",
+              "select": "/data",
+              "inner": "voices",
+              "id_keys": ["id", "voice_id", "name"],
+              "name_keys": ["name"]
+            }
+          }
+        ],
+        "route_probes": true,
+        "route_proves": true,
+        "route_base": "/v1"
+      },
+      "capabilities": [
+        "speech"
+      ],
+      "default_ticked": "likely",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Listing its models",
+        "Finding what it can do"
+      ],
+      "name_fallback": "{host_label}",
+      "models_note": "Azizam shows the models and voices the server reports. It does not send a key to this kind of server.",
+      "advice": [
+        {
+          "code": "needkey",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {"status_in": [401, 403], "key_sent": false},
+          "title": "This server asks for a key",
+          "what": "This server asks for a key, and this kind of server is used without a key.",
+          "why": "It answered “{status_text}”. Azizam sends no key to a speech server of this kind, so it cannot be added this way.",
+          "fix": "Turn the key off on the server, or use a server that needs none. A server that needs a key cannot be added this way."
+        }
+      ],
+      "record": {
+        "protocol": "inline-tts",
+        "native_passthrough": false,
+        "base_path": ""
       }
     }
   ]

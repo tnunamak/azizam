@@ -18,7 +18,7 @@
     },
     "evidence_text": {
       "type": "object",
-      "required": ["possible", "possible_why", "against", "against_why", "none", "none_why", "needs_key", "likely_model_field", "likely_metadata", "likely_test"],
+      "required": ["possible", "possible_why", "against", "against_why", "none", "none_why", "needs_key", "likely_model_field", "likely_metadata", "likely_test", "likely_list"],
       "additionalProperties": {"type": "string", "minLength": 1}
     },
     "metadata_rows": {"type": "array", "items": {"$ref": "#/$defs/metadataRow"}},
@@ -111,6 +111,16 @@
       "additionalProperties": false,
       "required": ["sent", "cost"],
       "properties": {
+        "kind": {"enum": ["json_post", "binary_post"], "description": "json_post (the default) reads a JSON reply. binary_post reads bytes: it passes when the reply holds the status, the content type prefix and the number of bytes in expect."},
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {"type": "integer", "minimum": 100, "maximum": 599},
+            "content_type_prefix": {"type": "string", "minLength": 1},
+            "min_bytes": {"type": "integer", "minimum": 1}
+          }
+        },
         "sent": {"type": "string"},
         "cost": {"type": "string"},
         "body": {"type": "object"},
@@ -236,6 +246,35 @@
         "require_json_key": {"type": "string"}
       }
     },
+    "listRead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shape"],
+      "description": "How one answer is read as a list of ids. The shapes are a closed set, checked when the file loads (gateway/engine_definitions.py LIST_SHAPES): array_of_strings, array_of_objects, object_keys, tuple_first, nested.",
+      "properties": {
+        "shape": {"type": "string", "minLength": 1},
+        "select": {"type": "string", "description": "A JSON pointer to the list. Empty means the whole answer."},
+        "inner": {"type": "string", "description": "nested: the key of the list inside each entry of the selected list."},
+        "id_keys": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "name_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "default_select": {"type": "string", "description": "A JSON pointer to the id the server names as its default."}
+      }
+    },
+    "listProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "offers", "method", "path", "from", "list"],
+      "description": "One read of a list the server reports. The first probe of an offers kind that finds ids wins. A model list replaces the models the primary probe found; a voice list is stored with the record.",
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "offers": {"enum": ["model", "voice"]},
+        "method": {"const": "GET"},
+        "path": {"type": "string", "pattern": "^/"},
+        "from": {"enum": ["origin", "address"]},
+        "capability": {"$ref": "#/$defs/id", "description": "The capability a non-empty list shows the server offers. Models read from this list are for this work."},
+        "list": {"$ref": "#/$defs/listRead"}
+      }
+    },
     "timeouts": {
       "type": "object",
       "additionalProperties": false,
@@ -270,7 +309,9 @@
           "properties": {
             "primary": {"$ref": "#/$defs/probe"},
             "metadata": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+            "lists": {"type": "array", "items": {"$ref": "#/$defs/listProbe"}},
             "route_probes": {"type": "boolean"},
+            "route_proves": {"type": "boolean", "description": "A route that answers an empty request as present (level possible) counts as likely. Only for a kind the owner chose because the server serves just these capabilities."},
             "route_base": {"type": "string", "pattern": "^/"}
           }
         },
