@@ -1317,7 +1317,7 @@ class EngineService:
             # An engine Azizam starts: the slot values become the literal process block now, with the address they imply.
             if not _is_owner(ctx):
                 raise _owner_only("Only the owner can add an engine that Azizam starts.")
-            resolved = self._resolve_process(definition, body.get("slots"))
+            resolved = await asyncio.to_thread(self._resolve_process, definition, body.get("slots"))
             if values.get("address") not in (None, "", resolved.address):
                 raise DraftError("Azizam gives this engine its address from the port. Leave the address out.", field="address")
             values = {**values, "address": resolved.address}

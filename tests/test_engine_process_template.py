@@ -541,3 +541,97 @@ def test_an_unset_or_unreadable_setting_allows_no_folder(tmp_path):
     admin_store.init_db(db)
     assert process_template.allowed_folders(db) == []
     assert process_template.allowed_folders(tmp_path / "missing" / "admin.db") == []
+
+
+# -- review fixes: the root by another name, untested refusals, step-up and audit ------------------
+
+
+def test_the_root_folder_named_another_way_or_reached_by_a_symlink_is_refused(gateway, tmp_path):
+    owner, *_ = owner_and_admin(gateway)
+    link = tmp_path / "rootlink"
+    os.symlink("/", link)
+    for value in (["//"], ["/./"], [str(link)]):
+        refused = owner.put("/admin/api/operator/engine-folders", headers={**csrf_for(owner), "If-Match": "0"},
+                            json={"folders": value})
+        assert refused.status_code == 400, (value, refused.text)
+        assert refused.json()["error"]["code"] == "invalid_engine_folders"
+    assert process_template.allowed_folders(gateway.path) == []
+
+
+def test_a_stored_root_folder_allows_nothing(folders):
+    # A value written before this check, or by hand, that names the root is not a root the resolver uses.
+    assert process_template._roots(["//", "/", "/./"]) == []
+    found = refusal(TEMPLATE, folders.values(), allowed_folders=["//"])
+    assert {p.code for p in found.problems} == {"no_folders"}
+
+
+def test_a_folder_is_stored_as_its_real_path(gateway, tmp_path):
+    owner, *_ = owner_and_admin(gateway)
+    real = tmp_path / "real-engines"
+    real.mkdir()
+    link = tmp_path / "engines-link"
+    os.symlink(real, link)
+    saved = owner.put("/admin/api/operator/engine-folders", headers={**csrf_for(owner), "If-Match": "0"},
+                      json={"folders": [str(link)]})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["folders"] == [os.path.realpath(real)]
+    entry = admin_store.list_audit(path=gateway.path, action_prefix="operator.engine_folders.")[0]
+    assert os.path.realpath(real) in json.dumps(entry)
+
+
+def test_a_folder_change_without_if_match_is_refused(gateway, tmp_path):
+    owner, *_ = owner_and_admin(gateway)
+    refused = owner.put("/admin/api/operator/engine-folders", headers=csrf_for(owner), json={"folders": [str(tmp_path)]})
+    assert refused.status_code == 428, refused.text
+    assert process_template.allowed_folders(gateway.path) == []
+
+
+def test_a_working_folder_that_leaves_the_allowed_folders_is_refused(folders):
+    os.symlink(folders.outside, folders.install / "work")
+    found = refusal(template_with(cwd="{folder}/work"), folders.values(), allowed_folders=folders.allowed)
+    assert [p.code for p in found.problems] == ["cwd_outside_allowed_folders"]
+
+
+def test_a_file_slot_given_a_folder_is_refused(folders):
+    template = template_with(argv=["{folder}/venv/bin/python", "{script}", "--port", "{port}"],
+                             slots={**TEMPLATE["slots"], "script": {"type": "path", "kind": "file"}})
+    found = refusal(template, {**folders.values(), "script": str(folders.install)}, allowed_folders=folders.allowed)
+    assert [(p.code, p.slot) for p in found.problems] == [("wrong_kind", "script")]
+    ok = resolve(template, {**folders.values(), "script": str(folders.install / "stub.py")},
+                 allowed_folders=folders.allowed, port_free=lambda _port: True)
+    assert ok.argv[1] == os.path.realpath(folders.install / "stub.py")
+
+
+def test_a_program_that_cannot_run_is_refused(folders):
+    program = folders.install / "server"
+    program.write_text("#!/bin/false\n")
+    program.chmod(0o644)
+    found = refusal(template_with(argv=["{folder}/server", "--port", "{port}"]), folders.values(),
+                    allowed_folders=folders.allowed)
+    assert [p.code for p in found.problems] == ["program_missing"]
+
+
+def test_the_projection_carries_only_the_ready_observation(rig, folders):
+    created = rig.create(folders.values(port=free_port()))
+    record = rig.registry()["services"][created["service_id"]]
+    record = {**record, "observations": {**record["observations"], "voices": ["a"]}}
+    backend = service_registry.runtime_backend_from_service(record)
+    assert backend["observations"] == {"process_ready": {"http": {"path": "/health", "expect": 200}}}
+
+
+def test_saving_a_started_engine_from_a_stale_browser_session_needs_a_fresh_sign_in(rig, folders):
+    from gateway import step_up
+
+    stale = AdminContext(subject="owner-1", roles=frozenset({"owner", "admin"}), actor_id="owner-1",
+                         authenticated_at=1)
+    with pytest.raises(step_up.StepUpRequired):
+        rig.create(folders.values(port=free_port()), ctx=stale)
+    assert not rig.registry().get("services")
+
+
+def test_the_audit_line_for_a_saved_started_engine_names_its_command_and_port(rig, folders):
+    port = free_port()
+    rig.create(folders.values(port=port))
+    entry = admin_store.list_audit(path=rig.db, action_prefix="operator.service.added")[0]
+    text = json.dumps(entry)
+    assert str(port) in text and "stub.py" in text

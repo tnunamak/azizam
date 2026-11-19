@@ -3340,6 +3340,9 @@ def create_admin_router(
 
     @router.put("/operator/engine-folders")
     async def update_engine_folders(request: Request) -> JSONResponse:
+        # Each folder is stored as its real path; the root is never allowed. Azizam checks the list when an engine is
+        # saved: removing a folder stops new engines from it, while an engine already saved keeps its command until it
+        # is removed or running commands on this computer is off.
         ctx = await asyncio.to_thread(_guard, request)
         if isinstance(ctx, JSONResponse):
             return ctx
@@ -3359,7 +3362,7 @@ def create_admin_router(
                 audit_actor_label=ctx.actor_label,
                 audit_target_kind="operator_setting",
                 audit_target_id=process_template.SETTING,
-                audit_metadata={"count": len(folders)},
+                audit_metadata={"count": len(folders), "folders": folders},
                 expected_revision=settings_revision(request),
                 path=store.path,
             )
