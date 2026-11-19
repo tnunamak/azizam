@@ -162,9 +162,11 @@ export interface RemotePlan {
   /** The private network computed from the address, such as 10.0.0.0/24. */
   network: string;
   transport: "tls" | "private_plaintext";
-  /** True for plain http: the owner must say they trust the network before the engine is saved. */
+  /** True for plain http or a mesh-network address: the owner must say they trust the network before the engine is saved. */
   trust_needed: boolean;
   trusted: boolean;
+  /** True when the address is in the shared range mesh networks such as Tailscale use (100.64 to 100.127). */
+  shared_space?: boolean;
 }
 
 export interface CheckResult {
