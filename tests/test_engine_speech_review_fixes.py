@@ -487,4 +487,3 @@ def test_the_release_ships_no_speech_alias_so_only_a_records_engine_serves_tts_1
     resolution = stable_aliases.resolve_alias(merged, "speech", "tts-1")
     assert resolution is not None and resolution.layer == "engine"
     assert resolution.engine == "tts-1" and resolution.service == "r1"
-
