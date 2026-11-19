@@ -93,6 +93,7 @@ class _StubResponse:
 
 class _FakeStreamResponse:
     status_code = 200
+    headers: dict[str, str] = {}  # the loopback names no receipt here; a subclass may set its own
 
     def __init__(self, chunks: list[bytes]):
         self._chunks = chunks
