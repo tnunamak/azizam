@@ -35,7 +35,7 @@ def test_trellis_background_removal_choice_labels():
     spec = _input("mesh.generate.trellis-2.yml", "bg_removal")
     _assert_labels(
         spec,
-        {"threshold": "Quick cutout", "birefnet": "Careful cutout (AI)"},
+        {"threshold": "Simple cutout", "birefnet": "AI cutout"},
     )
     assert spec["help"] == (
         "Choose how the background is cut away, or leave it empty to let the service choose."
