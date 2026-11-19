@@ -2514,11 +2514,16 @@ def set_service_enabled(
     return out
 
 
-def split_base_url(value: Any) -> dict[str, Any]:
+def split_base_url(value: Any, *, default_port: bool = True) -> dict[str, Any]:
     """Parse a base URL into host/port/base_path (the form's single URL field).
 
     Accepts ``http://host:port/v1`` and bare ``host:port``. Returns only the
     keys it can determine, so a caller can merge with explicit fields.
+
+    A URL with no port means the scheme's default port, as every URL parser and HTTP client reads it: 80 for http, 443
+    for https (a bare ``host`` is http). The record keeps the scheme in its own ``scheme`` field, so an https URL with
+    no port stores ``scheme: https`` beside port 443; an explicit port is stored as before, with no scheme.
+    ``default_port=False`` leaves a URL with no port without one (the caller holds the URL whole).
     """
     from urllib.parse import urlparse
 
@@ -2533,6 +2538,10 @@ def split_base_url(value: Any) -> dict[str, Any]:
         out["host"] = parsed.hostname
     if parsed.port:
         out["port"] = int(parsed.port)
+    elif parsed.port is None and parsed.hostname and default_port:
+        out["port"] = 443 if parsed.scheme == "https" else 80
+        if parsed.scheme == "https":
+            out["scheme"] = "https"
     path = (parsed.path or "").rstrip("/")
     if path:
         out["base_path"] = path
@@ -2590,7 +2599,8 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("engine presets are gone: add an engine with a definition and its values "
                          "(registry/engine_definitions.json), or send a raw record with its protocol")
     raw: dict[str, Any] = {}
-    raw.update(split_base_url(form.get("base_url")))
+    # A remote provider keeps its whole base URL as its address (written below), so no default port stands in for it.
+    raw.update(split_base_url(form.get("base_url"), default_port=not is_remote_provider_config(form)))
     base_url = str(form.get("base_url") or "").strip().rstrip("/")
     if base_url and is_remote_provider_config(form):
         raw["base_url"] = base_url

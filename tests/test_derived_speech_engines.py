@@ -13,7 +13,8 @@ import pytest
 import proxy
 from gateway import derived_engines, service_registry, stable_aliases
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - fixture
-from tests.test_added_speech_engine_serves_speech import ADDED_MODEL, _app_key, _rig, _speak
+from tests.support.fake_upstream import load_scenario
+from tests.test_added_speech_engine_serves_speech import ADDED_MODEL, _app_key, _rig, _speak, _wav
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,
     gateway,
@@ -296,9 +297,38 @@ def test_a_tier_that_named_only_the_deleted_engine_answers_the_existing_no_engin
     assert spoken.status_code == 503 and "TTS not enabled" in spoken.text and fake.calls("speech") == [], spoken.text
 
 
-# ---- a record with no port (a finding of the S0 note; not fixed here) ------------------------------------------------
+# ---- a base URL with no port means the scheme's default port ---------------------------------------------------------
 
-def test_a_raw_record_whose_base_url_has_no_port_is_stored_without_one_and_turns_speech_off(gateway, monkeypatch, tmp_path):
+def test_a_base_url_with_no_port_gets_the_default_port_of_its_scheme():
+    assert service_registry.split_base_url("http://voice.fk.test") == {"host": "voice.fk.test", "port": 80}
+    assert service_registry.split_base_url("voice.fk.test/v1") == {"host": "voice.fk.test", "port": 80, "base_path": "/v1"}
+    assert service_registry.split_base_url("https://voice.fk.test/v1") == {
+        "host": "voice.fk.test", "port": 443, "scheme": "https", "base_path": "/v1"}
+
+
+def test_a_base_url_with_an_explicit_port_is_stored_as_before():
+    assert service_registry.split_base_url("http://voice.fk.test:8080/v1") == {"host": "voice.fk.test", "port": 8080, "base_path": "/v1"}
+    assert service_registry.split_base_url("https://voice.fk.test:8443") == {"host": "voice.fk.test", "port": 8443}
+
+
+def test_the_default_port_gives_the_record_an_address_of_its_scheme():
+    for url, address in (("http://voice.fk.test", "http://voice.fk.test:80"), ("https://voice.fk.test", "https://voice.fk.test:443")):
+        raw = service_registry.service_form_to_raw({"name": "garage-voice", "base_url": url, "protocol": "inline-tts"})
+        assert service_registry.engine_base_address(raw) == address
+
+
+def test_a_remote_provider_keeps_its_whole_base_url_as_its_address():
+    form = {"name": "cloud-voice", "base_url": "https://api.fk.test/v1", "protocol": "inline-tts", "remote_provider": True}
+
+    raw = service_registry.service_form_to_raw(form)
+
+    assert "port" not in raw and raw["base_url"] == "https://api.fk.test/v1"
+    assert service_registry.engine_base_address(raw) == "https://api.fk.test/v1"
+
+
+def test_a_raw_record_whose_base_url_has_no_port_keeps_the_default_port_and_serves_speech(
+    gateway, fake_upstreams, monkeypatch, tmp_path,
+):
     from gateway import media_jobs, receipt_store
 
     for module in (receipt_store, media_jobs):
@@ -306,6 +336,7 @@ def test_a_raw_record_whose_base_url_has_no_port_is_stored_without_one_and_turns
         module.init_db(db)
         monkeypatch.setattr(module, "DB_PATH", db)
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "images")
+    fake = fake_upstreams.asgi(load_scenario("openai-compatible/speech-buffered", wav_hex=_wav().hex()), host="voice.fk.test")
     owner, owner_id, *_ = owner_and_admin(gateway)
     key = _app_key(gateway, owner_id)
     etag = owner.get("/admin/api/operator/service-registry").headers.get("etag", '"os-0"')
@@ -313,14 +344,15 @@ def test_a_raw_record_whose_base_url_has_no_port_is_stored_without_one_and_turns
     added = owner.post(
         "/admin/api/operator/services",
         headers={**csrf_for(owner), "If-Match": etag},
-        json={"name": "garage-voice", "base_url": "http://voice.fk.test", "protocol": "inline-tts",
+        json={"name": "garage-voice", "base_url": fake.base_url, "protocol": "inline-tts",
               "capabilities": ["audio", "speech"], "models": [{"public": ADDED_MODEL, "upstream": "fake-speech-1"}]},
     )
 
-    assert added.status_code == 201, added.text  # accepted: nothing says the record is half configured
+    assert added.status_code == 201, added.text
     stored = proxy.config["backends"]["garage-voice"]
-    assert stored.get("host") and not stored.get("port")
-    assert service_registry.engine_base_address(stored) == ""
-    assert proxy.DERIVED.TTS_ENABLED is False
+    assert stored["port"] == 80 and service_registry.engine_base_address(stored) == "http://voice.fk.test:80"
+    assert proxy.DERIVED.TTS_ENABLED is True
     spoken = _speak(owner, key, ADDED_MODEL)
-    assert spoken.status_code == 503 and "TTS not enabled" in spoken.text
+    assert spoken.status_code == 200, spoken.text
+    assert spoken.content[:4] == b"RIFF"
+    assert [call.json["model"] for call in fake.calls("speech")] == ["fake-speech-1"]
