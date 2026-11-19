@@ -152,7 +152,10 @@ UPLOAD_SAMPLES = ("tone_wav",)
 _EXPECT_KEYS = {
     "binary_post": ("status", "content_type_prefix", "min_bytes"),
     "multipart_post": ("status", "json_string"),
+    "get_probe": ("status",),
 }
+# What a kind of test may also say about what it expects, without having to.
+_OPTIONAL_EXPECT_KEYS = {"get_probe": ("json_key",)}
 
 
 def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
@@ -165,9 +168,18 @@ def _real_test_errors(real_tests: Mapping[str, Mapping[str, Any]]) -> list[str]:
                 if not isinstance(expect, Mapping) or key not in expect:
                     errors.append(f"real_tests.{test_id}.expect.{key}: a {kind} test says what it expects, including {key}")
             if isinstance(expect, Mapping):
-                errors += [f"real_tests.{test_id}.expect.{key}: a {kind} test does not use it" for key in expect if key not in _EXPECT_KEYS[kind]]
+                allowed = _EXPECT_KEYS[kind] + _OPTIONAL_EXPECT_KEYS.get(kind, ())
+                errors += [f"real_tests.{test_id}.expect.{key}: a {kind} test does not use it" for key in expect if key not in allowed]
         elif expect is not None:
             errors.append(f"real_tests.{test_id}.expect: only a {' or '.join(_EXPECT_KEYS)} test has expect; this one is {kind}")
+        path = test.get("path")
+        if kind == "get_probe":
+            from gateway.engine_readiness import safe_probe_path
+
+            if not isinstance(path, str) or safe_probe_path(path) is None:
+                errors.append(f"real_tests.{test_id}.path: a get_probe test reads a plain server-root path")
+        elif path is not None:
+            errors.append(f"real_tests.{test_id}.path: only a get_probe test reads a path; this one is {kind}")
         upload = test.get("file")
         if kind == "multipart_post":
             if not isinstance(upload, Mapping):

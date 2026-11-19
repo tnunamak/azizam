@@ -53,6 +53,31 @@
         "path": "/audio/transcriptions"
       },
       "real_test": "transcription"
+    },
+    "images": {
+      "label": "Pictures",
+      "noun": "picture",
+      "record_capabilities": [
+        "images",
+        "generations"
+      ],
+      "real_test": "graph_ready"
+    },
+    "videos": {
+      "label": "Video",
+      "noun": "video",
+      "record_capabilities": [
+        "videos"
+      ],
+      "real_test": "graph_ready"
+    },
+    "audio_generate": {
+      "label": "Sound and music",
+      "noun": "sound",
+      "record_capabilities": [
+        "audio.generate"
+      ],
+      "real_test": "graph_ready"
     }
   },
   "evidence_text": {
@@ -281,6 +306,16 @@
         "json_string": "text"
       },
       "cost": "A moment of the server's time. The transcript may be empty, because the clip is not speech"
+    },
+    "graph_ready": {
+      "kind": "get_probe",
+      "sent": "One read of the engine's status page. No picture, video or sound is made and nothing is queued",
+      "path": "/system_stats",
+      "expect": {
+        "status": 200,
+        "json_key": "system"
+      },
+      "cost": "None. It only reads the status page"
     }
   },
   "advice": [
@@ -1313,6 +1348,123 @@
       ],
       "record": {
         "protocol": "chunked-stt",
+        "native_passthrough": false,
+        "base_path": ""
+      }
+    },
+    {
+      "definition": "workflow-image-engine",
+      "timeouts": {
+        "probe_s": 10,
+        "real_test_s": 30
+      },
+      "definition_version": 1,
+      "title": "Workflow image engine",
+      "example": "For example, ComfyUI",
+      "summary": "Makes pictures, video and sound by running workflows. Azizam starts it from its install folder, then lists the workflows it can run.",
+      "keywords": [
+        "workflow",
+        "node graph",
+        "nodes",
+        "image",
+        "video",
+        "comfyui",
+        "comfy"
+      ],
+      "flow": "detect",
+      "steps": [
+        "Kind",
+        "Address",
+        "What it can do",
+        "Workflows",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://127.0.0.1:8188",
+          "help": "Where the engine listens. When Azizam starts the engine, it gives this address from the port you choose."
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "system_stats",
+          "method": "GET",
+          "path": "/system_stats",
+          "from": "origin",
+          "kind": "model_list",
+          "require_json_key": "system"
+        },
+        "metadata": [],
+        "lists": [
+          {
+            "id": "node_classes",
+            "offers": "node",
+            "method": "GET",
+            "path": "/object_info",
+            "from": "origin",
+            "cap_bytes": 16777216,
+            "list": {
+              "shape": "object_keys",
+              "max_entries": 50000
+            }
+          }
+        ],
+        "route_probes": false
+      },
+      "capabilities": [
+        "images",
+        "videos",
+        "audio_generate"
+      ],
+      "default_ticked": "likely",
+      "check_rows": [
+        "Reaching the engine",
+        "Checking the key",
+        "Reading its nodes",
+        "Finding the workflows it can run"
+      ],
+      "name_fallback": "{host_label}",
+      "models_note": "Azizam shows the workflows this engine can run. A workflow that needs a node the engine lacks is listed with the missing node.",
+      "advice": [],
+      "process_template": {
+        "argv": [
+          "{folder}/.venv/bin/python",
+          "{folder}/main.py",
+          "--listen",
+          "127.0.0.1",
+          "--port",
+          "{port}"
+        ],
+        "cwd": "{folder}",
+        "slots": {
+          "folder": {
+            "type": "path",
+            "kind": "dir",
+            "locate": [
+              "main.py"
+            ]
+          },
+          "port": {
+            "type": "port"
+          }
+        },
+        "ready": {
+          "http": {
+            "path": "/system_stats",
+            "expect": 200
+          }
+        },
+        "stop": {
+          "timeout_s": 10
+        }
+      },
+      "record": {
+        "protocol": "node-graph",
         "native_passthrough": false,
         "base_path": ""
       }

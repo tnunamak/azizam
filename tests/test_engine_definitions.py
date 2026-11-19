@@ -28,7 +28,7 @@ def _parse(data):
 
 def test_the_seed_holds_its_definitions_with_any_openai_compatible_server_first():
     catalog = load_engine_catalog()
-    assert catalog.ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription"]
+    assert catalog.ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription", "workflow-image-engine"]
     first = catalog.public()["definitions"][0]
     assert first["title"] == "Any OpenAI-compatible server"
     assert first["fields"][0]["key"] == "address" and first["fields"][1]["key"] == "api_key"
@@ -195,7 +195,7 @@ def test_definition_timeouts_are_optional_positive_bounded_numbers():
     data = copy.deepcopy(SEED)
     for definition in data["definitions"]:
         definition.pop("timeouts", None)
-    assert _parse(data).ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription"]
+    assert _parse(data).ids() == ["openai-compatible", "own-model-list", "openai-speech", "openai-transcription", "workflow-image-engine"]
 
 
 def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():

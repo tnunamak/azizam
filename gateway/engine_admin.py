@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import hashlib
 import hmac
 import json
@@ -1027,6 +1028,14 @@ def _refuse_protocol_probe(values: Mapping[str, Any]) -> None:
                                field="dispatch")
 
 
+@functools.cache
+def shipped_workflow_manifests() -> tuple[Mapping[str, Any], ...]:
+    """The workflow manifests the release ships: what a check judges an engine's node inventory against."""
+    from gateway.discovery import BUNDLED_WORKFLOWS_DIR, WorkflowRegistry
+
+    return tuple(record.manifest for record in WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR).records())
+
+
 class EngineService:
     """The create and edit steps. The store persists; the r47 rules are re-checked there."""
 
@@ -1034,8 +1043,10 @@ class EngineService:
                  fetch: Fetch | None = None, env: Callable[[str], str | None] | None = None,
                  hop_timeout: Callable[[], float] | None = None,
                  gateway_ports: Callable[[], Iterable[int]] | None = None,
-                 port_free: Callable[[int], bool] = process_template.port_is_free) -> None:
+                 port_free: Callable[[int], bool] = process_template.port_is_free,
+                 workflow_manifests: Callable[[], Iterable[Mapping[str, Any]]] | None = None) -> None:
         self.store = store
+        self.workflow_manifests = workflow_manifests or shipped_workflow_manifests
         self.gateway_ports = gateway_ports or (lambda: GATEWAY_PORTS)
         self.port_free = port_free
         self.catalog_loader = catalog_loader
@@ -1049,6 +1060,12 @@ class EngineService:
     @property
     def db_path(self) -> Path:
         return Path(getattr(self.store, "path"))
+
+    def _workflows_for(self, definition: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        """The workflow manifests a check judges, for a definition that reads an engine's node inventory; else none."""
+        if not any(probe.get("offers") == "node" for probe in definition["probes"].get("lists") or ()):
+            return []
+        return list(self.workflow_manifests())
 
     def catalog(self) -> EngineCatalog:
         try:
@@ -1106,7 +1123,8 @@ class EngineService:
                 # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
                 existing = []
         result = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
-                                 viewer_role="owner" if _is_owner(ctx) else "admin")
+                                 viewer_role="owner" if _is_owner(ctx) else "admin",
+                                 workflows=self._workflows_for(definition))
         return projection.scrub_value(result)
 
     async def test(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
@@ -1345,7 +1363,8 @@ class EngineService:
         else:
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch,
                                     existing=_existing_engines(registry),
-                                    viewer_role="owner" if _is_owner(ctx) else "admin")
+                                    viewer_role="owner" if _is_owner(ctx) else "admin",
+                                    workflows=self._workflows_for(definition))
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
         capabilities = body.get("capabilities")
         if capabilities is None:
@@ -1512,7 +1531,8 @@ class EngineService:
         if connection_changed and not disabled:
             _refuse_protocol_probe(clean)
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
-                                    viewer_role="owner" if _is_owner(ctx) else "admin")
+                                    viewer_role="owner" if _is_owner(ctx) else "admin",
+                                    workflows=self._workflows_for(definition))
             # The check ran against the stored address; its report must not repeat what the page is not shown.
             check = projection.scrub_value(check, projection.url_secret_parts(clean["address"]))
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
