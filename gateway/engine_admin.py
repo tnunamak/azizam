@@ -21,6 +21,7 @@ import copy
 import functools
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -58,6 +59,7 @@ from gateway.engine_check import (
     run_real_test,
     GATEWAY_PORTS,
 )
+from gateway import engine_check
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
 from gateway.engine_protocol import description as protocol_descriptions, reviewed as reviewed_adapters
 from gateway.service_priority import selected_service
@@ -242,6 +244,9 @@ def _number(values: Mapping[str, Any], key: str, default: float, *, low: float, 
     return number
 
 
+_WHERE_FIELDS = ("where", "network_trusted")
+
+
 def _field_default(definition: Mapping[str, Any], key: str, fallback: Any = None) -> Any:
     for field in definition["fields"]:
         if field["key"] == key:
@@ -305,16 +310,29 @@ def _no_headers_sent(definition: Mapping[str, Any]) -> dict[str, Any]:
     return {"headers": []} if _declares(definition, "headers") else {}
 
 
+def refuse_network_for_adapters(definition: Mapping[str, Any], where: Any) -> None:
+    """A server the gateway calls through a reviewed adapter stays on this computer; say so in plain words."""
+    if where == "network" and not definition["record"].get("remote"):
+        raise DraftError("Azizam does not yet use this kind of server on another computer with the same network safety "
+                         "as other engines. Run it on this computer.", field="where")
+
+
 def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
                  stored_headers: Iterable[Any] = ()) -> dict[str, Any]:
     """Validate draft values against the definition's field list."""
     if not isinstance(values, Mapping):
         raise DraftError("values must be an object.", field="values")
     fields = {f["key"]: f for f in definition["fields"]}
-    unknown = sorted(set(values) - set(fields) - {"dispatch", "protocol_description"})
+    unknown = sorted(set(values) - set(fields) - {"dispatch", "protocol_description", *_WHERE_FIELDS})
     if unknown:
         raise DraftError("This kind of server has no field with one of the names sent.", field="values")
     out = {key: copy.deepcopy(value) for key, value in values.items()}
+    if any(name in values for name in _WHERE_FIELDS) or "where" in fields:
+        out["where"] = values.get("where") or "this"
+        out["network_trusted"] = values.get("network_trusted") is True
+        if out["where"] not in ("this", "network"):
+            raise DraftError("Choose where the server runs: on this computer or on another computer on your network.", field="where")
+        refuse_network_for_adapters(definition, out["where"])
     dispatch = values.get("dispatch") or ""
     if dispatch not in ("", "protocol"):
         raise DraftError("Choose an installed protocol description or the existing route.", field="dispatch")
@@ -350,6 +368,48 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
     out["reply_timeout_s"] = (None if timeout_value == ""
                               else _number(values, "reply_timeout_s", _field_default(definition, "reply_timeout_s", 600), low=1, high=3600))
     return out
+
+
+async def remote_plan(definition: Mapping[str, Any], clean: Mapping[str, Any], key: KeyInput, *, confirmed: bool,
+                      resolve: Any = None) -> dict[str, Any] | None:
+    """What "another computer on my network" means for this address, or ``None`` for this computer.
+
+    The owner never types a network. It is computed from the address: the /24 around an IPv4 host, the /64 around an
+    IPv6 one. The answer says the network and how Azizam will talk to the server, so the page can ask for a yes. A server
+    reached with plain http also needs that yes (``confirmed``) and no key, since a key would cross the network in clear
+    text. ``confirmed`` is False for a check, which only shows the question, and True for a save.
+    """
+    if clean.get("where") != "network":
+        return None
+    from urllib.parse import urlsplit
+
+    from gateway import remote_engine
+
+    parts = urlsplit(clean["address"])
+    host = (parts.hostname or "").strip("[]")
+    try:
+        found = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            found = [ipaddress.ip_address(str(a)) for a in await (resolve or engine_check._default_resolve)(host, parts.port or 80)]
+        except Exception:  # noqa: BLE001 - any lookup failure reads the same to the owner
+            raise DraftError("Azizam cannot find that name on your network. Use the computer's address as numbers.", field="address") from None
+    found = [engine_check.plain_address(a) for a in found]
+    if any([await asyncio.to_thread(engine_check.is_this_computer, a) for a in found]):
+        raise DraftError("That address is this computer. Choose “On this computer” instead.", field="where")
+    try:
+        network = remote_engine.network_around(found)
+    except remote_engine.PlainRefusal as refusal:
+        raise DraftError(str(refusal), field="address") from None
+    plaintext = parts.scheme == "http"
+    if plaintext and key.source != "none":
+        raise DraftError("A key cannot be sent over plain http, even on your own network. "
+                         "Put the server behind a reverse proxy that uses https, or remove the key.", field="api_key")
+    if plaintext and confirmed and clean.get("network_trusted") is not True:
+        raise DraftError(f"Confirm that you trust the network {network}. This server is reached with plain http, so anyone "
+                         "on that network can read what Azizam and the server send each other.", field="network_trusted")
+    return {"network": network, "transport": "private_plaintext" if plaintext else "tls",
+            "trust_needed": plaintext, "trusted": clean.get("network_trusted") is True}
 
 
 def _existing_engines(registry: Mapping[str, Any], *, exclude: str | None = None) -> list[dict[str, Any]]:
@@ -607,6 +667,17 @@ def build_raw(
     if values.get("dispatch") == "protocol":
         connection = copy.deepcopy(raw.get("connection") or {})
         connection.update(dispatch="protocol", protocol=values["protocol_description"], address=values["address"], transport="http")
+        plan = values.get("remote_plan")
+        if plan:
+            # Another computer: the owner-approved network, written as the remote block the gateway already enforces.
+            # Limits an owner set on an earlier save stay.
+            block = {**(connection.get("remote_dispatch") or {}), "enabled": True, "version": 1,
+                     "transport": plan["transport"], "private_cidrs": [plan["network"]],
+                     "tasks": list(definition["record"]["remote"]["tasks"])}
+            connection["remote_dispatch"] = block
+            raw["cost_class"] = "free-local"
+        else:
+            connection.pop("remote_dispatch", None)
         raw["connection"] = connection
     elif "dispatch" in values and isinstance(raw.get("connection"), dict):
         raw["connection"].pop("dispatch", None)
@@ -679,7 +750,7 @@ def _test_binding(definition: Mapping[str, Any], values: Mapping[str, Any], key:
                   service_id: str, models: Any) -> str:
     """Fingerprint all tested connection inputs and model settings without retaining credentials."""
     connection = {name: value for name, value in values.items()
-                  if name not in (*_LIFECYCLE_FIELDS, "api_key")}
+                  if name not in (*_LIFECYCLE_FIELDS, "api_key", "remote_plan")}
     snapshot = {"service_id": service_id, "definition": definition["definition"],
                 "connection": connection, "credential": key.value, "withheld": key.withheld,
                 "models": model_rows(models)}
@@ -833,6 +904,10 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
             unsupported_fields[field] = "Protocol dispatch uses its connection and installed description. This legacy setting is not used."
     values["dispatch"] = connection.get("dispatch") or ""
     values["protocol_description"] = connection.get("protocol") or ""
+    if "where" in field_keys:
+        remote = connection.get("remote_dispatch") if isinstance(connection.get("remote_dispatch"), Mapping) else {}
+        values["where"] = "network" if remote.get("enabled") is True else "this"
+        values["network_trusted"] = remote.get("transport") == "private_plaintext"
     # The tasks the installed description declares, when the record offers them, are listed beside the definition's own.
     caps = [*caps, *(op for op in sorted(described_operations(values))
                      if op in (record.get("capabilities") or ()) and op not in caps)]
@@ -1064,6 +1139,10 @@ def _admin_limits(ctx: Any, values: Mapping[str, Any], definition: Mapping[str, 
     if pasted and pasted != SECRET_MASK:
         raise _owner_only("Only the owner can add a key.")
     before_values = (before or {}).get("values") or {}
+    if any(values.get(name) != before_values.get(name, {"where": "this", "network_trusted": False}[name])
+           for name in _WHERE_FIELDS if name in values) or (
+            values.get("where") == "network" and values.get("address") != before_values.get("address")):
+        raise _owner_only("Only the owner can choose a server on another computer.")
     if values.get("api_key_env") and values.get("api_key_env") != before_values.get("api_key_env"):
         raise _owner_only("Only the owner can read a key from a server environment variable.")
     changed_lifecycle = any(_same_text(values.get(k, "")) != _same_text(before_values.get(k, _field_default(definition, k, "")))
@@ -1247,6 +1326,11 @@ class EngineService:
             if comparable_address(clean["address"]) == comparable_address(saved.get("address") or ""):
                 # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
                 existing = []
+        if clean.get("where") == "network" and not _is_owner(ctx):
+            raise _owner_only("Only the owner can choose a server on another computer.")
+        plan = await remote_plan(definition, clean, key, confirmed=False)
+        if plan:
+            clean = {**clean, "remote_plan": plan}
         result = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
                                  viewer_role="owner" if _is_owner(ctx) else "admin",
                                  workflows=self._workflows_for(definition))
@@ -1456,6 +1540,7 @@ class EngineService:
             raise DraftError("Give the engine a name.", field="name")
         _header_credentials_are_the_owners(ctx, body.get("values"))
         _refuse_reserved_texts(values)
+        refuse_network_for_adapters(definition, values.get("where"))
         resolved = None
         if definition.get("process_template") is not None:
             # An engine Azizam starts: the slot values become the literal process block now, with the address they imply.
@@ -1478,6 +1563,9 @@ class EngineService:
         if not disabled:
             _refuse_protocol_probe(clean)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=None, db_path=self.db_path, env=self.env)
+        plan = await remote_plan(definition, clean, key, confirmed=True)
+        if plan:
+            clean = {**clean, "remote_plan": plan}
         check: dict[str, Any] | None = None
         if unchecked:
             # A server kept off is not checked, but an address already in use still stops.
@@ -1661,6 +1749,7 @@ class EngineService:
             or [(h["name"], h["value"]) for h in clean.get("headers") or ()]
                != [(h["name"], h["value"]) for h in stored_config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
             or body.get("recheck") is True
+            or any(clean.get(name, "") != before["values"].get(name, "") for name in _WHERE_FIELDS if name in before["values"])
         )
         if moved:
             # An address already in use stops, saved on or off.
@@ -1670,6 +1759,9 @@ class EngineService:
                 raise EngineRouteError(status.HTTP_409_CONFLICT, "engine_duplicate", dup["what"], field="address",
                                        check={"outcome": "error", "findings": [dup]})
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
+        plan = await remote_plan(definition, clean, key, confirmed=True)
+        if plan:
+            clean = {**clean, "remote_plan": plan}
         check_summary = before["check"] or {}
         observed: dict[str, Any] | None = None  # None: no check ran, the record keeps its observations
         if connection_changed and not disabled:
@@ -1837,7 +1929,10 @@ class EngineService:
                                                  drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")),
                                                  **({"in_transaction": recheck} if recheck is not None else {}),
                                                  **({"observations": observations} if observations is not None else {}),
-                                                 **({"process": process, "residency": residency} if process is not None else {}))
+                                                 **({"process": process, "residency": residency} if process is not None else {}),
+                                                 **({"audit_extra": {"remote_network": values["remote_plan"]["network"],
+                                                                     "remote_transport": values["remote_plan"]["transport"]}}
+                                                    if values.get("remote_plan") else {}))
             except protocol_description_store.DescriptionRefused as refused:
                 raise EngineRouteError(status.HTTP_409_CONFLICT, "protocol_description_changed", str(refused),
                                        field="protocol_description") from None

@@ -1,4 +1,4 @@
-"""HTTPS transport for one service capability, using the checked socket connector."""
+"""Transport for one service capability, using the checked socket connector: https, or private plain http when the owner approved it."""
 from __future__ import annotations
 
 import asyncio
@@ -51,7 +51,8 @@ class RemoteNetworkTransport:
         limits = dict(cap.finite_budgets)
         parts = urlsplit(request.url)
         origin(request.url)
-        host, port = parts.hostname, parts.port or 443
+        plaintext = cap.exact_origin.startswith('http://')
+        host, port = parts.hostname, parts.port or (80 if plaintext else 443)
         try:
             addresses = [ipaddress.ip_address(host)]
         except ValueError:
@@ -73,6 +74,9 @@ class RemoteNetworkTransport:
             private_allowed = any(address.version == ipaddress.ip_network(cidr).version and
                                   address in ipaddress.ip_network(cidr) for cidr in cap.address_exceptions)
             if not address.is_global and not private_allowed:
+                raise refused()
+            # Plain http goes only to the owner's approved private network: a public answer is never trusted with it.
+            if plaintext and not private_allowed:
                 raise refused()
             # CIDR consent is not permission to call the gateway or other host services.
             if await asyncio.to_thread(engine_check.is_this_computer, address):

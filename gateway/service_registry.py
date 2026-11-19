@@ -1654,6 +1654,8 @@ def validate_protocol_dispatch_configuration(service: Mapping[str, Any]) -> None
     if remote_engine.PRODUCTION_READY and 'remote_dispatch' in connection_config(service):
         try:
             remote_engine.policy(service, require_enabled=False)
+        except remote_engine.PlainRefusal as refusal:
+            raise ValueError(str(refusal)) from None
         except remote_engine.ProtocolError:
             raise ValueError('The remote engine policy is invalid or refused.') from None
         return
@@ -1668,6 +1670,8 @@ def validate_protocol_dispatch_admission(service: Mapping[str, Any]) -> None:
             if remote_engine.remote_enabled(connection_config(service)):
                 remote_engine.policy(service)
                 return
+        except remote_engine.PlainRefusal as refusal:
+            raise ValueError(str(refusal)) from None
         except remote_engine.ProtocolError:
             raise ValueError('The remote engine policy is invalid or refused.') from None
     validate_protocol_dispatch_local_only(service)

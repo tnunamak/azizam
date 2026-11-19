@@ -56,6 +56,13 @@ def refused() -> ProtocolError:
     return ProtocolError('Remote engine authority is missing, changed or refused.', code='protocol_dispatch_refused')
 
 
+class PlainRefusal(ProtocolError):
+    """A refusal the owner can act on: its message is plain words and is safe to show at save."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code='protocol_dispatch_refused')
+
+
 def refuse_unbound(service: Mapping[str, Any]) -> None:
     """Legacy clients have no remote authority, even for owner-enabled records."""
     if remote_enabled(connection_config(service)):
@@ -79,15 +86,16 @@ def refuse_unbound_connection(connection) -> None:
 
 
 def origin(address: str) -> str:
+    """The exact origin of an engine address. Plain http parses here; ``policy`` allows it only as ``private_plaintext``."""
     if (not isinstance(address, str) or any(c.isspace() or ord(c) < 32 for c in address)
             or '\\' in address or '#' in address or '?' in address):
         raise refused()
     try:
         p = urlsplit(address)
-        if (p.scheme != 'https' or not p.hostname or p.username is not None or p.password is not None
+        if (p.scheme not in ('https', 'http') or not p.hostname or p.username is not None or p.password is not None
                 or p.fragment or p.query or '%' in p.netloc or p.hostname.endswith('.')):
             raise refused()
-        port = p.port if p.port is not None else 443
+        port = p.port if p.port is not None else (443 if p.scheme == 'https' else 80)
         if not 0 < port < 65536:
             raise refused()
         host = p.hostname.encode('idna').decode('ascii').lower()
@@ -97,7 +105,7 @@ def origin(address: str) -> str:
         if ('\\' in decoded or decoded.startswith('//') or any(s in {'.', '..'} for s in decoded.split('/'))
                 or any(c.isspace() or ord(c) < 32 for c in decoded)):
             raise refused()
-        return f'https://{host}:{port}'
+        return f'{p.scheme}://{host}:{port}'
     except (ValueError, UnicodeError):
         raise refused() from None
 
@@ -116,6 +124,53 @@ def authority_record(record):
             {key: config[key] for key in keys if key in config}]
 
 
+TRANSPORTS = ('tls', 'private_plaintext')
+_KEY_FIELDS = ('api_key_secret_id', 'api_key_env', 'api_key_ref')
+
+
+def _require_plaintext_is_safe(service, connection, approved, cidrs):
+    """Plain http crosses the network in clear text, so it is allowed only where nothing secret travels it.
+
+    The rules: an approved private network is named, no credential is bound to the record, and an address given as
+    numbers is inside that network. Names are checked against the same network at every connection.
+    """
+    if not cidrs:
+        raise PlainRefusal('Plain http needs the private network the server is on. None was given.')
+    config = service.get('config') if isinstance(service.get('config'), Mapping) else {}
+    carriers = (service, config, connection)
+    if (any(spec and spec.get('secret_ref') for spec in (connection.get('credentials') or {}).values())
+            or any(carrier.get(name) for carrier in carriers for name in _KEY_FIELDS)
+            or any(carrier.get('secret_refs') for carrier in (service, config))):
+        raise PlainRefusal('A key cannot be sent over plain http, even on your own network. '
+                           'Put the server behind a reverse proxy that uses https, or remove the key.')
+    try:
+        literal = ipaddress.ip_address(urlsplit(approved).hostname.strip('[]'))
+    except ValueError:
+        return
+    if not any(literal.version == ipaddress.ip_network(c).version and literal in ipaddress.ip_network(c) for c in cidrs):
+        raise PlainRefusal('The address is not inside the private network that was approved for it.')
+
+
+def network_around(addresses) -> str:
+    """The private network an owner is asked to approve for these addresses: the /24 of an IPv4 one, the /64 of an IPv6 one.
+
+    Every address must sit in that one network and in private space. Anything else is refused in plain words, so
+    that approving a network can never approve a public host, this computer, a link-local or a metadata address.
+    """
+    found = [ipaddress.ip_address(str(a)) for a in addresses]
+    if not found:
+        raise PlainRefusal('That name does not point to an address.')
+    first = found[0]
+    network = ipaddress.ip_network(f'{first}/{24 if first.version == 4 else 64}', strict=False)
+    pools = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16') if first.version == 4 else ('fc00::/7',)
+    if not any(network.subnet_of(ipaddress.ip_network(pool)) for pool in pools):
+        raise PlainRefusal('That address is not on a private network (10.x.x.x, 172.16 to 172.31, 192.168.x.x, or fd00::/8). '
+                           'Azizam does not call a server on a public address without https.')
+    if any(a.version != first.version or a not in network for a in found):
+        raise PlainRefusal('That name points to addresses on more than one network. Use the server\'s own address.')
+    return str(network)
+
+
 @lru_cache(maxsize=1)
 def limit_catalog():
     return yaml.safe_load((Path(__file__).resolve().parents[1] / 'registry/remote_egress.yml').read_text())['limits']
@@ -129,7 +184,11 @@ def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tu
     if (not isinstance(raw, Mapping) or type(raw.get('enabled')) is not bool
             or (require_enabled and raw.get('enabled') is not True)):
         raise refused()
-    if set(raw) - {'enabled', 'version', 'private_cidrs', 'limits'} or type(raw.get('version', 1)) is not int or raw.get('version', 1) != 1:
+    if (set(raw) - {'enabled', 'version', 'private_cidrs', 'limits', 'transport', 'tasks'}
+            or type(raw.get('version', 1)) is not int or raw.get('version', 1) != 1):
+        raise refused()
+    transport = raw.get('transport', 'tls')
+    if transport not in TRANSPORTS:
         raise refused()
     if connection.get('dispatch') != 'protocol':
         raise refused()
@@ -151,6 +210,11 @@ def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tu
     if not any(level.get('cost_class') == 'free-local' for level in levels):
         raise refused()
     approved = origin(connection.get('address'))
+    if approved.startswith('http://') != (transport == 'private_plaintext'):
+        # Plain http is a named choice, never a side effect of an address, and a named choice needs its own address.
+        raise PlainRefusal('Plain http needs the private network choice, and a private network choice needs an http address.'
+                           if transport == 'private_plaintext' else
+                           'An http address needs the choice that this network is trusted. Use https for anything else.')
     if connection.get('control_address') and origin(connection['control_address']) != approved:
         raise refused()
     for spec in (connection.get('credentials') or {}).values():
@@ -173,6 +237,18 @@ def policy(service: Mapping[str, Any], *, require_enabled=True) -> tuple[str, tu
         if not any(network.subnet_of(ipaddress.ip_network(pool)) for pool in pools):
             raise refused()
         parsed.append(str(network))
+    if transport == 'private_plaintext':
+        _require_plaintext_is_safe(service, connection, approved, parsed)
+    tasks = raw.get('tasks')
+    if tasks is not None:
+        if not isinstance(tasks, list) or not tasks or not all(isinstance(task, str) and task for task in tasks):
+            raise refused()
+        for offering in offerings_config(service):
+            for row in offering.get('tasks') or ():
+                name = row.get('task') if isinstance(row, Mapping) else row
+                if name not in tasks:
+                    raise PlainRefusal(f'This engine may be used on another computer for {", ".join(sorted(tasks))} only, '
+                                       f'and one of its offerings is for {name}.')
     catalog = limit_catalog()
     overrides = raw.get('limits', {})
     if not isinstance(overrides, Mapping) or set(overrides) - catalog.keys():

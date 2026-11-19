@@ -1327,9 +1327,14 @@ async def _run_check(
     if dup is not None:
         result["findings"].append(dup)
         return finish("error")
-    # A definition that has the gateway call the engine through an installed description serves only this computer's
-    # addresses for now. Say so here, before any request and before a save, not when the first generation fails.
-    if definition["record"].get("dispatch") and not _served_dispatch_address(address):
+    # The owner may have chosen another computer on their network: that address was checked, and its network computed,
+    # before this check began. Otherwise a definition that has the gateway call the engine through an installed
+    # description serves only this computer's addresses. Say so here, before any request and before a save, not when
+    # the first generation fails.
+    plan = values.get("remote_plan")
+    if plan:
+        result["remote"] = dict(plan)  # shown so the page can ask for the owner's yes
+    elif definition["record"].get("dispatch") and not _served_dispatch_address(address):
         row = next(r for r in advice if r["code"] == "local_only")
         result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=None, key_sent=False))
         return finish("error")
