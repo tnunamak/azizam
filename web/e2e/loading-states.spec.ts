@@ -148,7 +148,7 @@ async function capture(
     const where = `${item.group} ${theme} ${width}`;
     // first(): a route may show its loader in two places (a list and a panel) while both wait.
     const loader = page.getByLabel(item.loadingLabel, { exact: true }).first();
-    await expect(loader, `${where}: the route's labeled loading state`).toBeAttached();
+    await expect(loader, `${where}: the route's labeled loading state`).toBeVisible();
     await expect.soft(page.getByRole("heading", { level: 1 }), `${where}: the page title stays`).toBeVisible();
     if (item.absent) {
       await expect.soft(page.getByText(item.absent, { exact: true }), `${where}: no "${item.absent}" line`).toHaveCount(0);
