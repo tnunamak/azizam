@@ -21,9 +21,11 @@ from tests.test_stt_round4_planner import config
 @pytest.mark.parametrize("shared", [False, True])
 def test_multitrack_decode_uses_probed_track_and_reservation(tmp_path, rates, shared):
     source = tmp_path / "two-tracks.mkv"
+    # Scale media and planning limits together: still chunked, and native PCM
+    # still exceeds the source-fallback cap.
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-        f"sine=frequency=440:sample_rate={rates[0]}:duration=700", "-f", "lavfi", "-i",
-        f"sine=frequency=880:sample_rate={rates[1]}:duration=700",
+        f"sine=frequency=440:sample_rate={rates[0]}:duration=70", "-f", "lavfi", "-i",
+        f"sine=frequency=880:sample_rate={rates[1]}:duration=70",
         "-map", "0:a", "-map", "1:a", "-ac", "2", "-c:a", "libmp3lame", "-q:a", "4",
         "-disposition:a:0", "0", "-disposition:a:1", "default", str(source)], check=True)
     # Independent oracle: decode the first audio track at the probe's native format.
@@ -34,9 +36,9 @@ def test_multitrack_decode_uses_probed_track_and_reservation(tmp_path, rates, sh
     oracle.unlink()
 
     async def run():
-        execution = config(tmp_path, target_seconds=300, threshold_seconds=600,
-            max_segment_seconds=350, search_seconds=0,
-            max_decoded_bytes=256 * 1024**2 if shared else 100 * 1024**2)
+        execution = config(tmp_path, target_seconds=30, threshold_seconds=60,
+            max_segment_seconds=35, search_seconds=0,
+            max_decoded_bytes=(26 if shared else 10) * 1024**2)
         gate = stt.SttResourceGate()
         lease = gate.acquire(request_id="multitrack", config=execution, upload_bytes=source.stat().st_size)
         sent = hashlib.sha256()
