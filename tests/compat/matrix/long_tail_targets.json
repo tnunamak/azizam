@@ -1,6 +1,6 @@
 {
   "version": "2026-05-15",
-  "generated_at": "2026-05-15",
+  "generated_at": "2026-11-18",
   "targets": [
     {
       "id": "open-webui",
@@ -259,7 +259,7 @@
         "generateObject relies on JSON Schema response_format; gateway must surface JSON-mode shape errors as OpenAI-typed errors."
       ],
       "priority": "P0",
-      "status": "unverified",
+      "status": "automated-probe",
       "references": [
         "https://ai-sdk.dev/providers/community-providers/openai-compatible",
         "https://ai-sdk.dev/docs"
