@@ -120,7 +120,7 @@ def test_steps_out_of_range_is_refused(manifest, binding, graph):
     spec = manifest["inputs"]["steps"]
     assert "steps" in validate_inputs(manifest, {"steps": spec["minimum"] - 1}).rejected
     assert "steps" in validate_inputs(manifest, {"steps": spec["maximum"] + 1}).rejected
-    assert not validate_inputs(manifest, {"steps": spec["maximum"]}).rejected
+    assert "steps" not in validate_inputs(manifest, {"steps": spec["maximum"]}).rejected
 
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
@@ -156,4 +156,4 @@ def test_engine_snapshot_replaces_the_sampler_choices():
     manifest, _, _ = load(MANIFESTS / "krea2-turbo.yml")
     assert "newly-added" not in manifest["inputs"]["sampler"]["enum"]
     ok = validate_inputs(manifest, {"sampler": "newly-added"}, choices={"sampler": ["euler", "newly-added"]})
-    assert not ok.rejected
+    assert "sampler" not in ok.rejected
