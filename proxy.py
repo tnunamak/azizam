@@ -140,7 +140,7 @@ from gateway.engine_protocol.errors import BudgetExceeded as ProtocolBudgetExcee
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
     SERVICE_DISABLED, SERVICE_NOT_ADMITTING, SERVICE_REASONS, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
-from gateway import media_input_assets, media_input_leases, media_inputs
+from gateway import chat_asset_refs, media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
 from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, node_graph_runner, row_routes, workflow_adapters
@@ -27205,6 +27205,63 @@ ASSETS_DELETE_OPENAPI = {"responses": {"200": {"description": "The asset is dele
     "404": {"description": "asset_not_found: no such asset, or it is not owned by this App's accountable person."}}}
 
 
+ASSETS_CREATE_OPENAPI = {
+    "requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
+        "type": "object", "required": ["file"],
+        "properties": {"file": {"type": "string", "format": "binary",
+                                "description": "One image. Its type is read from its bytes. The size limit is the media input limit "
+                                               "(AZIZAM_MEDIA_FETCH_MAX_BYTES), not the JSON body limit."}}}}}},
+    "responses": {
+        "200": {"description": "The image is stored. Send its id as chat image_url.url instead of the image.",
+                "content": {"application/json": {"schema": {
+                    "type": "object", "required": ["id", "object", "media_type", "size_bytes"],
+                    "properties": {"id": {"type": "string"}, "object": {"type": "string", "enum": ["gateway.asset"]},
+                                   "media_type": {"type": "string"}, "size_bytes": {"type": "integer"}}}}}},
+        "400": {"description": "No file, an empty file, or a file that is not an image."},
+        "413": {"description": "file_too_large: the image is over the media input limit."}}}
+
+
+async def assets_create(request: Request):
+    """Store one image for the caller and return its id, so a large picture need not ride in a JSON body."""
+    auth_context = await asyncio.to_thread(authenticate_request, request, "/v1/assets")
+    if isinstance(auth_context, Response):
+        return auth_context
+    try:
+        form = await request.form()
+    except Exception:  # noqa: BLE001 - a body that is not multipart is the caller's mistake
+        return openai_error_response("Send the image as one multipart/form-data file part named 'file'.",
+                                     status_code=400, param="file", code="missing_file")
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        return openai_error_response("Send the image as one multipart/form-data file part named 'file'.",
+                                     status_code=400, param="file", code="missing_file")
+    limit = media_fetch.max_bytes()
+    if (getattr(upload, "size", None) or 0) > limit:
+        return openai_error_response(f"The image is larger than the {limit}-byte media input limit.",
+                                     status_code=413, param="file", code="file_too_large")
+    data = await upload.read()
+    return await asyncio.to_thread(_store_uploaded_image, data, auth_context)
+
+
+def _store_uploaded_image(data: bytes, auth_context: AuthContext) -> Response:
+    if not data:
+        return openai_error_response("The image is empty.", status_code=400, param="file", code="invalid_image")
+    if len(data) > media_fetch.max_bytes():
+        return openai_error_response(f"The image is larger than the {media_fetch.max_bytes()}-byte media input limit.",
+                                     status_code=413, param="file", code="file_too_large")
+    measured = media_inputs.measure(data)
+    if not measured.media_type.startswith("image/"):
+        return openai_error_response("The file is not an image this gateway can read.",
+                                     status_code=400, param="file", code="invalid_image_format")
+    try:
+        # An uploaded input is not a creation: it has no maker and keeps no prompt.
+        asset_id = store_asset_bytes(data, kind="img", suffix=measured.suffix, owner_key_hash=_asset_owner_key(auth_context),
+                                     maker_person_id=None, keep_prompt=False)
+    except media_metadata.MediaMetadataError:
+        return openai_error_response("The image could not be read.", status_code=400, param="file", code="invalid_image")
+    return JSONResponse({"id": asset_id, "object": "gateway.asset", "media_type": measured.media_type, "size_bytes": len(data)})
+
+
 async def assets_delete(asset_id: str, request: Request):
     """Delete an asset this App (or its accountable person) made; the same work as the browser Delete."""
     auth_context = await asyncio.to_thread(authenticate_request, request, "/v1/assets/{asset_id}")
@@ -35252,6 +35309,16 @@ async def _handle_openai_litellm_request_once(
     if admission is not None:
         return admission
 
+    if request_path == "/v1/chat/completions" and isinstance(parsed_body.get("messages"), list):
+        # A picture named by a stored asset id becomes the data URI an engine accepts, after the asset owner check.
+        messages, reference_error = await asyncio.to_thread(
+            chat_asset_refs.resolve, parsed_body["messages"],
+            lambda asset_id: _mcp_read_asset(request, auth_context, asset_id))
+        if reference_error is not None:
+            return openai_error_response(
+                reference_error.message, status_code=400, param=reference_error.param, code=reference_error.code)
+        parsed_body = {**parsed_body, "messages": messages}
+
     if (
         request_path in {"/v1/chat/completions", "/v1/completions"}
         and _is_use_loaded_model_alias(parsed_body.get("model"))
@@ -36654,6 +36721,7 @@ FRONTEND_TRANSLATORS.register("identity", {
                                  response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.SIGNED_URL),
+    "assets.create": SelfAuthOp(assets_create, frozenset({"POST"}), openapi_extra=ASSETS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
     "assets.delete": SelfAuthOp(assets_delete, frozenset({"DELETE"}), openapi_extra={**ASSETS_DELETE_OPENAPI}, auth=operation_security.APP_KEY),
     "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
