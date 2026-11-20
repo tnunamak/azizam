@@ -35,8 +35,8 @@ chosen adapter names and their effective weights, and the encoder if selected.
    The gateway lists files from the folder configured by the workflow binding.
 2. For automatic discovery, the file's header must name a base model that the
    [architecture registry](../../registry/adapter_architectures.yml) maps to the
-   workflow's architecture. The current rows are `krea2` and `qwen_image_2`;
-   both match the `ss_base_model_version` header field. Files without a usable
+   workflow's architecture. The current rows are `krea2`, `qwen_image_2` and `flux2_klein_9b`;
+   all match the `ss_base_model_version` header field. Files without a usable
    matching header are hidden by default. An explicit owner mark for the
    architecture is the exception.
 3. To recognize a new base model, add a row to the registry using the actual
