@@ -122,7 +122,7 @@ describe("availability copy remedies", () => {
 
   it("treats absent capabilities as account setup, not a transient wait", () => {
     const copy = statusSummaryCopy({ state: "unavailable", reason_code: "no_capabilities" });
-    expect(copy).toBe("No capabilities are available to your account yet.");
+    expect(copy).toBe("No capabilities are available to your account yet. Ask the owner to check your account access.");
     expect(copy).not.toMatch(/try again/i);
   });
 });
