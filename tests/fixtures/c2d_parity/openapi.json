@@ -1108,7 +1108,7 @@
     }
   },
   "shared": {
-    "bytes": 9543,
+    "bytes": 9586,
     "full": {
       "info": {
         "description": "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content.",
@@ -1438,13 +1438,14 @@
         "video.generate.ltx-2.5-long",
         "video.generate.ltx-2.5-t2v",
         "video.generate.minimax-h3-i2v",
+        "video.generate.minimax-h3-i2v-hires",
         "video.generate.minimax-h3-keyframes",
         "video.generate.minimax-h3-keyframes-mid",
         "video.generate.minimax-h3-long",
         "video.generate.minimax-h3-t2v"
       ]
     },
-    "sha256": "1057b65c3600a894e10b4b588e354699d677b767c86cb6efeb2fe86a779096b5"
+    "sha256": "f0282f51e579d696b18d419000945068364e6b3a56b310c538ecf8cf71ff37d4"
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
@@ -8520,6 +8521,168 @@
         "run_path": null
       },
       "sha256": "7d8a56057a07bcbf45ce179bb0ecb5830e7b15a91e40e097a98965ef2b2a2093"
+    },
+    "video.generate.minimax-h3-i2v-hires": {
+      "bytes": 4641,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a high-resolution video with stereo sound from a starting picture and a description, without the usual content filtering. It only shows adults.",
+          "display_name": "MiniMax H3 I2V Hi-Res (uncensored)",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "length": {
+                  "in": "none"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-minimax-h3-i2v-hires",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.minimax-h3-i2v-hires",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v_hires"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 5.17,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "minimax-h3-i2v-hires",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 195.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_minimax_h3_i2v_hires": {
+            "additionalProperties": false,
+            "description": "Make a high-resolution video with stereo sound from a starting picture and a description, without the usual content filtering. It only shows adults.",
+            "properties": {},
+            "title": "MiniMax H3 I2V Hi-Res (uncensored)",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-i2v-hires"
+          },
+          "WorkflowInputs_video_generate_minimax_h3_i2v_hires": {
+            "additionalProperties": false,
+            "description": "Make a high-resolution video with stereo sound from a starting picture and a description, without the usual content filtering. It only shows adults.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels. A multiple of 64.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer",
+                "x-azizam-step": 64
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels. A multiple of 64.",
+                "maximum": 1216,
+                "minimum": 64,
+                "type": "integer",
+                "x-azizam-step": 64
+              }
+            },
+            "required": [
+              "prompt",
+              "image"
+            ],
+            "title": "MiniMax H3 I2V Hi-Res (uncensored)",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-i2v-hires"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v_hires",
+        "run_path": null
+      },
+      "sha256": "f1f989afe8b55137b77a6cd6bfd0acb1f75cd06829fd016fa414031e972d9474"
     },
     "video.generate.minimax-h3-keyframes": {
       "bytes": 6030,

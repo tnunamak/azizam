@@ -7182,6 +7182,32 @@
         "type": "video"
       }
     },
+    "video.generate.minimax-h3-i2v-hires": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
     "video.generate.minimax-h3-keyframes": {
       "fields": {
         "architecture": {
@@ -8389,6 +8415,7 @@
     "video.generate.ltx-2.5-long",
     "video.generate.ltx-2.5-t2v",
     "video.generate.minimax-h3-i2v",
+    "video.generate.minimax-h3-i2v-hires",
     "video.generate.minimax-h3-keyframes",
     "video.generate.minimax-h3-keyframes-mid",
     "video.generate.minimax-h3-long",
