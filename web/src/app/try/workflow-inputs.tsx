@@ -672,14 +672,19 @@ function controlFor(
   }
   if (isUnsupportedValue(value)) return unloadedControl(id, value);
   if (input.enum?.length) {
+    const options = input.enum;
+    const selected = options.indexOf(value);
     return (
       <Select
-        value={selectValue(value)}
+        value={selected < 0 ? (value === undefined && !input.required ? UNSET : "") : enumOptionId(selected)}
         disabled={disabled}
         onValueChange={(next) => {
           // Radix can emit an empty value when its hidden form input resets.
-          if (next === UNSET) onChange(undefined);
-          else if (next) onChange(enumValue(input, next));
+          if (next === UNSET && !input.required) onChange(undefined);
+          else {
+            const index = options.findIndex((_, optionIndex) => enumOptionId(optionIndex) === next);
+            if (index >= 0) onChange(options[index]);
+          }
         }}
       >
         <SelectTrigger id={id} className={cn("w-full", extras.touch && "min-h-11")} {...aria}>
@@ -687,8 +692,8 @@ function controlFor(
         </SelectTrigger>
         <SelectContent>
           {!input.required && <SelectItem value={UNSET}>Not set</SelectItem>}
-          {input.enum.map((option) => (
-            <SelectItem key={String(option)} value={String(option)}>
+          {options.map((option, index) => (
+            <SelectItem key={enumOptionId(index)} value={enumOptionId(index)}>
               {choiceName(input, option) ?? String(option)}
             </SelectItem>
           ))}
@@ -1256,15 +1261,11 @@ function choiceName(input: WorkflowInput, option: unknown): string | undefined {
   return typeof name === "string" && name ? name : undefined;
 }
 
-function enumValue(input: WorkflowInput, value: string) {
-  return input.enum?.find((option) => String(option) === value) ?? value;
-}
+// Select IDs live separately from manifest values, which retain their types.
+const UNSET = "unset";
 
-// Select item for "omit this optional field"; never a real enum value.
-const UNSET = "__unset__";
-
-function selectValue(value: unknown) {
-  return value === undefined || value === null ? "" : String(value);
+function enumOptionId(index: number) {
+  return `choice-${index}`;
 }
 
 function numberDisplay(value: unknown) {
