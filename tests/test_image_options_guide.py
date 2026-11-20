@@ -103,6 +103,14 @@ def test_guide_links_klein_and_explains_inputs_without_defaults():
     assert any("no default" in sentence and "built-in" in sentence for sentence in sentences)
 
 
+def test_guide_distinguishes_optional_defaults_from_required_values():
+    sentences = re.split(r"[.!?](?:\s|$)", _guide().lower())
+    assert any(all(re.search(rf"\b{word}\b", sentence) for word in ("optional", "no", "default"))
+               for sentence in sentences)
+    assert any(all(re.search(rf"\b{word}\b", sentence) for word in ("required", "value"))
+               for sentence in sentences)
+
+
 def test_guide_relative_links_resolve_to_repository_files():
     missing = []
     for href in INLINE_LINK.findall(_guide()):
