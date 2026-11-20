@@ -383,3 +383,137 @@ def test_the_digest_of_an_offered_name_is_read_back_from_its_asset_id():
     assert adapter_upload.digest_of("op-a.safetensors") is None
     assert adapter_upload.digest_of("img_" + "5" * 64) is None
     assert adapter_upload.digest_of("ast_" + "G" * 64) is None
+
+
+# --- a person's own uploads: the Library's ownership rule decides, the header decides the base -------------------------
+
+class Store:
+    """The asset store, the Library's ownership rule and the engine's folder, as the Library class is given them."""
+
+    def __init__(self, tmp_path: Path, *, enabled: bool = True, local: bool = True) -> None:
+        self.cache = tmp_path / "cache"
+        self.cache.mkdir()
+        self.engine = tmp_path / "models" / "loras"
+        self.engine.mkdir(parents=True)
+        self.enabled, self.local = enabled, local
+        self.sidecars: dict[str, dict] = {}
+        self.holders: dict[str, set[str]] = {}
+        self.noted: list[tuple[str, str]] = []
+        self.library = adapter_upload.Library(
+            asset_ids=lambda: list(self.sidecars),
+            metadata=lambda asset_id: self.sidecars.get(asset_id, {}),
+            path=lambda asset_id: self.cache / f"{asset_id.split('_', 1)[1]}{adapter_upload.SUFFIX}",
+            holds=lambda person, asset_id: person in self.holders.get(asset_id, ()),
+            policy=lambda: adapter_upload.Policy(self.enabled),
+            lora_root=lambda folder: self.engine if self.local and folder == "loras" else None,
+            note_copy=lambda asset_id, folder: self.noted.append((asset_id, folder)),
+            table=TABLE)
+
+    def add(self, person: str, data: bytes, label: str = "mine.safetensors", *, marked: bool = True) -> str:
+        digest = hashlib.sha256(data).hexdigest()
+        asset_id = f"ast_{digest}"
+        (self.cache / f"{digest}{adapter_upload.SUFFIX}").write_bytes(data)
+        self.sidecars.setdefault(asset_id, {})
+        if marked:
+            self.sidecars[asset_id]["adapter"] = {"label": label}
+        self.holders.setdefault(asset_id, set()).add(person)
+        return asset_id
+
+
+ALPHA = safetensors(metadata={"ss_base_model_version": "alpha_base"})
+BETA = safetensors({"b": [3]}, metadata={"ss_base_model_version": "beta_base"})
+UNKNOWN = safetensors({"u": [5]}, metadata={"ss_base_model_version": "gamma"})
+
+
+def test_a_person_is_offered_their_own_compatible_uploads(tmp_path):
+    store = Store(tmp_path)
+    mine = store.add("robin", ALPHA, "style.safetensors")
+    store.add("robin", BETA, "other.safetensors")
+    offers = store.library.offers("robin", folder="loras")
+    assert {o.name: (o.label, o.architectures) for o in offers} == {
+        mine: ("style.safetensors", ("alpha_base",)),
+        "ast_" + hashlib.sha256(BETA).hexdigest(): ("other.safetensors", ("beta_base",))}
+
+
+def test_another_persons_upload_is_not_offered_and_is_refused_like_an_unknown_name(tmp_path):
+    store = Store(tmp_path)
+    theirs = store.add("sam", ALPHA)
+    assert store.library.offers("robin", folder="loras") == []
+    assert store.library.resolve("robin", theirs, folder="loras") is None
+    assert store.library.resolve("robin", "ast_" + "0" * 64, folder="loras") is None
+    with pytest.raises(adapter_upload.UnknownAdapter):
+        store.library.engine_names("robin", [theirs], folder="loras")
+    with pytest.raises(adapter_upload.UnknownAdapter):
+        store.library.engine_names("robin", ["ast_" + "0" * 64], folder="loras")
+    assert os.listdir(store.engine) == []
+
+
+def test_an_upload_with_an_unknown_base_is_stored_but_not_offered(tmp_path):
+    store = Store(tmp_path)
+    asset_id = store.add("robin", UNKNOWN)
+    [offer_] = store.library.offers("robin", folder="loras")
+    assert offer_.name == asset_id and offer_.architectures == ()
+    assert adapter_upload.join([], store.library.offers("robin", folder="loras"), "alpha_base") == []
+    assert adapter_upload.join([], store.library.offers("robin", folder="loras"), "gamma") == []
+
+
+def test_nothing_is_offered_when_the_setting_is_off(tmp_path):
+    store = Store(tmp_path, enabled=False)
+    asset_id = store.add("robin", ALPHA)
+    assert store.library.offers("robin", folder="loras") == []
+    assert store.library.resolve("robin", asset_id, folder="loras") is None
+
+
+def test_nothing_is_offered_when_the_engine_is_not_on_this_computer(tmp_path):
+    store = Store(tmp_path, local=False)
+    store.add("robin", ALPHA)
+    assert store.library.offers("robin", folder="loras") == []
+
+
+def test_a_stored_file_that_no_upload_marked_is_not_an_adapter(tmp_path):
+    store = Store(tmp_path)
+    store.add("robin", ALPHA, marked=False)
+    assert store.library.offers("robin", folder="loras") == []
+
+
+def test_a_stored_file_whose_header_no_longer_reads_is_not_offered(tmp_path):
+    store = Store(tmp_path)
+    asset_id = store.add("robin", ALPHA)
+    (store.cache / f"{asset_id.split('_', 1)[1]}{adapter_upload.SUFFIX}").write_bytes(b"not safetensors any more")
+    assert store.library.offers("robin", folder="loras") == []
+
+
+def test_using_an_upload_copies_it_under_its_hash_and_notes_the_folder(tmp_path):
+    store = Store(tmp_path)
+    asset_id = store.add("robin", ALPHA)
+    digest = asset_id.split("_", 1)[1]
+    names = store.library.engine_names("robin", [asset_id], folder="loras")
+    assert names == {asset_id: f"{adapter_upload.SUBFOLDER}/{digest}.safetensors"}
+    assert (store.engine / names[asset_id]).read_bytes() == ALPHA
+    assert store.noted == [(asset_id, "loras")]
+    assert "mine" not in " ".join(os.listdir(store.engine / adapter_upload.SUBFOLDER))
+
+
+def test_a_deleted_asset_removes_its_copy_and_leaves_the_pick_list(tmp_path):
+    store = Store(tmp_path)
+    asset_id = store.add("robin", ALPHA)
+    names = store.library.engine_names("robin", [asset_id], folder="loras")
+    # The Library's delete: the claim goes with the file, and the sidecar said where copies were made.
+    store.library.forget(asset_id, {"adapter": {"label": "x", "copies": ["loras"]}})
+    assert not (store.engine / names[asset_id]).exists()
+    store.holders[asset_id].clear()
+    assert store.library.offers("robin", folder="loras") == []
+
+
+def test_forget_leaves_a_folder_it_cannot_reach_alone(tmp_path):
+    store = Store(tmp_path, local=False)
+    store.library.forget("ast_" + "7" * 64, {"adapter": {"copies": ["loras"]}})   # no error
+
+
+def test_a_sweep_removes_copies_whose_asset_is_gone(tmp_path):
+    store = Store(tmp_path)
+    kept, gone = store.add("robin", ALPHA), store.add("robin", BETA)
+    store.library.engine_names("robin", [kept, gone], folder="loras")
+    del store.sidecars[gone]
+    assert store.library.sweep(folder="loras") == [gone.split("_", 1)[1]]
+    assert os.listdir(store.engine / adapter_upload.SUBFOLDER) == [f"{kept.split('_', 1)[1]}.safetensors"]
