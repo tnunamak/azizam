@@ -70,7 +70,7 @@ import dataclasses
 import contextvars
 import io
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Awaitable, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import Any, AsyncIterator, BinaryIO, Awaitable, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
@@ -103,6 +103,8 @@ from gateway import (
     me_avatar,
     me_make,
     me_media,
+    adapter_upload,
+    me_adapters,
     native_lane,
     prompt_memory,
     receipt_store,
@@ -16431,6 +16433,71 @@ def _record_make_dispatch(job_id: str, receipt: RouteReceipt) -> None:
 _SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
 
 
+def _adapter_rules() -> adapter_upload.Policy:
+    """The owner's setting for member adapter uploads (off until the owner turns it on)."""
+    try:
+        setting = admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=ADMIN_STORE.path)
+    except Exception:  # noqa: BLE001 - a setting that cannot be read leaves uploads off
+        return adapter_upload.Policy()
+    return adapter_upload.policy(setting["value"] if setting else None)
+
+
+def _adapter_engine_local() -> bool:
+    """Whether the image engine's models folder is on this computer: the engine directory is set and the engine is not
+    reached as a remote destination."""
+    if host_memory_admission.engine_models_dir() is None:
+        return False
+    try:
+        return not engine_egress.is_remote_destination(_graph_service(_GRAPH_CAPABILITY).host)
+    except Exception:  # noqa: BLE001 - no engine selected: nothing to be remote
+        return True
+
+
+def _adapter_lora_root(folder: str) -> Path | None:
+    return adapter_upload.lora_root(host_memory_admission.engine_models_dir(), folder) if _adapter_engine_local() else None
+
+
+def _note_adapter_copy(asset_id: str, folder: str) -> None:
+    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+        metadata = _read_asset_metadata(asset_id)
+        marker = dict(metadata.get("adapter") or {})
+        marker["copies"] = sorted({*marker.get("copies", ()), folder})
+        _write_asset_metadata(asset_id, {**metadata, "adapter": marker})
+
+
+def _store_adapter_upload(stream: BinaryIO, checked: adapter_upload.Validated, person_id: str, label: str) -> str:
+    """Store a checked upload in the content-addressed cache for the person who sent it, streamed (not held in memory).
+    The sidecar marks it an adapter and keeps the label the person gave it; the person is its maker, so the Library's
+    own rule shows it to them and to no one else."""
+    from gateway import private_io
+    asset_id = f"ast_{checked.digest}"
+    target = IMAGE_CACHE_DIR / f"{checked.digest}{adapter_upload.SUFFIX}"
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
+    if not target.exists():
+        private_io.atomic_copy_stream(stream, target)
+    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+        metadata = _read_asset_metadata(asset_id)
+        makers = set(metadata.get("maker_person_ids") or [])
+        makers.add(person_id)
+        marker = dict(metadata.get("adapter") or {})
+        marker["label"] = marker.get("label") or label
+        _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": sorted(makers),
+                                         "adapter": marker, "updated_at": int(time.time())})
+    return asset_id
+
+
+ADAPTER_LIBRARY = adapter_upload.Library(
+    asset_ids=lambda: [i for i in me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)() if i.startswith("ast_")],
+    metadata=lambda asset_id: _read_asset_metadata(asset_id),
+    path=lambda asset_id: asset_cache_path(asset_id),
+    holds=lambda person_id, asset_id: me_media.holds_cached_asset(
+        person_id, asset_id, asset_metadata_reader=_read_asset_metadata, admin_db_path=lambda: ADMIN_STORE.path),
+    policy=_adapter_rules,
+    lora_root=_adapter_lora_root,
+    note_copy=_note_adapter_copy,
+)
+
+
 # Removes a Library item (the member's Delete, and a canceled mesh job's model); it keeps one that has several owners.
 _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
     metadata_reader=_read_asset_metadata,
@@ -16438,7 +16505,13 @@ _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
     metadata_path_resolver=_asset_metadata_path,
     metadata_writer=_write_asset_metadata,
     prompt_memory_path=lambda: media_jobs.DB_PATH,
+    on_removed=lambda asset_id, metadata: ADAPTER_LIBRARY.forget(asset_id, metadata),
 )
+
+app.include_router(me_adapters.create_me_adapters_router(
+    session_provider=lambda request: _oidc_session_from_request(request),
+    mutation_validator=lambda request, session: _require_user_action_header(request, session),
+    rules=_adapter_rules, engine_local=_adapter_engine_local, store=_store_adapter_upload))
 
 app.include_router(
     me_media.create_me_media_router(

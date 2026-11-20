@@ -185,18 +185,29 @@ class Validated:
     header: Header
 
 
-def validate(path: Path, rules: Policy) -> Validated:
-    """Check a spooled upload and hash it in one streamed pass. The file is not loaded into memory."""
-    size = path.stat().st_size
+def validate_stream(stream: BinaryIO, size: int, rules: Policy) -> Validated:
+    """Check an upload and hash it in one streamed pass. The file is not loaded into memory."""
     if size > rules.max_bytes:
         raise Refused("adapter_too_large", 413, f"The file is larger than the {rules.max_bytes}-byte limit for adapters.")
-    with path.open("rb") as stream:
-        header = read_header(stream, size)
-        stream.seek(0)
-        digest = hashlib.sha256()
-        while chunk := stream.read(_CHUNK):
-            digest.update(chunk)
+    header = read_header(stream, size)
+    stream.seek(0)
+    digest = hashlib.sha256()
+    while chunk := stream.read(_CHUNK):
+        digest.update(chunk)
     return Validated(digest.hexdigest(), size, header)
+
+
+def validate(path: Path, rules: Policy) -> Validated:
+    """``validate_stream`` for a file on disk."""
+    with path.open("rb") as stream:
+        return validate_stream(stream, path.stat().st_size, rules)
+
+
+def label_of(filename: str | None) -> str:
+    """What the person called the file, kept to show it back to them. It is text only: never a path, never a stored name."""
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(ch for ch in name if ch.isprintable()).strip()
+    return name[:120] or "adapter"
 
 
 # ------------------------------------------------------------------------------------- the engine's folder, a copy
