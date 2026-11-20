@@ -79,7 +79,7 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Response | `results[]` and `data[]` (same items: `index`, `relevance_score` in 0..1, optional `document.text`), `id`, `usage`, `meta` | same |
 | | Errors | 400 with `message` (Cohere), `detail` (Jina, Voyage) and `error{}` (gateway) in one body; TEI bodies get TEI's `error` and `error_type` | same |
 | | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
-| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech`; plus `rename_app` and `rename_key` for the signed-in person's own apps and keys | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
+| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech`; plus `rename_app` and `rename_key` for the signed-in person's own apps and keys, and `report_problem` (also `POST /gateway/v1/problem-reports`) | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
 | | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
 | | Auth | Bearer app key, or sign-in through the gateway's OAuth flow for hosted clients; see [Recipe: MCP clients](#recipe-mcp-clients-chatgpt-claudeai-claude-code-cursor-pi-codex). A 401 carries an RFC 9728 `resource_metadata` challenge. | same |
 | | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
@@ -1467,6 +1467,7 @@ person signed in to, not an App key):
 | `job` | Poll a `job_id`, wait for it (`wait_seconds`), or `cancel` it. |
 | `rename_app` | Give one of your apps a new `name`. `app` is its current name (or its id when two share a name). |
 | `rename_key` | Give an active key of one of your apps a new `name`. `app` and `key` are current names (or ids). |
+| `report_problem` | Tell the operator a tool failed, differed from its description or forced a workaround. `summary` is required; `category`, `workaround`, `target` and `job_id` are optional. It is a tool, not a `run` target. A client that cannot list tools sends the same JSON to `POST /gateway/v1/problem-reports` with its key; `capabilities` names both ways in its `report_problem` field. |
 
 Arguments for `job`:
 

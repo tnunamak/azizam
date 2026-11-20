@@ -64,7 +64,9 @@ from urllib.parse import quote, urlsplit
 
 from PIL import Image, ImageOps
 
-from gateway.problem_report_tool import INSTRUCTION as REPORT_INSTRUCTION, REPORT_HINT, TOOL as REPORT_TOOL
+from gateway.problem_report_tool import (
+    HOW_TO_REPORT, INSTRUCTION as REPORT_INSTRUCTION, NOT_A_TARGET, NOT_A_TARGET_NAMES, REPORT_HINT, TOOL as REPORT_TOOL,
+)
 from gateway.stt_samples import RIGHTS_CAVEAT
 
 from fastapi import FastAPI, Request, Response
@@ -857,6 +859,8 @@ class Tools:
         inputs pick the one that accepts them all; ties go to the generate workflow.
         """
         t = target.strip()
+        if t in NOT_A_TARGET_NAMES and self.deps.problem_report is not None:
+            raise CallError(NOT_A_TARGET)
         for descriptor in self.registry.targets:
             if t == descriptor.target or t in self._operation_names(descriptor):
                 return "operation", descriptor, None if t == descriptor.target else t
@@ -926,11 +930,14 @@ class Tools:
                          "typical_seconds": None, "mode": descriptor.mode})
         # An agent asks "what should I use": everything to choose today comes before the workflows it replaced.
         rows.sort(key=lambda row: row.get("status") == "superseded")
-        return {"workflows": rows, "hint": (
+        reply: dict[str, Any] = {"workflows": rows, "hint": (
             "Call capabilities with `target` for typed inputs; run with `target` and `inputs`. "
             "Speech and transcription also run over the OpenAI-shaped routes. "
             "GET /health at the gateway root is the public health route."
         )}
+        if self.deps.problem_report is not None:
+            reply["report_problem"] = HOW_TO_REPORT
+        return reply
 
     async def _availability(self, workflow_ids: list[str]) -> Mapping[str, Mapping[str, Any]]:
         """Each workflow's availability from the host's engine health record; empty when the host has none or it fails."""

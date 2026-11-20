@@ -9,6 +9,14 @@ CATEGORIES = ("failure", "differs_from_description", "workaround", "missing_capa
 SUMMARY_MAX = 1000
 WORKAROUND_MAX = 500
 
+REST_PATH = "/gateway/v1/problem-reports"
+# How to report, for a client that does not list MCP tools: the `capabilities` answer carries this one field.
+HOW_TO_REPORT = {"tool": "report_problem", "rest": f"POST {REST_PATH}"}
+# A client that only drives `run` may try these as targets. They are not targets.
+NOT_A_TARGET_NAMES = frozenset({"report_problem", "report-problem"})
+NOT_A_TARGET = ("`report_problem` is a tool, not a run target. To file a report, call the `report_problem` tool, "
+                f"or send the same JSON arguments to POST {REST_PATH} with your key.")
+
 INSTRUCTION = "If a tool fails, misbehaves or forces a workaround, call `report_problem` before you move on."
 REPORT_HINT = ("If you work around this or give up, call `report_problem` once to tell the operator. "
                "Pass the `target` you called (and the `job_id`, if any) so the gateway attaches the details.")

@@ -21573,6 +21573,83 @@
         ]
       }
     },
+    "/gateway/v1/problem-reports": {
+      "post": {
+        "description": "Tell the operator a tool failed, differed from its description or forced a workaround.\n\nTakes the arguments of the MCP `report_problem` tool and answers what it answers (`report_id`, `duplicate`,\n`count`, `known_workaround`). One report per distinct problem; a repeat folds into the same report.",
+        "operationId": "file_report_gateway_v1_problem_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "category": {
+                    "default": "failure",
+                    "description": "failure: a call failed. differs_from_description: it worked but not as described. workaround: you took another path. missing_capability: nothing here can do it.",
+                    "enum": [
+                      "failure",
+                      "differs_from_description",
+                      "workaround",
+                      "missing_capability"
+                    ],
+                    "type": "string"
+                  },
+                  "job_id": {
+                    "description": "The job id involved, if there is one.",
+                    "type": "string"
+                  },
+                  "summary": {
+                    "description": "What happened, in plain words.",
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "target": {
+                    "description": "The workflow, alias or `speech` involved, if you know it.",
+                    "type": "string"
+                  },
+                  "workaround": {
+                    "description": "What you did instead, if anything.",
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "summary"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "File Report",
+        "tags": [
+          "Problem reports"
+        ]
+      }
+    },
     "/gateway/v1/providers": {
       "get": {
         "description": "List provider-native lanes visible to this authenticated caller.",

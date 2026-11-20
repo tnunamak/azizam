@@ -16829,6 +16829,14 @@ async def _mcp_problem_report(request: Request, auth: Any, args: Mapping[str, An
         raise CallError(str(exc), code=exc.code) from None
 
 
+async def _rest_problem_report(request: Request, args: Mapping[str, Any]) -> dict[str, Any]:
+    """``POST /gateway/v1/problem-reports``: the same core and the same caller as the MCP tool."""
+    return await PROBLEM_REPORTS.submit(_mcp_problem_caller(request.scope.get("auth_context")), args)
+
+
+app.include_router(problem_reports.create_runtime_problem_reports_router(submit=_rest_problem_report))
+
+
 def _mount_mcp(app: FastAPI) -> None:
     if MCP_OAUTH_ENABLED:
         MCP_OAUTH.register(app)
