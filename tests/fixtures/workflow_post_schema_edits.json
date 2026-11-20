@@ -679,6 +679,132 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
     }
   ],
   "image.edit.image-identity": [
@@ -949,6 +1075,142 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
+      "before": "More steps add detail but take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
     }
   ],
   "image.edit.qwen-image-2.1-edit-multiref": [
@@ -1086,6 +1348,142 @@
       "before_present": false,
       "path": [
         "source_url"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
+      "before": "More steps add detail but take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
       ]
     }
   ],
@@ -1298,6 +1696,152 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
+      "before": "More steps add detail but take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "LanPaint_KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "LanPaint_KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "karras"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
+      "before": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "mask_feather",
+        "description"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "11",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "11",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
     }
   ],
   "image.edit.seedvr2-upscale": [
@@ -1411,6 +1955,132 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
     }
   ],
   "image.generate.krea2-turbo": [
@@ -1469,6 +2139,132 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
     }
   ],
   "image.generate.krea2-turbo-snofs": [
@@ -1486,6 +2282,132 @@
       "before_present": false,
       "path": [
         "source_url"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
       ]
     }
   ],
@@ -1515,6 +2437,164 @@
       "path": [
         "source_url"
       ]
+    },
+    {
+      "after": {
+        "label": "steps",
+        "help": "This model is trained for 8 steps. 4 to 12 works well.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16,
+        "default": 8
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSamplerSelect",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "BasicScheduler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "steps"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "steps"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
     }
   ],
   "image.generate.moss-image-quality": [
@@ -1532,6 +2612,142 @@
       "before_present": false,
       "path": [
         "source_url"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer. 40 to 50 works well for this model.",
+      "before": "More steps add detail but take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSamplerSelect",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "BasicScheduler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "8",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
       ]
     }
   ],
@@ -1821,6 +3037,46 @@
         "inputs",
         "scheduler",
         "choice_labels"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer. 25 to 35 works well for this model.",
+      "before": "More steps add detail but take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": 28,
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "default"
+      ]
+    },
+    {
+      "after": "dpmpp_2m",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "default"
+      ]
+    },
+    {
+      "after": "karras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "default"
       ]
     }
   ],
