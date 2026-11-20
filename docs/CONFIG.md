@@ -295,9 +295,28 @@ engine page shows which values came from there (`stt_chunking.from_bundled_defau
 | `native_long_audio_offline` | `true` when the engine takes long offline transcription audio whole. |
 | `native_long_audio_streaming` | `true` when the engine takes long streaming transcription audio whole. |
 
+The same block also declares what the engine does with a request option:
+
+| Key | Meaning |
+|---|---|
+| `response_formats` | The `response_format` values the engine produces, as a list such as `[json, text]`. The route answers any other value with HTTP 400 `unsupported_response_format` (`param: response_format`) naming the formats the model takes, and sends nothing to the engine. Left out: no format is refused. |
+| `prompt_supported` | `false` when the engine has no prompt input. A non-empty `prompt` is then a 400 `unsupported_parameter` (`param: prompt`); an empty one is not an error. Left out: a prompt is passed on as before. |
+
+A record that declares nothing still has one backstop: when `response_format=verbose_json` was asked and the engine's reply
+has no `segments`, the route answers 502 `stt_response_format_not_returned` instead of passing on a different shape. A
+malformed declaration is a 503 `stt_configuration_invalid`. `GET /gateway/v1/capabilities` lists these values on each
+transcription alias row (see [Local client recipes](LOCAL_CLIENT_RECIPES.md#model-aliases-stable-names)).
+
 An uncut file above a maximum declared on the record is refused unless its request mode declares native long audio
 (HTTP 422 or 502, code `stt_audio_cannot_be_split`). A record without a declared maximum sends an uncut file whole;
 the engine page marks this as no measured limit and offers the measure action.
+
+Only `response_format=json` and `verbose_json` requests are cut: the pieces' replies are JSON objects the gateway can merge.
+A `verbose_json` reply keeps its segments: each segment (and word) time moves by the piece's start in the source, segment
+ids are renumbered in order, `duration` is the whole source's and `language` is the first piece's. A piece reply without
+`segments` fails the request. `text`, `srt` and `vtt`, `timestamp_granularities`, `include`, `chunking_strategy`, streaming
+and more than one file keep a long file from being cut; the refusal names the option, the file's length when known, and the
+declared maximum.
 
 Pieces do not overlap and the texts are joined as they come. The silence keys (`silence_noise_db`,
 `silence_min_seconds`, `silence_search_seconds`) are no longer read. The default-only upgrade removes the old

@@ -152,6 +152,8 @@ def test_setup_guide_gets_the_first_key_from_apps_and_covers_a_docker_engine():
     for text in (setup, readme):
         overlap = _paragraph_with(text, "Pool overlaps with other one on this address space")
         assert "AZIZAM_DOCKER_SUBNET" in overlap and "AZIZAM_DOCKER_GATEWAY" in overlap, overlap
+        # The 2026-11-19 re-walk hit the overlap: "unused values" needs a way to see the used ones.
+        assert "docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'" in overlap, overlap
 
 
 def test_readme_names_the_setup_field_and_the_usage_receipt_steps():

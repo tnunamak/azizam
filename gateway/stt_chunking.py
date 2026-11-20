@@ -48,6 +48,7 @@ from starlette.formparsers import (
 from starlette.requests import ClientDisconnect
 
 from gateway import off_loop_spawn, private_io, private_tmp, service_registry
+from gateway.client_errors import STT_SPLIT_BLOCKERS
 from gateway.alias_policy import transform_specs
 from gateway.resource_claims import (
     AdmissionDecision,
@@ -104,6 +105,9 @@ _DECODED_RESPONSE_REPRESENTATION_HEADERS = frozenset(
 # not safely mergeable without response-specific timestamp semantics.
 _SDK_TRANSCRIPTION_FIELDS = frozenset(Transcription.__annotations__)
 _MERGEABLE_TRANSCRIPTION_FIELDS = frozenset({"text", "usage"})
+# A verbose_json reply adds these (OpenAI's verbose transcription object); each is merged by ``_merge_verbose``.
+_VERBOSE_TRANSCRIPTION_FIELDS = frozenset({"task", "language", "duration", "segments", "words"})
+_SEEK_FRAMES_PER_SECOND = 100
 _SDK_DURATION_USAGE_FIELDS = frozenset(UsageDuration.__annotations__)
 _SDK_TOKEN_USAGE_FIELDS = frozenset(UsageTokens.__annotations__)
 _SDK_TOKEN_DETAIL_FIELDS = frozenset(UsageTokensInputTokenDetails.__annotations__)
@@ -167,12 +171,19 @@ class SttAudioNotSplittable(SttExecutionError):
     ``reason`` is one of a fixed set (never text from a tool or an engine): ``unknown_duration`` when the probe
     could not establish a length, ``split_failed`` when
     a local step failed, or ``unsupported_request`` when cutting would change the response contract.
+    ``blocked_by`` names the request options that prevent cutting, only from ``CHUNKING_BLOCKERS``;
+    ``duration_seconds`` is the file's length when the probe reported one.
     """
 
-    def __init__(self, reason: Literal["unknown_duration", "split_failed", "unsupported_request"], *, limit_seconds: float) -> None:
+    def __init__(
+        self, reason: Literal["unknown_duration", "split_failed", "unsupported_request"], *, limit_seconds: float,
+        blocked_by: Sequence[str] = (), duration_seconds: float | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.limit_seconds = limit_seconds
+        self.blocked_by = tuple(name for name in blocked_by if name in CHUNKING_BLOCKERS)
+        self.duration_seconds = duration_seconds if duration_seconds is not None and math.isfinite(duration_seconds) and duration_seconds > 0 else None
 
 
 class SttMediaCommandFailed(SttSetupFailure):
@@ -1320,24 +1331,48 @@ async def extract_segment(
             raise SttCleanupFailure("STT verification cleanup failed")
 
 
-def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: int) -> bool:
-    """Return true only for the OpenAI envelope this module can preserve."""
+# Every name ``chunking_blockers`` can return: the fixed list a refusal may name (never request text).
+CHUNKING_BLOCKERS = tuple(STT_SPLIT_BLOCKERS)
+# Formats whose pieces the gateway merges: the reply is one JSON object per piece.
+SPLITTABLE_RESPONSE_FORMATS = ("json", "verbose_json")
+
+
+def chunking_blockers(fields: Sequence[tuple[str, str]], *, file_count: int) -> tuple[str, ...]:
+    """The request options that keep the pieces' replies from being merged into the one reply asked for.
+
+    Empty means the envelope can be cut. Names come from ``CHUNKING_BLOCKERS`` only.
+    """
+    blockers: list[str] = []
     if file_count != 1:
-        return False
+        blockers.append("more than one file")
     names = [name for name, _ in fields]
     values = {name: value for name, value in fields}
     response_format = values.get("response_format", "json").strip().lower()
-    if response_format != "json" or _as_bool(values.get("stream", False)):
-        return False
+    if response_format not in SPLITTABLE_RESPONSE_FORMATS:
+        named = f"response_format={response_format}"
+        blockers.append(named if named in CHUNKING_BLOCKERS else "response_format")
+    if _as_bool(values.get("stream", False)):
+        blockers.append("stream")
     if "chunking_strategy" in names:
-        return False
-    return not any(
-        name == "include"
-        or name.startswith("include[")
-        or name == "timestamp_granularities"
-        or name.startswith("timestamp_granularities[")
-        for name in names
-    )
+        blockers.append("chunking_strategy")
+    if any(name == "include" or name.startswith("include[") for name in names):
+        blockers.append("include")
+    if any(name == "timestamp_granularities" or name.startswith("timestamp_granularities[") for name in names):
+        blockers.append("timestamp_granularities")
+    return tuple(blockers)
+
+
+def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: int) -> bool:
+    """Return true only for the OpenAI envelope this module can preserve: ``json`` or ``verbose_json`` replies.
+
+    The one place that says which requests are cut. ``text``, ``srt`` and ``vtt`` are not merged: their replies are
+    not JSON objects, and the gateway does not rebuild them from pieces.
+    """
+    return not chunking_blockers(fields, file_count=file_count)
+
+
+def _wants_verbose(fields: Sequence[tuple[str, str]]) -> bool:
+    return any(name == "response_format" and value.strip().lower() == "verbose_json" for name, value in fields)
 
 
 def uncut_upload_needs_decode(config: SttExecutionConfig, *, streaming: bool = False) -> bool:
@@ -1350,8 +1385,12 @@ async def guard_uncut_uploads(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
     on_cancel: Callable[[], None] | None, streaming: bool = False,
     resource_lease: SttResourceLease | None = None,
+    fields: Sequence[tuple[str, str]] | None = None,
 ) -> None:
     """Refuse a whole file over a known maximum before sending it.
+
+    ``fields`` (the request's form fields, when the caller has them) lets the refusal name which option kept the
+    file from being cut.
 
     D47 amendment 2: native long audio for this mode deliberately bypasses the
     chunk maximum. An undeclared/derived maximum cannot justify a refusal.
@@ -1375,7 +1414,13 @@ async def guard_uncut_uploads(
         finally:
             _unlink_chunk_path(pcm_path)
         if duration > config.max_segment_seconds:
-            raise SttAudioNotSplittable("unsupported_request", limit_seconds=config.max_segment_seconds)
+            blocked_by = chunking_blockers(fields, file_count=len(paths)) if fields is not None else ()
+            if fields is not None and not blocked_by and not config.chunking_enabled:
+                blocked_by = ("chunking disabled",)
+            # The probe's length is advisory (a container can lie); name it only when it agrees the file is over the limit.
+            reported = probed.duration_seconds if probed.duration_seconds > config.max_segment_seconds else None
+            raise SttAudioNotSplittable("unsupported_request", limit_seconds=config.max_segment_seconds,
+                                        blocked_by=blocked_by, duration_seconds=reported)
 
 
 def _may_send_whole(config: SttExecutionConfig, probed: ProbedAudio | None, *, duration_verified: bool) -> bool:
@@ -1402,7 +1447,8 @@ def _unplanned_outcome(
         reason = "unknown_duration"
     else:
         reason = "split_failed"
-    raise SttAudioNotSplittable(reason, limit_seconds=config.max_segment_seconds) from error
+    raise SttAudioNotSplittable(reason, limit_seconds=config.max_segment_seconds,
+                                duration_seconds=probed.duration_seconds if probed is not None else None) from error
 
 
 async def execute_chunking(
@@ -1550,7 +1596,7 @@ async def _execute_chunking(
             _segment_sample_count(start, end, source_sample_rate) > math.floor(config.max_segment_seconds * source_sample_rate)
             for start, end in segments)
     ):
-        raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds)
+        raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds, duration_seconds=planning_duration)
     if not segments or len(segments) <= 1:
         return ChunkingOutcome("passthrough", 0, "single_segment_plan", verified_duration_seconds=verified_duration)
     if len(segments) > config.max_segments:
@@ -1568,6 +1614,7 @@ async def _execute_chunking(
             return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration)
         raise SttSetupFailure("STT service response transforms cannot run") from error
     payloads: list[Mapping[str, Any]] = []
+    verbose = _wants_verbose(fields)
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
         chunk_path = source_path.parent / f"segment-{index:03d}.wav"
@@ -1595,7 +1642,8 @@ async def _execute_chunking(
                     if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
                         return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration)
                     if config.setup_failure_policy == "passthrough":
-                        raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds) from error
+                        raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds,
+                                                            duration_seconds=planning_duration) from error
                 raise SttChunkAttemptError("STT segment extraction failed after chunk progress") from error
 
             attempts_started += 1
@@ -1619,29 +1667,96 @@ async def _execute_chunking(
                     attempts_started,
                     upstream_response=response,
                 )
-            payloads.append(_parse_mergeable_chunk_payload(response.body, response_transforms))
+            payloads.append(_parse_mergeable_chunk_payload(response.body, response_transforms, verbose=verbose))
         finally:
             await cleanup.release(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
 
     return ChunkingOutcome(
         "chunked",
         attempts_started,
-        merged_payload=merge_transcription_payloads(payloads),
+        merged_payload=merge_transcription_payloads(
+            payloads, pieces=segments if verbose else None, duration_seconds=verified_duration, sample_rate=source_sample_rate),
     )
 
 
-def merge_transcription_payloads(payloads: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def merge_transcription_payloads(
+    payloads: Sequence[Mapping[str, Any]], *, pieces: Sequence[tuple[float, float]] | None = None,
+    duration_seconds: float | None = None, sample_rate: int = _PLANNING_SAMPLE_RATE,
+) -> dict[str, Any]:
+    """Join the pieces' replies. Given ``pieces`` (each piece's start and end in the source), merge verbose_json."""
     if not payloads:
         raise SttChunkResponseError("STT chunks returned no transcription payload")
     texts = [payload["text"].strip() for payload in payloads if payload["text"].strip()]
     merged: dict[str, Any] = {"text": " ".join(texts)}
+    if pieces is not None:
+        merged = _merge_verbose(payloads, pieces, merged, duration_seconds=duration_seconds, sample_rate=sample_rate)
     usage = _merge_usage([payload.get("usage") for payload in payloads])
     if usage is not None:
         merged["usage"] = usage
     return merged
 
 
-def _parse_mergeable_chunk_payload(body: bytes, response_transforms: Sequence[Any] = ()) -> Mapping[str, Any]:
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _merge_verbose(
+    payloads: Sequence[Mapping[str, Any]], pieces: Sequence[tuple[float, float]], merged: dict[str, Any], *,
+    duration_seconds: float | None, sample_rate: int,
+) -> dict[str, Any]:
+    """Put every piece's segments (and words) on the source's timeline.
+
+    The planner cuts the source into pieces that tile it exactly (no overlap, no gap), so a segment belongs to the
+    piece that produced it and none can appear twice. A piece's offset is its start rounded to the source sample
+    (the same rounding the extractor uses), so it is exact; a time the engine reports past its own piece is clamped
+    to the piece's end, which keeps the merged timeline in order across pieces.
+    """
+    if len(pieces) != len(payloads):
+        raise SttChunkResponseError("STT chunk count differs from the planned pieces")
+    segments: list[dict[str, Any]] = []
+    words: list[dict[str, Any]] = []
+    for payload, (piece_start, piece_end) in zip(payloads, pieces):
+        offset = round(piece_start * sample_rate) / sample_rate
+        limit = round(piece_end * sample_rate) / sample_rate
+        for segment in payload["segments"]:
+            shifted = _shift_timed(segment, offset, limit)
+            if isinstance(segment.get("seek"), int) and not isinstance(segment.get("seek"), bool):
+                # The verbose_json seek field counts 10 ms frames from the start of the audio the engine was given.
+                shifted["seek"] = segment["seek"] + round(offset * _SEEK_FRAMES_PER_SECOND)
+            if isinstance(segment.get("words"), list):
+                shifted["words"] = [_shift_timed(word, offset, limit) for word in segment["words"]]
+            shifted["id"] = len(segments)
+            segments.append(shifted)
+        if payload.get("words") is not None:
+            words.extend(_shift_timed(word, offset, limit) for word in payload["words"])
+    for field in ("task", "language"):
+        if payload_value := payloads[0].get(field):
+            merged[field] = payload_value
+    if duration_seconds is not None:
+        merged["duration"] = duration_seconds
+    merged["segments"] = segments
+    if words:
+        merged["words"] = words
+    return merged
+
+
+def _shift_timed(item: Mapping[str, Any], offset: float, limit: float) -> dict[str, Any]:
+    shifted = dict(item)
+    shifted["start"] = min(item["start"] + offset, limit)
+    shifted["end"] = min(item["end"] + offset, limit)
+    return shifted
+
+
+def _validate_timed_items(items: Any, what: str) -> None:
+    if not isinstance(items, list):
+        raise SttChunkResponseError(f"STT chunk returned no {what} for verbose_json")
+    for item in items:
+        if not isinstance(item, Mapping) or not _finite_number(item.get("start")) or not _finite_number(item.get("end")) \
+                or item["start"] < 0 or item["end"] < item["start"]:
+            raise SttChunkResponseError(f"STT chunk returned a {what} entry without usable times")
+
+
+def _parse_mergeable_chunk_payload(body: bytes, response_transforms: Sequence[Any] = (), *, verbose: bool = False) -> Mapping[str, Any]:
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -1649,12 +1764,21 @@ def _parse_mergeable_chunk_payload(body: bytes, response_transforms: Sequence[An
     if not isinstance(payload, Mapping) or not isinstance(payload.get("text"), str):
         raise SttChunkResponseError("STT chunk returned no text")
     payload = run_response_pipeline(list(response_transforms), dict(payload))
-    unknown = set(payload) - _SDK_TRANSCRIPTION_FIELDS
-    unsupported = set(payload) - _MERGEABLE_TRANSCRIPTION_FIELDS
+    mergeable = _MERGEABLE_TRANSCRIPTION_FIELDS | _VERBOSE_TRANSCRIPTION_FIELDS if verbose else _MERGEABLE_TRANSCRIPTION_FIELDS
+    unknown = set(payload) - (_SDK_TRANSCRIPTION_FIELDS | _VERBOSE_TRANSCRIPTION_FIELDS if verbose else _SDK_TRANSCRIPTION_FIELDS)
+    unsupported = set(payload) - mergeable
     if unknown or unsupported:
         raise SttChunkResponseError("STT chunk returned a response shape that cannot be merged")
     if payload.get("usage") is not None:
         _validate_usage(payload["usage"])
+    if verbose:
+        # A reply with no segments cannot be placed on the timeline; failing is better than returning text alone.
+        _validate_timed_items(payload.get("segments"), "segments")
+        if payload.get("words") is not None:
+            _validate_timed_items(payload["words"], "words")
+        for segment in payload["segments"]:
+            if segment.get("words") is not None:
+                _validate_timed_items(segment["words"], "words")
     return payload
 
 

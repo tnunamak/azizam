@@ -412,3 +412,148 @@ showed, a verdict, and the time taken. It does not change any doc.
 9. **Small label differences (S4, S16).** "Email or username" for "an email
    address" (`README.md:43`). "I've saved it" for "Continue to Home"
    (`FOR_MEMBERS.md:21`).
+
+## Re-walk after train 97 (2026-11-19)
+
+Train 97 gave the `litellm` service the same `extra_hosts:
+host.docker.internal:host-gateway` line as `gateway` (`docker-compose.yml:18-19`
+and `:59-60`). It also rewrote the engine guidance in `FIRST_RUN_SETUP.md`. This
+re-walk repeats S1, S10 and S11 on a fresh Compose install of `main` at
+`c3feeb423` (train 97). It checks one claim: an engine on the same computer,
+added with the address the docs now give, answers a chat request.
+
+- **Gateway:** `docker compose -p azizam-rewalk up -d --build`, published at
+  `http://127.0.0.1:5101` (`AZIZAM_PORT=5101`). New volumes, no `.env`. The
+  default Compose subnet overlapped another Docker network on this computer, so
+  the walk set `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` (see R3).
+- **Engine:** a throwaway Ollama container, `qwen2.5:0.5b`, on CPU.
+- **Browser:** headless Chrome, driven by a Playwright script. The owner used an
+  `example.com` address and a generated password. Keys are never written here
+  beyond their first 8 characters.
+- **Timing:** wall-clock, measured by the agent, as in the first walk.
+
+| # | Step | Verdict | Time |
+| --- | --- | --- | --- |
+| R1 | `main` has the train 97 files | PASS | under 1 min |
+| R2 | Engine published on the Docker bridge address, as the doc says | PASS | 76 s (includes the image pull and the model pull) |
+| R3 | `docker compose up -d --build`, then the README's overlap sentence | PASS | 4 s to the error, then 2 s with the override (cached layers) |
+| R4 | `host.docker.internal` inside `litellm` | PASS | about 1 s |
+| R5 | Setup, app and key, Add engine with `http://host.docker.internal:11501` | PASS | owner under 10 s, app and key 3.3 s, engine check 1.0 s |
+| R6 | Chat through `/openai/v1/chat/completions` | PASS | 200 in 4.4 s |
+| R7 | Status page, baseline | DRIFT (known, not a pass condition) | about 5 s |
+
+### R1. Check out train 97: PASS
+
+- **Did.** `git fetch origin`, then `git checkout --detach origin/main`.
+- **Showed.** HEAD was `c3feeb423`. `docker-compose.yml` has the `extra_hosts`
+  line on both `gateway` and `litellm`. This file existed.
+
+### R2. Start the engine as the doc says: PASS
+
+- **Doc says.** `FIRST_RUN_SETUP.md:254-266`, "Engine in its own Docker
+  container on the same computer": "A container published only on loopback, such
+  as `-p 127.0.0.1:11434:11434`, answers "Connection refused" from the gateway's
+  containers. Publish it on the host's Docker bridge address instead. On Linux,
+  `ip addr show docker0` shows that address, and `host.docker.internal` resolves
+  to it." and "Run the engine with `-p <docker0-address>:11434:11434`".
+- **Did.** `ip addr show docker0` gave the bridge address, written here as
+  `<docker0-address>`. Then `docker run -d --name azizam-rewalk-ollama -p
+  <docker0-address>:11501:11434 ollama/ollama` and `ollama pull qwen2.5:0.5b`
+  inside it. The walk used host port 11501, not 11434, to avoid a clash with
+  other engines on this computer.
+- **Showed.** `curl http://<docker0-address>:11501/api/tags` listed
+  `qwen2.5:0.5b`. The step took 76 s.
+- **Verdict.** PASS. The doc's commands worked as written.
+
+### R3. Start the gateway, and the overlap sentence: PASS
+
+- **Doc says.** `README.md:35`: "If Docker says `Pool overlaps with other one on
+  this address space`, another network already uses the default subnet. Set both
+  `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` (the first address in that
+  subnet) to unused values, then run `docker compose up -d` again."
+- **Did.** `AZIZAM_PORT=5101 docker compose -p azizam-rewalk up -d --build`.
+  Docker answered `invalid pool request: Pool overlaps with other one on this
+  address space` after 4 s. I listed the existing Docker networks and chose an
+  unused `/24` in the `10.x` range. I then set `AZIZAM_DOCKER_SUBNET` to it and
+  `AZIZAM_DOCKER_GATEWAY` to its first address, and ran the same command again.
+- **Showed.** Both containers started in 2 s (the image layers were cached from
+  the first try). `/setup/` answered at once on `http://127.0.0.1:5101`.
+- **Verdict.** PASS. The sentence was enough: I needed no other information. It
+  names both variables and says what the gateway value is. It does not say how
+  to find an unused subnet. `docker network inspect` on every network, or `ip
+  route`, shows the used ones. This was easy here, but a new owner may not know
+  the command.
+
+### R4. Resolve `host.docker.internal` inside `litellm`: PASS
+
+- **Did.** Ran a name lookup inside the `litellm` container (it has no
+  `getent`, so a one-line Python `socket.gethostbyname`). Also ran `getent hosts`
+  in the `gateway` container, and an HTTP request from `litellm` to
+  `http://host.docker.internal:11501/api/tags`.
+- **Showed.** `litellm` resolved the name to the `docker0` address, the same
+  address as `gateway`. The HTTP request from `litellm` returned `200`. The first
+  walk saw `Name or service not known` here (S10). This was the likeliest wrong
+  assumption: that `host-gateway` in `litellm` maps to the address the engine
+  listens on. It does.
+- **Verdict.** PASS.
+
+### R5. Owner, app and key, Add engine: PASS
+
+- **Doc says.** `README.md:45-49` (owner on `/setup/`; **Apps & keys**, **New
+  app**, choose **You** or **A service**, **Create app and key**; **Gateway →
+  Engines → Add engine**) and `FIRST_RUN_SETUP.md:263`: "Address in **Add
+  engine**: `http://host.docker.internal:11434`."
+- **Did.** Created the owner on `/setup/`. On **Apps & keys**, **New app**, named
+  it, chose **You**, and chose **Create app and key**. The key started with
+  `opk_6ZhU`. (My exploration of the dialog also made three other apps and
+  keys, which the chat did not use.) On **Gateway, Engines, Add engine** I chose
+  "Server with its own model list" and typed
+  `http://host.docker.internal:11501`. I accepted the defaults on steps 3 to 5,
+  so the public model name stayed `qwen2.5-0.5b` and the engine name stayed
+  `host`.
+- **Showed.** Step 2 of the dialog said "Check finished: reached the server, 1
+  model found." in 1.0 s. After **Add engine** the page said "Added “host”. It is
+  on, with Chat." The engine page showed "Saved connection check passed", the
+  check request `GET http://host.docker.internal:11501/api/tags` and the saved
+  chat destination `POST http://host.docker.internal:11501/v1/chat/completions`.
+  `GET /openai/v1/models` listed `qwen2.5-0.5b`.
+- **Verdict.** PASS. The doc's address worked in the dialog as before (S10). The
+  "Name apps use" field was prefilled, so the owner types no model name.
+
+### R6. The chat request: PASS
+
+- **Did.** One request: `curl http://127.0.0.1:5101/openai/v1/chat/completions`
+  with the key and `"model": "qwen2.5-0.5b"`, the message "Say hello in five
+  words.", `max_tokens` 32.
+- **Showed.** `200` in 4.4 s. The reply was "Hello, how are you?". The first
+  walk's S10 saw `500` after 5.1 s with the same engine address. This was the
+  first request, so it includes the time Ollama needs to load the model.
+- **Verdict.** PASS. A new owner who follows the doc reaches a first chat with an
+  engine on the same computer, with no step that the doc leaves out, once the
+  subnet override is set.
+
+### R7. The Status page, baseline: DRIFT
+
+- **Did.** Opened **Status** in the owner's browser after the chat, and **Home**.
+- **Showed.** The top of **Status** said "5 of 5 capabilities need attention",
+  then under **Needs attention**: "LiteLLM is not accepting connections.
+  Affects: Nothing yet: another engine still serves chat. Check the engine
+  address, or start the engine." It added "Down since about 3:47 PM" and "Down
+  for 1 hour in the last 24 hours", although the install was less than an hour
+  old. The **Capabilities** list said Chat "Degraded". **Home** said "Chat is
+  degraded". Before the engine was added, the Home and Apps pages said "LiteLLM
+  can’t take requests right now." The chat in R6 returned `200` between these
+  two readings, so LiteLLM did accept connections.
+- **Verdict.** DRIFT, as a baseline for the Status fix that is in progress. It is
+  not a pass condition for this re-walk. The message is wrong while chat works,
+  and a new owner who reads it right after a good first chat would think the
+  install is broken.
+
+### Result of the re-walk
+
+S1, S10 and S11 of the first walk now pass in the order the docs give them: the
+engine on the Docker bridge address, the address `http://host.docker.internal:<port>`
+in **Add engine**, and a `200` chat reply with no change of address. The only
+step that needed outside information was the subnet override on this computer,
+and the README sentence covered it. The Status page still shows a false LiteLLM
+error (R7).

@@ -1811,6 +1811,22 @@ curl -s "$AZIZAM_BASE_URL/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o
 each stable alias as a capability tagged `alias`, `resolves_to:<target>` and
 `engine:<id>`.
 
+A transcription alias row also carries `limits`, so a caller learns what the alias takes before it sends audio:
+
+```json
+{"model": "stt-quality", "intent": "speech.transcription",
+ "limits": {"response_formats": ["json", "text"], "prompt_supported": false,
+            "max_audio_seconds": 40, "split_response_formats": ["json"]}}
+```
+
+`response_formats` and `prompt_supported` are what the engine record declares (`null`: it declares nothing, and the
+gateway does not refuse the option). A `response_format` outside the list, or a non-empty `prompt` when
+`prompt_supported` is `false`, is a `400` with `param` naming the field and nothing sent to the engine.
+`max_audio_seconds` is the longest audio the engine takes in one piece (`null`: no declared maximum, or the engine takes
+long audio whole). `split_response_formats` lists the formats for which the gateway cuts audio longer than that into pieces
+and joins the answers; in any other format, audio over the maximum is refused. The row describes the alias's first
+engine; a fallback engine is held to its own record when it serves the request.
+
 ## Discovery and Debugging: `/gateway/v1/*`
 
 The read-only gateway router (`gateway/api.py`) is mounted into the live app.

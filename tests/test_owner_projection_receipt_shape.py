@@ -112,3 +112,26 @@ def test_phase_durations_never_invent_missing_or_negative_time(tmp_path, phases)
         assert shown.execution_ms is None
     else:
         assert shown.first_output_ms is None
+
+
+def test_projection_shows_the_model_by_its_catalog_name_and_the_cost(tmp_path):
+    stored = _stored_fixture(tmp_path / "receipts.db")
+    shown = project("receipt", stored, names=ProjectionNames(models={"model:a": "Image model"}))
+    assert shown.model is not None
+    assert shown.model.catalog_id == "model:a"
+    assert shown.model.name == "Image model"
+    assert shown.cost.amount_usd == 0.5
+    assert shown.cost.quality == "measured"
+    assert shown.cost.source == "provider"
+    assert shown.cost.reconciled is True
+
+
+@pytest.mark.parametrize(
+    "stored_cost", [None, {}, {"amount_usd": "not-a-number"}], ids=["none", "empty", "nonnumeric"],
+)
+def test_projection_never_invents_a_cost(tmp_path, stored_cost):
+    stored = _stored_fixture(tmp_path / "receipts.db") | {"cost": stored_cost}
+    shown = project("receipt", stored)
+    assert shown.cost.amount_usd is None
+    assert shown.cost.quality == "unknown"
+    assert shown.cost.source == "none"
