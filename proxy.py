@@ -11219,6 +11219,14 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
     if not roles or dangling:
         print(f"[proxy] invalid video workflow {p}: node roles {dangling or 'missing'}", flush=True)
         return None
+    # A text role's node must also hold the field the request writes. The engine ignores an input a node does not
+    # have, so a prompt written there would be dropped and the video made from the graph's placeholder text.
+    text_roles = ((roles.get("prompt_node"), roles.get("prompt_field", "text")), (roles.get("negative_prompt_node"), "text"))
+    absent = sorted(f"{node}.{field}" for node, field in text_roles
+                    if node and field not in ((workflow.get(str(node)) or {}).get("inputs") or {}))
+    if absent:
+        print(f"[proxy] invalid video workflow {p}: role fields {absent} are not inputs of their nodes", flush=True)
+        return None
     if workflow_cfg.get("subject_select"):
         try:
             video_subject.check_roles(roles, workflow)

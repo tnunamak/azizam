@@ -954,10 +954,12 @@ def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any,
     if has_node and has_input:
         node_id = str(mapping["node"])
         input_name = str(mapping["input"])
-        try:
-            request[node_id]["inputs"][input_name] = value
-        except KeyError as exc:
-            raise refusal(at, "target_missing", f"binding target missing: node {node_id} input {input_name}") from exc
+        node = request.get(node_id)
+        inputs = node.get("inputs") if isinstance(node, dict) else None
+        # The engine ignores an input a node does not have, so writing a new key would drop the value silently.
+        if not isinstance(inputs, dict) or input_name not in inputs:
+            raise refusal(at, "target_missing", f"binding target missing: node {node_id} input {input_name}")
+        inputs[input_name] = value
         return
 
     path = mapping.get("path")
