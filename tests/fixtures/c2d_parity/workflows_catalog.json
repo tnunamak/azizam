@@ -4101,7 +4101,7 @@
         "sha256": "c312d56d1cbaf3cfd79277019a3c27e98e9eebbc7a0b30005b100239575b3e69"
       },
       "row": {
-        "bytes": 17395,
+        "bytes": 17429,
         "full": {
           "aliases": [],
           "availability": {
@@ -4260,7 +4260,7 @@
               "accepted": true,
               "applies": "Workflow extension",
               "default": "euler",
-              "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "description": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
               "enum": [
                 "euler",
                 "euler_cfg_pp",
@@ -4308,7 +4308,7 @@
                 "uni_pc",
                 "uni_pc_bh2"
               ],
-              "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "help": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
               "ignored": false,
               "label": "Generation method",
               "name": "sampler",
@@ -4396,11 +4396,11 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
-              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "description": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
               "enum": [
                 "qwen_3_8b_fp8mixed.safetensors"
               ],
-              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "help": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
               "ignored": false,
               "label": "text encoder",
               "name": "text_encoder",
@@ -4617,7 +4617,7 @@
           "try_url": "/try/?workflow=image.generate.flux2-klein",
           "typical_seconds": 20
         },
-        "sha256": "97859c7cfe59eed560e429258c77ef48f0177af7411121293aa472fc5dc4d925"
+        "sha256": "7f6d494f1e586ad69c48192602f560565f74617597fa0a3882184dbbc2a95443"
       }
     },
     "image.generate.flux2-klein-snofs": {
@@ -4661,7 +4661,7 @@
         "sha256": "f68fcd354a4a9c56218eac7daafdac28b2f037b520d3a627c8cb33eb16bb0bfe"
       },
       "row": {
-        "bytes": 18501,
+        "bytes": 18575,
         "full": {
           "aliases": [],
           "availability": {
@@ -4821,7 +4821,7 @@
               "accepted": true,
               "applies": "Workflow extension",
               "default": "euler",
-              "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "description": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
               "enum": [
                 "euler",
                 "euler_cfg_pp",
@@ -4869,7 +4869,7 @@
                 "uni_pc",
                 "uni_pc_bh2"
               ],
-              "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "help": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
               "ignored": false,
               "label": "Generation method",
               "name": "sampler",
@@ -4932,8 +4932,8 @@
               "accepted": true,
               "applies": "Workflow extension",
               "default": 1.0,
-              "description": "How strongly the added style applies. 1.0 is the usual setting.",
-              "help": "How strongly the added style applies. 1.0 is the usual setting.",
+              "description": "How strongly the uncensoring adapter affects the picture. 1.0 is the usual setting.",
+              "help": "How strongly the uncensoring adapter affects the picture. 1.0 is the usual setting.",
               "ignored": false,
               "label": "style strength",
               "maximum": 1.5,
@@ -4972,11 +4972,11 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
-              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "description": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
               "enum": [
                 "qwen_3_8b_fp8mixed.safetensors"
               ],
-              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "help": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
               "ignored": false,
               "label": "text encoder",
               "name": "text_encoder",
@@ -5201,7 +5201,7 @@
           "try_url": "/try/?workflow=image.generate.flux2-klein-snofs",
           "typical_seconds": 20
         },
-        "sha256": "7730b9a873c2c5e3ce186d7aafa79cae19ee213f2d6cffbcb6260138f7d6a104"
+        "sha256": "e9c578bc73bef1c1af6f16c263b7c0fb5f6c7627c40a958b34ac366f3c5595a1"
       }
     },
     "image.generate.krea2-turbo": {

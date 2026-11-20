@@ -2778,7 +2778,7 @@
           },
           "sampler": {
             "default": "euler",
-            "description": "The method the model uses to build the picture. It changes fine detail and texture. Keep the default unless you are comparing methods.",
+            "description": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
             "enum": [
               "euler",
               "euler_cfg_pp",
@@ -2857,7 +2857,7 @@
             "type": "integer"
           },
           "text_encoder": {
-            "description": "The model that reads your description. A different one changes how the words are understood. Leave empty for the usual one.",
+            "description": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
             "enum": [
               "qwen_3_8b_fp8mixed.safetensors"
             ],
@@ -2937,7 +2937,7 @@
           },
           "sampler": {
             "default": "euler",
-            "description": "The method the model uses to build the picture. It changes fine detail and texture. Keep the default unless you are comparing methods.",
+            "description": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
             "enum": [
               "euler",
               "euler_cfg_pp",
@@ -3016,7 +3016,7 @@
             "type": "integer"
           },
           "text_encoder": {
-            "description": "The model that reads your description. A different one changes how the words are understood. Leave empty for the usual one.",
+            "description": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
             "enum": [
               "qwen_3_8b_fp8mixed.safetensors"
             ],
