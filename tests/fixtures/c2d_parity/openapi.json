@@ -4088,7 +4088,7 @@
       "sha256": "5efacf1bcbe59fdcb0063260d6433cd0304edf34b599eb4ce6399cd7595f8828"
     },
     "image.generate.flux2-klein": {
-      "bytes": 9438,
+      "bytes": 9506,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4292,6 +4292,7 @@
                 "type": "integer"
               },
               "guidance": {
+                "description": "Higher follows your words more closely.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "number"
@@ -4437,10 +4438,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
         "run_path": null
       },
-      "sha256": "4b6f16a1f192b6cd1353ae6b3785de50b2949c9ff0627105214d9715c33be5d1"
+      "sha256": "6e09db75ee72ea64eea4b4cad758b961dd34be8e340a33a79264d22693f05daa"
     },
     "image.generate.flux2-klein-snofs": {
-      "bytes": 10033,
+      "bytes": 10101,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4652,6 +4653,7 @@
                 "type": "integer"
               },
               "guidance": {
+                "description": "Higher follows your words more closely.",
                 "maximum": 20,
                 "minimum": 0,
                 "type": "number"
@@ -4804,7 +4806,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
         "run_path": null
       },
-      "sha256": "3367efe99c7cf3b6d305fab8dfc2d7732960a7d8935af68666248020b620b5c8"
+      "sha256": "419000e0cf78b6659a873b65eef04b0eaedac058aab8e52b72c6d58ce10e39b0"
     },
     "image.generate.krea2-turbo": {
       "bytes": 9172,

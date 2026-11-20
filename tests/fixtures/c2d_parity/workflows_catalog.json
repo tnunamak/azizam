@@ -4101,7 +4101,7 @@
         "sha256": "c312d56d1cbaf3cfd79277019a3c27e98e9eebbc7a0b30005b100239575b3e69"
       },
       "row": {
-        "bytes": 17274,
+        "bytes": 17395,
         "full": {
           "aliases": [],
           "availability": {
@@ -4343,6 +4343,8 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
+              "description": "Higher follows your words more closely.",
+              "help": "Higher follows your words more closely.",
               "ignored": false,
               "label": "prompt guidance",
               "maximum": 20,
@@ -4615,7 +4617,7 @@
           "try_url": "/try/?workflow=image.generate.flux2-klein",
           "typical_seconds": 20
         },
-        "sha256": "b2e2a424191b158396704fe382bef67c61141897eabfb1a18d81ec87ad731707"
+        "sha256": "97859c7cfe59eed560e429258c77ef48f0177af7411121293aa472fc5dc4d925"
       }
     },
     "image.generate.flux2-klein-snofs": {
@@ -4659,7 +4661,7 @@
         "sha256": "f68fcd354a4a9c56218eac7daafdac28b2f037b520d3a627c8cb33eb16bb0bfe"
       },
       "row": {
-        "bytes": 18380,
+        "bytes": 18501,
         "full": {
           "aliases": [],
           "availability": {
@@ -4902,6 +4904,8 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
+              "description": "Higher follows your words more closely.",
+              "help": "Higher follows your words more closely.",
               "ignored": false,
               "label": "prompt guidance",
               "maximum": 20,
@@ -5197,7 +5201,7 @@
           "try_url": "/try/?workflow=image.generate.flux2-klein-snofs",
           "typical_seconds": 20
         },
-        "sha256": "b459494dafade1cf82d478dfb2372b2d5ecf3910db18ccc7357fe42f7b726779"
+        "sha256": "7730b9a873c2c5e3ce186d7aafa79cae19ee213f2d6cffbcb6260138f7d6a104"
       }
     },
     "image.generate.krea2-turbo": {
