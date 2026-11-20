@@ -2778,7 +2778,7 @@
           },
           "sampler": {
             "default": "euler",
-            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "description": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
             "enum": [
               "euler",
               "euler_cfg_pp",
@@ -2857,7 +2857,7 @@
             "type": "integer"
           },
           "text_encoder": {
-            "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+            "description": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
             "enum": [
               "qwen_3_8b_fp8mixed.safetensors"
             ],
@@ -2901,7 +2901,7 @@
           },
           "lora_strength": {
             "default": 1.0,
-            "description": "How strongly the added style applies. 1.0 is the usual setting.",
+            "description": "How strongly the uncensoring adapter affects the picture. 1.0 is the usual setting.",
             "maximum": 1.5,
             "minimum": 0,
             "type": "number"
@@ -2937,7 +2937,7 @@
           },
           "sampler": {
             "default": "euler",
-            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "description": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
             "enum": [
               "euler",
               "euler_cfg_pp",
@@ -3016,7 +3016,7 @@
             "type": "integer"
           },
           "text_encoder": {
-            "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+            "description": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
             "enum": [
               "qwen_3_8b_fp8mixed.safetensors"
             ],

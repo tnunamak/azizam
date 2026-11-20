@@ -410,4 +410,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # moved. Before it the digest was 61605247b4f318ced75ace73352a57b3e8612068a79407053c61b5dae4df6a91.
     # Re-captured 2026-11-18 (train 77, six more workflows name their choices): four reworded help texts; only those
     # input descriptions moved. Before it the digest was be25213ce02d368fdbfa60b66af4134bcf68b0475f31b835a42ff0f939fed249.
+    # Re-captured 2026-11-20 (train 103): the FLUX.2 Klein sampler, text encoder and LoRA strength help; only those input
+    # descriptions moved. Before it the digest was d6be2699b0a6aebeff7077e7fc650dd811e884bc8b1f8056cd70258b01d52cba.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

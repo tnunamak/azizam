@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import struct
@@ -27,6 +28,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from gateway.adapter_choices import architecture_table, compatible
+
+_LOG = logging.getLogger(__name__)
 
 SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enabled": bool, "max_bytes": int, "max_total_bytes": int}
 SUBFOLDER = "azizam-uploads"         # the gateway's own folder inside the engine's adapter folder
@@ -521,10 +524,12 @@ class Library:
         lora_root: Callable[[str], Path | None],
         note_copy: Callable[[str, str], None],
         table: Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+        declared_folders: Callable[[], Iterable[str]] = lambda: (),
     ) -> None:
         self._asset_ids, self._metadata, self._path, self._holds = asset_ids, metadata, path, holds
         self._policy, self._lora_root, self._note_copy = policy, lora_root, note_copy
         self._table = table
+        self._declared_folders = declared_folders
         self._headers: dict[tuple[str, int, int], tuple[str, ...]] = {}
         self._materializers: dict[Path, Materializer] = {}     # one per folder for the process: its lock and holds are shared
         self._seen_folders: set[str] = set()
@@ -712,9 +717,19 @@ class Library:
         return removed
 
     def folders(self) -> set[str]:
-        """The engine folders this gateway has copied uploads to: the ones this process has used, and the ones the stored
-        uploads' sidecars say were used before."""
+        """Engine folders declared by workflows, used by this process, or listed in upload sidecars."""
         found = set(self._seen_folders)
+        try:
+            declared = self._declared_folders()
+            if isinstance(declared, (str, bytes)):
+                raise TypeError("expected an iterable of folder names")
+            declared = list(declared)
+            if not all(isinstance(folder, str) for folder in declared):
+                raise TypeError("expected string folder names")
+        except Exception:
+            _LOG.warning("Ignoring unavailable or invalid declared adapter folders")
+        else:
+            found.update(declared)
         for asset_id in self._asset_ids():
             marker = self._metadata(asset_id).get("adapter") if digest_of(asset_id) is not None else None
             copied = marker.get("copies") if isinstance(marker, Mapping) else None

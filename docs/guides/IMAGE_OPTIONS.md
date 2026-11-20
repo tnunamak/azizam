@@ -21,7 +21,9 @@ Use the model identifier shown by your gateway's workflow listing. If the model 
 
 ## Discover accepted values and defaults
 
-Find the workflow in the listing and read its `inputs`. For an input with choices, use a value in its `enum`. For `steps`, check its integer minimum and maximum. The input's `default` is the workflow's own setting: omit that input to keep it. Don't copy choices or ranges from a different model.
+Find the workflow in the listing and read its inputs. Use one of the listed choices, and check the minimum and maximum for steps.
+Omit an input to keep its default. If the input has no default, omitting it keeps the workflow's built-in value.
+Ranges and choices can differ by workflow for guidance, width, height, and text encoder too. Don't copy them from another model.
 
 ## Workflows without sampler choices
 
@@ -33,4 +35,4 @@ Find the workflow in the listing and read its `inputs`. For an input with choice
 
 On a workflow that exposes `batch_size`, set it in `extensions["com.azizam.workflow"]`, as shown above. Check the workflow's input bounds. The reply has one item per image.
 
-See the [Krea 2 Turbo input declarations](../../manifests/workflows/krea2-turbo.yml).
+See the input declarations for [Krea 2 Turbo](../../manifests/workflows/krea2-turbo.yml) and [FLUX.2 Klein](../../manifests/workflows/flux2-klein.yml).

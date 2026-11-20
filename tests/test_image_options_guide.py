@@ -41,6 +41,10 @@ def test_guide_names_workflows_without_sampler_controls():
     assert not missing, f"missing workflows without sampler controls: {missing}"
 
 
+def _krea_inputs():
+    return yaml.safe_load(KREA_MANIFEST.read_text(encoding="utf-8"))["inputs"]
+
+
 def test_guide_workflow_example_uses_only_krea_manifest_inputs():
     blocks = JSON_FENCE.findall(_guide())
     assert blocks, "missing JSON image request example"
@@ -53,16 +57,50 @@ def test_guide_workflow_example_uses_only_krea_manifest_inputs():
         if isinstance(workflow, dict) and "steps" in workflow:
             options.append(workflow)
     assert options, "missing extensions.com.azizam.workflow example containing steps"
-    inputs = yaml.safe_load(KREA_MANIFEST.read_text(encoding="utf-8"))["inputs"]
+    inputs = _krea_inputs()
     for workflow in options:
         unknown = sorted(workflow.keys() - inputs.keys())
         assert not unknown, f"unrecognized krea2-turbo workflow inputs: {unknown}"
+        for name, value in workflow.items():
+            spec = inputs[name]
+            if "minimum" in spec or "maximum" in spec:
+                assert type(value) is int, f"{name}={value!r} must be an integer"
+                if "minimum" in spec:
+                    assert value >= spec["minimum"], f"{name}={value} is below minimum {spec['minimum']}"
+                if "maximum" in spec:
+                    assert value <= spec["maximum"], f"{name}={value} is above maximum {spec['maximum']}"
+            if "enum" in spec:
+                assert value in spec["enum"], f"{name}={value!r} is not a manifest enum value"
+
+
+CODE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+
+
+def _copied_choice_names(text):
+    """Sampler and scheduler values the guide shows as code. Prose is skipped: values such as normal and simple are also
+    plain English words."""
+    code = "\n".join(CODE.findall(text))
+    inputs = _krea_inputs()
+    return sorted({name for control in ("sampler", "scheduler") for name in inputs[control]["enum"]
+                   if re.search(rf"\b{re.escape(name)}\b", code)})
 
 
 def test_guide_does_not_copy_model_specific_sampler_names():
-    text = _guide().lower()
-    names = [name for name in ("euler", "dpmpp_2m", "res_multistep") if name in text]
-    assert not names, f"hard-coded sampler names: {names}"
+    names = _copied_choice_names(_guide())
+    assert not names, f"hard-coded sampler or scheduler names: {names}"
+
+
+def test_copied_choice_names_reads_code_and_skips_prose():
+    assert _copied_choice_names('Set `"sampler": "lms"` here.') == ["lms"]
+    assert _copied_choice_names('```json\n{"scheduler": "karras"}\n```') == ["karras"]
+    assert _copied_choice_names("Keep the normal, simple default.") == []
+
+
+def test_guide_links_klein_and_explains_inputs_without_defaults():
+    text = _guide()
+    assert "../../manifests/workflows/flux2-klein.yml" in INLINE_LINK.findall(text)
+    sentences = re.split(r"[.!?](?:\s|$)", text.lower())
+    assert any("no default" in sentence and "built-in" in sentence for sentence in sentences)
 
 
 def test_guide_relative_links_resolve_to_repository_files():

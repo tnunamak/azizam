@@ -39,7 +39,7 @@ inputs:
     default: 4
   sampler:
     label: Generation method
-    help: The method the model uses to build the result. Keep the default unless you are comparing methods.
+    help: How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.
     choices_from: {node_type: KSampler, input: sampler_name}
     type: string
     enum: [euler, euler_cfg_pp, euler_ancestral, euler_ancestral_cfg_pp, heun, heunpp2, exp_heun_2_x0, exp_heun_2_x0_sde, dpm_2, dpm_2_ancestral, lms, dpm_fast, dpm_adaptive, dpmpp_2s_ancestral, dpmpp_2s_ancestral_cfg_pp, dpmpp_sde, dpmpp_sde_gpu, dpmpp_2m, dpmpp_2m_cfg_pp, dpmpp_2m_sde, dpmpp_2m_sde_gpu, dpmpp_2m_sde_heun, dpmpp_2m_sde_heun_gpu, dpmpp_3m_sde, dpmpp_3m_sde_gpu, ddpm, lcm, ipndm, ipndm_v, deis, cfgpp_ud10_ab, res_multistep, res_multistep_cfg_pp, res_multistep_ancestral, res_multistep_ancestral_cfg_pp, gradient_estimation, gradient_estimation_cfg_pp, er_sde, seeds_2, seeds_3, sa_solver, sa_solver_pece, ddim, uni_pc, uni_pc_bh2]
@@ -94,7 +94,7 @@ inputs:
           default: 1.0
   text_encoder:
     label: text encoder
-    help: Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.
+    help: The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.
     type: string
     enum: [qwen_3_8b_fp8mixed.safetensors]
 outputs:
@@ -145,3 +145,13 @@ bindings:
       batch_size:
         - node: "27"
           input: batch_size
+    requires:
+      custom_nodes:
+        - RMBG
+      models:
+        - role: diffusion_model
+          path: unet/flux-2-klein-9b-Q8_0.gguf
+        - role: text_encoder
+          path: text_encoders/qwen_3_8b_fp8mixed.safetensors
+        - role: vae
+          path: vae/flux2-vae.safetensors

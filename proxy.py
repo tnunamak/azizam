@@ -16511,6 +16511,17 @@ def _store_adapter_upload(stream: BinaryIO, checked: adapter_upload.Validated, p
     return asset_id
 
 
+def _declared_adapter_folders() -> set[str]:
+    """The engine folders the workflows declare for adapters: the sweep visits each one, also after a restart."""
+    folders: set[str] = set()
+    for entry in GATEWAY_REGISTRY_PROVIDER.current().workflows.values():
+        for binding in (entry.contract.get("bindings") or {}).values():
+            folder = binding.get("adapter_lora_folder") if isinstance(binding, Mapping) else None
+            if isinstance(folder, str):
+                folders.add(folder)
+    return folders
+
+
 ADAPTER_LIBRARY = adapter_upload.Library(
     asset_ids=lambda: [i for i in me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)() if i.startswith("ast_")],
     metadata=lambda asset_id: _read_asset_metadata(asset_id),
@@ -16520,6 +16531,7 @@ ADAPTER_LIBRARY = adapter_upload.Library(
     policy=_adapter_rules,
     lora_root=_adapter_lora_root,
     note_copy=_note_adapter_copy,
+    declared_folders=lambda: _declared_adapter_folders(),
 )
 adapter_choices.UPLOADS = ADAPTER_LIBRARY     # a person's own uploads join the pick-lists built for that person
 

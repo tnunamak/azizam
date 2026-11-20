@@ -400,7 +400,10 @@ class Store:
         self.sidecars: dict[str, dict] = {}
         self.holders: dict[str, set[str]] = {}
         self.noted: list[tuple[str, str]] = []
-        self.library = adapter_upload.Library(
+        self.library = self.new_library()
+
+    def new_library(self, **ports):
+        return adapter_upload.Library(
             asset_ids=lambda: list(self.sidecars),
             metadata=lambda asset_id: self.sidecars.get(asset_id, {}),
             path=lambda asset_id: self.cache / f"{asset_id.split('_', 1)[1]}{adapter_upload.SUFFIX}",
@@ -408,7 +411,7 @@ class Store:
             policy=lambda: adapter_upload.Policy(self.enabled),
             lora_root=lambda folder: self.engine if self.local and folder == "loras" else None,
             note_copy=lambda asset_id, folder: self.noted.append((asset_id, folder)),
-            table=TABLE)
+            table=TABLE, **ports)
 
     def add(self, person: str, data: bytes, label: str = "mine.safetensors", *, marked: bool = True) -> str:
         content = hashlib.sha256(data).hexdigest()
@@ -716,6 +719,56 @@ def test_the_periodic_sweep_visits_every_folder_the_library_copied_to(tmp_path):
     store.library.engine_names("robin", [kept, gone], folder="loras")
     del store.sidecars[gone]
     assert store.library.sweep_all() == [hashlib.sha256(BETA).hexdigest()]
+
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_a_restarted_sweep_visits_a_declared_folder_without_sidecars(tmp_path, held):
+    store = Store(tmp_path)
+    gone = store.add("robin", ALPHA)
+    names = store.library.engine_names("robin", [gone], folder="loras")
+    digest = hashlib.sha256(ALPHA).hexdigest()
+    del store.sidecars[gone]
+    restarted = store.new_library(declared_folders=lambda: iter(("loras", "unknown")))
+    if held:
+        restarted.hold_copies("resumed", names.values())
+        assert restarted.held_digests() == {digest}
+    assert restarted.sweep_all() == ([] if held else [digest])
+    assert (store.engine / names[gone]).exists() is held
+
+
+@pytest.mark.parametrize("invalid", ["raises", "invalid-item"])
+def test_a_bad_declared_port_does_not_stop_the_sidecar_sweep(tmp_path, caplog, invalid):
+    store = Store(tmp_path)
+    gone, kept = store.add("robin", ALPHA), store.add("robin", BETA)
+    store.library.engine_names("robin", [gone], folder="loras")
+    del store.sidecars[gone]
+
+    def declared():
+        yield "must-not-leak"
+        if invalid == "raises":
+            raise OSError("synthetic source failure")
+        yield 42
+
+    restarted = store.new_library(declared_folders=declared)
+    assert restarted.folders() == set()
+    store.sidecars[kept]["adapter"]["copies"] = ["loras"]
+    assert restarted.sweep_all() == [hashlib.sha256(ALPHA).hexdigest()]
+    assert [r.message for r in caplog.records if r.name == adapter_upload.__name__] == [
+        "Ignoring unavailable or invalid declared adapter folders",
+        "Ignoring unavailable or invalid declared adapter folders",
+    ]
+
+
+def test_default_restarted_sweep_does_not_discover_undeclared_folders(tmp_path):
+    store = Store(tmp_path)
+    gone = store.add("robin", ALPHA)
+    names = store.library.engine_names("robin", [gone], folder="loras")
+    del store.sidecars[gone]
+    restarted = store.new_library()
+    assert restarted.folders() == set()
+    assert restarted.sweep_all() == []
+    assert (store.engine / names[gone]).exists()
 
 
 def test_the_owners_setting_carries_a_per_person_total_with_a_default_and_a_ceiling():

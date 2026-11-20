@@ -82,6 +82,8 @@ Remote providers can cost money. The gateway does not silently switch from a
 free local model to a paid remote provider. A paid provider must be configured
 by the owner, named by the model or alias, and allowed by your access plan.
 
+Uploading your own image adapters is a separate setting the owner turns on; it is off by default.
+
 ## Use generated media
 
 Generated images, video, and audio can appear in `/library/` when those
@@ -131,6 +133,10 @@ configured key and available spend budget.
 The capability can be disabled, unavailable, or outside your access plan. The owner can check the engine, workflow, and access plan to find the cause.
 
 ## Links
+
+- [Upload your own style adapter](IMAGE_ADAPTERS.md#your-own-adapters)
+- [Set image steps and sampler](IMAGE_OPTIONS.md)
+- [Send a large image in chat](CHAT_IMAGES.md)
 
 - [Local client recipes](../LOCAL_CLIENT_RECIPES.md)
 - [People and built-in accounts](../PEOPLE_AND_ACCOUNTS.md)
