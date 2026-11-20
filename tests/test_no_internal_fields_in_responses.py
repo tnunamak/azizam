@@ -17,6 +17,7 @@ import proxy
 import responses_store
 import status_endpoint
 from test_people_isolation import people  # noqa: F401  (fixture)
+from tests.test_event_loop_guard import engine_lists_no_adapter_files  # noqa: F401  (fixture)
 
 PREFIXES = ("/me/api", "/gateway/v1", "/v1")
 
@@ -69,7 +70,7 @@ def test_route_walk_finds_the_surface():
     assert "/gateway/v1/media/jobs/{job_id}" in paths and "/me/api/session" in paths
 
 
-def test_no_json_get_response_contains_an_internal_key(people):  # noqa: F811
+def test_no_json_get_response_contains_an_internal_key(people, engine_lists_no_adapter_files):  # noqa: F811
     async def no_grid(*_args, **_kwargs):
         return []
 
