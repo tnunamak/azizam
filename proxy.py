@@ -23482,13 +23482,14 @@ async def _apply_workflow_extensions_to_image_request(
             )
         return dict(backend_request), None
 
-    # A request that names adapters is checked against the files the engine offers now; one that does not reads nothing.
+    # A request that names adapter files is checked against the files the engine offers now; one that does not reads nothing.
     adapter_view: adapter_choices.Current | None = None
     try:
         supplied_adapters = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
     except ExtensionError as e:
         return None, _image_extension_error_response(receipt, str(e))
-    if adapter_choices.names_adapters(supplied_adapters):
+    adapter_decl = adapter_choices.declaration(manifest, DERIVED._GRAPH_BINDING)
+    if adapter_choices.needs_file_list(supplied_adapters):
         graph_service = _graph_service(_GRAPH_CAPABILITY)
         try:
             adapter_view = await adapter_choices.current(
@@ -23519,7 +23520,7 @@ async def _apply_workflow_extensions_to_image_request(
         if receipt is not None:
             record_image_extension_binding(receipt, result)
             facts = adapter_choices.receipt_facts(
-                adapter_view[0] if adapter_view is not None else None, result.validation.accepted, manifest)
+                adapter_view[0] if adapter_view is not None else adapter_decl, result.validation.accepted, manifest)
             if facts:
                 receipt.metadata["adapters"] = facts
     except ManifestError:
@@ -23536,7 +23537,7 @@ async def _apply_workflow_extensions_to_image_request(
             receipt,
             reason,
             param=f"extensions.{result.namespace}.{name}",
-            status_code=422 if adapter_view is not None and name in (adapter_choices.LORAS_INPUT, adapter_choices.ENCODER_INPUT) else 400,
+            status_code=422 if adapter_decl is not None and name in (adapter_choices.LORAS_INPUT, adapter_choices.ENCODER_INPUT) else 400,
         )
     return result.request or dict(backend_request), None
 

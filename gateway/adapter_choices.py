@@ -437,9 +437,11 @@ async def offered(
     return dict(found for found in await asyncio.gather(*(one(record) for record in records)) if found)
 
 
-def names_adapters(supplied: Mapping[str, Any]) -> bool:
-    """Whether a request supplies an adapter input. A request that does not needs no list of files."""
-    return LORAS_INPUT in supplied or ENCODER_INPUT in supplied
+def needs_file_list(supplied: Mapping[str, Any]) -> bool:
+    """Whether a request names adapter files, so its names must be checked against the engine's list. An empty list names
+    none, and an encoder is checked against the manifest's own list, so neither reads the engine."""
+    value = supplied.get(LORAS_INPUT)
+    return value is not None and value != []
 
 
 # ------------------------------------------------------------------------------------------------------------ receipts

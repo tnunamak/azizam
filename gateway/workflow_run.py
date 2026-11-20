@@ -685,7 +685,7 @@ class WorkflowRunCore:
         choices = choices_for_run(identity, plain(entry.contract).get("inputs") or {})
         contract_now: dict[str, Any] | None = None
         view = None
-        if adapter_choices.names_adapters(req.inputs) and adapter_choices.declaration(plain(entry.contract), binding_key):
+        if adapter_choices.needs_file_list(req.inputs) and adapter_choices.declaration(plain(entry.contract), binding_key):
             try:
                 if identity is None:
                     raise adapter_choices.ChoicesUnavailable("the engine behind this workflow is not known")
