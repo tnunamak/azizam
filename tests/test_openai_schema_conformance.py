@@ -287,8 +287,10 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
     """New extension, storyboard and character-replace paths return the OpenAI video shape."""
 
     def setUp(self) -> None:
-        super().setUp()
+        # Cleanups run last-in, first-out. The store tree is made first so it is removed last: after the base's stack has
+        # stopped the portal and its job workers, none of which may still be writing into it.
         _patch_route_stores(self)
+        super().setUp()
 
     def _create_character_replace(self) -> str:
         r = self.client.post("/v1/videos", json={
