@@ -731,6 +731,22 @@ def test_only_plain_accepted_folder_names_are_enumerated_once(tmp_path, monkeypa
     assert visited == ["loras", "new_adapters", "other-adapters"]
 
 
+def test_declared_adapter_folders_are_visited_when_a_sidecar_has_no_copies(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    asset = store.add("robin", ALPHA)
+    store.sidecars[asset]["adapter"]["copies"] = []
+    restarted = store.new_library(declared_folders=lambda: ["loras", "extra"])
+    visited = []
+
+    def sweep(*, folder):
+        visited.append(folder)
+        return []
+
+    monkeypatch.setattr(restarted, "sweep", sweep)
+    assert restarted.sweep_all() == []
+    assert visited == ["extra", "loras"]
+
+
 def test_the_periodic_sweep_visits_every_folder_the_library_copied_to(tmp_path):
     store = Store(tmp_path)
     kept, gone = store.add("robin", ALPHA), store.add("robin", BETA)
