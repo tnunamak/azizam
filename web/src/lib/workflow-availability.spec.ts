@@ -35,10 +35,10 @@ describe("workflowAvailabilityView", () => {
     });
   });
 
-  it("keeps an available idle workflow runnable with its reason as idle text", () => {
+  it("keeps an available idle workflow runnable with its reason as owner idle text", () => {
     expect(workflowAvailabilityView({
       status: "idle", available: true, reason: "  Starts when requested.  ",
-    }, { owner: false })).toEqual({
+    }, { owner: true })).toEqual({
       readiness: "ready_to_start", runnable: true, pickerNote: READY_TO_START,
       text: "Starts when requested.", fix: null,
     });
@@ -85,14 +85,15 @@ describe("workflowAvailabilityView", () => {
       engine: "worker one",
     }, { owner })).toEqual({
       readiness: "down", runnable: false,
-      pickerNote: "Engine is unavailable.", text: "Engine is unavailable.",
+      pickerNote: owner ? "Engine is unavailable." : "Unavailable",
+      text: owner ? "Engine is unavailable." : "Unavailable. Ask the owner to check this capability.",
       fix: owner ? { href: "/engines?service=worker%20one", action: "Open Engines" } : null,
     });
   });
 
   it.each([
     { missing: [{ kind: "model", name: "sample.bin" }, { kind: "node", name: "SampleNode" }] as const,
-      reason: "Gateway fallback.", text: "A file it needs is missing on its engine: sample.bin, SampleNode. Install it in Engines; the list refreshes within 5 minutes." },
+      reason: "Gateway fallback.", text: "1 node and 1 file are missing: sample.bin, SampleNode." },
     { missing: [], reason: "Gateway fallback.", text: "Gateway fallback." },
   ])("gives an owner missing-file setup help: $text", ({ missing, reason, text }) => {
     expect(workflowAvailabilityView({
@@ -144,7 +145,38 @@ describe("workflowAvailabilityView", () => {
     expect(workflowAvailabilityView({
       available: false, reason_code: "backend_unavailable", reason,
     }, { owner: false })).toEqual({
-      readiness: "down", runnable: false, pickerNote: reason, text: reason, fix: null,
+      readiness: "down", runnable: false, pickerNote: "Unavailable",
+      text: "Unavailable. Ask the owner to check this capability.", fix: null,
     });
+  });
+
+  it.each([
+    "engine_transitioning",
+    "backend_unavailable",
+    "required_file_missing",
+    "policy_denied",
+    "unavailable_disabled",
+    "unavailable_unconfigured",
+    "not_available",
+    "unknown",
+    undefined,
+  ])("keeps structured diagnostics in the owner availability view (%s)", (reason_code) => {
+    const missing = [
+      { kind: "model", name: "ExampleModel.bin" },
+      { kind: "node", name: "the owner's local check" },
+      { kind: "model", name: "C:\\models\\a.bin" },
+    ] as const;
+    const availability = {
+      available: false, ...(reason_code ? {reason_code} : {}), missing: [...missing], reason: "Engine is unavailable.",
+      engine: "worker one",
+    };
+    const member = workflowAvailabilityView(availability, { owner: false });
+    const owner = workflowAvailabilityView(availability, { owner: true });
+    expect(member.fix).toBeNull();
+    expect(owner.fix).toEqual({ href: "/engines?service=worker%20one", action: "Open Engines" });
+    for (const { name } of missing) {
+      expect(JSON.stringify(member)).not.toContain(JSON.stringify(name).slice(1, -1));
+      expect(owner.text).toContain(name);
+    }
   });
 });
