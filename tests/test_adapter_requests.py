@@ -182,8 +182,9 @@ import httpx  # noqa: E402
 from tests.test_event_loop_guard import gateway  # noqa: E402,F401  (fixture)
 
 
-def member_workflows(gateway, monkeypatch):
+def member_workflows(gateway, monkeypatch, serving=True):
     monkeypatch.setattr(proxy, "_graph_service", lambda _capability: SERVICE)
+    monkeypatch.setattr(adapter_choices, "LISTING_READS_ENGINE", serving)
 
     async def get():
         transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000))
@@ -208,6 +209,11 @@ def test_a_listing_when_the_engine_cannot_list_shows_no_files_and_is_still_serve
     engine_files.listing_fails = True
     rows = member_workflows(gateway, monkeypatch)
     assert "adapter_files" not in adapter_row(rows, WORKFLOW)
+
+
+def test_a_process_that_is_not_serving_lists_no_files_and_reads_nothing_from_the_engine(gateway, monkeypatch, engine_files):
+    rows = member_workflows(gateway, monkeypatch, serving=False)
+    assert "adapter_files" not in adapter_row(rows, WORKFLOW) and engine_files.listed == 0
 
 
 def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypatch):

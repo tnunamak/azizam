@@ -14491,6 +14491,7 @@ async def _serve(app: FastAPI):
     # in generated media survives a ComfyUI that is restarting at submit time.
     node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "graph_object_info"
     choice_lists.STORE = choice_lists.ChoiceStore(Path(__file__).resolve().parent / "cache" / "engine_choices.json")
+    adapter_choices.LISTING_READS_ENGINE = True
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older

@@ -42,6 +42,11 @@ TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_archite
 MARKS: Callable[[], Any] = lambda: None
 
 
+# Whether a listing may read the engine's files. The gateway sets this at startup, as it does the choice store: a
+# process that never started serving (a test, a tool) lists no files and never reaches an engine from a listing.
+LISTING_READS_ENGINE = False
+
+
 class ChoicesUnavailable(RuntimeError):
     """The engine could not list its files and no earlier list is held, so no choice can be offered."""
 
@@ -221,6 +226,8 @@ LISTING_WAIT_S = 5.0     # a listing waits this long for the engine, then shows 
 async def offered(records: Sequence[Any], binding_key: str, *, service_id: str, origin: str) -> dict[str, tuple[str, ...]]:
     """The adapter files each record offers now, by record id, for a listing. A record that takes no adapters is left
     out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again)."""
+    if not LISTING_READS_ENGINE:
+        return {}
     async def one(record: Any) -> tuple[str, tuple[str, ...]] | None:
         decl = declaration(record.contract, binding_key)
         if decl is None:
