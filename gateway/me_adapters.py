@@ -19,7 +19,7 @@ from typing import Any, BinaryIO
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import adapter_upload
+from gateway import adapter_upload, request_forms
 from gateway.admin_oidc import AdminSession
 
 SessionProvider = Callable[[Request], AdminSession | None]
@@ -69,7 +69,7 @@ def create_me_adapters_router(
         if declared > policy.max_bytes + adapter_upload.FRAMING_BYTES:
             return _error("adapter_too_large", 413, f"The file is larger than the {policy.max_bytes}-byte limit for adapters.")
         try:
-            form = await request.form()
+            form = await request_forms.read_form(request)
         except Exception:  # noqa: BLE001 - a body that is not multipart is the caller's mistake
             return _error("missing_file", 400, "Send the adapter as one multipart/form-data file part named 'file'.")
         part = form.get("file")

@@ -8,13 +8,14 @@ import asyncio
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gateway import media_jobs
+from gateway import adapter_choices, media_jobs
 from gateway.capabilities import Capability, unavailable_capability
 from gateway.discovery import WorkflowRegistry
 from gateway.user_runtime import UserPortalError
@@ -885,7 +886,8 @@ class WorkflowsCatalogTests(unittest.TestCase):
                 path=jobs_db,
             )
 
-            with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
+            with patch.object(proxy, "_oidc_session_from_request", return_value=SimpleNamespace(subject="person")), \
+                 patch.object(adapter_choices, "default_list_files", lambda origin, node_type, input_name: []), \
                  patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
                  patch.object(proxy, "_session_catalog_auth_contexts", return_value=[object()]), \
                  patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
@@ -933,7 +935,8 @@ class WorkflowsCatalogTests(unittest.TestCase):
                 path=jobs_db,
             )
 
-            with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
+            with patch.object(proxy, "_oidc_session_from_request", return_value=SimpleNamespace(subject="person")), \
+                 patch.object(adapter_choices, "default_list_files", lambda origin, node_type, input_name: []), \
                  patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
                  patch.object(proxy, "_session_catalog_auth_contexts", return_value=[object()]), \
                  patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[

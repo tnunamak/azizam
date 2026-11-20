@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 import proxy
-from gateway import accounts, admin_store, media_jobs, receipt_store, signin_trial
+from gateway import accounts, adapter_choices, admin_store, media_jobs, receipt_store, signin_trial
 from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import hash_api_key
 from gateway.signin_rules import Claims
@@ -131,7 +131,10 @@ def test_the_walk_measures_most_of_the_read_routes() -> None:
 
 
 @pytest.mark.parametrize("route", MEASURED)
-def test_route_work_does_not_grow_with_the_data(gateway, media_store, route):  # noqa: F811
+def test_route_work_does_not_grow_with_the_data(gateway, media_store, route, monkeypatch):  # noqa: F811
+    # The member workflow listing reads the engine's adapter files; the engine is not reachable from a test.
+    adapter_choices.reset()
+    monkeypatch.setattr(adapter_choices, "default_list_files", lambda origin, node_type, input_name: [])
     household = Household(media_store)
     household.grow_to(SMALL)
     path = _seed(route, household)
