@@ -59,7 +59,7 @@ machine, not on remote workflows.
 2. Upload your style file in the Library or send it to `POST /me/api/adapters`.
    Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
    and `.bin` are refused.
-   A file with an unreadable header is also refused.
+   If the gateway cannot read the file's built-in information, it refuses the upload.
 3. The gateway reads the file header to find its base model. Your adapter is
    offered only on workflows that use that base model. If the header names no
    known base model, the file is still stored, but the upload reply says it

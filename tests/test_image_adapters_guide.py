@@ -98,8 +98,8 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
         self.assertRegex(section, r"(?i)workflow.s listing[^.]*label")
         self.assertRegex(section, r'(?i)my style[^.]*`ast_[^\x60]+`[^.]*loras[^.]*"name"\s*:\s*"ast_')
 
-    def test_member_section_explains_unreadable_header_refusal(self):
-        self.assertRegex(self.section(), r"(?i)\b(?:unreadable|damaged) header[^.]*\brefused\b")
+    def test_member_section_explains_unreadable_file_refusal(self):
+        self.assertIn("If the gateway cannot read the file's built-in information, it refuses the upload.", " ".join(self.section().split()))
 
     def test_member_section_explains_unlabelled_upload_listing(self):
         self.assertRegex(self.section(), r"(?i)an upload without a label[^.]*is listed by its ID\b")
