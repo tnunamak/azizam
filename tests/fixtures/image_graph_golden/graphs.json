@@ -2563,6 +2563,576 @@
    ]
   ]
  },
+ "generate-batch-input/flux2-klein": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 2,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein"
+  ],
+  "resolved_workflow": [
+   "flux2-klein"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate-batch-input/flux2-klein-snofs": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 2,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "resolved_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein-snofs",
+    512,
+    768
+   ]
+  ]
+ },
  "generate-batch-input/krea2-turbo": {
   "graphs": [
    {
@@ -4683,6 +5253,576 @@
    ]
   ]
  },
+ "generate-n2/flux2-klein": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 2,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein"
+  ],
+  "resolved_workflow": [
+   "flux2-klein"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate-n2/flux2-klein-snofs": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 2,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "resolved_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein-snofs",
+    512,
+    768
+   ]
+  ]
+ },
  "generate-n2/krea2-turbo": {
   "graphs": [
    {
@@ -6690,6 +7830,321 @@
    ]
   ]
  },
+ "generate-noseed/flux2-klein": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": "<random-seed>",
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein"
+  ],
+  "resolved_workflow": [
+   "flux2-klein"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein",
+    1024,
+    1024
+   ],
+   [
+    "flux2-klein",
+    1024,
+    1024
+   ]
+  ]
+ },
+ "generate-noseed/flux2-klein-snofs": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": "<random-seed>",
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "resolved_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein-snofs",
+    1024,
+    1024
+   ],
+   [
+    "flux2-klein-snofs",
+    1024,
+    1024
+   ]
+  ]
+ },
  "generate-noseed/krea2-turbo": {
   "graphs": [
    {
@@ -7855,6 +9310,321 @@
    ]
   ]
  },
+ "generate-transparent/flux2-klein": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "90",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein"
+  ],
+  "resolved_workflow": [
+   "flux2-klein"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein+rmbg",
+    512,
+    768
+   ],
+   [
+    "flux2-klein+rmbg",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate-transparent/flux2-klein-snofs": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "90",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "resolved_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein-snofs+rmbg",
+    512,
+    768
+   ],
+   [
+    "flux2-klein-snofs+rmbg",
+    512,
+    768
+   ]
+  ]
+ },
  "generate-transparent/krea2-turbo": {
   "graphs": [
    {
@@ -9015,6 +10785,321 @@
    ],
    [
     "anima-turbo",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate/flux2-klein": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein"
+  ],
+  "resolved_workflow": [
+   "flux2-klein"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein",
+    512,
+    768
+   ],
+   [
+    "flux2-klein",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate/flux2-klein-snofs": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UnetLoaderGGUF",
+     "inputs": {
+      "unet_name": "flux-2-klein-9b-Q8_0.gguf"
+     }
+    },
+    "11": {
+     "class_type": "LoraLoaderModelOnly",
+     "inputs": {
+      "lora_name": "klein_snofs_v1_4.safetensors",
+      "model": [
+       "1",
+       0
+      ],
+      "strength_model": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2"
+     }
+    },
+    "27": {
+     "class_type": "EmptySD3LatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+     }
+    },
+    "31": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+       "27",
+       0
+      ],
+      "model": [
+       "11",
+       0
+      ],
+      "negative": [
+       "33",
+       0
+      ],
+      "positive": [
+       "35",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 4
+     }
+    },
+    "33": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "35": {
+     "class_type": "FluxGuidance",
+     "inputs": {
+      "conditioning": [
+       "6",
+       0
+      ],
+      "guidance": 3.5
+     }
+    },
+    "6": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "31",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "api",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    },
+    "90": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "resolved_workflow": [
+   "flux2-klein-snofs"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "flux2-klein-snofs",
+    512,
+    768
+   ],
+   [
+    "flux2-klein-snofs",
     512,
     768
    ]

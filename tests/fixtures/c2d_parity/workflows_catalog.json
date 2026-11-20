@@ -1,14 +1,14 @@
 {
   "envelope": {
     "counts": {
-      "capabilities": 39,
-      "workflows": 39
+      "capabilities": 41,
+      "workflows": 41
     },
     "discovery_url": "https://gateway.example.test/gateway/v1/workflows",
     "groups": [
       {
         "capability": "image",
-        "count": 14,
+        "count": 16,
         "title": "Image",
         "workflow_ids": [
           "image.analyze.face-likeness",
@@ -19,6 +19,8 @@
           "image.edit.qwen-image-2.1-inpaint",
           "image.edit.seedvr2-upscale",
           "image.generate.anima-turbo",
+          "image.generate.flux2-klein",
+          "image.generate.flux2-klein-snofs",
           "image.generate.krea2-turbo",
           "image.generate.krea2-turbo-snofs",
           "image.generate.moss-image",
@@ -149,6 +151,8 @@
     "image.edit.qwen-image-2.1-inpaint",
     "image.edit.seedvr2-upscale",
     "image.generate.anima-turbo",
+    "image.generate.flux2-klein",
+    "image.generate.flux2-klein-snofs",
     "image.generate.krea2-turbo",
     "image.generate.krea2-turbo-snofs",
     "image.generate.moss-image",
@@ -4020,6 +4024,1055 @@
           "typical_seconds": 4
         },
         "sha256": "5660f372745bc5f126332b9faba4b4ab1ee4277322708a3a69c43a35c8f1d97a"
+      }
+    },
+    "image.generate.flux2-klein": {
+      "examples": {
+        "bytes": 3992,
+        "full": {
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4
+                }
+              },
+              "model": "flux2-klein",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          }
+        },
+        "sha256": "aa902ea201fd2401851736e469e5454383e9e6bd429371841e3e505aa490dd7a"
+      },
+      "row": {
+        "bytes": 15449,
+        "full": {
+          "aliases": [],
+          "availability": {
+            "available": true,
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "capabilities": [
+            {
+              "availability": {
+                "available": false,
+                "configured": true,
+                "enabled": true,
+                "evidence": {
+                  "kind": "unknown"
+                },
+                "idle_startable": false,
+                "measured": false,
+                "reason": "Not measured yet",
+                "status": "unknown",
+                "up": null
+              },
+              "available": true,
+              "capability": "image",
+              "capability_title": "Images",
+              "caveats": [],
+              "execution": "job",
+              "exposure": "default",
+              "icon_key": "image",
+              "input_modalities": [
+                "text"
+              ],
+              "intent": "image.generate",
+              "output_modalities": [
+                "image"
+              ],
+              "recommended_model": "FLUX.2 Klein 9B",
+              "resource_tier": "batch",
+              "secondary_profile": false,
+              "streaming": false,
+              "summary": "Generate or edit images from your prompts.",
+              "tags": [],
+              "title": "FLUX.2 Klein 9B",
+              "trust_tier": "stable",
+              "use_name": "image.generate.flux2-klein",
+              "use_names": [
+                "image.generate.flux2-klein"
+              ],
+              "workflow": "image.generate.flux2-klein"
+            }
+          ],
+          "capability": "image",
+          "description": "Detailed images from a prompt",
+          "discovery_url": "https://gateway.example.test/gateway/v1/workflows/image.generate.flux2-klein",
+          "engine_binding": "comfyui",
+          "engine_binding_detail": {
+            "available": true,
+            "backends": [
+              "comfyui"
+            ],
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4
+                }
+              },
+              "model": "flux2-klein",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "id": "image.generate.flux2-klein",
+          "inputs": [
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Describe what you want to make.",
+              "help": "Describe what you want to make.",
+              "ignored": false,
+              "label": "description",
+              "name": "prompt",
+              "request_field": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture width in pixels.",
+              "help": "Picture width in pixels.",
+              "ignored": false,
+              "label": "width",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "width",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture height in pixels.",
+              "help": "Picture height in pixels.",
+              "ignored": false,
+              "label": "height",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "height",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": 4,
+              "description": "More steps add detail but take longer. 4 works well for this model.",
+              "help": "More steps add detail but take longer. 4 works well for this model.",
+              "ignored": false,
+              "label": "steps",
+              "maximum": 100,
+              "minimum": 1,
+              "name": "steps",
+              "request_field": "steps",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "euler",
+              "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "enum": [
+                "euler",
+                "euler_cfg_pp",
+                "euler_ancestral",
+                "euler_ancestral_cfg_pp",
+                "heun",
+                "heunpp2",
+                "exp_heun_2_x0",
+                "exp_heun_2_x0_sde",
+                "dpm_2",
+                "dpm_2_ancestral",
+                "lms",
+                "dpm_fast",
+                "dpm_adaptive",
+                "dpmpp_2s_ancestral",
+                "dpmpp_2s_ancestral_cfg_pp",
+                "dpmpp_sde",
+                "dpmpp_sde_gpu",
+                "dpmpp_2m",
+                "dpmpp_2m_cfg_pp",
+                "dpmpp_2m_sde",
+                "dpmpp_2m_sde_gpu",
+                "dpmpp_2m_sde_heun",
+                "dpmpp_2m_sde_heun_gpu",
+                "dpmpp_3m_sde",
+                "dpmpp_3m_sde_gpu",
+                "ddpm",
+                "lcm",
+                "ipndm",
+                "ipndm_v",
+                "deis",
+                "cfgpp_ud10_ab",
+                "res_multistep",
+                "res_multistep_cfg_pp",
+                "res_multistep_ancestral",
+                "res_multistep_ancestral_cfg_pp",
+                "gradient_estimation",
+                "gradient_estimation_cfg_pp",
+                "er_sde",
+                "seeds_2",
+                "seeds_3",
+                "sa_solver",
+                "sa_solver_pece",
+                "ddim",
+                "uni_pc",
+                "uni_pc_bh2"
+              ],
+              "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "ignored": false,
+              "label": "Generation method",
+              "name": "sampler",
+              "request_field": "sampler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "simple",
+              "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "enum": [
+                "simple",
+                "sgm_uniform",
+                "karras",
+                "exponential",
+                "ddim_uniform",
+                "beta",
+                "normal",
+                "linear_quadratic",
+                "kl_optimal"
+              ],
+              "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "ignored": false,
+              "label": "Step timing",
+              "name": "scheduler",
+              "request_field": "scheduler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "ignored": false,
+              "label": "prompt guidance",
+              "maximum": 20,
+              "minimum": 0,
+              "name": "guidance",
+              "request_field": "guidance",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Reuse this number and the same settings for a similar result.",
+              "help": "Reuse this number and the same settings for a similar result.",
+              "ignored": false,
+              "label": "variation number",
+              "minimum": 0,
+              "name": "seed",
+              "request_field": "seed",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "How many pictures to make at once.",
+              "help": "How many pictures to make at once.",
+              "ignored": false,
+              "label": "number of pictures",
+              "maximum": 8,
+              "minimum": 1,
+              "name": "batch_size",
+              "request_field": "batch_size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Number of images.",
+              "ignored": false,
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "request_field": "n",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "intent": "image.generate",
+          "machine_readable_discovery_url": "https://gateway.example.test/openapi.json#x-azizam-workflows",
+          "native_passthrough_route": null,
+          "native_route": null,
+          "openapi": {
+            "execution": {
+              "async": {
+                "cancel": {
+                  "method": "POST",
+                  "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+                },
+                "content": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}/content"
+                },
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "kind": "media_job",
+                "poll": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}"
+                },
+                "statuses": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ],
+                "submit": {
+                  "body": {
+                    "intent": "image.generate",
+                    "request": "<the sync request body>"
+                  },
+                  "content_type": "application/json",
+                  "method": "POST",
+                  "model": "flux2-klein",
+                  "path": "/gateway/v1/media/jobs"
+                },
+                "terminal": [
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ]
+              },
+              "recommended": "sync",
+              "sync": {
+                "content_type": "application/json",
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "method": "POST",
+                "model": "flux2-klein",
+                "output": "data[].b64_json or data[].url",
+                "path": "/v1/images/generations",
+                "response": {
+                  "kind": "json"
+                }
+              }
+            },
+            "inputs_schema": {
+              "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+            },
+            "route_inputs": [
+              {
+                "description": "Number of images.",
+                "field": "n",
+                "in": "body",
+                "label": "number of results",
+                "maximum": 10,
+                "minimum": 1,
+                "name": "n",
+                "type": "integer"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "purpose": "Detailed images from a prompt",
+          "recent_jobs": [],
+          "recent_jobs_url": "/me/api/media?workflow=image.generate.flux2-klein",
+          "recent_receipts": [],
+          "short_id": "flux2-klein",
+          "technical_notes": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+          "title": "FLUX.2 Klein 9B",
+          "try_url": "/try/?workflow=image.generate.flux2-klein",
+          "typical_seconds": 20
+        },
+        "sha256": "6d58c44e0fa49b573d1b3e48bb9ad94d6734932d602ee016ef6a872e23c41831"
+      }
+    },
+    "image.generate.flux2-klein-snofs": {
+      "examples": {
+        "bytes": 4216,
+        "full": {
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "lora_strength": 1.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4
+                }
+              },
+              "model": "flux2-klein-snofs",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          }
+        },
+        "sha256": "84eca9ac32b4013f2669e9500aae724ad4bc0b9bed03dd5c7154cc3d917b14a2"
+      },
+      "row": {
+        "bytes": 16555,
+        "full": {
+          "aliases": [],
+          "availability": {
+            "available": true,
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "capabilities": [
+            {
+              "availability": {
+                "available": false,
+                "configured": true,
+                "enabled": true,
+                "evidence": {
+                  "kind": "unknown"
+                },
+                "idle_startable": false,
+                "measured": false,
+                "reason": "Not measured yet",
+                "status": "unknown",
+                "up": null
+              },
+              "available": true,
+              "capability": "image",
+              "capability_title": "Images",
+              "caveats": [],
+              "execution": "job",
+              "exposure": "default",
+              "icon_key": "image",
+              "input_modalities": [
+                "text"
+              ],
+              "intent": "image.generate",
+              "output_modalities": [
+                "image"
+              ],
+              "recommended_model": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+              "resource_tier": "batch",
+              "secondary_profile": false,
+              "streaming": false,
+              "summary": "Generate or edit images from your prompts.",
+              "tags": [],
+              "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+              "trust_tier": "stable",
+              "use_name": "image.generate.flux2-klein-snofs",
+              "use_names": [
+                "image.generate.flux2-klein-snofs"
+              ],
+              "workflow": "image.generate.flux2-klein-snofs"
+            }
+          ],
+          "capability": "image",
+          "description": "Uncensored detailed images from a prompt",
+          "discovery_url": "https://gateway.example.test/gateway/v1/workflows/image.generate.flux2-klein-snofs",
+          "engine_binding": "comfyui",
+          "engine_binding_detail": {
+            "available": true,
+            "backends": [
+              "comfyui"
+            ],
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "lora_strength": 1.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4
+                }
+              },
+              "model": "flux2-klein-snofs",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "id": "image.generate.flux2-klein-snofs",
+          "inputs": [
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Describe what you want to make.",
+              "help": "Describe what you want to make.",
+              "ignored": false,
+              "label": "description",
+              "name": "prompt",
+              "request_field": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture width in pixels.",
+              "help": "Picture width in pixels.",
+              "ignored": false,
+              "label": "width",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "width",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture height in pixels.",
+              "help": "Picture height in pixels.",
+              "ignored": false,
+              "label": "height",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "height",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": 4,
+              "description": "More steps add detail but take longer. 4 works well for this model.",
+              "help": "More steps add detail but take longer. 4 works well for this model.",
+              "ignored": false,
+              "label": "steps",
+              "maximum": 100,
+              "minimum": 1,
+              "name": "steps",
+              "request_field": "steps",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "euler",
+              "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "enum": [
+                "euler",
+                "euler_cfg_pp",
+                "euler_ancestral",
+                "euler_ancestral_cfg_pp",
+                "heun",
+                "heunpp2",
+                "exp_heun_2_x0",
+                "exp_heun_2_x0_sde",
+                "dpm_2",
+                "dpm_2_ancestral",
+                "lms",
+                "dpm_fast",
+                "dpm_adaptive",
+                "dpmpp_2s_ancestral",
+                "dpmpp_2s_ancestral_cfg_pp",
+                "dpmpp_sde",
+                "dpmpp_sde_gpu",
+                "dpmpp_2m",
+                "dpmpp_2m_cfg_pp",
+                "dpmpp_2m_sde",
+                "dpmpp_2m_sde_gpu",
+                "dpmpp_2m_sde_heun",
+                "dpmpp_2m_sde_heun_gpu",
+                "dpmpp_3m_sde",
+                "dpmpp_3m_sde_gpu",
+                "ddpm",
+                "lcm",
+                "ipndm",
+                "ipndm_v",
+                "deis",
+                "cfgpp_ud10_ab",
+                "res_multistep",
+                "res_multistep_cfg_pp",
+                "res_multistep_ancestral",
+                "res_multistep_ancestral_cfg_pp",
+                "gradient_estimation",
+                "gradient_estimation_cfg_pp",
+                "er_sde",
+                "seeds_2",
+                "seeds_3",
+                "sa_solver",
+                "sa_solver_pece",
+                "ddim",
+                "uni_pc",
+                "uni_pc_bh2"
+              ],
+              "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "ignored": false,
+              "label": "Generation method",
+              "name": "sampler",
+              "request_field": "sampler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "simple",
+              "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "enum": [
+                "simple",
+                "sgm_uniform",
+                "karras",
+                "exponential",
+                "ddim_uniform",
+                "beta",
+                "normal",
+                "linear_quadratic",
+                "kl_optimal"
+              ],
+              "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "ignored": false,
+              "label": "Step timing",
+              "name": "scheduler",
+              "request_field": "scheduler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "ignored": false,
+              "label": "prompt guidance",
+              "maximum": 20,
+              "minimum": 0,
+              "name": "guidance",
+              "request_field": "guidance",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Reuse this number and the same settings for a similar result.",
+              "help": "Reuse this number and the same settings for a similar result.",
+              "ignored": false,
+              "label": "variation number",
+              "minimum": 0,
+              "name": "seed",
+              "request_field": "seed",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": 1.0,
+              "description": "How strongly the added style applies. 1.0 is the usual setting.",
+              "help": "How strongly the added style applies. 1.0 is the usual setting.",
+              "ignored": false,
+              "label": "style strength",
+              "maximum": 1.5,
+              "minimum": 0,
+              "name": "lora_strength",
+              "request_field": "lora_strength",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "How many pictures to make at once.",
+              "help": "How many pictures to make at once.",
+              "ignored": false,
+              "label": "number of pictures",
+              "maximum": 8,
+              "minimum": 1,
+              "name": "batch_size",
+              "request_field": "batch_size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Number of images.",
+              "ignored": false,
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "request_field": "n",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "intent": "image.generate",
+          "machine_readable_discovery_url": "https://gateway.example.test/openapi.json#x-azizam-workflows",
+          "native_passthrough_route": null,
+          "native_route": null,
+          "openapi": {
+            "execution": {
+              "async": {
+                "cancel": {
+                  "method": "POST",
+                  "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+                },
+                "content": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}/content"
+                },
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "lora_strength": {
+                    "field": "lora_strength",
+                    "in": "extension"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "kind": "media_job",
+                "poll": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}"
+                },
+                "statuses": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ],
+                "submit": {
+                  "body": {
+                    "intent": "image.generate",
+                    "request": "<the sync request body>"
+                  },
+                  "content_type": "application/json",
+                  "method": "POST",
+                  "model": "flux2-klein-snofs",
+                  "path": "/gateway/v1/media/jobs"
+                },
+                "terminal": [
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ]
+              },
+              "recommended": "sync",
+              "sync": {
+                "content_type": "application/json",
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "lora_strength": {
+                    "field": "lora_strength",
+                    "in": "extension"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "method": "POST",
+                "model": "flux2-klein-snofs",
+                "output": "data[].b64_json or data[].url",
+                "path": "/v1/images/generations",
+                "response": {
+                  "kind": "json"
+                }
+              }
+            },
+            "inputs_schema": {
+              "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs"
+            },
+            "route_inputs": [
+              {
+                "description": "Number of images.",
+                "field": "n",
+                "in": "body",
+                "label": "number of results",
+                "maximum": 10,
+                "minimum": 1,
+                "name": "n",
+                "type": "integer"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "purpose": "Uncensored detailed images from a prompt",
+          "recent_jobs": [],
+          "recent_jobs_url": "/me/api/media?workflow=image.generate.flux2-klein-snofs",
+          "recent_receipts": [],
+          "short_id": "flux2-klein-snofs",
+          "technical_notes": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+          "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+          "try_url": "/try/?workflow=image.generate.flux2-klein-snofs",
+          "typical_seconds": 20
+        },
+        "sha256": "90a7168e9c7775f8538ce3ccf2b7898055d42bd7a7f1a0fa34999b01e19595ab"
       }
     },
     "image.generate.krea2-turbo": {

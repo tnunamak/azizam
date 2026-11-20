@@ -236,7 +236,7 @@ def test_the_frozen_schema_1_copy_excludes_workflows_introduced_in_schema_two():
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         bundled[document["id"]] = document
     frozen = {record_id: record["manifest"] for record_id, record in migration.frozen_release_records().items()}
-    assert len(frozen) == 32
+    assert len(frozen) == 34
     assert set(bundled) - set(frozen) == {
         "mesh.generate.pixal3d", "mesh.edit.retopo", "mesh.edit.rig-auto",
         "mesh.edit.rig-humanoid", "mesh.edit.texture-refine", "mesh.edit.uv-unwrap",

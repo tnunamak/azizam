@@ -32,6 +32,10 @@ EXPECTED = {
     ("image.generate.moss-image-fast", "scheduler"),
     ("image.generate.moss-image-quality", "sampler"),
     ("image.generate.moss-image-quality", "scheduler"),
+    ("image.generate.flux2-klein", "sampler"),
+    ("image.generate.flux2-klein", "scheduler"),
+    ("image.generate.flux2-klein-snofs", "sampler"),
+    ("image.generate.flux2-klein-snofs", "scheduler"),
 }
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = ROOT / "manifests" / "workflows"
