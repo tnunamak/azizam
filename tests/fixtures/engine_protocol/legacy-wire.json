@@ -933,6 +933,7 @@
       "enabled": true,
       "execution_substrate": "litellm",
       "health_endpoint": "/health/liveliness",
+      "health_success_path": ".",
       "lifecycle": {
         "managed": false,
         "service_name": "litellm",
