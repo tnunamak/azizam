@@ -39,10 +39,11 @@ chosen adapter names and their effective weights, and the encoder if selected.
    all match the `ss_base_model_version` header field. Files without a usable
    matching header are hidden by default. An explicit owner mark for the
    architecture is the exception.
-3. To recognize a new base model, add a row to the registry using the actual
-   header field and value emitted by its trainer. Refresh the workflow listing
-   after the engine and gateway have picked up the change. Encoder choices
-   come from the workflow manifest, not the adapter folder.
+3. To recognize a new base model, add a row to the registry using the
+   header field and value from its trainer, then restart the gateway so it
+   reads the registry again. Refresh the workflow listing after the restart.
+   A newly copied adapter file can take up to five minutes to appear.
+   Encoder choices come from the workflow manifest, not the adapter folder.
 
 ## Your own adapters
 

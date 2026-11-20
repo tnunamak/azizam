@@ -53,6 +53,15 @@ class ImageAdapterGuideTest(unittest.TestCase):
             self.assertTrue(destination.is_file(), f"Broken relative link: {target}")
 
 
+class OperatorImageAdapterGuideTest(unittest.TestCase):
+    def test_operator_section_says_restart_after_registry_row(self):
+        text = GUIDE.read_text(encoding="utf-8")
+        _, heading, tail = text.partition("\n## Operators: make an adapter available\n")
+        self.assertTrue(heading, "The guide must include operator instructions")
+        section = " ".join(tail.split("\n## ", 1)[0].split())
+        self.assertRegex(section, r"(?i)\brow (?:to|in) the registry[^.!?]*\brestart the gateway\b")
+
+
 class MemberImageAdapterGuideTest(unittest.TestCase):
     def section(self):
         guide = GUIDE.read_text(encoding="utf-8")
