@@ -44,6 +44,22 @@ chosen adapter names and their effective weights, and the encoder if selected.
    after the engine and gateway have picked up the change. Encoder choices
    come from the workflow manifest, not the adapter folder.
 
-## Out of scope
+## Your own adapters
 
-This guide covers operator-installed files. It does not cover uploads by members.
+1. The owner must turn on member uploads in the admin settings. They are off by
+   default. The owner can change the size limit for each file. The default is
+   2 GiB, and the highest allowed limit is 8 GiB.
+2. Upload your style file in the Library or send it to `POST /me/api/adapters`.
+   Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
+   and `.bin` are refused.
+3. The gateway reads the file header to find its base model. Your adapter is
+   offered only on workflows that use that base model. If the header names no
+   known base model, the file is still stored, but the upload reply says it
+   won't be offered.
+4. Uploads are private to the person who uploaded them. Your adapter appears
+   after the owner's files in your choice list, under the label you gave it.
+   In `loras`, put its ID in the `name` field, where you would normally put an
+   owner's file name.
+5. The first request that uses your adapter waits while the gateway copies it
+   to the machine running the workflow. Remote machines never receive uploads.
+   Deleting your adapter removes it from the choice list.

@@ -51,3 +51,33 @@ class ImageAdapterGuideTest(unittest.TestCase):
             destination = (GUIDE.parent / unquote(address.path)).resolve()
             self.assertTrue(destination.is_relative_to(ROOT), f"Link leaves the repository: {target}")
             self.assertTrue(destination.is_file(), f"Broken relative link: {target}")
+
+
+class MemberImageAdapterGuideTest(unittest.TestCase):
+    def section(self):
+        guide = GUIDE.read_text(encoding="utf-8")
+        _, heading, tail = guide.partition("\n## Your own adapters\n")
+        self.assertTrue(heading, "The guide must include a Your own adapters section")
+        return " ".join(tail.split("\n## ", 1)[0].split())
+
+    def test_member_section_exists(self):
+        self.assertTrue(self.section(), "The member section must explain how to use uploads")
+
+    def test_member_section_names_supported_and_refused_formats(self):
+        section = self.section()
+        self.assertRegex(section, r"(?i)only.*safetensors")
+        self.assertRegex(section, r"`\.pt`.*`\.ckpt`.*`\.bin`.*\brefused\b")
+
+    def test_member_section_explains_upload_privacy(self):
+        self.assertRegex(self.section(), r"(?i)uploads? (?:is|are) private")
+
+    def test_member_section_explains_header_based_workflow_matching(self):
+        self.assertRegex(self.section(), r"(?i)header[^.]*base model")
+        self.assertRegex(self.section(), r"(?i)only on workflows (?:that use|for) that base model")
+
+    def test_member_section_does_not_promise_storage_quota(self):
+        self.assertNotRegex(
+            self.section(),
+            r"(?i)\bquota\b|\b(?:per[- ](?:person|member|user|account)|"
+            r"(?:total|combined|cumulative) storage)\b",
+        )
