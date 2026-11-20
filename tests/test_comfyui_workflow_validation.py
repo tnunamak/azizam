@@ -231,15 +231,18 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                                 prompt_node="9", negative_prompt_node="7")))
 
     def test_a_manifest_mapping_to_an_input_the_node_lacks_is_refused_not_added(self) -> None:
-        from gateway.manifests import ManifestError, bind_backend_request
-        manifest = {"id": "video.generate.demo", "inputs": {"prompt": {"type": "string"}},
-                    "bindings": {"comfyui": {"map": {"prompt": [{"node": "9", "input": "prompt"}]}}}}
+        # The shipped H3 image-to-video manifest maps `prompt` to node 9's `prompt`. A graph whose node 9 lost that
+        # input must refuse the request; writing a new key there would make the video from the placeholder text.
+        from gateway.manifests import ManifestError, bind_backend_request, load_workflow_manifest
+        manifest = load_workflow_manifest(ROOT / "manifests/workflows/video-minimax-h3-i2v.yml")
+        graph = json.loads((ROOT / "workflows/videos/video-minimax-h3-i2v.json").read_text(encoding="utf-8"))
+        self.assertIn({"node": "9", "input": "prompt"}, manifest["bindings"]["comfyui"]["map"]["prompt"])
+        bound = bind_backend_request(manifest, "comfyui", graph, {"prompt": "a lighthouse at dusk"})
+        self.assertEqual(bound.request["9"]["inputs"]["prompt"], "a lighthouse at dusk")
+        del graph["9"]["inputs"]["prompt"]
         with self.assertRaises(ManifestError) as raised:
-            bind_backend_request(manifest, "comfyui", {"9": self.node(value="placeholder")}, {"prompt": "a lighthouse"})
+            bind_backend_request(manifest, "comfyui", graph, {"prompt": "a lighthouse at dusk"})
         self.assertEqual(raised.exception.code, "target_missing")
-        bound = bind_backend_request(manifest, "comfyui", {"9": self.node(prompt="placeholder")}, {"prompt": "a lighthouse"})
-        self.assertEqual(bound.request["9"]["inputs"]["prompt"], "a lighthouse")
-
 
 if __name__ == "__main__":
     unittest.main()
