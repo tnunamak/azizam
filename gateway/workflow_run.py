@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from gateway import engine_unavailable, generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
+from gateway import adapter_choices, engine_unavailable, generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
@@ -66,6 +66,7 @@ RECEIPT_OUTCOMES = {
 }
 RUN_RECEIPT_ID_KEY = "run_receipt_id"        # the request id of the receipt a run filed for itself (``run_receipt_path``)
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
+ADAPTER_CHOICES_UNAVAILABLE = "adapter_choices_unavailable"
 REQUEST_FACTS_KEY = "request_facts"          # where the request facts sit in the job's metadata: written once with the row
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
@@ -664,7 +665,17 @@ class WorkflowRunCore:
             identity = None
         from gateway.engine_protocol.choice_lists import choices_for_run
         choices = choices_for_run(identity, plain(entry.contract).get("inputs") or {})
-        errors = self._validate(entry, req, profile, choices=choices)
+        contract_now: dict[str, Any] | None = None
+        if adapter_choices.names_adapters(req.inputs) and adapter_choices.declaration(plain(entry.contract), binding_key):
+            try:
+                if identity is None:
+                    raise adapter_choices.ChoicesUnavailable("the engine behind this workflow is not known")
+                contract_now = (await adapter_choices.current(plain(entry.contract), binding_key,
+                                                              service_id=identity.service_id, origin=identity.origin))[1]
+            except adapter_choices.ChoicesUnavailable:
+                return RunRefused(503, ADAPTER_CHOICES_UNAVAILABLE, "the engine could not list its adapter files; try again shortly",
+                                  retry_after_s=RETRY_AFTER_S)
+        errors = self._validate(entry, req, profile, choices=choices, contract=contract_now)
         if errors:
             return RunRefused(422, INVALID_INPUTS, "the run request is not valid", problems=tuple(errors))
         refused = port.admission_refusal(profile.resource_class, caller, count_queue=True)
@@ -678,9 +689,11 @@ class WorkflowRunCore:
             return RunRefused(422, INVALID_INPUTS, "a generated input could not be filled",
                               problems=(ContractError(("inputs",), "generated_value_invalid", _wire_text(str(exc))),))
 
-    def _validate(self, entry: WorkflowEntry, req: RunRequest, profile, *, choices=None) -> list[ContractError]:
-        """Step 3: the inputs against the current contract and the media against the profile, every problem at once."""
-        contract = plain(entry.contract)
+    def _validate(self, entry: WorkflowEntry, req: RunRequest, profile, *, choices=None,
+                  contract: dict[str, Any] | None = None) -> list[ContractError]:
+        """Step 3: the inputs against the current contract and the media against the profile, every problem at once.
+        ``contract`` is the contract with the engine's current adapter choices put in, when the request names adapters."""
+        contract = plain(entry.contract) if contract is None else contract
         generated = generated_defaults.generated_inputs(contract.get("inputs") or {})
         supplied = dict(req.inputs)
         errors: list[ContractError] = []
@@ -723,6 +736,8 @@ class WorkflowRunCore:
         binding = entry.bindings[binding_key]
         owner_hash, app_id, key_name = port.job_owner(caller)
         facts = request_facts_record(req.facts)
+        stored = plain(entry.contract)
+        adapters = adapter_choices.receipt_facts(adapter_choices.declaration(stored, binding_key), req.inputs, stored)
         job = media_jobs.MediaJob(
             intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
@@ -731,6 +746,7 @@ class WorkflowRunCore:
                       "mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
                       "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries,
                       **({REQUEST_FACTS_KEY: facts} if facts else {}),
+                      **({"adapters": adapters} if adapters else {}),
                       **({"run_receipt_path": req.run_receipt_path} if req.run_receipt_path else {})})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
         adopted_sources: dict[str, tuple[MediaRef, ...]] = {}

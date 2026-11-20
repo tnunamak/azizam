@@ -37,6 +37,11 @@ HEADER_READS_AT_ONCE = 8
 TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_architectures.yml"
 
 
+# The owner's marks (``SETTING_KEY``). The gateway sets this at startup to read the stored setting, as it sets the choice
+# store; unset, no file is marked.
+MARKS: Callable[[], Any] = lambda: None
+
+
 class ChoicesUnavailable(RuntimeError):
     """The engine could not list its files and no earlier list is held, so no choice can be offered."""
 
@@ -197,6 +202,22 @@ async def _headers(service_id: str, origin: str, folder: str, files: Sequence[st
 
     await asyncio.gather(*(read(name) for name in unknown))
     return found
+
+
+async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: str, origin: str
+                  ) -> tuple[Declaration, dict[str, Any]] | None:
+    """The contract as a request sees it now: the declaration the binding makes and the contract with the choices put in.
+    None when the binding takes no adapters. Raises ``ChoicesUnavailable`` when the engine cannot list its files."""
+    decl = declaration(contract, binding_key)
+    if decl is None:
+        return None
+    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS())
+    return decl, overlay(contract, decl, choices)
+
+
+def names_adapters(supplied: Mapping[str, Any]) -> bool:
+    """Whether a request supplies an adapter input. A request that does not needs no list of files."""
+    return LORAS_INPUT in supplied or ENCODER_INPUT in supplied
 
 
 # ------------------------------------------------------------------------------------------------------------ receipts
