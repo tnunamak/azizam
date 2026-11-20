@@ -220,13 +220,36 @@ def adapter_row(workflows, workflow_id):
 
 def test_the_member_listing_shows_the_adapter_files_on_offer_now(gateway, monkeypatch):
     rows = member_workflows(gateway, monkeypatch)
-    assert adapter_row(rows, WORKFLOW)["adapter_files"] == ["example_style_v1.safetensors"]
+    row = adapter_row(rows, WORKFLOW)
+    manifest = manifest_of(WORKFLOW)["inputs"]["loras"]
+    assert row["type"] == "array" and row["max_items"] == manifest["max_items"]
+    assert row["items"]["type"] == "object"
+    properties = row["items"]["properties"]
+    assert properties["name"]["enum"] == ["example_style_v1.safetensors"]
+    assert "choice_labels" not in properties["name"]          # an operator's file has no label of its own
+    for field in ("name", "weight"):
+        declared = manifest["items"]["properties"][field]
+        for key in ("label", "help", "minimum", "maximum", "default"):
+            assert properties[field].get(key) == declared.get(key), (field, key)
+    assert "adapter_files" not in row
+
+
+def test_the_member_listing_offers_the_manifests_encoders(gateway, monkeypatch):
+    rows = member_workflows(gateway, monkeypatch)
+    encoder = next(r for r in rows[WORKFLOW]["inputs"] if r["name"] == "text_encoder")
+    assert encoder["enum"] == list(manifest_of(WORKFLOW)["inputs"]["text_encoder"]["enum"])
+
+
+def test_a_listing_when_the_engine_has_no_compatible_file_takes_no_items(gateway, monkeypatch):
+    monkeypatch.setattr(adapter_choices, "default_list_files", lambda *a: ["example_no_header.safetensors"])
+    row = adapter_row(member_workflows(gateway, monkeypatch), WORKFLOW)
+    assert row["max_items"] == 0
 
 
 def test_a_listing_when_the_engine_cannot_list_shows_no_files_and_is_still_served(gateway, monkeypatch, engine_files):
     engine_files.listing_fails = True
     rows = member_workflows(gateway, monkeypatch)
-    assert "adapter_files" not in adapter_row(rows, WORKFLOW)
+    assert "items" not in adapter_row(rows, WORKFLOW)
 
 
 def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypatch):

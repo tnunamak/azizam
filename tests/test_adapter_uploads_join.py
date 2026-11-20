@@ -227,18 +227,41 @@ def test_the_pick_list_has_no_upload_that_is_unknown_or_off(uploads):
     assert choices_for(uploads.person).uploads == ()
 
 
-def test_the_listing_offers_the_same_names_to_the_person_only(uploads, monkeypatch):
-    asset_id = uploads.add(KREA)
+def listed_inputs(person):
     record = SimpleNamespace(id=WORKFLOW, contract=manifest_of(WORKFLOW))
+    return asyncio.run(adapter_choices.offered([record], "comfyui", service_id="comfyui",
+                                               origin="http://engine.invalid:7890", person_id=person,
+                                               list_files=adapter_choices.default_list_files,
+                                               read_header=adapter_choices.default_read_header))[WORKFLOW]
 
-    def listed(person):
-        return asyncio.run(adapter_choices.offered([record], "comfyui", service_id="comfyui",
-                                                   origin="http://engine.invalid:7890", person_id=person,
-                                                   list_files=adapter_choices.default_list_files,
-                                                   read_header=adapter_choices.default_read_header))
 
-    assert listed(uploads.person)[WORKFLOW] == ("example_style_v1.safetensors", asset_id)
-    assert listed(STRANGER)[WORKFLOW] == ("example_style_v1.safetensors",)
+def name_spec(person):
+    return listed_inputs(person)["loras"]["items"]["properties"]["name"]
+
+
+def test_the_listing_offers_the_same_names_to_the_person_only(uploads):
+    asset_id = uploads.add(KREA)
+    assert name_spec(uploads.person)["enum"] == ["example_style_v1.safetensors", asset_id]
+    assert name_spec(STRANGER)["enum"] == ["example_style_v1.safetensors"]
+    assert name_spec(None)["enum"] == ["example_style_v1.safetensors"]
+
+
+def test_the_listing_names_each_upload_by_the_label_its_owner_gave_it(uploads):
+    named = uploads.add(KREA, label="My fox style")
+    unnamed = uploads.add(safetensors({"y": [3]}, metadata={"ss_base_model_version": "krea2"}), label="")
+    theirs = uploads.add(safetensors({"z": [9]}, metadata={"ss_base_model_version": "krea2"}), STRANGER, label="Not yours")
+    mine = name_spec(uploads.person)
+    assert mine["choice_labels"] == {named: "My fox style"}
+    assert unnamed in mine["enum"] and theirs not in mine["enum"] and "Not yours" not in json.dumps(mine)
+    assert name_spec(STRANGER)["choice_labels"] == {theirs: "Not yours"}
+    assert "choice_labels" not in name_spec(None)
+
+
+def test_an_upload_label_never_reaches_another_persons_listing_or_the_stored_contract(uploads):
+    uploads.add(KREA, label="My fox style")
+    name_spec(uploads.person)
+    assert "choice_labels" not in name_spec(STRANGER)
+    assert "choice_labels" not in manifest_of(WORKFLOW)["inputs"]["loras"]["items"]["properties"]["name"]
 
 
 def test_a_deleted_upload_leaves_the_pick_list_and_the_engines_folder(world, uploads):
