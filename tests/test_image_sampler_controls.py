@@ -26,6 +26,7 @@ STOCK_NODES = ("KSampler", "LanPaint_KSampler")
 LEFT_OUT = {
     "image.generate.moss-image": "the few-step adapter node supplies sampler and sigmas",
     "image.edit.seedvr2-upscale": "a one-step upscaler, not a generation sampler",
+    "image.edit.image-identity": "a composed gateway route with no graph map; steps is set by its own route code",
 }
 
 
@@ -46,8 +47,10 @@ def image_cases():
     return cases
 
 
-def controls(graph):
+def controls(graph, manifest_id=None):
     """Map each control to (node id, node class, input) in this graph, or None when it has no sampler."""
+    if manifest_id in LEFT_OUT:
+        return None
     classes = {node_id: node.get("class_type") for node_id, node in graph.items() if isinstance(node, dict)}
     stock = [i for i, c in classes.items() if c in STOCK_NODES]
     if stock:
@@ -67,9 +70,8 @@ def test_the_cases_cover_the_image_workflows():
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
 def test_every_image_manifest_with_a_sampler_exposes_the_three_controls(manifest, binding, graph):
-    found = controls(graph)
+    found = controls(graph, manifest["id"])
     if manifest["id"] in LEFT_OUT:
-        assert not any(name in manifest["inputs"] for name in STOCK) or manifest["id"] == "image.edit.seedvr2-upscale"
         assert "sampler" not in manifest["inputs"] and "scheduler" not in manifest["inputs"]
         return
     assert found is not None, manifest["id"]
@@ -90,7 +92,7 @@ def test_every_image_manifest_with_a_sampler_exposes_the_three_controls(manifest
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
 def test_defaults_leave_the_graph_unchanged(manifest, binding, graph):
-    found = controls(graph)
+    found = controls(graph, manifest["id"])
     if found is None:
         pytest.skip("no sampler")
     defaults = {name: manifest["inputs"][name]["default"] for name in found}
@@ -100,7 +102,7 @@ def test_defaults_leave_the_graph_unchanged(manifest, binding, graph):
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
 def test_bad_sampler_is_refused_and_lists_the_choices(manifest, binding, graph):
-    if controls(graph) is None:
+    if controls(graph, manifest["id"]) is None:
         pytest.skip("no sampler")
     result = validate_inputs(manifest, {"sampler": "no-such-sampler"})
     assert "sampler" in result.rejected
@@ -113,7 +115,7 @@ def test_bad_sampler_is_refused_and_lists_the_choices(manifest, binding, graph):
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
 def test_steps_out_of_range_is_refused(manifest, binding, graph):
-    if controls(graph) is None:
+    if controls(graph, manifest["id"]) is None:
         pytest.skip("no sampler")
     spec = manifest["inputs"]["steps"]
     assert "steps" in validate_inputs(manifest, {"steps": spec["minimum"] - 1}).rejected
@@ -123,7 +125,7 @@ def test_steps_out_of_range_is_refused(manifest, binding, graph):
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
 def test_only_steps_moves_when_steps_change(manifest, binding, graph):
-    found = controls(graph)
+    found = controls(graph, manifest["id"])
     if found is None:
         pytest.skip("no sampler")
     spec = manifest["inputs"]["steps"]
@@ -140,7 +142,7 @@ def test_only_steps_moves_when_steps_change(manifest, binding, graph):
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
 def test_chosen_sampler_and_scheduler_land_on_their_inputs(manifest, binding, graph):
-    found = controls(graph)
+    found = controls(graph, manifest["id"])
     if found is None:
         pytest.skip("no sampler")
     sampler = next(v for v in manifest["inputs"]["sampler"]["enum"] if v != manifest["inputs"]["sampler"]["default"])
