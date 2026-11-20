@@ -214,3 +214,26 @@ def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypat
     rows = member_workflows(gateway, monkeypatch)
     assert adapter_row(rows, PLAIN_WORKFLOW) is None
 
+
+
+# -------------------------------------------------------------------------------------- the shipped adapter workflows
+
+
+@pytest.mark.parametrize("workflow_id", ["image.generate.krea2-turbo", "image.generate.krea2-turbo-snofs", "image.edit.qwen-image-2.1-edit"])
+def test_each_shipped_adapter_workflow_binds_a_chain_into_its_own_graph_and_a_bare_request_changes_nothing(workflow_id):
+    from gateway.engine_protocol.node_graph import compile_workflow
+
+    manifest = manifest_of(workflow_id)
+    template = template_of(manifest)
+    inputs = {"prompt": "x"}
+    if workflow_id.startswith("image.edit"):
+        inputs["source_image"] = {"data": "abc"}
+    bare = compile_workflow(manifest, "comfyui", template, inputs)
+    chosen = compile_workflow(manifest, "comfyui", template, {**inputs, "loras": [
+        {"name": "example_style_v1.safetensors", "weight": 0.75}, {"name": "example_second_v1.safetensors"}]})
+    added = {key: node for key, node in chosen.items() if key not in bare}
+    assert [(n["class_type"], n["inputs"]["lora_name"], n["inputs"]["strength_model"]) for n in added.values()] == [
+        ("LoraLoaderModelOnly", "example_style_v1.safetensors", 0.75), ("LoraLoaderModelOnly", "example_second_v1.safetensors", 1.0)]
+    # the chain sits on one edge: nothing else in the graph moved except that edge's target
+    moved = [key for key in bare if bare[key] != chosen[key]]
+    assert len(moved) == 1
