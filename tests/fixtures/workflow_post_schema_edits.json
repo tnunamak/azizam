@@ -2417,6 +2417,16 @@
         "map",
         "text_encoder"
       ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
     }
   ],
   "image.generate.flux2-klein-snofs": [
@@ -2673,6 +2683,16 @@
         "comfyui",
         "map",
         "text_encoder"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
       ]
     }
   ],
