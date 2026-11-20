@@ -80,7 +80,7 @@ def test_a_file_for_another_architecture_is_refused_and_the_answer_lists_the_off
     response = run(WORKFLOW, {"prompt": "x", "loras": [{"name": "example_other_arch_v2.safetensors"}]})
     assert response.status_code == 422, response.text
     problems = response.json()["error"]["problems"]
-    assert problems[0]["path"] == ["inputs", "loras", 0, "name"]
+    assert problems[0]["path"] == "/inputs/loras/0/name"
     assert "example_style_v1.safetensors" in problems[0]["message"]
     assert "example_other_arch_v2.safetensors" not in problems[0]["message"]
     assert "example_no_header.safetensors" not in problems[0]["message"]
@@ -92,7 +92,7 @@ def test_an_unknown_name_and_a_weight_out_of_bounds_are_each_refused(world):
     unknown = run(WORKFLOW, {"prompt": "x", "loras": [{"name": "nope.safetensors"}]})
     heavy = run(WORKFLOW, {"prompt": "x", "loras": [{"name": "example_style_v1.safetensors", "weight": 4.5}]})
     assert unknown.status_code == 422 and heavy.status_code == 422
-    assert heavy.json()["error"]["problems"][0]["path"] == ["inputs", "loras", 0, "weight"]
+    assert heavy.json()["error"]["problems"][0]["path"] == "/inputs/loras/0/weight"
 
 
 def test_an_engine_that_cannot_list_its_files_is_a_retryable_refusal_not_a_bad_name(world, engine_files):
