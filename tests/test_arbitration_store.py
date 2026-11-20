@@ -401,6 +401,9 @@ def test_two_processes_writing_at_once_lose_no_operation_and_fence_every_stale_a
     Both children are started before either is waited on. Each takes over every 25 steps, so the other's
     generation goes stale while it still writes.
     """
+    # The file exists before the writers start, as it does in use. Two processes creating a new file at once race on the
+    # switch to WAL, which SQLite can refuse at once ("database is locked") instead of waiting: that is not what this tests.
+    ArbitrationStore(db).close()
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     children = [subprocess.Popen([sys.executable, "-c", _OVERLAP_CHILD, tag, str(db)], cwd=ROOT, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
