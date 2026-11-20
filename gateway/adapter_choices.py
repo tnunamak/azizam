@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -210,13 +211,45 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
 
 _LISTS: dict[tuple[str, str, str, str], tuple[float, list[str]]] = {}
 _HEADERS: dict[tuple[str, str, str], tuple[float, Mapping[str, Any] | None]] = {}
+_CACHE_LOCK = threading.Lock()
+_CACHE_GENERATION = 0
+_FLIGHTS: dict[tuple[str, ...], asyncio.Task[Any]] = {}
 _FAILED: dict[tuple[str, str, str, str], float] = {}   # when a list read last failed, by the same key as _LISTS
 
 
 def reset() -> None:
-    _LISTS.clear()
-    _HEADERS.clear()
-    _FAILED.clear()
+    global _CACHE_GENERATION
+    with _CACHE_LOCK:
+        _CACHE_GENERATION += 1
+        _LISTS.clear()
+        _HEADERS.clear()
+        _FAILED.clear()
+        _FLIGHTS.clear()
+
+
+def _shared_read(key: tuple[str, ...], read, *, gate: asyncio.Semaphore | None = None) -> asyncio.Task[Any]:
+    task = _FLIGHTS.get(key)
+    if task is not None:
+        return task
+    generation = _CACHE_GENERATION
+
+    async def run():
+        if gate is None:
+            return await asyncio.to_thread(read, generation)
+        async with gate:
+            return await asyncio.to_thread(read, generation)
+
+    task = asyncio.create_task(run())
+    _FLIGHTS[key] = task
+
+    def done(finished):
+        if _FLIGHTS.get(key) is finished:
+            _FLIGHTS.pop(key)
+        if not finished.cancelled():
+            finished.exception()  # A timed-out last waiter may no longer observe the error.
+
+    task.add_done_callback(done)
+    return task
 
 
 def default_list_files(origin: str, node_type: str, input_name: str) -> list[str]:
@@ -260,18 +293,30 @@ async def installed(
         if held is None:
             raise ChoicesUnavailable("the engine could not list its adapter files")
     elif due:
-        def read_list() -> list[str]:
-            files = list_files(origin, decl.node_type, decl.listing_input)
-            _LISTS[key] = (now, files)   # kept even when the caller stopped waiting
-            return files
+        def read_list(generation: int) -> tuple[float, list[str]]:
+            try:
+                files = list_files(origin, decl.node_type, decl.listing_input)
+            except Exception:
+                with _CACHE_LOCK:
+                    if generation == _CACHE_GENERATION and now >= _FAILED.get(key, float("-inf")):
+                        current = _LISTS.get(key)
+                        if current is None or current[0] <= now:
+                            _FAILED[key] = now
+                raise
+            with _CACHE_LOCK:
+                current = _LISTS.get(key)
+                if generation == _CACHE_GENERATION and (current is None or current[0] <= now):
+                    _LISTS[key] = (now, files)
+                    if _FAILED.get(key, float("-inf")) <= now:
+                        _FAILED.pop(key, None)
+            return now, files
         try:
-            await asyncio.to_thread(read_list)
-            _FAILED.pop(key, None)
+            read = await asyncio.shield(_shared_read(("list", *key), read_list))
+            held = _LISTS.get(key, read)
         except Exception as exc:  # noqa: BLE001 - any failed read keeps the last good list
-            _FAILED[key] = now
+            held = _LISTS.get(key, held)
             if held is None:
                 raise ChoicesUnavailable("the engine could not list its adapter files") from exc
-        held = _LISTS.get(key, held)
     # The gateway's own copies of uploads sit in the engine's folder, so the engine lists them. They are one person's
     # files: they are never offered as the operator's, whatever their header says.
     files = [name for name in held[1] if uploads is None or not uploads.is_copy(name)]
@@ -311,17 +356,21 @@ async def _headers(service_id: str, origin: str, folder: str, files: Sequence[st
             unknown.append(name)
     gate = asyncio.Semaphore(HEADER_READS_AT_ONCE)
 
-    def fetch(name: str) -> Mapping[str, Any] | None:
-        header = read_header(origin, folder, name)
-        _HEADERS[(service_id, folder, name)] = (now, header)   # kept even when the caller stopped waiting
-        return header
-
     async def read(name: str) -> None:
-        async with gate:
-            try:
-                found[name] = await asyncio.to_thread(fetch, name)
-            except Exception:  # noqa: BLE001 - not offered this time, and not remembered as having no header
-                return
+        key = (service_id, folder, name)
+
+        def fetch(generation: int) -> Mapping[str, Any] | None:
+            header = read_header(origin, folder, name)
+            with _CACHE_LOCK:
+                held = _HEADERS.get(key)
+                if generation == _CACHE_GENERATION and (held is None or held[0] <= now):
+                    _HEADERS[key] = (now, header)
+            return header
+
+        try:
+            found[name] = await asyncio.shield(_shared_read(("header", *key), fetch, gate=gate))
+        except Exception:  # noqa: BLE001 - not offered this time, and not remembered as having no header
+            return
 
     await asyncio.gather(*(read(name) for name in unknown))
     return found

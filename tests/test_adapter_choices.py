@@ -3,6 +3,7 @@
 Files are invented. No engine is called: the header and list readers are fakes.
 """
 import asyncio
+from threading import Event
 
 import pytest
 
@@ -358,6 +359,131 @@ def test_header_reads_that_finish_after_the_listing_wait_are_kept_so_the_next_li
     shown = listing(list_files=files, read_header=slow_header)
     assert shown["rec"]["loras"]["items"]["properties"]["name"]["enum"] == ["a.safetensors"]
     assert reads == ["a.safetensors"]
+
+
+def test_overlapping_installed_calls_share_one_list_read():
+    async def exercise():
+        entered, release = Event(), Event()
+        calls = []
+        listing, header, _ = make_fetchers(["a"], {"a": {"ss_base_model_version": "base_a"}}, calls)
+
+        def held(*args):
+            entered.set()
+            assert release.wait(2)
+            return listing(*args)
+
+        async def installed():
+            return await ac.installed(ac.declaration(contract(), "graph"), service_id="svc", origin="http://engine",
+                                      list_files=held, read_header=header, table=TABLE, now=100)
+
+        first = asyncio.create_task(installed())
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            second = asyncio.create_task(installed())
+            await asyncio.sleep(0)  # The second request reaches its await while the source is held.
+        finally:
+            release.set()
+        a, b = await asyncio.gather(first, second)
+        assert a.loras == b.loras == ("a",)
+        assert len([row for row in calls if row[0] == "list"]) == 1
+
+    asyncio.run(exercise())
+
+
+def test_overlapping_headers_share_one_file_read():
+    async def exercise():
+        entered, release = Event(), Event()
+        calls = []
+        _, header, _ = make_fetchers(["a"], {"a": {"ss_base_model_version": "base_a"}}, calls)
+
+        def held(*args):
+            entered.set()
+            assert release.wait(2)
+            return header(*args)
+
+        async def headers():
+            return await ac._headers("svc", "http://engine", "loras", ["a"], held, 100)
+
+        first = asyncio.create_task(headers())
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            second = asyncio.create_task(headers())
+            # _headers schedules a child for the file; let it reach the held source.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        a, b = await asyncio.gather(first, second)
+        assert a == b == {"a": {"ss_base_model_version": "base_a"}}
+        assert calls == [("header", "loras", "a")]
+
+    asyncio.run(exercise())
+
+
+def test_reset_fences_an_older_list_read_that_completes_last():
+    async def exercise():
+        entered, release = Event(), Event()
+        decl = ac.declaration(contract(), "graph")
+        _, header, _ = make_fetchers([], {name: {"ss_base_model_version": "base_a"} for name in ["old", "new"]})
+
+        def old_list(*_):
+            entered.set()
+            assert release.wait(2)
+            return ["old"]
+
+        async def installed(listing, now):
+            return await ac.installed(decl, service_id="svc", origin="http://engine", list_files=listing,
+                                      read_header=header, table=TABLE, now=now)
+
+        old = asyncio.create_task(installed(old_list, 100))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            ac.reset()
+            assert (await installed(lambda *_: ["new"], 200)).loras == ("new",)
+        finally:
+            release.set()
+        await old
+        assert (await installed(lambda *_: pytest.fail("new list should be held"), 201)).loras == ("new",)
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_list_waiter_does_not_cancel_the_shared_source():
+    async def exercise():
+        entered, release = Event(), Event()
+        calls = []
+        listing, header, _ = make_fetchers(["a"], {"a": {"ss_base_model_version": "base_a"}}, calls)
+
+        def held(*args):
+            entered.set()
+            assert release.wait(2)
+            return listing(*args)
+
+        async def installed():
+            return await ac.installed(ac.declaration(contract(), "graph"), service_id="svc", origin="http://engine",
+                                      list_files=held, read_header=header, table=TABLE, now=100)
+
+        first = asyncio.create_task(installed())
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(first, 0.01)
+            second = asyncio.create_task(installed())
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        assert (await second).loras == ("a",)
+        assert len([row for row in calls if row[0] == "list"]) == 1
+
+    asyncio.run(exercise())
+
+
+def test_shipped_architecture_rows_do_not_alias_after_normalization():
+    observed = set()
+    for identifier, selectors in ac.architecture_table().items():
+        normalized = {ac._plain(value) for values in selectors.values() for value in values}
+        assert observed.isdisjoint(normalized), identifier
+        observed.update(normalized)
 
 
 # ---- receipts -------------------------------------------------------------------------------------------------------
