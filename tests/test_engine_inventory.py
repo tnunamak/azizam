@@ -1,7 +1,12 @@
 """Offline unit tests for the engine inventory behind availability listings."""
 
 import asyncio
+import json
 import unittest
+from contextlib import contextmanager, nullcontext
+from unittest.mock import patch
+
+import httpx
 
 from gateway import engine_inventory as inventory
 
@@ -82,6 +87,57 @@ class EngineInventoryTest(unittest.TestCase):
             {"engine": "ValueError"},
         )
         self.assertIs(inventory.fresh("engine", now=12), prior)
+
+    def test_transport_and_body_failures_keep_original_snapshot_until_expiry(self):
+        source = inventory.Source("https://engine.invalid/object_info")
+        cases = (
+            ("timeout", 200, (), httpx.ReadTimeout("synthetic"), "ReadTimeout"),
+            ("not-found", 404, (), None, "ValueError"),
+            ("non-json", 200, (b"<html>not JSON</html>",), None, "JSONDecodeError"),
+            ("wrong-shape", 200, (json.dumps(["not a node list"]).encode(),), None, "ValueError"),
+        )
+        for label, status, chunks, error, expected in cases:
+            with self.subTest(label=label):
+                inventory.reset()
+                self.assertEqual(inventory.refresh_all({"engine": source}, fetch=lambda _: BODY, now=10),
+                                 {"engine": None})
+                prior = inventory.fresh("engine", now=10)
+
+                class FakeClient:
+                    @contextmanager
+                    def stream(self, method, url, **_kwargs):
+                        self_test.assertEqual((method, url), ("GET", source.url))
+
+                        class Response:
+                            status_code = status
+
+                            def iter_bytes(self):
+                                if error is not None:
+                                    raise error
+                                yield from chunks
+
+                        yield Response()
+
+                self_test = self
+                with patch("gateway.engine_egress.client", return_value=nullcontext(FakeClient())) as client:
+                    result = inventory.refresh_all({"engine": source}, now=11)
+                    self.assertEqual(result, {"engine": expected})
+                    client.assert_called_once()
+                    self.assertIs(inventory.fresh("engine", now=11), prior)
+                    self.assertEqual(prior.fetched_at, 10)
+                    self.assertIsNone(inventory.fresh("engine", now=10 + inventory.MAX_AGE_S))
+                    client.assert_called_once()  # memory-only status reads do not fetch
+
+    def test_a_parser_valid_smaller_node_list_is_a_new_snapshot_not_a_partial_state(self):
+        source = inventory.Source("https://engine.invalid/object_info")
+        smaller = {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["tiny.safetensors"], {}]}}}}
+        self.assertEqual(inventory.refresh_all({"engine": source}, fetch=lambda _: BODY, now=10),
+                         {"engine": None})
+        self.assertEqual(inventory.refresh_all({"engine": source}, fetch=lambda _: smaller, now=11),
+                         {"engine": None})
+        fresh = inventory.fresh("engine", now=11)
+        self.assertEqual(fresh.fetched_at, 11)
+        self.assertEqual(fresh.model_names, ("tiny.safetensors",))
 
     def test_removed_and_moved_sources_are_forgotten(self):
         """Remove stale source identities before attempting a changed URL."""
