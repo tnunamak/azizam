@@ -155,7 +155,7 @@ GATEWAY_CODES = frozenset({
     "prompt_erasure_unavailable", "prompt_not_accessible", "prompt_retention_pending", "privacy_permission_required", "provider_auth_failed", "provider_error",
     "provider_model_list_invalid", "provider_native_paid_remote_forbidden", "provider_no_sign_in_time", "provider_not_found",
     "provider_passthrough_error", "provider_sign_out_unavailable", "provider_timeout", "provider_unavailable", "reauth_required", "receipt_retention_unavailable", "reconnect_required", "retry_required",
-    "result_refused", "reference_skipped", "reload_failed", "request_expired", "resource_admission_denied", "resource_unavailable", "same_face", "secret_needed",
+    "result_count_short", "result_refused", "reference_skipped", "reload_failed", "request_expired", "resource_admission_denied", "resource_unavailable", "same_face", "secret_needed",
     "selection_unavailable", "settings_conflict", "settings_revision_required", "shots_seconds_mismatch", "signin_unavailable",
     "stt_audio_cannot_be_split", "stt_backend_connection_lost", "stt_backend_unavailable", "stt_cancellation_capacity", "stt_chunk_attempt_failed",
     "stt_cleanup_failed", "stt_configuration_invalid", "stt_media_setup_failed", "stt_not_configured", "stt_proxy_error", "stt_request_deadline",
