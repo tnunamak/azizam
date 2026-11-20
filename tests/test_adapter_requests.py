@@ -342,7 +342,7 @@ def test_a_members_upload_goes_from_upload_to_choices_to_run_to_restart_sweep(wo
     store = Store(tmp_path)
     monkeypatch.setattr(adapter_choices, "UPLOADS", store.library)
     caller = {"person": "robin"}
-    monkeypatch.setattr(proxy, "_auth_person_id", lambda _auth: caller["person"])
+    monkeypatch.setattr(proxy._WorkflowRunPort, "person_id", lambda _self, _auth: caller["person"])    # who the key acts for
 
     # 1. the file is checked on its header, then stored under the member's own name and label
     checked = adapter_upload.validate_stream(io.BytesIO(krea), len(krea), adapter_upload.Policy(True))
