@@ -26,6 +26,17 @@ import {
 import { MediaInput } from "@/components/media-input/media-input";
 import { isMediaInput, mediaKindOf } from "@/lib/workflow-media-input";
 
+type WorkflowItemProperty = {
+  type?: string;
+  label?: string;
+  help?: string;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  default?: unknown;
+  required?: boolean;
+};
+
 export type WorkflowInput = {
   name: string;
   type: string;
@@ -37,6 +48,8 @@ export type WorkflowInput = {
   enum?: unknown[];
   minimum?: number;
   maximum?: number;
+  max_items?: number;
+  items?: { type?: string; properties?: Record<string, WorkflowItemProperty> };
   accepted?: boolean;
   ignored?: boolean;
   /** The gateway marks media inputs; their `type` is still "string". */
@@ -396,6 +409,25 @@ function WorkflowInputControl({
       : ""
   }`;
 
+  if (normalizedType(input) === "array" && !fileInput && !mediaInput) {
+    const properties = arrayProperties(input);
+    const rows = arrayRows(value);
+    return (
+      <div role="group" aria-labelledby={`${id}-label`} aria-describedby={describedBy}
+        className={`${wrapper} md:col-span-2`}>
+        {header}
+        {hintLine}
+        {properties && rows ? (
+          <WorkflowArrayRows id={id} label={text} rows={rows} properties={properties}
+            max={arrayMaximum(input)} disabled={parentDisabled} onChange={onChange}
+            outputKind={outputKind} />
+        ) : unloadedControl(id, value)}
+        {problemLine}
+        {detailLine}
+      </div>
+    );
+  }
+
   // One control per picture: a file part gets the same picker as a picture
   // sent inside the request, never a text box plus a second upload control.
   if (fileInput && onFileChange && !parentDisabled) {
@@ -474,8 +506,113 @@ const UNLOADED_INPUTS =
 // An example in a field must not read as something already typed.
 const PLACEHOLDER_CLASS = "placeholder:italic placeholder:opacity-80";
 
+function isObjectRow(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function arrayProperties(input: WorkflowInput): WorkflowInput[] | null {
+  const properties = input.items?.properties;
+  if (input.items?.type !== "object" || !isObjectRow(properties)) return null;
+  const fields: WorkflowInput[] = [];
+  for (const [name, field] of Object.entries(properties)) {
+    if (!isObjectRow(field) || !["string", "number", "integer", "boolean"].includes(field.type ?? ""))
+      return null;
+    fields.push({ ...field, name, type: field.type! });
+  }
+  return fields.length ? fields : null;
+}
+
+function arrayRows(value: unknown): JsonObject[] | null {
+  if (value == null) return [];
+  return Array.isArray(value) && value.every(isObjectRow) ? value : null;
+}
+
+function arrayMaximum(input: WorkflowInput): number | undefined {
+  const max = input.max_items;
+  return typeof max === "number" && Number.isSafeInteger(max) && max >= 0 ? max : undefined;
+}
+
+function unloadedControl(id: string, value: unknown) {
+  return (
+    <div id={id} className="space-y-1.5">
+      <p className="text-muted-foreground text-xs">{UNLOADED_INPUTS}</p>
+      <details className="text-xs">
+        <summary className="min-h-11 cursor-pointer py-3">Technical details</summary>
+        <pre className="bg-muted/40 overflow-x-auto rounded-md p-2">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+function WorkflowArrayRows({
+  id, label, rows, properties, max, disabled, onChange, outputKind,
+}: {
+  id: string;
+  label: string;
+  rows: JsonObject[];
+  properties: WorkflowInput[];
+  max?: number;
+  disabled: boolean;
+  onChange: (value: unknown) => void;
+  outputKind: OutputKind;
+}) {
+  const limit = max !== undefined && rows.length >= max;
+  const write = (next: JsonObject[]) => onChange(next.length ? next : undefined);
+  return (
+    <>
+      {rows.map((row, index) => (
+        <fieldset key={index} className="min-w-0 rounded-md border p-3">
+          <legend className="px-1 text-xs font-medium">Row {index + 1}</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {properties.map((field, position) => {
+              const fieldId = `${id}-${index + 1}-${position + 1}`;
+              const fieldLabel = inputLabel(field, outputKind);
+              return (
+                <div key={field.name} className="flex min-w-0 flex-col gap-2">
+                  <label htmlFor={fieldId}>{fieldLabel}</label>
+                  {controlFor(field, fieldId, `${fieldLabel}, row ${index + 1}`,
+                    Object.hasOwn(row, field.name) ? row[field.name] : undefined,
+                    disabled, false, (value) => {
+                      const updated = { ...row, [field.name]: value };
+                      if (value === undefined) delete updated[field.name];
+                      write(rows.map((item, i) => i === index ? updated : item));
+                    }, { touch: true, describedBy: field.help ? `${fieldId}-hint` : undefined })}
+                  {field.help && <span id={`${fieldId}-hint`} className="text-muted-foreground text-xs">{field.help}</span>}
+                </div>
+              );
+            })}
+          </div>
+          <Button type="button" variant="ghost" className="mt-2 min-h-11"
+            aria-label={`Remove ${label} row ${index + 1}`} disabled={disabled}
+            onClick={() => write(rows.filter((_, i) => i !== index))}>
+            Remove row {index + 1}
+          </Button>
+        </fieldset>
+      ))}
+      {max === 0 ? (
+        <p className="text-muted-foreground text-xs">No items are available for this model.</p>
+      ) : (
+        <>
+          <Button type="button" variant="outline" className="min-h-11 self-start"
+            aria-label={`Add ${label}`} disabled={disabled || limit}
+            aria-describedby={limit ? `${id}-limit` : undefined}
+            onClick={() => write([...rows, Object.fromEntries(properties
+              .filter((field) => field.default !== undefined)
+              .map((field) => [field.name, field.default]))])}>
+            Add {label}
+          </Button>
+          {limit && <p id={`${id}-limit`} className="text-muted-foreground text-xs">You can add up to {max} {max === 1 ? "item" : "items"}.</p>}
+        </>
+      )}
+    </>
+  );
+}
+
 type ControlExtras = {
   placeholder?: string;
+  touch?: boolean;
   invalid?: boolean;
   describedBy?: string;
 };
@@ -501,23 +638,7 @@ function controlFor(
     // Only when no picker is wired up (the page always wires one).
     return <Input id={id} disabled value="" {...aria} readOnly />;
   }
-  if (isUnsupportedValue(value)) {
-    return (
-      <div id={id} className="space-y-1.5">
-        <p className="text-muted-foreground text-xs">
-          {UNLOADED_INPUTS}
-        </p>
-        <details className="text-xs">
-          <summary className="min-h-11 cursor-pointer py-3">
-            Technical details
-          </summary>
-          <pre className="bg-muted/40 overflow-x-auto rounded-md p-2">
-            {JSON.stringify(value, null, 2)}
-          </pre>
-        </details>
-      </div>
-    );
-  }
+  if (isUnsupportedValue(value)) return unloadedControl(id, value);
   if (input.enum?.length) {
     return (
       <Select
@@ -529,7 +650,7 @@ function controlFor(
           else if (next) onChange(enumValue(input, next));
         }}
       >
-        <SelectTrigger id={id} className="w-full" {...aria}>
+        <SelectTrigger id={id} className={cn("w-full", extras.touch && "min-h-11")} {...aria}>
           <SelectValue placeholder="Choose a value" />
         </SelectTrigger>
         <SelectContent>
@@ -549,6 +670,7 @@ function controlFor(
         <Checkbox
           id={id}
           {...aria}
+          className={extras.touch ? "min-h-11 min-w-11" : undefined}
           checked={value === true}
           disabled={disabled}
           onCheckedChange={(checked) => onChange(checked === true)}
@@ -561,6 +683,7 @@ function controlFor(
             type="button"
             variant="ghost"
             size="sm"
+            className={extras.touch ? "min-h-11" : undefined}
             disabled={disabled}
             aria-label={`Clear ${label}`}
             onClick={() => onChange(undefined)}
@@ -582,7 +705,7 @@ function controlFor(
         min={input.minimum}
         max={input.maximum}
         placeholder={extras.placeholder}
-        className={PLACEHOLDER_CLASS}
+        className={cn(PLACEHOLDER_CLASS, extras.touch && "min-h-11")}
         disabled={disabled}
         value={numberDisplay(value)}
         onChange={(event) => {
@@ -598,6 +721,7 @@ function controlFor(
       rows={1}
       className={cn(
         PLACEHOLDER_CLASS,
+        extras.touch && "min-h-11",
         isShortSingleLine(String(value ?? "")) && "min-h-11 resize-none py-1 shadow-none",
         // An empty field sizes to its example instead: one line looks the same, and an example that wraps on a
         // narrow field shows its second line instead of having it cut off.
@@ -632,6 +756,27 @@ function validateWorkflowInputValue(
   mapping: WorkflowInputMapping,
 ) {
   const type = normalizedType(input);
+  if (type === "array") {
+    const properties = arrayProperties(input);
+    if (!properties) return;
+    const rows = arrayRows(value);
+    if (!rows) throw new Error(`${named(input)} must be a list of records.`);
+    const max = arrayMaximum(input);
+    if (max !== undefined && rows.length > max)
+      throw new Error(`${named(input)} allows at most ${max} items.`);
+    for (const [index, row] of rows.entries()) {
+      for (const field of properties) {
+        const entry = Object.hasOwn(row, field.name) ? row[field.name] : undefined;
+        const label = `${named(field)}, row ${index + 1}`;
+        if (entry == null || (typeof entry === "string" && !entry.trim())) {
+          if (field.required) throw new Error(`${label} is required.`);
+        } else {
+          validateWorkflowInputValue({ ...field, label }, entry, {});
+        }
+      }
+    }
+    return;
+  }
   if (input.enum && !input.enum.includes(value)) {
     // A typed request must use the values; the names say what each one means.
     const choices = input.enum.map((option) => {
