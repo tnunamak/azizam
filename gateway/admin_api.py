@@ -3389,7 +3389,7 @@ def create_admin_router(
             "enabled": rules.enabled, "max_bytes": rules.max_bytes,
             "revision": admin_store.operator_setting_revision(record),
             "label": "Let members upload their own adapters",
-        }, response_class="switch")
+        }, response_class="capped_switch")
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -3427,7 +3427,7 @@ def create_admin_router(
         except admin_store.SettingsConflictError:
             return settings_conflict()
         response = egress.plain_json_response(
-            {**record["value"], "revision": admin_store.operator_setting_revision(record)}, response_class="switch")
+            {**record["value"], "revision": admin_store.operator_setting_revision(record)}, response_class="capped_switch")
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         return response
 

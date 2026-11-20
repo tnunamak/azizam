@@ -2,7 +2,8 @@
 
 What an uploader controls is the file's bytes, its name and its size. This module reads 8 bytes, a bounded JSON header and
 the file's length. It never loads a tensor, never unpickles, and never uses the uploader's name for a path: a stored
-upload is named by the hash of its content, and so is its copy in the engine's folder.
+upload is named by a digest of the person and the content (so each person's upload is their own asset), and its copy in
+the engine's folder is named by the hash of its content.
 
 The module names no engine, model or node class. Which base a file is for comes from ``registry/adapter_architectures.yml``,
 the table, and the header test, that the operator's own files are judged by (``adapter_choices``). Where the engine's loras folder is comes from the engine directory the
@@ -352,8 +353,15 @@ def join(operator_names: Sequence[str], uploads: Sequence[Offer], architecture: 
     return chosen
 
 
+def asset_digest(person_id: str, content_digest: str) -> str:
+    """The digest in an upload's Library asset id: one per person and file. The same bytes uploaded by two people are two
+    assets, each the sole creation of its person, so the Library's ownership rule shows each to its own person and one
+    person's upload can neither hide another's nor tell them whether the file is held."""
+    return hashlib.sha256(f"adapter-upload\0{person_id}\0{_check_digest(content_digest)}".encode("utf-8")).hexdigest()
+
+
 def digest_of(name: str) -> str | None:
-    """The content digest an offered upload name carries, or None for a name that is not an upload's asset id."""
+    """The digest an upload's asset id carries, or None for a name that is not an upload's asset id."""
     match = _ASSET_ID.match(name) if isinstance(name, str) else None
     return match.group(1) if match else None
 
@@ -408,6 +416,17 @@ class Library:
         found = self._architectures_of(path)
         return None if found is None else Offer(asset_id, str(marker.get("label") or ""), found)
 
+    def _content_digest(self, asset_id: str) -> str | None:
+        marker = self._metadata(asset_id).get("adapter")
+        found = marker.get("content_sha256") if isinstance(marker, Mapping) else None
+        return found if isinstance(found, str) and _DIGEST.match(found) else None
+
+    def _content_digests(self, *, excluding: str | None = None) -> set[str]:
+        """The content digests of every stored upload (but ``excluding``), whoever owns it."""
+        found = (self._content_digest(asset_id) for asset_id in self._asset_ids()
+                 if asset_id != excluding and digest_of(asset_id) is not None)
+        return {digest for digest in found if digest is not None}
+
     def _on(self, folder: str) -> bool:
         return self._policy().enabled and self._lora_root(folder) is not None
 
@@ -448,7 +467,7 @@ class Library:
         chosen: dict[str, str] = {}
         for name in wanted:
             source = self._path(name)
-            digest = digest_of(name)
+            digest = self._content_digest(name)
             if source is None or digest is None:
                 raise UnknownAdapter(name)
             chosen[name] = copies.materialize(digest, source)
@@ -456,11 +475,14 @@ class Library:
         return chosen
 
     def forget(self, asset_id: str, metadata: Mapping[str, Any]) -> None:
-        """The asset is going: remove its copies from the folders its sidecar says it was copied to."""
-        digest = digest_of(asset_id)
+        """The asset is going: remove its copies from the folders its sidecar says it was copied to. A copy is named by the
+        file's content, so one that another person's upload of the same bytes also uses stays until that goes too."""
         marker = metadata.get("adapter") if isinstance(metadata, Mapping) else None
         copied = marker.get("copies") if isinstance(marker, Mapping) else None
-        if digest is None or not isinstance(copied, list):
+        digest = marker.get("content_sha256") if isinstance(marker, Mapping) else None
+        if not (isinstance(digest, str) and _DIGEST.match(digest) and isinstance(copied, list)):
+            return
+        if digest in self._content_digests(excluding=asset_id):
             return
         for folder in copied:
             root = self._lora_root(folder) if isinstance(folder, str) else None
@@ -473,7 +495,7 @@ class Library:
         if root is None:
             return []
         copies = Materializer(root)
-        stored = {digest_of(asset_id) for asset_id in self._asset_ids()}
+        stored = self._content_digests()
         removed = copies.reap()
         for digest in copies.digests():
             if digest not in stored:

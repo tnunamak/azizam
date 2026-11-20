@@ -16466,22 +16466,23 @@ def _note_adapter_copy(asset_id: str, folder: str) -> None:
 
 
 def _store_adapter_upload(stream: BinaryIO, checked: adapter_upload.Validated, person_id: str, label: str) -> str:
-    """Store a checked upload in the content-addressed cache for the person who sent it, streamed (not held in memory).
-    The sidecar marks it an adapter and keeps the label the person gave it; the person is its maker, so the Library's
-    own rule shows it to them and to no one else."""
+    """Store a checked upload in the cache for the person who sent it, streamed (not held in memory). Its asset id is
+    personal (``adapter_upload.asset_digest``): the person is the sole maker, so the Library's own rule shows it to them
+    and to no one else, whoever else uploads the same bytes. The sidecar marks it an adapter and keeps the label the
+    person gave it and the content digest the engine's copy is named by."""
     from gateway import private_io
-    asset_id = f"ast_{checked.digest}"
-    target = IMAGE_CACHE_DIR / f"{checked.digest}{adapter_upload.SUFFIX}"
+    digest = adapter_upload.asset_digest(person_id, checked.digest)
+    asset_id = f"ast_{digest}"
+    target = IMAGE_CACHE_DIR / f"{digest}{adapter_upload.SUFFIX}"
     private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     if not target.exists():
         private_io.atomic_copy_stream(stream, target)
     with prompt_metadata_migration.CACHE_MUTATION_LOCK:
         metadata = _read_asset_metadata(asset_id)
-        makers = set(metadata.get("maker_person_ids") or [])
-        makers.add(person_id)
         marker = dict(metadata.get("adapter") or {})
         marker["label"] = marker.get("label") or label
-        _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": sorted(makers),
+        marker["content_sha256"] = checked.digest
+        _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": [person_id],
                                          "adapter": marker, "updated_at": int(time.time())})
     return asset_id
 

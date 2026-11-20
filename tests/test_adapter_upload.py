@@ -410,12 +410,13 @@ class Store:
             table=TABLE)
 
     def add(self, person: str, data: bytes, label: str = "mine.safetensors", *, marked: bool = True) -> str:
-        digest = hashlib.sha256(data).hexdigest()
+        content = hashlib.sha256(data).hexdigest()
+        digest = adapter_upload.asset_digest(person, content)
         asset_id = f"ast_{digest}"
         (self.cache / f"{digest}{adapter_upload.SUFFIX}").write_bytes(data)
         self.sidecars.setdefault(asset_id, {})
         if marked:
-            self.sidecars[asset_id]["adapter"] = {"label": label}
+            self.sidecars[asset_id]["adapter"] = {"label": label, "content_sha256": content}
         self.holders.setdefault(asset_id, set()).add(person)
         return asset_id
 
@@ -428,11 +429,10 @@ UNKNOWN = safetensors({"u": [5]}, metadata={"ss_base_model_version": "gamma"})
 def test_a_person_is_offered_their_own_compatible_uploads(tmp_path):
     store = Store(tmp_path)
     mine = store.add("robin", ALPHA, "style.safetensors")
-    store.add("robin", BETA, "other.safetensors")
+    other = store.add("robin", BETA, "other.safetensors")
     offers = store.library.offers("robin", folder="loras")
     assert {o.name: (o.label, o.architectures) for o in offers} == {
-        mine: ("style.safetensors", ("alpha_base",)),
-        "ast_" + hashlib.sha256(BETA).hexdigest(): ("other.safetensors", ("beta_base",))}
+        mine: ("style.safetensors", ("alpha_base",)), other: ("other.safetensors", ("beta_base",))}
 
 
 def test_another_persons_upload_is_not_offered_and_is_refused_like_an_unknown_name(tmp_path):
@@ -483,10 +483,11 @@ def test_a_stored_file_whose_header_no_longer_reads_is_not_offered(tmp_path):
     assert store.library.offers("robin", folder="loras") == []
 
 
-def test_using_an_upload_copies_it_under_its_hash_and_notes_the_folder(tmp_path):
+def test_using_an_upload_copies_it_under_its_content_hash_and_notes_the_folder(tmp_path):
     store = Store(tmp_path)
     asset_id = store.add("robin", ALPHA)
-    digest = asset_id.split("_", 1)[1]
+    digest = hashlib.sha256(ALPHA).hexdigest()
+    assert digest not in asset_id           # the asset id is personal; the engine's copy is named by the content
     names = store.library.engine_names("robin", [asset_id], folder="loras")
     assert names == {asset_id: f"{adapter_upload.SUBFOLDER}/{digest}.safetensors"}
     assert (store.engine / names[asset_id]).read_bytes() == ALPHA
@@ -499,7 +500,7 @@ def test_a_deleted_asset_removes_its_copy_and_leaves_the_pick_list(tmp_path):
     asset_id = store.add("robin", ALPHA)
     names = store.library.engine_names("robin", [asset_id], folder="loras")
     # The Library's delete: the claim goes with the file, and the sidecar said where copies were made.
-    store.library.forget(asset_id, {"adapter": {"label": "x", "copies": ["loras"]}})
+    store.library.forget(asset_id, {"adapter": {**store.sidecars[asset_id]["adapter"], "copies": ["loras"]}})
     assert not (store.engine / names[asset_id]).exists()
     store.holders[asset_id].clear()
     assert store.library.offers("robin", folder="loras") == []
@@ -507,7 +508,7 @@ def test_a_deleted_asset_removes_its_copy_and_leaves_the_pick_list(tmp_path):
 
 def test_forget_leaves_a_folder_it_cannot_reach_alone(tmp_path):
     store = Store(tmp_path, local=False)
-    store.library.forget("ast_" + "7" * 64, {"adapter": {"copies": ["loras"]}})   # no error
+    store.library.forget("ast_" + "7" * 64, {"adapter": {"content_sha256": "7" * 64, "copies": ["loras"]}})   # no error
 
 
 def test_a_sweep_removes_copies_whose_asset_is_gone(tmp_path):
@@ -515,8 +516,31 @@ def test_a_sweep_removes_copies_whose_asset_is_gone(tmp_path):
     kept, gone = store.add("robin", ALPHA), store.add("robin", BETA)
     store.library.engine_names("robin", [kept, gone], folder="loras")
     del store.sidecars[gone]
-    assert store.library.sweep(folder="loras") == [gone.split("_", 1)[1]]
-    assert os.listdir(store.engine / adapter_upload.SUBFOLDER) == [f"{kept.split('_', 1)[1]}.safetensors"]
+    assert store.library.sweep(folder="loras") == [hashlib.sha256(BETA).hexdigest()]
+    assert os.listdir(store.engine / adapter_upload.SUBFOLDER) == [f"{hashlib.sha256(ALPHA).hexdigest()}.safetensors"]
+
+
+def test_the_same_bytes_from_two_people_are_two_assets_each_offered_to_its_own_person(tmp_path):
+    store = Store(tmp_path)
+    robins, sams = store.add("robin", ALPHA), store.add("sam", ALPHA)
+    assert robins != sams
+    assert [o.name for o in store.library.offers("robin", folder="loras")] == [robins]
+    assert [o.name for o in store.library.offers("sam", folder="loras")] == [sams]
+    with pytest.raises(adapter_upload.UnknownAdapter):
+        store.library.engine_names("robin", [sams], folder="loras")
+
+
+def test_a_copy_two_uploads_share_stays_until_the_last_of_them_goes(tmp_path):
+    store = Store(tmp_path)
+    robins, sams = store.add("robin", ALPHA), store.add("sam", ALPHA)
+    [copy] = store.library.engine_names("robin", [robins], folder="loras").values()
+    assert store.library.engine_names("sam", [sams], folder="loras") == {sams: copy}
+    marker = {"adapter": {**store.sidecars[robins]["adapter"], "copies": ["loras"]}}
+    store.library.forget(robins, marker)
+    del store.sidecars[robins]
+    assert (store.engine / copy).exists()                       # sam's upload still names the same content
+    store.library.forget(sams, {"adapter": {**store.sidecars[sams]["adapter"], "copies": ["loras"]}})
+    assert not (store.engine / copy).exists()
 
 
 # --- the body limit and the ceiling of the owner's cap --------------------------------------------------------------

@@ -146,17 +146,18 @@ def test_when_the_engine_is_not_on_this_computer_the_upload_is_not_offered(world
 
 # --- what is stored, and who sees it --------------------------------------------------------------------------------
 
-def test_a_valid_upload_is_a_library_asset_of_kind_adapter_named_by_its_hash(world):
+def test_a_valid_upload_is_a_library_asset_of_kind_adapter_with_a_personal_id(world):
     world.turn_on()
     response = upload(world, ALPHA, "../../etc/evil name.safetensors")
     assert response.status_code == 200
     body = response.json()
-    digest = hashlib.sha256(ALPHA).hexdigest()
+    content = hashlib.sha256(ALPHA).hexdigest()
+    digest = adapter_upload.asset_digest(world.people["robin"]["id"], content)
     assert body["id"] == f"ast_{digest}" and body["kind"] == "adapter"
     assert (body["size_bytes"], body["offered"], body["architectures"]) == (len(ALPHA), True, ["alpha_base"])
-    assert stored_files(world) == [f"{digest}.meta.json", f"{digest}.safetensors"]
+    assert stored_files(world) == sorted([f"{digest}.meta.json", f"{digest}.safetensors"])
     sidecar = json.loads((world.cache / f"{digest}.meta.json").read_text())
-    assert sidecar["adapter"]["label"] == "evil name.safetensors"
+    assert sidecar["adapter"] == {"label": "evil name.safetensors", "content_sha256": content}
     assert (world.cache / f"{digest}.safetensors").read_bytes() == ALPHA
     listed = world.client.get("/me/api/media?kind=adapter").json()["assets"]
     assert [(item["asset_id"], item["kind"]) for item in listed] == [(body["id"], "adapter")]
@@ -204,11 +205,12 @@ def test_the_copy_in_the_engine_folder_is_named_by_the_hash_and_only_made_when_u
     assert os.listdir(world.engine) == []                         # an upload alone copies nothing
     robin = world.people["robin"]["id"]
     names = proxy.ADAPTER_LIBRARY.engine_names(robin, [asset_id], folder=FOLDER)
-    digest = hashlib.sha256(ALPHA).hexdigest()
-    assert names == {asset_id: f"{adapter_upload.SUBFOLDER}/{digest}.safetensors"}
+    content = hashlib.sha256(ALPHA).hexdigest()
+    assert names == {asset_id: f"{adapter_upload.SUBFOLDER}/{content}.safetensors"}
     assert (world.engine / names[asset_id]).read_bytes() == ALPHA
     assert os.listdir(world.engine) == [adapter_upload.SUBFOLDER]
-    assert json.loads((world.cache / f"{digest}.meta.json").read_text())["adapter"]["copies"] == [FOLDER]
+    sidecar = json.loads((world.cache / f"{asset_id.split('_', 1)[1]}.meta.json").read_text())
+    assert sidecar["adapter"]["copies"] == [FOLDER]
 
 
 # --- delete ---------------------------------------------------------------------------------------------------------
@@ -235,17 +237,22 @@ def test_the_same_file_uploaded_again_after_a_delete_is_offered_again(world):
     assert [offer.name for offer in offers(world, "robin")] == [asset_id]
 
 
-def test_two_people_with_the_same_file_each_keep_their_own_claim(world):
+def test_two_people_with_the_same_file_each_have_their_own_asset_and_one_cannot_hide_the_others(world):
     world.turn_on()
-    asset_id = upload(world, ALPHA).json()["id"]
+    robins = upload(world, ALPHA).json()["id"]
     world.who["now"] = "sam"
-    assert upload(world, ALPHA).json()["id"] == asset_id
+    sams = upload(world, ALPHA).json()["id"]
+    assert robins != sams
     robin, sam = world.people["robin"]["id"], world.people["sam"]["id"]
-    [copy] = proxy.ADAPTER_LIBRARY.engine_names(sam, [asset_id], folder=FOLDER).values()
+    [copy] = proxy.ADAPTER_LIBRARY.engine_names(sam, [sams], folder=FOLDER).values()
+    assert proxy.ADAPTER_LIBRARY.engine_names(world.people["robin"]["id"], [robins], folder=FOLDER) == {robins: copy}
     world.who["now"] = "robin"
-    assert world.client.delete(f"/me/api/media/{asset_id}").json()["physical_removed"] is False
+    assert world.client.delete(f"/me/api/media/{robins}").json()["physical_removed"] is True
     assert offers(world, "robin") == []
-    assert [offer.name for offer in offers(world, "sam")] == [asset_id]
-    assert (world.engine / copy).exists()
-    assert proxy.ADAPTER_LIBRARY.resolve(robin, asset_id, folder=FOLDER) is None
-    assert proxy.ADAPTER_LIBRARY.resolve(sam, asset_id, folder=FOLDER) is not None
+    assert [offer.name for offer in offers(world, "sam")] == [sams]
+    assert (world.engine / copy).exists()                         # sam's upload is the same content, so it keeps the copy
+    assert proxy.ADAPTER_LIBRARY.resolve(robin, sams, folder=FOLDER) is None
+    assert proxy.ADAPTER_LIBRARY.resolve(sam, sams, folder=FOLDER) is not None
+    world.who["now"] = "sam"
+    world.client.delete(f"/me/api/media/{sams}")
+    assert not (world.engine / copy).exists()
