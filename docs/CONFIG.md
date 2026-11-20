@@ -344,9 +344,15 @@ before JSON body reads. A declared oversized body may receive 413 before auth.
 | `AZIZAM_REQUEST_BODY_MEDIA_BYTES` | `request_body_limits.media_bytes` | 537,919,488 bytes (513 MiB) |
 
 Environment values override the startup file. Both must be positive byte counts;
-changes apply when the gateway starts. Image, audio, video, gateway media,
+changes apply when the gateway starts. Image, audio, video, asset upload, gateway media,
 workflow and identity routes, and `/sdapi/v1` use the media limit. `/openai/v1`
 media aliases use the same limit. All other routes use the JSON limit, regardless
 of the supplied `Content-Type`. The media default leaves 1 MiB of multipart
 overhead above STT's existing 512 MiB file limit. Route-specific file and field
 limits still apply.
+
+`request_body_limits.json_bytes` is the cap on an inline image: a `data:` URI in a chat `image_url` part counts toward it,
+and base64 makes the picture a third larger than the file. To send a larger image, upload it with `POST /v1/assets`
+(multipart, media limit, images only, at most `AZIZAM_MEDIA_FETCH_MAX_BYTES`, 256 MiB by default) and put the returned id in
+`image_url.url`. The chat body then holds only the id. See "Recipe: send a large image to a vision model" in
+`LOCAL_CLIENT_RECIPES.md`.

@@ -23739,6 +23739,85 @@
         "summary": "Ollama Version"
       }
     },
+    "/openai/v1/assets": {
+      "post": {
+        "description": "Store one image for the caller and return its id, so a large picture need not ride in a JSON body.",
+        "operationId": "assets_create_openai_v1_assets_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "description": "One image. Its type is read from its bytes. The size limit is the media input limit (AZIZAM_MEDIA_FETCH_MAX_BYTES), not the JSON body limit.",
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "enum": [
+                        "gateway.asset"
+                      ],
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "object",
+                    "media_type",
+                    "size_bytes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The image is stored. Send its id as chat image_url.url instead of the image."
+          },
+          "400": {
+            "description": "No file, an empty file, or a file that is not an image."
+          },
+          "413": {
+            "description": "file_too_large: the image is over the media input limit."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Assets Create"
+      }
+    },
     "/openai/v1/assets/{asset_id}": {
       "delete": {
         "description": "Delete an asset this App (or its accountable person) made; the same work as the browser Delete.",
@@ -30967,6 +31046,85 @@
           }
         ],
         "summary": "Row:Mesh-Glb:/V1/3D/Generations/Glb"
+      }
+    },
+    "/v1/assets": {
+      "post": {
+        "description": "Store one image for the caller and return its id, so a large picture need not ride in a JSON body.",
+        "operationId": "assets_create_v1_assets_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "description": "One image. Its type is read from its bytes. The size limit is the media input limit (AZIZAM_MEDIA_FETCH_MAX_BYTES), not the JSON body limit.",
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "enum": [
+                        "gateway.asset"
+                      ],
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "object",
+                    "media_type",
+                    "size_bytes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The image is stored. Send its id as chat image_url.url instead of the image."
+          },
+          "400": {
+            "description": "No file, an empty file, or a file that is not an image."
+          },
+          "413": {
+            "description": "file_too_large: the image is over the media input limit."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Assets Create"
       }
     },
     "/v1/assets/{asset_id}": {

@@ -2399,6 +2399,20 @@
       "access": "content:creation:read"
     },
     {
+      "handler": "proxy.assets_create",
+      "method": "POST",
+      "path": "/openai/v1/assets",
+      "access": "own-account",
+      "note": "Stores one image under the caller's own owner key; it reads no one else's content."
+    },
+    {
+      "handler": "proxy.assets_create",
+      "method": "POST",
+      "path": "/v1/assets",
+      "access": "own-account",
+      "note": "Stores one image under the caller's own owner key; it reads no one else's content."
+    },
+    {
       "handler": "proxy.assets_delete",
       "method": "DELETE",
       "path": "/openai/v1/assets/{asset_id}",

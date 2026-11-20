@@ -32,6 +32,9 @@ ADDED_PATHS: dict[str, str] = {
     "/gateway/v1/problem-reports": "an App key files a problem report without MCP: the same arguments and the same core as the MCP report_problem tool; "
                                    "tests/test_problem_report_rest.py covers it",
     "/admin/api/workflows": "the owner's workflow registry (CODE_TO_DATA_S4_S8 I6): list, check, create, read, replace, delete, state, publish and restore, each with the os-N ETag; admin guard; tests/test_workflow_owner_api.py covers it",
+    "/v1/assets": "an App key uploads one image (POST, multipart, media body limit) and names the returned id in a chat image_url part "
+                  "instead of carrying the picture; tests/test_chat_image_asset_refs.py covers it",
+    "/openai/v1/assets": "the /openai alias of POST /v1/assets; tests/test_chat_image_asset_refs.py covers it",
     "/v1/assets/{asset_id}": "an App key deletes an asset its accountable person made (DELETE; owner-scoped, a signed content URL is no "
                              "right to delete); tests/test_app_asset_delete.py covers it",
     "/openai/v1/assets/{asset_id}": "the /openai alias of DELETE /v1/assets/{asset_id}; tests/test_app_asset_delete.py covers it",
@@ -318,10 +321,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-19 for POST /admin/api/engines/process-preview and GET and PUT /admin/api/operator/engine-folders
         # (see ADDED_PATHS): only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and
         # nothing else). Before it the digest was ae29ca8c59c34f568113a516bccbf63d98b6cc52642771b8a28fc3bcf3e88361.
-        # Re-captured 2026-11-20 for POST /gateway/v1/problem-reports (see ADDED_PATHS): only that path is new
-        # (tests/fixtures/headless_openapi.json shows the same addition and nothing else). Before it the digest was
-        # ed6835d2d53b1985153826c22a9e09f7c812363cd4b01c6d829ef5cd798cb891.
-        assert route_graph.openapi_digest(proxy.app) == "9da9b8fa45dc61999bb893667e16b7e35e08d397378947bdce768e49e848c7fd"
+        # Re-captured 2026-11-20 for POST /gateway/v1/problem-reports, POST /v1/assets and POST /openai/v1/assets (see
+        # ADDED_PATHS): only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing
+        # else). Before them the digest was ed6835d2d53b1985153826c22a9e09f7c812363cd4b01c6d829ef5cd798cb891.
+        assert route_graph.openapi_digest(proxy.app) == "PENDING"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.

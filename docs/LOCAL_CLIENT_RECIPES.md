@@ -1453,6 +1453,36 @@ Expected unsupported features:
   Realtime HTTP routes such as `/v1/realtime/calls`, `client_secrets`, SIP and WebRTC are not supported;
   registered HTTP compatibility routes return `unsupported_operation`.
 
+## Recipe: send a large image to a vision model
+
+An inline picture (`data:image/png;base64,...`) rides in the JSON body, and every route outside the media routes limits that
+body (`request_body_limits.json_bytes`, 32 MiB by default). A full-resolution crop can go over it, because base64 adds a
+third. Upload the picture once, then name it by id:
+
+```bash
+# 1. Upload. This route has the media body limit; the image limit is AZIZAM_MEDIA_FETCH_MAX_BYTES (256 MiB by default).
+curl -s "$AZIZAM_BASE_URL/v1/assets" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
+  -F "file=@crop.png"
+# {"id":"img_<64 hex digits>","object":"gateway.asset","media_type":"image/png","size_bytes":4812331}
+
+# 2. Reference the id where the picture would go. The request body stays a few hundred bytes.
+curl -s "$AZIZAM_BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"'"$AZIZAM_MODEL"'","messages":[{"role":"user","content":[
+        {"type":"text","text":"Is the text in this crop legible?"},
+        {"type":"image_url","image_url":{"url":"img_<64 hex digits>"}}]}]}'
+```
+
+The gateway reads the stored image and sends the engine a data URI, so no engine changes. Only a caller that may read the asset
+in the Library (the same owner check as `DELETE /v1/assets/{id}`) can use its id. An id that is unknown, or not readable by the caller,
+answers HTTP 400 with `code: asset_missing` and `param` naming the part (`messages[0].content[1].image_url.url`). A value
+with no `:` and no `/` that is not an id answers `invalid_image_url`. An id of a file that is not an image answers
+`invalid_image_format`. Any `image_url.url` that is an address (`https://...`) or a data URI is passed on as before.
+
+Images made by the gateway (`img_...` ids from image generation) can be referenced the same way. Delete an uploaded image
+with `DELETE /v1/assets/{id}`. The reference is read on `POST /v1/chat/completions` and its `/openai/v1` alias.
+
 ## Recipe: MCP clients (ChatGPT, Claude.ai, Claude Code, Cursor, Pi, Codex)
 
 The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three media tools, so an

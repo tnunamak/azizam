@@ -359,6 +359,16 @@ records:
         mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
         alias: /openai/v1/assets/{asset_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+      - methods: [POST]
+        translator: identity
+        intent: assets.create
+        canonical: /v1/assets
+        mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
+      - methods: [POST]
+        translator: identity
+        intent: assets.create
+        canonical: /openai/v1/assets
+        mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
       - methods: [DELETE]
         translator: identity
         intent: assets.delete

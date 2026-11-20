@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 
 _MIB = 1024 * 1024
 _MEDIA_PREFIXES = (
-    "/v1/images", "/v1/audio", "/v1/videos",
+    "/v1/images", "/v1/audio", "/v1/videos", "/v1/assets",
     "/gateway/v1/media", "/gateway/v1/workflows", "/gateway/v1/images", "/gateway/v1/faces",
     "/sdapi/v1",
 )
