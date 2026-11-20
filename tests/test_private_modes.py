@@ -123,8 +123,30 @@ def test_private_directory_creation_tolerates_a_concurrent_winner(monkeypatch, t
     assert mode(target) == 0o700
 
 
-def test_atomic_copy_closes_stage_fd_when_source_open_fails(monkeypatch, tmp_path, permissive_umask) -> None:
+def test_atomic_copy_stages_nothing_when_source_open_fails(monkeypatch, tmp_path, permissive_umask) -> None:
+    # Train 102 opens the source first (atomic_copy_stream takes an open stream), so a missing source
+    # never reaches the stage: no descriptor to leak, no directory made, no temporary file left behind.
     source = tmp_path / "missing-source"
+    target = tmp_path / "copy" / "target"
+    staged = []
+    mkstemp = private_io.tempfile.mkstemp
+
+    def track_fd(*args, **kwargs):
+        staged.append(mkstemp(*args, **kwargs))
+        return staged[-1]
+
+    monkeypatch.setattr(private_io.tempfile, "mkstemp", track_fd)
+    with pytest.raises(FileNotFoundError):
+        private_io.atomic_copy_file(source, target)
+    assert staged == []
+    assert not target.parent.exists()
+
+
+def test_atomic_copy_closes_stage_fd_when_the_source_stream_fails(monkeypatch, tmp_path, permissive_umask) -> None:
+    class BrokenSource:
+        def seek(self, _offset):
+            raise OSError("source stream failed")
+
     target = tmp_path / "copy" / "target"
     mkstemp = private_io.tempfile.mkstemp
     staged_fds = []
@@ -135,8 +157,8 @@ def test_atomic_copy_closes_stage_fd_when_source_open_fails(monkeypatch, tmp_pat
         return fd, name
 
     monkeypatch.setattr(private_io.tempfile, "mkstemp", track_fd)
-    with pytest.raises(FileNotFoundError):
-        private_io.atomic_copy_file(source, target)
+    with pytest.raises(OSError, match="source stream failed"):
+        private_io.atomic_copy_stream(BrokenSource(), target)
     assert len(staged_fds) == 1
     with pytest.raises(OSError):
         os.fstat(staged_fds[0])

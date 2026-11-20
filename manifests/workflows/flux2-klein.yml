@@ -53,6 +53,7 @@ inputs:
     default: simple
   guidance:
     label: prompt guidance
+    help: Higher follows your words more closely.
     type: number
     minimum: 0
     maximum: 20
