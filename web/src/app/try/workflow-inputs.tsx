@@ -626,7 +626,7 @@ function WorkflowArrayRows({
         </fieldset>
       ))}
       {max === 0 ? (
-        <p className="text-muted-foreground text-xs">No items are available for this model.</p>
+        <p className="text-muted-foreground text-xs">No items are available.</p>
       ) : (
         <>
           <Button type="button" variant="outline" className="min-h-11 self-start"
@@ -636,9 +636,9 @@ function WorkflowArrayRows({
             Add {label}
           </Button>
           {limit && <p id={`${id}-limit`} className="text-muted-foreground text-xs">You can add up to {max} {max === 1 ? "item" : "items"}.</p>}
-        </div>
+        </>
       )}
-    </>
+    </div>
   );
 }
 

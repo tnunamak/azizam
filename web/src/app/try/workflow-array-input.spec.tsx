@@ -39,7 +39,7 @@ vi.mock("@/components/ui/select", async () => {
       return createElement("button", { ...props, role: "combobox" });
     },
     SelectValue: ({ placeholder }: { placeholder: string }) => createElement("span", null, placeholder),
-    SelectContent: () => null,
+    SelectContent: ({ children }: { children?: React.ReactNode }) => createElement("div", null, children),
     SelectItem: (props: { value?: string; children?: unknown }) => {
       controls.options.push({ value: props.value ?? "", label: String(props.children ?? "") });
       return null;
@@ -130,7 +130,7 @@ it("disables Add at the maximum and names the second row", () => {
 });
 
 it("does not offer Add when no items are available for this model", () => {
-  expect(view({ ...array, max_items: 0 }).render()).toContain("No items are available for this model.");
+  expect(view({ ...array, max_items: 0 }).render()).toContain("No items are available.");
   expect(controls.buttons.has("Add Styles")).toBe(false);
 });
 
