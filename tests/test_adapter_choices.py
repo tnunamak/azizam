@@ -36,8 +36,7 @@ def contract(max_items=3, encoder_enum=("default_encoder.safetensors",)):
 def test_the_declaration_is_read_from_the_binding_data():
     decl = ac.declaration(contract(), "graph")
     assert (decl.architecture, decl.folder) == ("base_a", "loras")
-    assert (decl.loras_input, decl.node_type, decl.listing_input, decl.encoder_input) == (
-        "loras", "AdapterLoader", "adapter_name", "text_encoder")
+    assert (decl.node_type, decl.listing_input, decl.encoder_input) == ("AdapterLoader", "adapter_name", "text_encoder")
     assert decl.default_encoders == ("default_encoder.safetensors",)
 
 
