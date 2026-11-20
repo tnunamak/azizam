@@ -516,6 +516,11 @@ binding_edits:
     operation: add
     value: [{"node": "2", "input": "clip_name"}]
     reason: "Per-request adapter inputs: a list of installed style adapters chained onto the sampler's model edge and an approved text-encoder choice; the old binding had no entry."
+  - workflow: image.generate.flux2-klein
+    path: [comfyui, requires]
+    operation: add
+    value: {"custom_nodes": ["RMBG"], "models": [{"role": "diffusion_model", "path": "unet/flux-2-klein-9b-Q8_0.gguf"}, {"role": "text_encoder", "path": "text_encoders/qwen_3_8b_fp8mixed.safetensors"}, {"role": "vae", "path": "vae/flux2-vae.safetensors"}]}
+    reason: "Base Klein lists the custom node and model files its graph loads, as Klein SNOFS already does; the old binding had no entry."
   - workflow: image.generate.flux2-klein-snofs
     path: [comfyui, adapter_architecture]
     operation: add

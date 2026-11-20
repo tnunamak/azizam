@@ -2186,7 +2186,7 @@
     {
       "after": {
         "label": "Generation method",
-        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "help": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
         "choices_from": {
           "node_type": "KSampler",
           "input": "sampler_name"
@@ -2345,7 +2345,7 @@
     {
       "after": {
         "label": "text encoder",
-        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "help": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
         "type": "string",
         "enum": [
           "qwen_3_8b_fp8mixed.safetensors"
@@ -2453,7 +2453,7 @@
     {
       "after": {
         "label": "Generation method",
-        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "help": "How the model builds the picture. It changes fine detail and texture. Keep the default unless comparing methods.",
         "choices_from": {
           "node_type": "KSampler",
           "input": "sampler_name"
@@ -2612,7 +2612,7 @@
     {
       "after": {
         "label": "text encoder",
-        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "help": "The model that reads your words. Another one changes how they are understood. Leave empty for the usual one.",
         "type": "string",
         "enum": [
           "qwen_3_8b_fp8mixed.safetensors"
@@ -2692,6 +2692,16 @@
       "path": [
         "inputs",
         "guidance",
+        "help"
+      ]
+    },
+    {
+      "after": "How strongly the uncensoring adapter affects the picture. 1.0 is the usual setting.",
+      "before": "How strongly the added style applies. 1.0 is the usual setting.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "lora_strength",
         "help"
       ]
     }
