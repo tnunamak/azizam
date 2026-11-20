@@ -110,6 +110,16 @@ def test_a_run_that_names_no_adapter_reads_nothing_from_the_engine_about_files(w
     assert engine_files.listed == 0 and engine_files.headers_read == 0
 
 
+def test_a_run_with_no_adapter_and_the_manifests_own_encoder_reads_no_file_list(world, engine_files):
+    """Try sends an empty pick and the manifest's encoder; an engine that cannot list its files must not block that run."""
+    serve(world)
+    engine_files.listing_fails = True
+    encoder = manifest_of(WORKFLOW)["inputs"]["text_encoder"]["enum"][0]
+    response = run(WORKFLOW, {"prompt": "x", "loras": [], "text_encoder": encoder})
+    assert response.status_code == 200, response.text
+    assert engine_files.listed == 0
+
+
 def test_a_workflow_that_takes_no_adapters_keeps_the_unknown_input_refusal(world):
     serve(world, PLAIN_WORKFLOW)
     response = run(PLAIN_WORKFLOW, {"prompt": "x", "loras": [{"name": "example_style_v1.safetensors"}]})
@@ -167,6 +177,21 @@ def test_the_image_route_reads_no_file_list_for_a_request_with_no_adapter_fields
     graph, response, receipt = image_call({})
     assert response is None and engine_files.listed == 0
     assert "adapters" not in receipt.metadata
+
+
+def test_the_image_route_with_no_adapter_and_the_manifests_own_encoder_reads_no_file_list(engine_files):
+    engine_files.listing_fails = True
+    encoder = manifest_of(WORKFLOW)["inputs"]["text_encoder"]["enum"][0]
+    graph, response, receipt = image_call({"loras": [], "text_encoder": encoder})
+    assert response is None, response and response.body
+    assert engine_files.listed == 0
+    assert receipt.metadata["adapters"]["text_encoder"] == encoder
+
+
+def test_the_image_route_refuses_an_encoder_the_manifest_does_not_list_with_a_422(engine_files):
+    graph, response, _ = image_call({"text_encoder": "not_listed_encoder.safetensors"})
+    assert graph is None and response is not None and response.status_code == 422
+    assert engine_files.listed == 0
 
 
 def test_the_image_route_keeps_the_unknown_input_refusal_for_a_workflow_without_adapters():
