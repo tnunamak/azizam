@@ -141,7 +141,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
 
     async def audio(self, **parameters):
         cfg = {"default_duration": 8, "min_seconds": 1, "max_seconds": 30}
-        workflow = {"1": {"inputs": {"seed": 0, "duration": 8}}}
+        workflow = {"1": {"inputs": {"text": "", "seed": 0, "duration": 8}}}
         manifest = audio_manifest("test-audio", {"prompt": [("1", "text")], "seed": [("1", "seed")],
                                                  "duration": [("1", "duration")]},
                                  result=("1", "audio"))

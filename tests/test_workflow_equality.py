@@ -123,7 +123,7 @@ def paths(result: eq.Result) -> list[tuple[str, str, str]]:
 def test_the_bundled_bindings_are_the_converters_edits_of_the_old_ones_and_the_named_edits(trees, tmp_path):
     result = run(trees["before_v1"], trees["same"], tmp_path, checks=("binding_content",))
     assert result.ok, [d.line() for d in result.unexplained]
-    assert result.compared == {"binding_content": 39}  # 38 bundled workflows and the demo package's
+    assert result.compared == {"binding_content": 40}  # 39 bundled workflows and the demo package's
 
 
 
@@ -187,7 +187,7 @@ def test_control_a_changed_target_in_a_template_workflow_changes_the_compiled_re
 
     def retarget(document: dict) -> None:
         mapping = document["bindings"]["comfyui"]["map"]["steps"][0]
-        mapping["input"] = "not_steps"
+        mapping["input"] = "denoise"  # an input the node has: a missing one is refused
 
     edit(changed, "krea2-turbo.yml", retarget)
     result = run(trees["same"], changed, tmp_path_factory.mktemp("scratch"), checks=("requests",))

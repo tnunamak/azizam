@@ -329,6 +329,12 @@
         "video.generate",
         "comfyui",
         null,
+        "video.generate.minimax-h3-i2v-hires"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
         "video.generate.minimax-h3-keyframes"
       ],
       [
@@ -1449,6 +1455,12 @@
         "video.generate",
         "comfyui",
         null,
+        "video.generate.minimax-h3-i2v-hires"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
         "video.generate.minimax-h3-keyframes"
       ],
       [
@@ -1794,6 +1806,12 @@
         "comfyui",
         null,
         "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v-hires"
       ],
       [
         "video.generate",
@@ -2268,6 +2286,12 @@
         "video.generate",
         "comfyui",
         null,
+        "video.generate.minimax-h3-i2v-hires"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
         "video.generate.minimax-h3-keyframes"
       ],
       [
@@ -2355,6 +2379,12 @@
         "comfyui",
         null,
         "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v-hires"
       ],
       [
         "video.generate",
@@ -2454,6 +2484,12 @@
         "video.generate",
         "comfyui",
         null,
+        "video.generate.minimax-h3-i2v-hires"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
         "video.generate.minimax-h3-keyframes"
       ],
       [
@@ -2541,6 +2577,12 @@
         "comfyui",
         null,
         "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v-hires"
       ],
       [
         "video.generate",
@@ -2918,8 +2960,8 @@
   ],
   "catalog_counts": {
     "aliases": 3,
-    "capabilities": 58,
-    "models": 48
+    "capabilities": 59,
+    "models": 49
   },
   "catalog_models": [
     {
@@ -7225,6 +7267,107 @@
       "sha256": "3aa30480fe420f3694b4fab95801a138d77244ecdb744d456c004de7c201913b"
     },
     {
+      "bytes": 2317,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "video",
+            "icon_key": "video",
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "intent": "video.generate",
+            "label": "Video",
+            "output_modalities": [
+              "video"
+            ],
+            "streaming": false
+          }
+        ],
+        "capability": "video",
+        "capability_title": "Video",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "Video from a prompt or image.",
+        "display_name": "MiniMax H3 I2V Hi-Res (uncensored)",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": {
+              "model": "video.generate.minimax-h3-i2v-hires",
+              "prompt": "A kite above a beach"
+            },
+            "kind": "video"
+          }
+        ],
+        "icon_key": "video",
+        "id": "video.generate.minimax-h3-i2v-hires",
+        "io": {
+          "input": [
+            "image",
+            "text"
+          ],
+          "output": [
+            "video"
+          ]
+        },
+        "locality": "unknown",
+        "name": "MiniMax H3 I2V Hi-Res (uncensored)",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "comfyui",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "MiniMax H3 I2V Hi-Res (uncensored)",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "MiniMax H3 I2V Hi-Res (uncensored)",
+        "use": {
+          "curl": "curl $AZIZAM_BASE/v1/videos -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"video.generate.minimax-h3-i2v-hires\",\"prompt\":\"A kite above a beach\"}'",
+          "javascript": {
+            "model": "video.generate.minimax-h3-i2v-hires",
+            "path": "/v1/videos"
+          },
+          "model": "video.generate.minimax-h3-i2v-hires",
+          "path": "/v1/videos",
+          "python": {
+            "model": "video.generate.minimax-h3-i2v-hires",
+            "path": "/v1/videos"
+          }
+        },
+        "use_names": [
+          "video.generate.minimax-h3-i2v-hires"
+        ],
+        "workflow": "video.generate.minimax-h3-i2v-hires"
+      },
+      "id": "video.generate.minimax-h3-i2v-hires",
+      "sha256": "8fb760e30c3717eeb67b8715cc24f6cf194774ca1339e05eb8bba0244ed91d5b"
+    },
+    {
       "bytes": 2261,
       "full": {
         "alias": false,
@@ -8395,6 +8538,12 @@
       "comfyui",
       null,
       "video.generate.minimax-h3-i2v"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.minimax-h3-i2v-hires"
     ],
     [
       "video.generate",

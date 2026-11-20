@@ -3455,6 +3455,120 @@
       }
     ]
   ],
+  "video.generate.minimax-h3-i2v-hires async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-i2v-hires sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
   "video.generate.minimax-h3-keyframes async": [
     [
       "prompt",

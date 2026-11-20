@@ -60,7 +60,7 @@ DEMO = "image.generate.test-demo-package"
 def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_demo_package_and_nothing_else():
     bundled = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in BUNDLED.glob("*.yml")}
     policy = release_policy()
-    assert set(policy) == bundled and len(policy) == 38   # the demo package's row is a package row: not a bundled workflow's
+    assert set(policy) == bundled and len(policy) == 39   # the demo package's row is a package row: not a bundled workflow's
     assert {facts.exposure for facts in policy.values()} == {"default"}
     # Only the two image-to-3D records carry a ``selection_rank``: their first-choice order (docs/design/MESH_WORKFLOW_SELECTION.md).
     assert {(facts.trust_tier, facts.resource_tier) for facts in policy.values()} == {("stable", "batch")}

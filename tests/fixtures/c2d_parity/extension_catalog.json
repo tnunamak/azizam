@@ -1015,6 +1015,10 @@
                       "id": "video.generate.minimax-h3-i2v"
                     },
                     {
+                      "controls": [],
+                      "id": "video.generate.minimax-h3-i2v-hires"
+                    },
+                    {
                       "controls": [
                         "frames",
                         "last_frame",
@@ -1459,6 +1463,10 @@
                       "id": "video.generate.minimax-h3-i2v"
                     },
                     {
+                      "controls": [],
+                      "id": "video.generate.minimax-h3-i2v-hires"
+                    },
+                    {
                       "controls": [
                         "frames",
                         "last_frame",
@@ -1901,6 +1909,10 @@
                         "steps"
                       ],
                       "id": "video.generate.minimax-h3-i2v"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.minimax-h3-i2v-hires"
                     },
                     {
                       "controls": [

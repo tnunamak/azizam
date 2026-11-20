@@ -369,7 +369,7 @@ def test_a_frontend_row_keeps_selects_as_written_and_refuses_a_bad_selector():
 
 def test_the_release_files_build_one_snapshot_whose_digest_is_stable():
     release = rs.bundled_release()
-    assert len(release.workflows) == 38 and release.frontends
+    assert len(release.workflows) == 39 and release.frontends
     first = rs.build({}, release, generation=1)
     assert rs.build({}, release, generation=1).digest == first.digest
     assert all(not e.needs_configuration and e.published for e in first.workflows.values())
@@ -388,7 +388,7 @@ def test_load_current_reads_the_stored_document_and_uses_its_generation_as_the_r
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     first = rs.load_current(path)
-    assert first.revision == 0 and len(first.workflows) == 38
+    assert first.revision == 0 and len(first.workflows) == 39
     written = admin_store.get_service_registry_with_generation(path=path)
     value = dict(written["value"]) if written else {"services": {}}
     result = admin_store.write_service_registry(value, expected_generation=written["operator_settings_generation"] if written else 0, path=path)

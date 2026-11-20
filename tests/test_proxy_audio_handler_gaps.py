@@ -201,7 +201,7 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
             fake = self.fakes.loopback(loaded) if wire else self.fakes.asgi(loaded)
             host = fake.base_url
         clients = self.fakes.track_clients(proxy)
-        workflow = {"1": {"inputs": {}}}
+        workflow = {"1": {"inputs": {"text": ""}}}
         with ExitStack() as stack:
             replacements = {
                 "_dispatch_admission_response": lambda *a, **kw: None,

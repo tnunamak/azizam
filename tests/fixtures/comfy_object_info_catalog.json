@@ -4357,6 +4357,74 @@
   "python_module": "comfy_extras.nodes_minimax_h3",
   "search_aliases": null
  },
+ "MiniMaxH3LatentUpscaleWithModel": {
+  "api_node": false,
+  "category": "model/latent/minimax",
+  "deprecated": false,
+  "description": "Resizes the video of a MiniMax H3 latent with a latent upscale model; audio passes through unchanged.",
+  "dev_only": false,
+  "display_name": "MiniMax H3 Latent Upscale With Model",
+  "essentials_category": null,
+  "experimental": false,
+  "has_intermediate_output": false,
+  "input": {
+   "required": {
+    "height": [
+     "INT",
+     {
+      "default": 1440,
+      "max": 16384,
+      "min": 32,
+      "step": 32
+     }
+    ],
+    "model": [
+     "LATENT_UPSCALE_MODEL",
+     {}
+    ],
+    "samples": [
+     "LATENT",
+     {}
+    ],
+    "width": [
+     "INT",
+     {
+      "default": 2560,
+      "max": 16384,
+      "min": 32,
+      "step": 32
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "model",
+    "samples",
+    "width",
+    "height"
+   ]
+  },
+  "is_input_list": false,
+  "name": "MiniMaxH3LatentUpscaleWithModel",
+  "output": [
+   "LATENT"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_matchtypes": null,
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false,
+  "output_tooltips": [
+   null
+  ],
+  "price_badge": null,
+  "python_module": "comfy_extras.nodes_minimax_h3",
+  "search_aliases": null
+ },
  "MiniMaxH3MotionContextTrim": {
   "category": "conditioning/minimax",
   "description": "Remove the leading pinned frames from a decoded H3 clip, trimming picture and sound by the same duration.",
@@ -4430,6 +4498,72 @@
   "output_node": false,
   "python_module": "custom_nodes.ComfyUI-H3-Motion-Context",
   "search_aliases": []
+ },
+ "MiniMaxH3SigmaShift": {
+  "api_node": false,
+  "category": "model/patch/minimax",
+  "deprecated": false,
+  "description": "Set the video/audio flow shifts.",
+  "dev_only": false,
+  "display_name": "ModelSamplingMiniMaxH3",
+  "essentials_category": null,
+  "experimental": false,
+  "has_intermediate_output": false,
+  "input": {
+   "required": {
+    "model": [
+     "MODEL",
+     {}
+    ],
+    "shift_audio": [
+     "FLOAT",
+     {
+      "default": 3.0,
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01
+     }
+    ],
+    "shift_video": [
+     "FLOAT",
+     {
+      "default": 12.0,
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "model",
+    "shift_video",
+    "shift_audio"
+   ]
+  },
+  "is_input_list": false,
+  "name": "MiniMaxH3SigmaShift",
+  "output": [
+   "MODEL"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_matchtypes": null,
+  "output_name": [
+   "MODEL"
+  ],
+  "output_node": false,
+  "output_tooltips": [
+   null
+  ],
+  "price_badge": null,
+  "python_module": "comfy_extras.nodes_minimax_h3",
+  "search_aliases": [
+   "sigma shift",
+   "minimax shift"
+  ]
  },
  "ModelSamplingAuraFlow": {
   "category": "model/patch",

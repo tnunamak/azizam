@@ -8,7 +8,8 @@
     "_submit_video_chain": "ecc019fa2fca6098d18be2e60928a2a5b84e9df8679d2a1e45a21a443b77ff76",
     "_legacy_video_create": "452528cecfcedb851e54ce366f8409d15b57cabfa512d79b6b118b520bbf108f",
     "_chain_policy_denial": "de65144d06f320ecab115770ef21ed4b499193701dd98832b83026b62897ebc2",
-    "_policy_denied_response": "63addf99d0854363e156272bc8cfbfd12091b98ec6e0214f401a4b27b423962f"
+    "_policy_denied_response": "63addf99d0854363e156272bc8cfbfd12091b98ec6e0214f401a4b27b423962f",
+    "_load_video_workflow_file": "f9dc59593553493e98c1c1a6c767e53559e4c9415e00a7b4c4aedd48cd927022"
   },
   "grid_sha256": "27ff3458d1c3f59aac16698c5d434f70c250656b1a35052d79393ba5338b1d98",
   "unchanged_proxy_helpers": {
@@ -73,7 +74,6 @@
     "_json_error": "56c72e2a38211ba646b1db72df3a737869ce907e101e89aacb4afce3872dcfef",
     "_load_completed_video_bytes": "ada163e1df0e339a36bd1617813584642aeaf0922bb944dca182d003ce5678b8",
     "_load_ui_workflow": "3411939fc2fdd3f4af5408f255967fd5f6e3764c1ac53c9acfc58d148358224c",
-    "_load_video_workflow_file": "f9dc59593553493e98c1c1a6c767e53559e4c9415e00a7b4c4aedd48cd927022",
     "_mcp_identity_for_person": "9da1b27dcfaee0e3f325b4dc281af9858878f2d61fe35025cb6805ba8514163d",
     "_media_input_destination": "177bb6ee4c55d7674bc97294c390c65082cfa22e27e1b02624ccf6511186e2ed",
     "_media_input_resolver": "32aae6f5eb3b3f917a91f7fe052c5af7060cbd75516eac6d61525ffdb505b632",
