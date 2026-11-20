@@ -133,6 +133,20 @@ class RefusalTests(SttCase):
         return self.use_upstream(lambda _request: httpx.Response(200, json=payload))
 
 
+class VerboseJsonShapePredicateTests(unittest.TestCase):
+    def test_verbose_json_requires_an_object_with_segments(self) -> None:
+        fields = [("response_format", "verbose_json")]
+        for payload in (None, "hello", []):
+            with self.subTest(payload=payload):
+                self.assertTrue(stt_declared_options.verbose_json_missing_segments(fields, payload))
+        self.assertFalse(stt_declared_options.verbose_json_missing_segments(fields, {"segments": []}))
+
+    def test_other_formats_do_not_require_segments(self) -> None:
+        for payload in (None, "hello", []):
+            with self.subTest(payload=payload):
+                self.assertFalse(stt_declared_options.verbose_json_missing_segments([("response_format", "json")], payload))
+
+
 class VerboseJsonBackstopTests(SttCase):
     def _reply(self, payload: dict):
         return self.use_upstream(lambda _request: httpx.Response(200, json=payload))
