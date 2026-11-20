@@ -33,7 +33,7 @@ describe("availability reason copy", () => {
 
   it("suggests retrying only while a gateway availability reason is transitioning", () => {
     const retryReasons = gatewayReasons.filter((code) =>
-      /try again/i.test(availabilityReason("unavailable", code))
+      /try again/i.test(availabilityReason("unavailable", code) ?? "")
     );
     expect(retryReasons).toEqual(["engine_transitioning"]);
   });
