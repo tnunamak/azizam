@@ -243,6 +243,26 @@ def test_the_same_file_uploaded_again_after_a_delete_is_offered_again(world):
     assert [offer.name for offer in offers(world, "robin")] == [asset_id]
 
 
+def test_repeated_upload_keeps_one_asset_file_and_one_offer(world):
+    world.turn_on()
+    first = upload(world, ALPHA)
+    repeated = upload(world, ALPHA)
+    assert (first.status_code, repeated.status_code) == (200, 200)
+    asset_id = first.json()["id"]
+    assert repeated.json()["id"] == asset_id
+    digest = adapter_upload.asset_digest(world.people["robin"]["id"], hashlib.sha256(ALPHA).hexdigest())
+    assert stored_files(world) == sorted([f"{digest}.meta.json", f"{digest}.safetensors"])
+    assert [offer.name for offer in offers(world, "robin")] == [asset_id]
+
+
+@pytest.mark.parametrize("retry", [False, True], ids=["clean-refusal", "same-file-retry"])
+def test_adapter_store_write_failure_cleanup_and_retry(world, retry):
+    pytest.skip(
+        "Missing fault seam inside proxy._store_adapter_upload: the fixture captures the whole store "
+        "callback; need its internal file-write step after staging and before commit to exercise cleanup."
+    )
+
+
 def test_two_people_with_the_same_file_each_have_their_own_asset_and_one_cannot_hide_the_others(world):
     world.turn_on()
     robins = upload(world, ALPHA).json()["id"]
