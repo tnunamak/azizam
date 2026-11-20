@@ -1105,3 +1105,24 @@ def _dispatch_admission_response(
     )
     return _gateway_refusal(Response(content=json.dumps(advised.body), status_code=advised.status_code,
                                      media_type="application/json", headers=dict(advised.headers)), "capacity")
+
+
+# Frozen from main 3f0e89ac2: train 101 stamps the availability reason onto the compatibility error.
+def model_compatibility_error(error: "str | Exception") -> Response:
+    code = getattr(error, "code", None)
+    status_code = 503 if code in ("model_not_deployed", "alias_not_configured") else 404 if code == "model_not_found" else 400
+    body: dict[str, Any] = {
+        "message": str(error),
+        "type": "service_unavailable" if status_code == 503 else "invalid_request_error",
+    }
+    if code:
+        body["param"] = "model"
+        body["code"] = code
+    details = getattr(error, "details", None)
+    if details:
+        body["details"] = details
+    return Response(
+        content=json.dumps({"error": body}),
+        status_code=status_code,
+        media_type="application/json",
+    )

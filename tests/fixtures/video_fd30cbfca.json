@@ -11,7 +11,8 @@
     "_policy_denied_response": "63addf99d0854363e156272bc8cfbfd12091b98ec6e0214f401a4b27b423962f",
     "_load_video_workflow_file": "f9dc59593553493e98c1c1a6c767e53559e4c9415e00a7b4c4aedd48cd927022",
     "_service_availability_response": "d739860bc4f13110f59e0817071ac7d9155341ff58229d7561f6bc033773c245",
-    "_dispatch_admission_response": "c2b606888653f69715b5664d88a52bf69ff54102bb51b318e09626590c708a54"
+    "_dispatch_admission_response": "c2b606888653f69715b5664d88a52bf69ff54102bb51b318e09626590c708a54",
+    "model_compatibility_error": "839573be84f80b51050bdb7c9577cdcaef9352b5772f4f52a6aad6aa1bfe5602"
   },
   "grid_sha256": "27ff3458d1c3f59aac16698c5d434f70c250656b1a35052d79393ba5338b1d98",
   "unchanged_proxy_helpers": {
@@ -184,7 +185,6 @@
     "model_compat_aliases": "9edcd146c0c796b77c0d992333975f776f9efac766535912688e3766bdc368c3",
     "model_compat_defaults": "1c6d296d80c6928d88dd5bf4f119157aaef83bce384c250da996159249e28207",
     "model_compat_enabled": "8d6524edca54399c968fd1e0df6e8e57bb58ff427f64cf23b1ff0fbf9c762d49",
-    "model_compatibility_error": "839573be84f80b51050bdb7c9577cdcaef9352b5772f4f52a6aad6aa1bfe5602",
     "normalize_model_id": "3e3d86b73383b107c66afc63794793a0c427cc46d030d685f8fa407088198161",
     "openai_model_aliases_file": "ff4267b7fc9c70f6b2bb2f86296800bc0f748fdee1521acbd6a4f3b1c401ff2f",
     "proxy_graph_video_status": "68eb7d2932a39dd365806c85bd2427dc65e4e5228578879aa2cb5894fd4f4d1c",
