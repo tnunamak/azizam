@@ -21,6 +21,7 @@ REASONS: dict[str, str] = {
     "service_disabled": "The owner turned off the service that runs this model.",
     "service_maintenance": "The owner took the service out of use for now (maintenance or draining).",
     "health_unknown": "The gateway has no recent health reading for the service.",
+    "required_file_missing": "A model file or custom node the workflow declares is not on its engine.",
 }
 
 # The delay a refusal and the list give for an operator override that sets none.
