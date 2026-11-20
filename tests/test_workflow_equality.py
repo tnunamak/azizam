@@ -187,7 +187,7 @@ def test_control_a_changed_target_in_a_template_workflow_changes_the_compiled_re
 
     def retarget(document: dict) -> None:
         mapping = document["bindings"]["comfyui"]["map"]["steps"][0]
-        mapping["input"] = "not_steps"
+        mapping["input"] = "denoise"  # an input the node has: a missing one is refused
 
     edit(changed, "krea2-turbo.yml", retarget)
     result = run(trees["same"], changed, tmp_path_factory.mktemp("scratch"), checks=("requests",))
