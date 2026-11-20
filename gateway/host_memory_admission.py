@@ -88,6 +88,18 @@ def _engine_roots(directory: str, models_folder: str, extra_file: str) -> list[s
     return roots
 
 
+def engine_models_dir(environ: Mapping[str, str] | None = None) -> Path | None:
+    """The models folder of the engine directory the registry file names, or None when no engine directory is set or the
+    folder is missing. It is a folder on this computer: an engine on another computer has no directory here."""
+    env = os.environ if environ is None else environ
+    document = safe_load_strict(_DECLARATION.read_text(encoding="utf-8"))
+    engine_dir = env.get(str(document["engine_dir_env"]))
+    if not engine_dir:
+        return None
+    models = Path(engine_dir) / str(document["engine_models_folder"])
+    return models if models.is_dir() else None
+
+
 def load_policy(environ: Mapping[str, str] | None = None) -> HostMemoryPolicy:
     env = os.environ if environ is None else environ
     document = safe_load_strict(_DECLARATION.read_text(encoding="utf-8"))
