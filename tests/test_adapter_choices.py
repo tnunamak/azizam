@@ -195,6 +195,19 @@ def source(files, headers, calls=None, **kw):
                                     wanted=kw.get("wanted", ()))), calls
 
 
+def test_a_header_value_is_compared_without_case_spaces_or_punctuation():
+    names = {"a.safetensors": "Base_A", "b.safetensors": "base-a", "c.safetensors": " BASE A ", "d.safetensors": "base_b"}
+    headers = {name: {"ss_base_model_version": value} for name, value in names.items()}
+    assert ac.compatible(list(names), headers, "base_a", TABLE, []) == ["a.safetensors", "b.safetensors", "c.safetensors"]
+    assert ac.compatible(["x.safetensors"], {"x.safetensors": {"ss_base_model_version": "sdxl"}}, "base_a", TABLE, []) == []
+
+
+def test_krea2_offers_krea2_spellings_from_the_shipped_table_and_still_hides_sdxl():
+    values = {"a": "Krea2", "b": "krea-2", "c": " KREA2 ", "d": "sdxl"}
+    headers = {name: {"ss_base_model_version": value} for name, value in values.items()}
+    assert ac.compatible(list(values), headers, "krea2", ac.architecture_table(), []) == ["a", "b", "c"]
+
+
 def test_the_installed_list_is_filtered_by_header_and_a_header_that_cannot_be_read_is_not_offered():
     headers = {"a.safetensors": {"ss_base_model_version": "base_a"}, "b.safetensors": {"ss_base_model_version": "base_b"},
                "c.safetensors": OSError("404")}

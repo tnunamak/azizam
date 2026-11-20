@@ -105,16 +105,22 @@ def marked(setting: Any, architecture: str, kind: str) -> list[str]:
     return [name for name in names if isinstance(name, str)] if isinstance(names, list) else []
 
 
+def _plain(value: str) -> str:
+    """A header value as compared: case folded, with every character that is not a letter or digit dropped, so "Krea-2"
+    and " KREA2 " name the same base as "krea2"."""
+    return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+
 def compatible(installed: Sequence[str], headers: Mapping[str, Any], architecture: str,
                table: Mapping[str, Mapping[str, Sequence[str]]], marked: Sequence[str]) -> list[str]:
     """The installed files that suit ``architecture``, in installed order: the owner's marks, and files whose header holds
     a value the table lists for it. A file with no readable header is offered only if marked."""
-    wanted = table.get(architecture, {})
+    wanted = {key: {_plain(value) for value in values} for key, values in table.get(architecture, {}).items()}
     chosen = set(marked)
 
     def names_it(header: Any) -> bool:
         return isinstance(header, Mapping) and any(
-            isinstance(header.get(key), str) and header[key] in values for key, values in wanted.items())
+            isinstance(header.get(key), str) and _plain(header[key]) in values for key, values in wanted.items())
 
     return [name for name in installed if name in chosen or names_it(headers.get(name))]
 
