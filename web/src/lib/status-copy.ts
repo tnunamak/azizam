@@ -68,7 +68,7 @@ export function statusSummaryCopy(summary: {
   const ids = summary.affected_capability_ids ?? [];
   const labels = ids.map((id) => capabilityLabelFor(id) ?? id).filter(Boolean);
   if (!labels.length && summary.reason_code === "no_capabilities") {
-    return "No capabilities are available to your account yet.";
+    return "No capabilities are available to your account yet. Ask the owner to check your account access.";
   }
   if (!labels.length) return availabilityReason(summary.state, summary.reason_code);
   const count = summary.counts?.affected ?? labels.length;
