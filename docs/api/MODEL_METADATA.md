@@ -108,14 +108,25 @@ makes for that model carries the same word in `error.reason` (next to `error.cod
 name that is also a refusal code, such as `backend_unavailable`, has that meaning in both places. Read the reason, not
 the message. A name the key may not use is not listed, and nothing here says that it exists.
 
+When no alternative can serve and at least one is not known to be unavailable, the model state is `unknown`.
+A starting alternative takes precedence and gives `engine_transitioning`. Otherwise, the listing takes the
+reason and any `retry_after_s` from the first alternative in configured order, so the reason can depend on
+order. For example, with one service in maintenance and one with no health reading, maintenance first gives
+`service_maintenance` with its retry delay; reversing them gives `health_unknown`.
+This rule is for alternatives, not workflows that require every named service.
+
+The separate workflow availability row carries a `reason_code` alongside its human-readable `reason`, for
+example `required_file_missing`. In `/v1/models`, the machine-readable code is `azizam_availability.reason`;
+`reason_code` is not a member of `/v1/models` availability.
+
 | Code | State | Client action | `retry_after_s` |
 |---|---|---|---|
-| `backend_unavailable` | `unavailable` | Use another model or retry once the engine is reachable. | no |
+| `backend_unavailable` | `unavailable`, `unknown` | Use another model or retry once the engine is reachable. | no |
 | `engine_transitioning` | `unknown` | Wait for the engine to finish starting or loading before retrying. | no |
 | `model_not_deployed` | `unavailable` | Choose a deployed model or ask the owner to deploy this one. | no |
 | `current_model_unavailable` | `unavailable` | Choose an explicitly named model or wait for a backend to load one. | no |
-| `service_disabled` | `unavailable` | Choose another model or ask the owner to enable this service. | no |
-| `service_maintenance` | `unavailable` | Wait for `retry_after_s` before retrying or choose another model. | yes: the owner's delay, 10 when none |
+| `service_disabled` | `unavailable`, `unknown` | Choose another model or ask the owner to enable this service. | no |
+| `service_maintenance` | `unavailable`, `unknown` | Wait for `retry_after_s` before retrying or choose another model. | yes: the owner's delay, 10 when none |
 | `health_unknown` | `unknown` | Treat readiness as unconfirmed and handle a possible refusal if you try the model. | no |
 | `required_file_missing` | `unavailable` | Ask the owner to install the model files or custom nodes named in `missing` before retrying. | no |
 
