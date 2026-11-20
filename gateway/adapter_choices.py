@@ -200,6 +200,25 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
         name["enum"] = list(choices.loras)
         named = {key: label for key, label in choices.labels.items() if key in choices.loras}
         if named:
+            operator_names = set(choices.loras) - named.keys()
+            counts: dict[str, int] = {}
+            for label in named.values():
+                counts[label] = counts.get(label, 0) + 1
+            occupied = operator_names | set(named.values())
+            for key, label in named.items():
+                if counts[label] == 1 and label not in operator_names:
+                    continue
+                for width in range(min(4, len(key)), len(key) + 1):
+                    candidate = f"{label} (…{key[-width:]})"
+                    if candidate not in occupied:
+                        break
+                else:
+                    # Even a member-typed label that matches a whole suffixed ID stays unique.
+                    number = 2
+                    while (candidate := f"{label} (…{key}, {number})") in occupied:
+                        number += 1
+                occupied.add(candidate)
+                named[key] = candidate
             name["choice_labels"] = named
     else:
         loras["max_items"] = 0

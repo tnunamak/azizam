@@ -508,3 +508,20 @@ def test_the_receipt_has_no_adapter_facts_when_none_were_chosen():
     decl = ac.declaration(contract(), "graph")
     assert ac.receipt_facts(decl, {"prompt": "x"}, contract()) is None
     assert ac.receipt_facts(None, {"loras": [{"name": "a.safetensors"}]}, contract()) is None
+
+def test_adapter_overlay_disambiguates_upload_display_labels():
+    operator = "style-a.safetensors"
+    first, second, third, unique = ("upload-first-3f2a", "upload-second-3f2a", "upload-third-8b3c", "upload-unique-1111")
+    loras = (operator, first, second, third, unique)
+    labels = {first: "watercolour", second: "watercolour", third: operator, unique: "watercolour (…3f2a)"}
+    choices = ac.AdapterChoices(loras=loras, text_encoders=(), uploads=loras[1:], labels=labels)
+    original = contract()
+    shown = ac.overlay(original, ac.declaration(original, "graph"), choices)
+    name = shown["inputs"]["loras"]["items"]["properties"]["name"]
+    assert name["enum"] == list(loras)
+    presented = [name["choice_labels"].get(key, key) for key in loras]
+    assert len(set(presented)) == len(loras)
+    assert presented[0] == operator
+    assert name["choice_labels"][unique] == labels[unique]
+    assert all(name["choice_labels"][key].startswith(labels[key]) for key in choices.uploads)
+    assert "choice_labels" not in original["inputs"]["loras"]["items"]["properties"]["name"]
