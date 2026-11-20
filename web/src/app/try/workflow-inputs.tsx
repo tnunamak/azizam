@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
@@ -560,10 +560,43 @@ function WorkflowArrayRows({
 }) {
   const limit = max !== undefined && rows.length >= max;
   const write = (next: JsonObject[]) => onChange(next.length ? next : undefined);
+  const [rowKeys, setRowKeys] = useState<string[]>([]);
+  const nextKey = useRef(0);
+  const group = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<{ key: string; count: number } | null>(null);
+  // Keep row identity in this control; it is not part of submitted JSON.
+  const keys = rows.map((_, i) => rowKeys[i] ?? `existing-${i}`);
+  useLayoutEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending || rows.length !== pending.count) return;
+    const target = Array.from(group.current?.querySelectorAll<HTMLElement>("[data-array-focus]") ?? [])
+      .find((element) => element.dataset.arrayFocus === pending.key);
+    pendingFocus.current = null;
+    target?.focus();
+  });
+  const add = () => {
+    if (disabled || limit) return;
+    const key = `added-${nextKey.current++}`;
+    pendingFocus.current = { key, count: rows.length + 1 };
+    setRowKeys([...keys, key]);
+    write([...rows, Object.fromEntries(properties
+      .filter((field) => field.default !== undefined)
+      .map((field) => [field.name, field.default]))]);
+  };
+  const remove = (index: number) => {
+    const remainingKeys = keys.filter((_, i) => i !== index);
+    pendingFocus.current = {
+      key: remainingKeys[index] ?? remainingKeys[index - 1] ?? "add",
+      count: remainingKeys.length,
+    };
+    setRowKeys(remainingKeys);
+    write(rows.filter((_, i) => i !== index));
+  };
   return (
-    <>
+    <div ref={group} className="contents">
       {rows.map((row, index) => (
-        <fieldset key={index} className="min-w-0 rounded-md border p-3">
+        <fieldset key={keys[index]} data-array-focus={keys[index]} tabIndex={-1}
+          className="min-w-0 rounded-md border p-3">
           <legend className="px-1 text-xs font-medium">Row {index + 1}</legend>
           <div className="grid gap-3 sm:grid-cols-2">
             {properties.map((field, position) => {
@@ -586,7 +619,7 @@ function WorkflowArrayRows({
           </div>
           <Button type="button" variant="ghost" className="mt-2 min-h-11"
             aria-label={`Remove ${label} row ${index + 1}`} disabled={disabled}
-            onClick={() => write(rows.filter((_, i) => i !== index))}>
+            onClick={() => remove(index)}>
             Remove row {index + 1}
           </Button>
         </fieldset>
@@ -598,13 +631,11 @@ function WorkflowArrayRows({
           <Button type="button" variant="outline" className="min-h-11 self-start"
             aria-label={`Add ${label}`} disabled={disabled || limit}
             aria-describedby={limit ? `${id}-limit` : undefined}
-            onClick={() => write([...rows, Object.fromEntries(properties
-              .filter((field) => field.default !== undefined)
-              .map((field) => [field.name, field.default]))])}>
+            data-array-focus="add" onClick={add}>
             Add {label}
           </Button>
           {limit && <p id={`${id}-limit`} className="text-muted-foreground text-xs">You can add up to {max} {max === 1 ? "item" : "items"}.</p>}
-        </>
+        </div>
       )}
     </>
   );
