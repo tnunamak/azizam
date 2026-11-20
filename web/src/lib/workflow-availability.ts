@@ -86,15 +86,11 @@ function ownerSetupHelp(
   const { status, reason_code: code } = availability;
   const engines = { href: enginesHref(engineBinding), action: "Open Engines" };
   const statusPage = { href: "/status", action: "Open Status" };
-  if (code === "required_file_missing") {
-    const names = availability.missing?.map(({ name }) => name).filter(Boolean).join(", ");
+  if (code === "required_file_missing")
     return {
-      text: names
-        ? `A file it needs is missing on its engine: ${names}. Install it in Engines; the list refreshes within 5 minutes.`
-        : availability.reason?.trim() || "A file it needs is missing on its engine. Install it in Engines.",
+      text: availability.reason?.trim() || "A file it needs is missing on its engine. Install it in Engines.",
       fix: engines,
     };
-  }
   if (code === "unavailable_disabled")
     return { text: "Turned off. Turn it on in Engines.", fix: engines };
   if (code === "unavailable_unconfigured" || status === "not_configured")
@@ -124,6 +120,32 @@ export function workflowAvailabilityView(
     engineBinding,
   }: { owner: boolean; engineBinding?: string | null },
 ): WorkflowAvailabilityView {
+  const view = baseAvailabilityView(availability, owner, engineBinding);
+  if (!owner || availability?.available !== false) return view;
+
+  const missing = availability.missing?.filter(({ name }) => name.trim()) ?? [];
+  if (!missing.length) return view;
+  const nodes = missing.filter(({ kind }) => kind === "node").length;
+  const files = missing.length - nodes;
+  const counts = [
+    nodes ? `${nodes} ${nodes === 1 ? "node" : "nodes"}` : "",
+    files ? `${files} ${files === 1 ? "file" : "files"}` : "",
+  ].filter(Boolean).join(" and ");
+  const missingText = `${counts} ${missing.length === 1 ? "is" : "are"} missing: ${missing.map(({ name }) => name).join(", ")}.`;
+  return {
+    ...view,
+    text: availability.reason_code === "required_file_missing" || !view.text
+      ? missingText
+      : `${view.text} ${missingText}`,
+    fix: { href: enginesHref(availability.engine ?? engineBinding), action: "Open Engines" },
+  };
+}
+
+function baseAvailabilityView(
+  availability: WorkflowAvailability | null | undefined,
+  owner: boolean,
+  engineBinding: string | null | undefined,
+): WorkflowAvailabilityView {
   const status = String(availability?.status ?? "").toLowerCase();
   const reason = availability?.reason?.trim() || null;
   if (status === "idle" && availability?.available !== false)
@@ -131,7 +153,7 @@ export function workflowAvailabilityView(
       readiness: "ready_to_start",
       runnable: true,
       pickerNote: READY_TO_START,
-      text: reason ?? availabilityReason("idle") ?? null,
+      text: (owner ? reason : null) ?? availabilityReason("idle") ?? null,
       fix: null,
     };
   if (availability?.available !== false)
@@ -151,12 +173,15 @@ export function workflowAvailabilityView(
       text: "Try again shortly.",
       fix: null,
     };
-  if (status in WAIT_NOTE && code !== "required_file_missing" && code !== "policy_denied")
+  if (
+    status in WAIT_NOTE && code !== "required_file_missing" &&
+    code !== "policy_denied" && code !== "backend_unavailable"
+  )
     return {
       readiness: "wait",
       runnable: false,
       pickerNote: WAIT_WORD[status],
-      text: reason ?? WAIT_NOTE[status],
+      text: (owner ? reason : null) ?? WAIT_NOTE[status],
       fix: null,
     };
   // A setup code decides the state; the gateway's prose only explains it.
@@ -168,12 +193,14 @@ export function workflowAvailabilityView(
     code === "not_available" ||
     status === "not_configured" ||
     status === "not_available";
-  if (reason && !needsSetup)
+  if (code === "backend_unavailable" || (reason && !needsSetup))
     return {
       readiness: "down",
       runnable: false,
-      pickerNote: reason,
-      text: reason,
+      pickerNote: owner && reason ? reason : "Unavailable",
+      text: owner
+        ? reason ?? "Unavailable. Check its engine."
+        : "Unavailable. Ask the owner to check this capability.",
       fix: owner
         ? {
             href: enginesHref(availability?.engine ?? engineBinding),
