@@ -47,6 +47,8 @@ baseline's paths and its own. Only these differences are allowed:
 * /me/api/profile/avatar, /me/api/profile/avatars and /me/api/profile/avatar/picture are new (a person's avatar and the
   sign-in picture served from the gateway; tests/test_me_avatar.py covers them): each answers with its own
   route or that route's 405, and no other method reaches a handler;
+* POST /me/api/adapters is new (a member uploads one safetensors adapter; tests/test_adapter_upload_route.py covers
+  it): it answers with its own route, HEAD with that route's 405, and every other method falls to the catch-all;
 * PATCH /admin/api/apps/{app_id}/keys/{credential_id} is new (an administrator or the owner renames an App's key), and
   PATCH on /me/api/apps/{app_id} and /me/api/credentials/{credential_id} is new (a person renames their own App or key;
   tests/test_rename_apps_keys.py covers them): each is a route of its own, and every other method on those paths answers
@@ -127,6 +129,7 @@ MESH_LIVE = {
 }
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
+ADAPTER_UPLOAD_PATH = "/me/api/adapters"  # a member's adapter upload; tests/test_adapter_upload_route.py covers it
 ADAPTER_UPLOADS = "/admin/api/operator/adapter-uploads"  # the owner's switch for member adapter uploads; tests/test_adapter_upload_setting.py covers it
 ENGINE_FOLDERS = "/admin/api/operator/engine-folders"  # the owner's list of folders engines may run from; tests/test_engine_process_template.py covers it
 SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere",
@@ -265,6 +268,8 @@ def _deliberate(key: str) -> str | None:
         return "mcp_oauth"
     if path.startswith(AVATAR_PREFIX):
         return "avatar"
+    if path == ADAPTER_UPLOAD_PATH:
+        return "adapter_upload"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
@@ -389,6 +394,12 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if kind == "avatar" and key not in old:
             continue  # new member routes; tests/test_me_avatar.py and tests/test_avatar_signin.py cover them
+        if kind == "adapter_upload" and key not in old:
+            # POST is the new route itself; HEAD says 405 for it; every other method falls to the catch-all.
+            expected = {"POST": f"{ADAPTER_UPLOAD_PATH} upload_adapter",
+                        "HEAD": f"405 allow=POST via {ADAPTER_UPLOAD_PATH} upload_adapter"}.get(_method_of(key))
+            if outcome == expected or (expected is None and route_matrix.is_catch_all(outcome)):
+                continue
         if kind == "request_history" and key not in old:
             continue  # new maker routes and the member choice; tests/test_request_history_*.py cover them
         if _now_needs_a_key(old.get(key), new.get(key)):
@@ -442,7 +453,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "session_end_token", "secret_entries", "native", "avatar", "remembered", "request_history", "provider_sign_out"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "session_end_token", "secret_entries", "native", "avatar", "adapter_upload", "remembered", "request_history", "provider_sign_out"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue
