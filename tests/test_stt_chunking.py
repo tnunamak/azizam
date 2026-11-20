@@ -2121,6 +2121,54 @@ class AdmissionEvidenceRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt.resource_decision["facts"][0]["value"], 20)
 
 
+class SplitRefusalRouteTests(unittest.IsolatedAsyncioTestCase):
+    """The route's refusal advice comes from the record's own declarations, and an unexpected failure leaves a trace."""
+
+    async def _route(self, side_effect: BaseException, **chunking: object):
+        from gateway.receipts import RouteReceipt
+        receipt = RouteReceipt(protocol="openai.audio", intent="audio.transcribe")
+        request = Request({"type": "http", "method": "POST", "path": "/v1/audio/transcriptions",
+                           "headers": [(b"content-type", b"multipart/form-data; boundary=test")]})
+        with tempfile.TemporaryDirectory() as temp:
+            with (patch.object(proxy, "_service_availability_response", return_value=None),
+                  patch.object(proxy.receipt_store, "begin"),
+                  patch.object(proxy.receipt_store, "finalize"),
+                  patch.object(stt_chunking.GLOBAL_STT_RESOURCE_GATE, "acquire", side_effect=side_effect)):
+                response = await proxy.proxy_stt_request(request, access_context(),
+                                                        execution_snapshot=_config(Path(temp), **chunking),
+                                                        route_receipt=receipt)
+        return response.status_code, json.loads(response.body)["error"]
+
+    async def test_the_format_advice_names_only_formats_the_record_can_cut(self) -> None:
+        refused = stt_chunking.SttAudioNotSplittable("unsupported_request", limit_seconds=30,
+                                                     blocked_by=("response_format=text",), duration_seconds=46.0)
+        status, error = await self._route(refused, response_formats=["json", "text"])
+        self.assertEqual((status, error["code"]), (422, "stt_audio_cannot_be_split"))
+        self.assertIn("use response_format=json,", error["message"])
+        self.assertNotIn("verbose_json", error["message"])
+
+    async def test_a_record_that_can_cut_no_format_gets_no_format_advice(self) -> None:
+        refused = stt_chunking.SttAudioNotSplittable("unsupported_request", limit_seconds=30,
+                                                     blocked_by=("response_format=text",), duration_seconds=46.0)
+        status, error = await self._route(refused, response_formats=["text"])
+        self.assertEqual(status, 422)
+        self.assertNotIn("use response_format", error["message"])
+        self.assertIn("30 seconds or less", error["message"])
+
+    async def test_an_unexpected_failure_logs_its_class_and_place_but_not_its_text(self) -> None:
+        from contextlib import redirect_stdout
+        import io
+        printed = io.StringIO()
+        with redirect_stdout(printed):
+            status, error = await self._route(RuntimeError("private /srv/spool sk-1234"))
+        self.assertEqual((status, error["code"]), (502, "stt_proxy_error"))
+        line = printed.getvalue()
+        self.assertIn("RuntimeError", line)
+        self.assertIn(".py:", line)
+        self.assertNotIn("private", line)
+        self.assertNotIn("sk-1234", line)
+
+
 class SplitRefusalMessageTests(unittest.TestCase):
     def _message(self, reason: str = "unsupported_request", limit: float = 40.0, **kwargs) -> tuple[int, str]:
         response = client_errors.stt_audio_cannot_be_split(reason, limit, **kwargs)
@@ -2136,6 +2184,12 @@ class SplitRefusalMessageTests(unittest.TestCase):
         self.assertIn("response_format=srt", message)
         self.assertIn("response_format=json or verbose_json", message)
         self.assertIn("40 seconds or less", message)
+        _, declared = self._message(blocked_by=("response_format=text",), split_formats=("json",))
+        self.assertIn("use response_format=json,", declared)
+        self.assertNotIn("verbose_json", declared)
+        _, none_cut = self._message(blocked_by=("response_format=text", "stream"), split_formats=())
+        self.assertNotIn("use response_format", none_cut)
+        self.assertIn("remove stream", none_cut)
         _, several = self._message(blocked_by=("stream", "include", "timestamp_granularities"))
         self.assertIn("stream, include and timestamp_granularities", several)
         self.assertNotIn("seconds long", several)
