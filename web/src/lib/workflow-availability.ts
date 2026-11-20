@@ -15,6 +15,7 @@ export interface WorkflowAvailability {
    * engines, naming the engine it waits on ("ComfyUI is down.").
    */
   reason?: string;
+  missing?: { kind: "model" | "node"; name: string }[];
   /** The engine that limits a composed workflow; used for the owner's link. */
   engine?: string;
   evidence?: { kind?: string; source?: string };
@@ -83,6 +84,15 @@ function ownerSetupHelp(
   const { status, reason_code: code } = availability;
   const engines = { href: enginesHref(engineBinding), action: "Open Engines" };
   const statusPage = { href: "/status", action: "Open Status" };
+  if (code === "required_file_missing") {
+    const names = availability.missing?.map(({ name }) => name).filter(Boolean).join(", ");
+    return {
+      text: names
+        ? `A file it needs is missing on its engine: ${names}. Install it in Engines; the list refreshes within 5 minutes.`
+        : availability.reason?.trim() || "A file it needs is missing on its engine. Install it in Engines.",
+      fix: engines,
+    };
+  }
   if (code === "unavailable_disabled")
     return { text: "Turned off. Turn it on in Engines.", fix: engines };
   if (code === "unavailable_unconfigured" || status === "not_configured")
@@ -130,7 +140,8 @@ export function workflowAvailabilityView(
       text: null,
       fix: null,
     };
-  if (status in WAIT_NOTE)
+  const code = availability.reason_code;
+  if (status in WAIT_NOTE && code !== "required_file_missing")
     return {
       readiness: "wait",
       runnable: false,
@@ -139,8 +150,8 @@ export function workflowAvailabilityView(
       fix: null,
     };
   // A setup code decides the state; the gateway's prose only explains it.
-  const code = availability?.reason_code;
   const needsSetup =
+    code === "required_file_missing" ||
     code === "unavailable_disabled" ||
     code === "unavailable_unconfigured" ||
     code === "not_available" ||
@@ -172,7 +183,7 @@ export function workflowAvailabilityView(
     readiness: "setup",
     runnable: false,
     pickerNote: "Unavailable",
-    text: reason ?? help.text,
+    text: code === "required_file_missing" ? help.text : reason ?? help.text,
     fix: help.fix,
   };
 }
