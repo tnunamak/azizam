@@ -5,7 +5,8 @@ that maps through a ``chain``, and optionally a ``text_encoder`` input). A calle
 
 - ``loras``: the files the engine lists for the chain's loader input, kept when the file's own header names the
   workflow's architecture (``registry/adapter_architectures.yml``) or the owner marked the file for that architecture;
-- ``text_encoders``: the encoder the workflow ships with, then the files the owner marked for that architecture.
+- ``text_encoders``: the encoders the workflow's manifest lists (its ``text_encoder`` enum). The job runs against that
+  same contract, so an encoder the manifest does not list cannot run; a new encoder is a manifest edit.
 
 Where choices come from is the one function ``installed`` (the operator's files). Another source, such as a member's
 uploads, joins by adding its files to the ``entries`` it builds: nothing else here reads where a file came from.
@@ -85,8 +86,8 @@ def declaration(contract: Mapping[str, Any], binding_key: str) -> Declaration | 
 
 
 def marked(setting: Any, architecture: str, kind: str) -> list[str]:
-    """The files the owner marked for an architecture, by kind (``loras`` or ``text_encoders``). A setting that is not
-    shaped as expected marks nothing."""
+    """The files the owner marked for an architecture, by kind (``loras``). A setting that is not shaped as expected
+    marks nothing."""
     marks = setting.get("marks") if isinstance(setting, Mapping) else None
     entry = marks.get(architecture) if isinstance(marks, Mapping) else None
     names = entry.get(kind) if isinstance(entry, Mapping) else None
@@ -148,14 +149,15 @@ def default_read_header(origin: str, folder: str, name: str) -> Mapping[str, Any
 
 async def installed(
     decl: Declaration, *, service_id: str, origin: str, marks: Any = None,
-    list_files: Callable[[str, str, str], list[str]] = default_list_files,
-    read_header: Callable[[str, str, str], Mapping[str, Any] | None] = default_read_header,
+    list_files: Callable[[str, str, str], list[str]] | None = None,
+    read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
     table: Mapping[str, Mapping[str, Sequence[str]]] | None = None, now: float | None = None,
 ) -> AdapterChoices:
     """The choices for one binding from the operator's installed files. Reads the engine only when its list is older than
     ``MAX_AGE_S``; a file header is read once. When the engine cannot answer, the last good list stays in use; with none
     held, ``ChoicesUnavailable``. A header that cannot be read keeps its file out of the list, never in it."""
     now = time.time() if now is None else now
+    list_files, read_header = list_files or default_list_files, read_header or default_read_header
     key = (service_id, decl.node_type, decl.listing_input, decl.folder)
     held = _LISTS.get(key)
     if held is None or now - held[0] >= MAX_AGE_S:
@@ -169,8 +171,7 @@ async def installed(
     headers = await _headers(service_id, origin, decl.folder, files, read_header, now)
     table = architecture_table() if table is None else table
     loras = compatible(files, headers, decl.architecture, table, marked(marks, decl.architecture, "loras"))
-    encoders = list(dict.fromkeys([*decl.default_encoders, *marked(marks, decl.architecture, "text_encoders")]))
-    return AdapterChoices(tuple(loras), tuple(encoders))
+    return AdapterChoices(tuple(loras), decl.default_encoders)
 
 
 async def _headers(service_id: str, origin: str, folder: str, files: Sequence[str],

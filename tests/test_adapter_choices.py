@@ -83,14 +83,13 @@ def test_a_header_value_that_is_not_text_names_nothing():
 
 
 def test_marks_are_read_by_architecture_and_a_malformed_setting_marks_nothing():
-    setting = {"marks": {"base_a": {"loras": ["x.safetensors"], "text_encoders": ["enc.safetensors"]}, "base_b": {"loras": 5}}}
+    setting = {"marks": {"base_a": {"loras": ["x.safetensors"]}, "base_b": {"loras": 5}}}
     assert ac.marked(setting, "base_a", "loras") == ["x.safetensors"]
-    assert ac.marked(setting, "base_a", "text_encoders") == ["enc.safetensors"]
     assert ac.marked(setting, "base_b", "loras") == []
     assert ac.marked(None, "base_a", "loras") == [] and ac.marked({"marks": []}, "base_a", "loras") == []
 
 
-def overlaid(loras=("a.safetensors", "b.safetensors"), encoders=("default_encoder.safetensors", "marked_encoder.safetensors"), **kw):
+def overlaid(loras=("a.safetensors", "b.safetensors"), encoders=("default_encoder.safetensors", "second_encoder.safetensors"), **kw):
     c = contract(**kw)
     return ac.overlay(c, ac.declaration(c, "graph"), ac.AdapterChoices(tuple(loras), tuple(encoders))), c
 
@@ -98,7 +97,7 @@ def overlaid(loras=("a.safetensors", "b.safetensors"), encoders=("default_encode
 def test_the_overlay_puts_the_choices_in_the_schema_and_leaves_the_manifest_alone():
     shown, original = overlaid()
     assert shown["inputs"]["loras"]["items"]["properties"]["name"]["enum"] == ["a.safetensors", "b.safetensors"]
-    assert shown["inputs"]["text_encoder"]["enum"] == ["default_encoder.safetensors", "marked_encoder.safetensors"]
+    assert shown["inputs"]["text_encoder"]["enum"] == ["default_encoder.safetensors", "second_encoder.safetensors"]
     assert "enum" not in original["inputs"]["loras"]["items"]["properties"]["name"]
     assert original["inputs"]["text_encoder"]["enum"] == ["default_encoder.safetensors"]
 
@@ -130,7 +129,7 @@ def run(shown, supplied):
 def test_a_chosen_adapter_and_encoder_pass_with_a_weight_in_bounds():
     shown, _ = overlaid()
     result = run(shown, {"prompt": "x", "loras": [{"name": "a.safetensors", "weight": 4}, {"name": "b.safetensors"}],
-                         "text_encoder": "marked_encoder.safetensors"})
+                         "text_encoder": "second_encoder.safetensors"})
     assert not result.rejected
 
 
@@ -145,7 +144,7 @@ def test_a_name_that_is_not_offered_is_refused_and_the_message_lists_what_is():
 def test_an_encoder_that_is_not_offered_is_refused_and_the_message_lists_what_is():
     shown, _ = overlaid()
     reason = run(shown, {"prompt": "x", "text_encoder": "other.safetensors"}).rejected["text_encoder"]
-    assert "default_encoder.safetensors" in reason and "marked_encoder.safetensors" in reason
+    assert "default_encoder.safetensors" in reason and "second_encoder.safetensors" in reason
 
 
 @pytest.mark.parametrize("weight", [4.01, -4.5, 100])
@@ -202,11 +201,11 @@ def test_the_installed_list_is_filtered_by_header_and_a_header_that_cannot_be_re
     assert choices.loras == ("a.safetensors",)
 
 
-def test_the_encoder_choices_are_the_shipped_one_then_the_owner_marked_ones():
+def test_the_encoder_choices_are_the_ones_the_manifest_lists_and_an_owner_mark_adds_a_lora_only():
     choices, _ = source(["a.safetensors"], {"a.safetensors": {"format": "pt"}},
                         marks={"marks": {"base_a": {"loras": ["a.safetensors"], "text_encoders": ["enc2.safetensors"]}}})
     assert choices.loras == ("a.safetensors",)
-    assert choices.text_encoders == ("default_encoder.safetensors", "enc2.safetensors")
+    assert choices.text_encoders == ("default_encoder.safetensors",)
 
 
 def test_a_second_request_inside_the_age_limit_reads_nothing_from_the_engine():
@@ -250,9 +249,9 @@ def test_a_new_file_appears_after_the_age_limit():
 def test_the_receipt_facts_name_each_file_with_its_weight_and_the_encoder():
     decl = ac.declaration(contract(), "graph")
     facts = ac.receipt_facts(decl, {"prompt": "x", "loras": [{"name": "a.safetensors", "weight": 0.5}, {"name": "b.safetensors"}],
-                                    "text_encoder": "marked_encoder.safetensors"}, contract())
+                                    "text_encoder": "second_encoder.safetensors"}, contract())
     assert facts == {"loras": [{"name": "a.safetensors", "weight": 0.5}, {"name": "b.safetensors", "weight": 1.0}],
-                     "text_encoder": "marked_encoder.safetensors"}
+                     "text_encoder": "second_encoder.safetensors"}
 
 
 def test_the_receipt_has_no_adapter_facts_when_none_were_chosen():
