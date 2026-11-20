@@ -1131,7 +1131,7 @@ _HEALTH_LAST_SUCCESS_S: dict[str, int] = {}
 async def probe_service_health(
     service_records: Mapping[str, Any],
     *,
-    get_json: Callable[[str], Awaitable[Mapping[str, Any] | None]],
+    get_json: Callable[[str], Awaitable[Mapping[str, Any] | str | None]],
     service_ids: Iterable[str] | None = None,
     endpoint_for: Callable[[Mapping[str, Any]], str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -1177,6 +1177,14 @@ async def probe_service_health(
             payload = None
         except Exception:  # noqa: BLE001
             payload = None
+        if isinstance(payload, str):
+            # A bare-value reply: only a declared whole-body rule can read it as up.
+            payload = payload if declared_health_success(service or {}, payload) else {}
+            if payload:
+                _HEALTH_LAST_SUCCESS_S[service_id] = attempted_at
+                times["last_success_at_s"] = attempted_at
+                return service_id, {"available": True, "status": "ready", "reason": "Health endpoint responded",
+                                    "source": "health", **times}
         if not isinstance(payload, Mapping):
             if missing_route:
                 return service_id, {

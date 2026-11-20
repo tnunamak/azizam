@@ -209,14 +209,20 @@ def starts_on_demand(service: Mapping[str, Any]) -> bool:
     return False
 
 
-def declared_health_success(service: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
-    """Match a declared JSON path with a value other than null or false."""
+def declared_health_success(service: Mapping[str, Any], payload: Any) -> bool:
+    """Match a declared JSON path with a value other than null or false.
+
+    The path ``.`` names the whole reply, for a health route that answers a bare
+    JSON value (a string) instead of an object. An empty string does not match.
+    """
     config = service.get("config")
     connection = {**(config if isinstance(config, Mapping) else {}), **service}
     path = connection.get("health_success_path")
     if not isinstance(path, str) or not path.strip():
         return False
     value: Any = payload
+    if path.strip() == ".":
+        return value is not None and value is not False and value != "" and value != {}
     for key in path.split("."):
         if not isinstance(value, Mapping) or key not in value:
             return False

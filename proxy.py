@@ -18645,7 +18645,7 @@ async def _models_catalog_health_evidence(
 ) -> dict[str, dict[str, Any]]:
     context = tls_context()  # building one costs tens of milliseconds; one serves every probe
 
-    async def get_json(url: str) -> Mapping[str, Any] | None:
+    async def get_json(url: str) -> Mapping[str, Any] | str | None:
         if not url.startswith(("http://", "https://")):
             return None
         try:
@@ -18662,7 +18662,8 @@ async def _models_catalog_health_evidence(
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
-        return payload if isinstance(payload, Mapping) else {}
+        # A bare value (a string) goes on to the declared success rule; any other reply is an opaque object.
+        return payload if isinstance(payload, (Mapping, str)) else {}
 
     services = service_records.get("services") if isinstance(service_records, Mapping) else None
     services = services if isinstance(services, Mapping) else {}
