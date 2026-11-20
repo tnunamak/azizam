@@ -1491,6 +1491,256 @@
       }
     ]
   ],
+  "image.generate.flux2-klein async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-snofs async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "lora_strength",
+      {
+        "field": "lora_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-snofs sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "lora_strength",
+      {
+        "field": "lora_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
   "image.generate.krea2-turbo async": [
     [
       "prompt",

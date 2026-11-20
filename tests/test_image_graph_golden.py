@@ -173,7 +173,7 @@ def release_graph_roles() -> dict:
     """
     section = yaml.safe_load((ROOT / "registry" / "defaults" / "images.yml").read_text())
     table = image_graph_roles.load(section, proxy.GATEWAY_WORKFLOW_REGISTRY, proxy.DERIVED._GRAPH_BINDING)
-    assert len(table) == 12
+    assert len(table) == 14
     return table
 
 
@@ -273,7 +273,7 @@ def test_the_fixture_covers_every_case_and_every_shipped_image_graph():
     golden = json.loads(FIXTURE.read_text()) if FIXTURE.exists() else {}
     assert set(golden) == {f"{s}/{n}" for s, n in CASES}
     graphs = {path.stem for path in (ROOT / "workflows" / "images").glob("*.json") if ".ui" not in path.name}
-    assert len(graphs) == 12
+    assert len(graphs) == 14
     assert graphs <= set(GENERATE) | set(EDITS)
     assert graphs == set(GENERATE) | set(EDITS)
 
