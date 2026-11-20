@@ -209,6 +209,14 @@ def test_krea2_offers_krea2_spellings_from_the_shipped_table_and_still_hides_sdx
     assert ac.compatible(list(values), headers, "krea2", ac.architecture_table(), []) == ["a", "b", "c"]
 
 
+def test_member_copy_classifier_normalizes_engine_folder_spellings():
+    assert ac.is_member_upload_copy("azizam-uploads/style.safetensors")
+    assert ac.is_member_upload_copy("azizam-uploads\\style.safetensors")
+    assert ac.is_member_upload_copy("AZIZAM-UPLOADS/style.safetensors")
+    assert not ac.is_member_upload_copy("operator/style.safetensors")
+    assert not ac.is_member_upload_copy("azizam-uploads-other/style.safetensors")
+
+
 def test_the_installed_list_is_filtered_by_header_and_a_header_that_cannot_be_read_is_not_offered():
     headers = {"a.safetensors": {"ss_base_model_version": "base_a"}, "b.safetensors": {"ss_base_model_version": "base_b"},
                "c.safetensors": OSError("404")}
