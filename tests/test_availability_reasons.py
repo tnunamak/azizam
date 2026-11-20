@@ -224,7 +224,7 @@ def _admission(monkeypatch, *, override, cfg=None, backends=None):
     monkeypatch.setattr(proxy, "_effective_media_job_admission_cfg", lambda: cfg or {})
     monkeypatch.setattr(proxy, "_operator_service_availability_overrides", lambda: {"selected": override} if override else {})
     monkeypatch.setitem(proxy.config, "backends", backends or {})
-    return proxy._dispatch_admission_response("chat.generate", resource_class="chat", service_id="selected", service_available=True)
+    return proxy._dispatch_admission_response("chat.generate", resource_class="chat", service_id="selected")
 
 
 @pytest.mark.parametrize("override,backends,reason", [
@@ -234,7 +234,8 @@ def _admission(monkeypatch, *, override, cfg=None, backends=None):
     ({}, {"selected": {"enabled": False}}, "service_disabled"),
 ])
 def test_an_admission_refusal_about_the_service_names_the_listing_reason(monkeypatch, override, backends, reason):
-    refusal = _admission(monkeypatch, override=override, backends=backends, cfg={"disabled_resource_classes": []} if not override else None)
+    # With admission settings in force and no override, the service's own `enabled` decides.
+    refusal = _admission(monkeypatch, override=override, backends=backends, cfg={"reserved_tokens": ["gpu"]})
     assert refusal is not None and refusal.status_code == 503
     error = json.loads(refusal.body)["error"]
     assert error["code"] == "resource_admission_denied"
