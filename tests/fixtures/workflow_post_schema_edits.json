@@ -1285,7 +1285,7 @@
       ]
     },
     {
-      "after": "More steps add detail but take longer.",
+      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
       "before": null,
       "before_present": false,
       "path": [
@@ -1348,16 +1348,6 @@
       "before_present": false,
       "path": [
         "source_url"
-      ]
-    },
-    {
-      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
-      "before": "More steps add detail but take longer.",
-      "before_present": true,
-      "path": [
-        "inputs",
-        "steps",
-        "help"
       ]
     },
     {
@@ -1552,7 +1542,7 @@
       ]
     },
     {
-      "after": "More steps add detail but take longer.",
+      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
       "before": null,
       "before_present": false,
       "path": [
@@ -1695,16 +1685,6 @@
       "before_present": false,
       "path": [
         "source_url"
-      ]
-    },
-    {
-      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
-      "before": "More steps add detail but take longer.",
-      "before_present": true,
-      "path": [
-        "inputs",
-        "steps",
-        "help"
       ]
     },
     {
@@ -2849,7 +2829,7 @@
       ]
     },
     {
-      "after": "More steps add detail but take longer.",
+      "after": "More steps add detail but take longer. 25 to 35 works well for this model.",
       "before": null,
       "before_present": false,
       "path": [
@@ -3037,16 +3017,6 @@
         "inputs",
         "scheduler",
         "choice_labels"
-      ]
-    },
-    {
-      "after": "More steps add detail but take longer. 25 to 35 works well for this model.",
-      "before": "More steps add detail but take longer.",
-      "before_present": true,
-      "path": [
-        "inputs",
-        "steps",
-        "help"
       ]
     },
     {
