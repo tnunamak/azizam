@@ -916,6 +916,20 @@
         "field": "seed",
         "in": "extension"
       }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
+        "in": "extension"
+      }
     ]
   ],
   "image.edit.qwen-image-2.1-edit sync": [
@@ -979,6 +993,20 @@
       "seed",
       {
         "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
         "in": "extension"
       }
     ]
@@ -1562,6 +1590,20 @@
         "field": "batch_size",
         "in": "extension"
       }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
+        "in": "extension"
+      }
     ]
   ],
   "image.generate.flux2-klein sync": [
@@ -1633,6 +1675,20 @@
       "batch_size",
       {
         "field": "batch_size",
+        "in": "extension"
+      }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
         "in": "extension"
       }
     ]
@@ -1715,6 +1771,20 @@
         "field": "batch_size",
         "in": "extension"
       }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
+        "in": "extension"
+      }
     ]
   ],
   "image.generate.flux2-klein-snofs sync": [
@@ -1795,6 +1865,20 @@
         "field": "batch_size",
         "in": "extension"
       }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
+        "in": "extension"
+      }
     ]
   ],
   "image.generate.krea2-turbo async": [
@@ -1861,6 +1945,20 @@
         "field": "batch_size",
         "in": "extension"
       }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
+        "in": "extension"
+      }
     ]
   ],
   "image.generate.krea2-turbo sync": [
@@ -1925,6 +2023,20 @@
       "batch_size",
       {
         "field": "batch_size",
+        "in": "extension"
+      }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
         "in": "extension"
       }
     ]
@@ -2000,6 +2112,20 @@
         "field": "batch_size",
         "in": "extension"
       }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
+        "in": "extension"
+      }
     ]
   ],
   "image.generate.krea2-turbo-snofs sync": [
@@ -2071,6 +2197,20 @@
       "batch_size",
       {
         "field": "batch_size",
+        "in": "extension"
+      }
+    ],
+    [
+      "loras",
+      {
+        "field": "loras",
+        "in": "extension"
+      }
+    ],
+    [
+      "text_encoder",
+      {
+        "field": "text_encoder",
         "in": "extension"
       }
     ]

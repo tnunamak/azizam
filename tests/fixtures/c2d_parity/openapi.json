@@ -2913,7 +2913,7 @@
       "sha256": "8f2a08c3e9627e41f0fc63eb02d9f3958f603a39954ba96cabd8d1bb05348272"
     },
     "image.edit.qwen-image-2.1-edit": {
-      "bytes": 6379,
+      "bytes": 7693,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2928,6 +2928,10 @@
               "fields": {
                 "cfg": {
                   "field": "cfg",
+                  "in": "extension"
+                },
+                "loras": {
+                  "field": "loras",
                   "in": "extension"
                 },
                 "negative_prompt": {
@@ -2960,6 +2964,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 }
               },
@@ -3018,6 +3026,31 @@
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "negative_prompt": {
                 "default": "",
@@ -3119,6 +3152,13 @@
                 "maximum": 60,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_8b_w4a8.safetensors"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -3134,7 +3174,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit",
         "run_path": null
       },
-      "sha256": "135c074ef6c31d3d4bf7737843fb59a87771698fb4dcde233ddca6b1e4f97755"
+      "sha256": "d94897c73f4d8f857db10e98cd5c04d0d45399359b2bdc57e193cabafd9c6202"
     },
     "image.edit.qwen-image-2.1-edit-multiref": {
       "bytes": 6818,
@@ -4048,7 +4088,7 @@
       "sha256": "5efacf1bcbe59fdcb0063260d6433cd0304edf34b599eb4ce6399cd7595f8828"
     },
     "image.generate.flux2-klein": {
-      "bytes": 7919,
+      "bytes": 9438,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4081,6 +4121,10 @@
                   "field": "size",
                   "in": "body"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4099,6 +4143,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4158,6 +4206,10 @@
                   "field": "size",
                   "in": "body"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4176,6 +4228,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4245,6 +4301,31 @@
                 "maximum": 2048,
                 "minimum": 64,
                 "type": "integer"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "prompt": {
                 "description": "Describe what you want to make.",
@@ -4330,6 +4411,13 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen_3_8b_fp8mixed.safetensors"
+                ],
+                "type": "string"
+              },
               "width": {
                 "description": "Picture width in pixels.",
                 "maximum": 2048,
@@ -4349,10 +4437,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
         "run_path": null
       },
-      "sha256": "6806a84030659e569f38a97722481ec6a80eed8d7b410ff8348f86cdb8f78c2f"
+      "sha256": "4b6f16a1f192b6cd1353ae6b3785de50b2949c9ff0627105214d9715c33be5d1"
     },
     "image.generate.flux2-klein-snofs": {
-      "bytes": 8514,
+      "bytes": 10033,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4389,6 +4477,10 @@
                   "field": "lora_strength",
                   "in": "extension"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4407,6 +4499,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4470,6 +4566,10 @@
                   "field": "lora_strength",
                   "in": "extension"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4488,6 +4588,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4565,6 +4669,31 @@
                 "minimum": 0,
                 "type": "number"
               },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
               "prompt": {
                 "description": "Describe what you want to make.",
                 "type": "string"
@@ -4649,6 +4778,13 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen_3_8b_fp8mixed.safetensors"
+                ],
+                "type": "string"
+              },
               "width": {
                 "description": "Picture width in pixels.",
                 "maximum": 2048,
@@ -4668,10 +4804,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
         "run_path": null
       },
-      "sha256": "8aaf74f3bb94ad3ae448fee34fb7c31b1e65e943d3c58d7e583e8f91fd66ac92"
+      "sha256": "3367efe99c7cf3b6d305fab8dfc2d7732960a7d8935af68666248020b620b5c8"
     },
     "image.generate.krea2-turbo": {
-      "bytes": 7650,
+      "bytes": 9172,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -4702,6 +4838,10 @@
                   "field": "size",
                   "in": "body"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4720,6 +4860,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4775,6 +4919,10 @@
                   "field": "size",
                   "in": "body"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4793,6 +4941,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4859,6 +5011,31 @@
                 "maximum": 2048,
                 "minimum": 64,
                 "type": "integer"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "prompt": {
                 "description": "Describe the picture you want.",
@@ -4944,6 +5121,13 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_4b_fp8_scaled.safetensors"
+                ],
+                "type": "string"
+              },
               "width": {
                 "default": 1024,
                 "description": "Picture width in pixels.",
@@ -4964,10 +5148,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo",
         "run_path": null
       },
-      "sha256": "f3882181a5b5bdb4711a156d4e50b8798775b0e687f0c7ef22073036cb78e51f"
+      "sha256": "0ab8386827189801ab183d4a4c6c5ba103e09171b676344f6fb045ca936ee6f3"
     },
     "image.generate.krea2-turbo-snofs": {
-      "bytes": 8281,
+      "bytes": 9803,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5000,6 +5184,10 @@
                   "field": "lora_strength",
                   "in": "extension"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -5018,6 +5206,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -5077,6 +5269,10 @@
                   "field": "lora_strength",
                   "in": "extension"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -5095,6 +5291,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -5168,6 +5368,31 @@
                 "maximum": 1.5,
                 "minimum": 0,
                 "type": "number"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "prompt": {
                 "description": "Describe what you want to make.",
@@ -5253,6 +5478,13 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_4b_fp8_scaled.safetensors"
+                ],
+                "type": "string"
+              },
               "width": {
                 "default": 1024,
                 "description": "Picture width in pixels.",
@@ -5273,7 +5505,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs",
         "run_path": null
       },
-      "sha256": "407c4b637749b16fe70e6e0fffd74af876d9800bcea2c7fb356b868095a5cb5d"
+      "sha256": "029c749e9de04dd8be29c3312c420497adeb5ad963a6b6c4aeaf178f2a43b999"
     },
     "image.generate.moss-image": {
       "bytes": 4816,

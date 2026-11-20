@@ -7,4 +7,4 @@ krea2:
 qwen_image_2:
   ss_base_model_version: [qwen_image_2]
 flux2_klein_9b:
-  ss_base_model_version: [flux2_klein_9b]
+  ss_base_model_version: [flux2_klein_9b, flux_2_klein_9b]
