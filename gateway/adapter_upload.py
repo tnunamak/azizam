@@ -19,7 +19,7 @@ import re
 import struct
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -276,6 +276,13 @@ class Materializer:
             if folder is not None:
                 (folder / f"{_check_digest(digest)}{SUFFIX}").unlink(missing_ok=True)
 
+    def digests(self) -> list[str]:
+        with self._lock:
+            folder = self._safe_folder(create=False)
+            if folder is None:
+                return []
+            return sorted(m.group(1) for name in os.listdir(folder) if (m := _COPY_NAME.match(name)))
+
     @contextlib.contextmanager
     def hold(self, digest: str) -> Iterator[None]:
         """While held, ``reap`` leaves the copy alone: a request that has chosen it is still being served."""
@@ -345,3 +352,119 @@ def digest_of(name: str) -> str | None:
     """The content digest an offered upload name carries, or None for a name that is not an upload's asset id."""
     match = _ASSET_ID.match(name) if isinstance(name, str) else None
     return match.group(1) if match else None
+
+
+class UnknownAdapter(Exception):
+    """A name that is not one of this person's offered uploads: unknown, someone else's, deleted, or no longer readable.
+    The caller refuses it exactly as it refuses any name that is not in the pick-list, so names cannot be probed."""
+
+
+class Library:
+    """A person's uploaded adapters, seen through the ports the gateway gives it: the asset store, the Library's own
+    ownership rule (``holds``), the owner's setting and the engine's folder. It adds no rule of its own about who may see
+    a file: ``holds`` decides that, and this class asks it for every file before it reads one."""
+
+    def __init__(
+        self, *,
+        asset_ids: Callable[[], Iterable[str]],
+        metadata: Callable[[str], Mapping[str, Any]],
+        path: Callable[[str], Path | None],
+        holds: Callable[[str, str], bool],
+        policy: Callable[[], Policy],
+        lora_root: Callable[[str], Path | None],
+        note_copy: Callable[[str, str], None],
+        table: Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    ) -> None:
+        self._asset_ids, self._metadata, self._path, self._holds = asset_ids, metadata, path, holds
+        self._policy, self._lora_root, self._note_copy = policy, lora_root, note_copy
+        self._table = table
+        self._headers: dict[tuple[str, int, int], tuple[str, ...]] = {}
+
+    def _architectures_of(self, path: Path) -> tuple[str, ...] | None:
+        try:
+            stat = path.stat()
+            key = (str(path), stat.st_size, stat.st_mtime_ns)
+            held = self._headers.get(key)
+            if held is None:
+                with path.open("rb") as stream:
+                    header = read_header(stream, stat.st_size)
+                held = architectures(header.metadata, architecture_table() if self._table is None else self._table)
+                if len(self._headers) > 4096:
+                    self._headers.clear()
+                self._headers[key] = held
+            return held
+        except (OSError, Refused):
+            return None
+
+    def _offer(self, person_id: str, asset_id: str) -> Offer | None:
+        marker = self._metadata(asset_id).get("adapter")
+        path = self._path(asset_id)
+        if not isinstance(marker, Mapping) or path is None or not self._holds(person_id, asset_id):
+            return None
+        found = self._architectures_of(path)
+        return None if found is None else Offer(asset_id, str(marker.get("label") or ""), found)
+
+    def _on(self, folder: str) -> bool:
+        return self._policy().enabled and self._lora_root(folder) is not None
+
+    def offers(self, person_id: str, *, folder: str) -> list[Offer]:
+        """The person's own uploads, whatever base they name (``join`` keeps the ones that suit a workflow). Empty when
+        uploads are off or the engine's folder is not on this computer."""
+        if not self._on(folder):
+            return []
+        offers = (self._offer(person_id, asset_id) for asset_id in self._asset_ids() if digest_of(asset_id) is not None)
+        return [offer for offer in offers if offer is not None]
+
+    def resolve(self, person_id: str, name: str, *, folder: str) -> Offer | None:
+        if digest_of(name) is None or not self._on(folder):
+            return None
+        return self._offer(person_id, name)
+
+    def engine_names(self, person_id: str, names: Iterable[str], *, folder: str) -> dict[str, str]:
+        """The engine's name for each chosen upload, copied into the engine's folder when a request uses it. A name
+        that is not an upload's asset id (an operator's file) is not in the answer. A name that is an asset id but not
+        one of this person's offered uploads raises ``UnknownAdapter``, whoever owns it, if anyone does."""
+        wanted = [name for name in dict.fromkeys(names) if digest_of(name) is not None]
+        found = {name: self.resolve(person_id, name, folder=folder) for name in wanted}
+        if any(offer is None for offer in found.values()):
+            raise UnknownAdapter(next(name for name, offer in found.items() if offer is None))
+        root = self._lora_root(folder)
+        if root is None or not wanted:
+            return {}
+        copies = Materializer(root)
+        copies.reap()
+        chosen: dict[str, str] = {}
+        for name in wanted:
+            source = self._path(name)
+            digest = digest_of(name)
+            if source is None or digest is None:
+                raise UnknownAdapter(name)
+            chosen[name] = copies.materialize(digest, source)
+            self._note_copy(name, folder)
+        return chosen
+
+    def forget(self, asset_id: str, metadata: Mapping[str, Any]) -> None:
+        """The asset is going: remove its copies from the folders its sidecar says it was copied to."""
+        digest = digest_of(asset_id)
+        marker = metadata.get("adapter") if isinstance(metadata, Mapping) else None
+        copied = marker.get("copies") if isinstance(marker, Mapping) else None
+        if digest is None or not isinstance(copied, list):
+            return
+        for folder in copied:
+            root = self._lora_root(folder) if isinstance(folder, str) else None
+            if root is not None:
+                Materializer(root).remove(digest)
+
+    def sweep(self, *, folder: str) -> list[str]:
+        """Remove the copies in a folder whose asset is no longer stored, and the idle or over-bound ones."""
+        root = self._lora_root(folder)
+        if root is None:
+            return []
+        copies = Materializer(root)
+        stored = {digest_of(asset_id) for asset_id in self._asset_ids()}
+        removed = copies.reap()
+        for digest in copies.digests():
+            if digest not in stored:
+                copies.remove(digest)
+                removed.append(digest)
+        return removed
