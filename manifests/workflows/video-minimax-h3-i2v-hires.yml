@@ -1,0 +1,117 @@
+schema_version: 2
+min_gateway_version: '0.1'
+version: 0.1.0
+id: video.generate.minimax-h3-i2v-hires
+license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
+intent: video.generate
+capability: video
+display_name: MiniMax H3 I2V Hi-Res (uncensored)
+purpose: Animate an image in high resolution with sound
+prompt_hint: Describe how the picture should move
+description: Make a high-resolution video with stereo sound from a starting picture and a description, without the usual content filtering. It only shows adults.
+typical_seconds: 195
+video:
+  roles:
+    width: width
+    height: height
+    length: length
+    frame_rate: frame_rate
+    image: image
+  size: {default: 1216x704, max: 1216x704, multiple: 64}
+  length: {min_seconds: 2, max_seconds: 5.17}
+  grid: {fps: 24, step: 17, offset: 5}
+  requires: [image]
+inputs:
+  prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
+    type: string
+    required: true
+  seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
+    type: integer
+    minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
+  image:
+    label: a starting picture
+    help: The picture the video starts from.
+    type: asset
+    accepts:
+      - image/*
+    required: true
+  width:
+    label: Width
+    help: Video width in pixels. A multiple of 64.
+    type: integer
+    step: 64
+    minimum: 64
+    maximum: 1216
+  height:
+    label: Height
+    help: Video height in pixels. A multiple of 64.
+    type: integer
+    step: 64
+    minimum: 64
+    maximum: 704
+  length:
+    label: Length in frames
+    help: Frame count on the 17N+5 grid.
+    type: integer
+    step: 17
+    offset: 5
+    minimum: 22
+    maximum: 124
+  frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
+    type: integer
+    minimum: 1
+    maximum: 50
+    default: 24
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-minimax-h3-i2v-hires.json
+    selectors:
+      video: {node: 'out', key: images, from: output_dir, decode: none, take: first}
+    map:
+      prompt:
+        - node: 'prompt'
+          input: value
+      seed:
+        - node: 'noise'
+          input: noise_seed
+      image:
+        - node: 'ref'
+          input: image
+      width:
+        - node: 'width'
+          input: value
+      height:
+        - node: 'height'
+          input: value
+      frame_rate:
+        - node: 'vid'
+          input: fps
+      length:
+        - node: 'length'
+          input: value
+    requires:
+      models:
+        - role: diffusion_model
+          path: diffusion_models/10Eros-Max-Turbo-Beta7-Q4_K_M.gguf
+        - role: text_encoder
+          path: text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+        - role: vae
+          path: vae/minimax_h3_video_vae_int8_convrot.safetensors
+        - role: vae
+          path: vae/minimax_h3_audio_vae_fp32.safetensors
+        - role: upscale_model
+          path: latent_upscale_models/minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors
+source_url: https://huggingface.co/TenStrip/10Eros-Max

@@ -41,6 +41,7 @@ workflows:
   video.generate.ltx-2.5-long: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
   video.generate.ltx-2.5-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
   video.generate.minimax-h3-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.minimax-h3-i2v-hires: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
   video.generate.minimax-h3-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
   video.generate.minimax-h3-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
   video.generate.minimax-h3-long: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}

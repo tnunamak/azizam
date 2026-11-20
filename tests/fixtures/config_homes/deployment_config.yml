@@ -1147,6 +1147,25 @@ videos:
       frame_rate: 24
       length_step: 17
       length_offset: 5
+    video-minimax-h3-i2v-hires:
+      file: workflows/videos/video-minimax-h3-i2v-hires.json
+      node_roles:
+        prompt_node: "prompt"
+        size_node: ["width", "height"]
+        length_nodes: ["length"]
+        frame_rate_nodes: ["vid"]
+        seed_nodes: ["noise"]
+        save_node: "out"
+        image_node: "ref"
+        prompt_field: "value"
+      requires_input_reference: true
+      min_seconds: 2
+      max_seconds: 5.17
+      max_size: 1216x704
+      default_size: 1216x704
+      frame_rate: 24
+      length_step: 17
+      length_offset: 5
     # Keyframe variants: the clip starts on `input_reference`, ends on the manifest's
     # `last_frame` asset (sent as extensions.com.azizam.workflow.last_frame) and, for
     # the -mid variant, passes through `middle_frame`. `requires_extensions` makes the

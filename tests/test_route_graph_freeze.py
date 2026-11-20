@@ -196,6 +196,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
              "image.generate.moss-image-quality", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
+             "video.generate.minimax-h3-i2v-hires",
              "mesh.generate.trellis-2", "mesh.generate.pixal3d", "video.edit.video-mux",
              "mesh.edit.retopo", "mesh.edit.rig-auto", "mesh.edit.rig-humanoid",
              "mesh.edit.texture-refine", "mesh.edit.uv-unwrap"}
