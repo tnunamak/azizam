@@ -1,4 +1,6 @@
-import { createElement, type ComponentProps } from "react";
+// @vitest-environment jsdom
+import { act, createElement, useState, type ComponentProps } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { WorkflowInputs, type WorkflowInput } from "./workflow-inputs";
@@ -120,4 +122,43 @@ it.each([
 ])("keeps the unloaded notice for an unsupported array schema", (items) => {
   expect(view({ ...array, items }).render()).toContain("inputs could not be loaded");
   expect(controls.buttons.has("Add Styles")).toBe(false);
+});
+
+it("focuses the added row at the maximum and keeps focus and identity after removal", async () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const env = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previous = env.IS_REACT_ACT_ENVIRONMENT;
+  env.IS_REACT_ACT_ENVIRONMENT = true;
+  function Harness() {
+    const [json, setJson] = useState("{}");
+    return createElement(WorkflowInputs, { inputs: [{ ...array, max_items: 3 }], json, onChange: setJson });
+  }
+  const add = () => host.querySelector<HTMLButtonElement>('[aria-label="Add Styles"]')!;
+  const rows = () => [...host.querySelectorAll<HTMLFieldSetElement>("fieldset")];
+  const remove = async (number: number) => {
+    const button = host.querySelector<HTMLButtonElement>(`[aria-label="Remove Styles row ${number}"]`)!;
+    button.focus();
+    await act(async () => button.click());
+  };
+  try {
+    await act(async () => root.render(createElement(Harness)));
+    add().focus();
+    for (let i = 0; i < 3; i++) await act(async () => add().click());
+    expect(add().disabled).toBe(true);
+    const [first, , third] = rows();
+    expect(document.activeElement).toBe(third);
+    await remove(2);
+    expect(rows()[1]).toBe(third);
+    expect(document.activeElement).toBe(third);
+    await remove(2);
+    expect(document.activeElement).toBe(first);
+    await remove(1);
+    expect(document.activeElement).toBe(add());
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    env.IS_REACT_ACT_ENVIRONMENT = previous;
+  }
 });
