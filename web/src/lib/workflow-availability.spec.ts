@@ -73,6 +73,37 @@ describe("workflowAvailabilityView", () => {
     });
   });
 
+  it("keeps a reasonless backend refusal down and routes only the owner to Engines", () => {
+    const row = { available: false, reason_code: "backend_unavailable" } as const;
+    expect(workflowAvailabilityView(row, { owner: false })).toEqual({
+      readiness: "down", runnable: false, pickerNote: "Unavailable",
+      text: "Unavailable. Ask the owner to check this capability.", fix: null,
+    });
+    expect(workflowAvailabilityView(row, { owner: true })).toEqual({
+      readiness: "down", runnable: false, pickerNote: "Unavailable",
+      text: "Unavailable. Check its engine.",
+      fix: { href: "/engines", action: "Open Engines" },
+    });
+  });
+
+  it("uses fixed member idle copy and preserves the owner's idle explanation", () => {
+    const row = { status: "idle", available: true, reason: "Starts on demand at this site." };
+    expect(workflowAvailabilityView(row, { owner: false }).text)
+      .toBe("Ready to start when you make a request.");
+    expect(workflowAvailabilityView(row, { owner: true }).text)
+      .toBe("Starts on demand at this site.");
+  });
+
+  it("uses fixed member wait copy and preserves the owner's wait explanation", () => {
+    const row = { status: "busy", available: false, reason: "Finishing the fixture request." };
+    expect(workflowAvailabilityView(row, { owner: false })).toEqual({
+      readiness: "wait", runnable: false, pickerNote: "Busy",
+      text: "Busy with other requests. Try again soon.", fix: null,
+    });
+    expect(workflowAvailabilityView(row, { owner: true }).text)
+      .toBe("Finishing the fixture request.");
+  });
+
   it.each([null, undefined])("keeps absent availability %s runnable", (availability) => {
     expect(workflowAvailabilityView(availability, { owner: false })).toEqual({
       readiness: "ready", runnable: true, pickerNote: null, text: null, fix: null,

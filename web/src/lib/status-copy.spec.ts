@@ -14,6 +14,12 @@ const gatewayReasons = [
 ] as const;
 
 describe("availability reason copy", () => {
+  it("ends the no-capabilities message with a full stop and names what to do", () => {
+    const copy = statusSummaryCopy({ state: "unavailable", reason_code: "no_capabilities" });
+    expect(copy).toMatch(/\.$/);
+    expect(copy).toMatch(/Ask the owner/i);
+  });
+
   it.each(gatewayReasons)("explains %s without naming internals", (code) => {
     const copy = availabilityReason("unavailable", code);
     expect(copy).toMatch(/\S.*\.$/);
