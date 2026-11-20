@@ -1,9 +1,12 @@
 """Member adapter uploads through the real Library: the route, the store, the ownership rule and the delete."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 import json
 import os
+import tempfile
 import time
 from types import SimpleNamespace
 
@@ -14,6 +17,7 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import accounts, admin_store, adapter_upload, media_jobs, me_adapters, me_media, prompt_memory, receipt_store
 from gateway.admin_oidc import AdminSession
+from gateway.request_body_limits import RequestBodyLimitMiddleware
 
 from tests.test_adapter_upload import safetensors
 
@@ -34,6 +38,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt_memory, "DB_PATH", jobs)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(proxy.ADAPTER_LIBRARY, "_materializers", {})
     engine = tmp_path / "engine"
     (engine / "models" / FOLDER).mkdir(parents=True)
     monkeypatch.setenv("AZIZAM_COMFY_DIR", str(engine))
@@ -51,7 +56,8 @@ def world(tmp_path, monkeypatch):
     app = FastAPI()
     app.include_router(me_adapters.create_me_adapters_router(
         session_provider=session, rules=proxy._adapter_rules, engine_local=proxy._adapter_engine_local,
-        store=proxy._store_adapter_upload))
+        store=proxy._store_adapter_upload, used_bytes=proxy.ADAPTER_LIBRARY.used_bytes))
+    app.add_middleware(RequestBodyLimitMiddleware, limits=proxy._request_body_limits())
     app.include_router(me_media.create_me_media_router(
         session_provider=session,
         signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}",
@@ -256,3 +262,128 @@ def test_two_people_with_the_same_file_each_have_their_own_asset_and_one_cannot_
     world.who["now"] = "sam"
     world.client.delete(f"/me/api/media/{sams}")
     assert not (world.engine / copy).exists()
+
+
+# --- review fixes: the body bound, the spool, the person's total, and what is not an adapter -----------------------------
+
+MIB = 1 << 20
+
+
+def big_adapter(mib: int = 2) -> bytes:
+    return safetensors({"w": [mib * 512, 1024]}, metadata={"ss_base_model_version": "alpha_base"})
+
+
+def test_the_gateways_body_limit_for_the_route_is_the_owners_cap_plus_one_mib(world):
+    limits = proxy._request_body_limits()
+    world.turn_on(max_bytes=5 * MIB)
+    assert limits.for_path("/me/api/adapters") == 6 * MIB
+    world.turn_on(max_bytes=MIB)
+    assert limits.for_path("/me/api/adapters") == 2 * MIB
+    assert any(m.cls is RequestBodyLimitMiddleware for m in proxy.app.user_middleware)
+
+
+def test_a_declared_length_past_the_cap_is_refused_with_413_and_nothing_is_stored(world):
+    world.turn_on(max_bytes=1000)
+    response = world.client.post("/me/api/adapters", content=b"x" * (1000 + MIB + 10),
+                                 headers={"content-type": "multipart/form-data; boundary=x"})
+    assert response.status_code == 413 and error_code(response) == "request_too_large"
+    assert stored_files(world) == []
+
+
+def test_a_chunked_body_is_stopped_once_it_passes_the_bound_whatever_it_declares(world):
+    world.turn_on(max_bytes=1000)
+    chunks = (b"x" * MIB for _ in range(3))                     # no Content-Length: only the bytes counted can stop it
+    response = world.client.post("/me/api/adapters", content=chunks,
+                                 headers={"content-type": "multipart/form-data; boundary=x"})
+    assert response.status_code == 413 and error_code(response) == "request_too_large"
+    assert stored_files(world) == []
+
+
+def test_a_body_past_the_spool_size_is_held_on_disk_under_the_temporary_directory_in_use(world, monkeypatch, tmp_path):
+    spool = tmp_path / "private-tmp"
+    spool.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(spool))        # what ``private_tmp.activate`` sets for the process
+    seen = []
+    real = adapter_upload.validate_stream
+
+    def watching(stream, size, rules):
+        seen.append(getattr(getattr(stream, "_file", None), "name", None))
+        return real(stream, size, rules)
+
+    monkeypatch.setattr(adapter_upload, "validate_stream", watching)
+    world.turn_on()
+    assert upload(world, big_adapter()).status_code == 200
+    assert seen and isinstance(seen[0], str) and seen[0].startswith(str(spool) + os.sep)
+
+
+def test_a_person_cannot_store_more_than_the_owners_total_and_is_told_how_much_is_used(world):
+    beta = safetensors({"b": [3]}, metadata={"ss_base_model_version": "alpha_base"})
+    world.turn_on(max_total_bytes=len(ALPHA) + len(beta) - 1)
+    assert upload(world, ALPHA).status_code == 200
+    refused = upload(world, beta)
+    assert (refused.status_code, error_code(refused)) == (413, "adapter_total_too_large")
+    message = refused.json()["error"]["message"]
+    assert str(len(ALPHA)) in message and str(len(ALPHA) + len(beta) - 1) in message
+    assert len(stored_files(world)) == 2                       # the first file and its sidecar only
+    world.who["now"] = "sam"
+    assert upload(world, beta).status_code == 200              # the total is each person's own
+
+
+def test_storing_the_same_file_again_does_not_count_twice_and_a_delete_frees_the_room(world):
+    beta = safetensors({"b": [3]}, metadata={"ss_base_model_version": "alpha_base"})
+    world.turn_on(max_total_bytes=len(ALPHA) + len(beta) - 1)
+    first = upload(world, ALPHA).json()["id"]
+    assert upload(world, ALPHA).json()["id"] == first
+    assert upload(world, beta).status_code == 413
+    world.client.delete(f"/me/api/media/{first}")
+    assert upload(world, beta).status_code == 200
+
+
+def test_a_graph_service_that_cannot_be_read_leaves_the_engine_unproven_local(world, monkeypatch):
+    def broken(_capability):
+        raise RuntimeError("registry unreadable")
+
+    monkeypatch.setattr(proxy, "_graph_service", broken)
+    assert proxy._adapter_engine_local() is False
+    world.turn_on()
+    response = upload(world, ALPHA)
+    assert (response.status_code, error_code(response)) == (409, "adapter_engine_not_local")
+
+
+def test_noting_a_copy_for_an_asset_deleted_meanwhile_does_not_bring_its_sidecar_back(world):
+    world.turn_on()
+    asset_id = upload(world, ALPHA).json()["id"]
+    world.client.delete(f"/me/api/media/{asset_id}")
+    with pytest.raises(LookupError):
+        proxy._note_adapter_copy(asset_id, FOLDER)
+    assert stored_files(world) == []
+
+
+def test_a_safetensors_file_stored_by_the_generic_path_is_not_an_adapter_and_is_never_offered(world):
+    world.turn_on()
+    robin = world.people["robin"]["id"]
+    asset_id = proxy.store_asset_bytes(ALPHA, kind="ast", suffix=".safetensors", maker_person_id=robin)
+    assert asset_id.startswith("ast_") and adapter_upload.digest_of(asset_id) is not None
+    assert offers(world, "robin") == []
+    assert proxy.ADAPTER_LIBRARY.resolve(robin, asset_id, folder=FOLDER) is None
+    with pytest.raises(adapter_upload.UnknownAdapter):
+        proxy.ADAPTER_LIBRARY.engine_names(robin, [asset_id], folder=FOLDER)
+    assert os.listdir(world.engine) == []
+    assert proxy.ADAPTER_LIBRARY.used_bytes(robin) == 0
+
+
+def test_the_gateway_sweeps_its_adapter_copies_on_a_timer_and_the_lifespan_starts_that_timer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(proxy.ADAPTER_LIBRARY, "sweep_all", lambda: calls.append(1) or [])
+    monkeypatch.setattr(adapter_upload, "SWEEP_EVERY_S", 0.01)
+
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(proxy._adapter_sweep_loop(stop))
+        await asyncio.sleep(0.2)
+        stop.set()
+        await asyncio.wait_for(task, 2)
+
+    asyncio.run(go())
+    assert len(calls) >= 2
+    assert "_adapter_sweep_loop" in inspect.getsource(proxy.lifespan)

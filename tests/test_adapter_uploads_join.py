@@ -10,6 +10,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -23,7 +24,9 @@ from tests.support import gateway as support
 from tests.test_adapter_requests import (  # noqa: F401  (engine_files is an autouse fixture)
     EXT, FILES, HEADERS, SERVICE, WORKFLOW, engine_files, run, serve)
 from tests.test_adapter_upload import safetensors
-from tests.test_workflow_run_contracts import manifest_of, template_of, world  # noqa: F401  (world is a fixture)
+from tests.media_test_bytes import png_bytes
+from tests.test_workflow_run_contracts import (  # noqa: F401  (world is a fixture)
+    FakeGraphEngine, call, manifest_of, serve_engine, template_of, world)
 
 KREA = safetensors(metadata={"ss_base_model_version": "krea2"})
 OTHER_BASE = safetensors({"u": [5]}, metadata={"ss_base_model_version": "no-such-base"})
@@ -41,6 +44,7 @@ def uploads(world, monkeypatch, tmp_path):
     folder.mkdir(parents=True)
     monkeypatch.setenv("AZIZAM_COMFY_DIR", str(engine))
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(proxy.ADAPTER_LIBRARY, "_materializers", {})        # holds of an earlier test's folder are not this one's
     admin_store.put_operator_setting(adapter_upload.SETTING_KEY, {"enabled": True}, path=db)
     person = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", email="fixture@example.test", path=db)
     app = admin_store.create_app("Personal app", kind="personal", owner_user_id=person["id"], access_plan="person", path=db)
@@ -248,3 +252,89 @@ def test_a_deleted_upload_leaves_the_pick_list_and_the_engines_folder(world, upl
     [copy_path] = list((uploads.folder / COPIES).iterdir())
     proxy._LIBRARY_ASSET_DELETER(asset_id, release_person_id=uploads.person)
     assert not copy_path.exists() and choices_for(uploads.person).uploads == ()
+
+
+# --- review fixes: a name that is not text, an upload that vanished, and a copy held for the life of its run -----------
+
+def test_an_adapter_whose_name_is_not_text_is_a_422_beside_a_real_upload_not_a_crash(world, uploads):
+    asset_id = uploads.add(KREA)
+    engine = serve(world)
+    response = run(WORKFLOW, {"prompt": "x", "loras": [{"name": asset_id}, {"name": ["a", "b"]}]})
+    assert response.status_code == 422, response.text
+    assert engine.calls == []
+
+
+def test_the_image_route_answers_a_name_that_is_not_text_with_a_422(uploads):
+    asset_id = uploads.add(KREA)
+    _, response, _ = image_call(uploads, {"loras": [{"name": asset_id}, {"name": {"x": 1}}]}, person=uploads.person)
+    assert response is not None and response.status_code == 422
+
+
+def test_an_upload_deleted_between_the_list_and_the_copy_is_refused_as_any_unknown_name(world, uploads, monkeypatch):
+    asset_id = uploads.add(KREA)
+    engine = serve(world)
+
+    def vanished(*_args, **_kwargs):
+        raise adapter_upload.UnknownAdapter(asset_id)
+
+    monkeypatch.setattr(proxy.ADAPTER_LIBRARY, "engine_names", vanished)
+    response = run(WORKFLOW, {"prompt": "x", "loras": [{"name": asset_id}]})
+    assert response.status_code == 422, response.text
+    assert engine.calls == []
+
+
+class WatchingEngine(FakeGraphEngine):
+    """Notes which copies the gateway held at the moment the engine was given the graph."""
+
+    held_at_submit: list[set[str]] = []
+
+    def __call__(self, request):
+        if request.method == "POST" and request.url.path == "/prompt":
+            self.held_at_submit.append(set(proxy.ADAPTER_LIBRARY.held_digests()))
+        return super().__call__(request)
+
+
+def watching(world):
+    WatchingEngine.held_at_submit = []
+    return serve_engine(world, WatchingEngine(manifest_of(WORKFLOW), png_bytes((9, 9, 9)), "image/png", "out.png"))
+
+
+def test_a_run_holds_its_copy_while_the_engine_has_it_and_lets_go_when_the_run_ends(world, uploads):
+    asset_id = uploads.add(KREA)
+    watching(world)
+    response = run(WORKFLOW, {"prompt": "x", "loras": [{"name": asset_id}]})
+    assert response.status_code == 200 and response.json()["status"] == "succeeded", response.text
+    assert WatchingEngine.held_at_submit == [{hashlib.sha256(KREA).hexdigest()}]
+    assert proxy.ADAPTER_LIBRARY.held_digests() == set()
+
+
+def test_a_queued_job_keeps_its_copy_until_it_has_run_whatever_a_sweep_or_a_delete_does(world, uploads, monkeypatch):
+    asset_id = uploads.add(KREA)
+    watching(world)
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", lambda job_id: None)     # queued, not yet run
+    queued = call("post", f"/gateway/v1/workflows/{WORKFLOW}/run", json={"inputs": {"prompt": "x", "loras": [{"name": asset_id}]}})
+    assert queued.status_code == 202, queued.text
+    digest = hashlib.sha256(KREA).hexdigest()
+    copy_path = uploads.folder / COPIES / f"{digest}.safetensors"
+    os.utime(copy_path, (1, 1))
+    proxy.ADAPTER_LIBRARY.sweep(folder=DECL.folder)
+    proxy._LIBRARY_ASSET_DELETER(asset_id, release_person_id=uploads.person)
+    assert copy_path.exists()                                     # held for the queued job, so neither removed it
+    asyncio.run(proxy._run_workflow_job(queued.json()["job_id"]))
+    assert media_jobs.get(queued.json()["job_id"], path=world.media)["status"] == "succeeded"
+    assert not copy_path.exists()                                 # the delete took effect when the job let go
+    assert proxy.ADAPTER_LIBRARY.held_digests() == set()
+
+
+def test_a_run_refused_after_its_copy_was_made_does_not_keep_the_copy_held(world, uploads):
+    asset_id = uploads.add(KREA)
+    serve(world)
+    response = run(WORKFLOW, {"prompt": "x", "loras": [{"name": asset_id, "weight": 99}]})
+    assert response.status_code == 422, response.text
+    assert proxy.ADAPTER_LIBRARY.held_digests() == set()
+
+
+def test_the_image_route_holds_its_copy_for_a_bounded_time(uploads):
+    asset_id = uploads.add(KREA)
+    image_call(uploads, {"loras": [{"name": asset_id}]}, person=uploads.person)
+    assert proxy.ADAPTER_LIBRARY.held_digests() == {hashlib.sha256(KREA).hexdigest()}

@@ -10,6 +10,7 @@ import io
 import json
 import os
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -545,10 +546,14 @@ def test_a_copy_two_uploads_share_stays_until_the_last_of_them_goes(tmp_path):
 
 # --- the body limit and the ceiling of the owner's cap --------------------------------------------------------------
 
-def test_the_adapter_route_may_carry_a_body_up_to_the_ceiling_and_other_routes_keep_their_limits():
+def test_the_adapter_route_may_carry_a_body_up_to_the_owners_cap_and_other_routes_keep_their_limits():
     from gateway.request_body_limits import RequestBodyLimits
-    limits = RequestBodyLimits()
-    assert limits.for_path("/me/api/adapters") > adapter_upload.MAX_BYTES_CEILING
+    cap = {"now": 3 * GIB}
+    limits = RequestBodyLimits(adapter_bytes=lambda: cap["now"])
+    assert limits.for_path("/me/api/adapters") == 3 * GIB + (1 << 20)
+    cap["now"] = 1 << 20                                          # the owner lowers the cap: the limit follows at once
+    assert limits.for_path("/me/api/adapters") == 2 * (1 << 20)
+    assert RequestBodyLimits().for_path("/me/api/adapters") == adapter_upload.DEFAULT_MAX_BYTES + (1 << 20)
     assert limits.for_path("/me/api/prompt-memory") == limits.json_bytes
     assert limits.for_path("/me/api/adapters/other") == limits.json_bytes
 
@@ -556,3 +561,176 @@ def test_the_adapter_route_may_carry_a_body_up_to_the_ceiling_and_other_routes_k
 def test_the_owners_cap_cannot_pass_the_ceiling():
     assert adapter_upload.policy({"enabled": True, "max_bytes": adapter_upload.MAX_BYTES_CEILING + 1}).max_bytes == \
         adapter_upload.MAX_BYTES_CEILING
+
+
+# --- review fixes: header depth, anchors, races, holds, the sweep, and the person's total ---------------------------------
+
+def test_a_header_nested_past_the_parsers_depth_is_refused_not_a_crash():
+    blob = b'{"a":' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+    data = struct.pack("<Q", len(blob)) + blob
+    assert refused_code(data) == "adapter_header_invalid"
+
+
+def test_a_name_with_a_trailing_newline_is_not_a_digest_a_copy_name_or_a_folder(tmp_path, lora_root):
+    assert adapter_upload.digest_of("ast_" + "a" * 64 + "\n") is None
+    with pytest.raises(ValueError):
+        adapter_upload.Materializer(lora_root).name_for("a" * 64 + "\n")
+    assert adapter_upload.lora_root(lora_root.parent, "loras\n") is None
+    folder = lora_root / adapter_upload.SUBFOLDER
+    folder.mkdir()
+    (folder / ("a" * 64 + ".safetensors\n")).write_bytes(b"x")
+    assert adapter_upload.Materializer(lora_root).digests() == []
+
+
+def test_two_makers_of_the_gateways_folder_at_once_do_not_fail(tmp_path, lora_root, monkeypatch):
+    source, digest = source_file(tmp_path)
+    folder = lora_root / adapter_upload.SUBFOLDER
+    folder.mkdir()
+    real, told = Path.exists, []
+
+    def late(self, *args, **kwargs):          # the other maker made the folder after this one looked
+        if self == folder and not told:
+            told.append(1)
+            return False
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", late)
+    assert adapter_upload.Materializer(lora_root).materialize(digest, source).endswith(f"{digest}.safetensors")
+
+
+def test_reap_survives_a_copy_that_vanishes_while_it_reads_the_folder(tmp_path, lora_root, monkeypatch):
+    source, digest = source_file(tmp_path)
+    cache = adapter_upload.Materializer(lora_root)
+    cache.materialize(digest, source)
+    real_scandir = os.scandir
+
+    def vanishing(path):
+        entries = list(real_scandir(path))
+
+        class Gone:
+            name, path = entries[0].name, entries[0].path
+
+            def is_file(self, follow_symlinks=True):
+                return True
+
+            def stat(self, follow_symlinks=True):
+                raise FileNotFoundError(self.name)
+
+        return iter([Gone()])
+
+    monkeypatch.setattr(adapter_upload.os, "scandir", vanishing)
+    assert cache.reap(now=10**9, idle_s=1, max_bytes=0) == []
+
+
+def test_a_copy_that_a_run_holds_survives_a_reap_until_the_run_ends(tmp_path, lora_root):
+    source, digest = source_file(tmp_path)
+    cache = adapter_upload.Materializer(lora_root)
+    cache.materialize(digest, source, hold="run-1")
+    os.utime(lora_root / cache.name_for(digest), (1, 1))
+    assert cache.reap(now=10**9, idle_s=1, max_bytes=0) == []
+    cache.release("run-1")
+    assert cache.reap(now=10**9, idle_s=1, max_bytes=0) == [digest]
+
+
+def test_a_hold_nobody_released_ends_after_its_time_bound(tmp_path, lora_root):
+    source, digest = source_file(tmp_path)
+    cache = adapter_upload.Materializer(lora_root)
+    started = time.time()
+    cache.materialize(digest, source, hold="lost", ttl_s=100)
+    os.utime(lora_root / cache.name_for(digest), (1, 1))
+    assert cache.reap(now=started + 50, idle_s=1, max_bytes=0) == []
+    assert cache.reap(now=started + 500, idle_s=1, max_bytes=0) == [digest]
+
+
+def test_removing_a_held_copy_waits_for_the_hold_and_then_removes_it(tmp_path, lora_root):
+    source, digest = source_file(tmp_path)
+    cache = adapter_upload.Materializer(lora_root)
+    cache.materialize(digest, source, hold="run-1")
+    assert cache.remove(digest) is False
+    assert (lora_root / cache.name_for(digest)).exists()
+    cache.release("run-1")
+    assert not (lora_root / cache.name_for(digest)).exists()
+
+
+def test_a_copy_whose_content_is_not_what_its_name_says_is_made_again(tmp_path, lora_root):
+    source, digest = source_file(tmp_path)
+    adapter_upload.Materializer(lora_root).materialize(digest, source)
+    target = lora_root / adapter_upload.SUBFOLDER / f"{digest}.safetensors"
+    target.write_bytes(b"\x00" * source.stat().st_size)             # same size, other bytes: a damaged or planted file
+    adapter_upload.Materializer(lora_root).materialize(digest, source)     # a new process
+    assert target.read_bytes() == source.read_bytes()
+
+
+def test_using_an_upload_twice_in_one_process_uses_one_materializer_so_its_holds_are_shared(tmp_path):
+    store = Store(tmp_path)
+    held, other = store.add("robin", ALPHA), store.add("robin", BETA)
+    [copy] = store.library.engine_names("robin", [held], folder="loras", hold="run-1").values()
+    os.utime(store.engine / copy, (1, 1))
+    store.library.engine_names("robin", [other], folder="loras")      # reaps the folder
+    assert (store.engine / copy).exists()
+    assert store.library.held_digests() == {hashlib.sha256(ALPHA).hexdigest()}
+    store.library.release("run-1")
+    assert store.library.held_digests() == set()
+
+
+def test_forgetting_an_upload_a_queued_run_names_removes_the_copy_when_the_run_ends(tmp_path):
+    store = Store(tmp_path)
+    asset_id = store.add("robin", ALPHA)
+    [copy] = store.library.engine_names("robin", [asset_id], folder="loras", hold="run-1").values()
+    store.library.forget(asset_id, {"adapter": {**store.sidecars[asset_id]["adapter"], "copies": ["loras"]}})
+    assert (store.engine / copy).exists()
+    store.library.release("run-1")
+    assert not (store.engine / copy).exists()
+
+
+def test_a_copy_made_for_an_upload_that_is_gone_is_not_left_behind(tmp_path):
+    store = Store(tmp_path)
+    asset_id = store.add("robin", ALPHA)
+
+    def gone(asset, folder):
+        raise LookupError(asset)
+
+    store.library._note_copy = gone
+    with pytest.raises(adapter_upload.UnknownAdapter):
+        store.library.engine_names("robin", [asset_id], folder="loras", hold="run-1")
+    assert os.listdir(store.engine / adapter_upload.SUBFOLDER) == []
+    assert store.library.held_digests() == set()
+
+
+def test_a_sweep_removes_a_scratch_file_a_crash_left_and_keeps_a_fresh_one(tmp_path):
+    store = Store(tmp_path)
+    folder = store.engine / adapter_upload.SUBFOLDER
+    folder.mkdir()
+    old, fresh = folder / f".{'a' * 64}.1.2.tmp", folder / f".{'b' * 64}.1.3.tmp"
+    for path in (old, fresh):
+        path.write_bytes(b"half")
+    os.utime(old, (time.time() - 7200, time.time() - 7200))
+    store.library.engine_names("robin", [], folder="loras")
+    store.library.sweep(folder="loras")
+    assert not old.exists() and fresh.exists()
+
+
+def test_the_periodic_sweep_visits_every_folder_the_library_copied_to(tmp_path):
+    store = Store(tmp_path)
+    kept, gone = store.add("robin", ALPHA), store.add("robin", BETA)
+    store.library.engine_names("robin", [kept, gone], folder="loras")
+    del store.sidecars[gone]
+    assert store.library.sweep_all() == [hashlib.sha256(BETA).hexdigest()]
+
+
+def test_the_owners_setting_carries_a_per_person_total_with_a_default_and_a_ceiling():
+    assert adapter_upload.policy(None).max_total_bytes == adapter_upload.DEFAULT_TOTAL_BYTES == 10 * GIB
+    over = adapter_upload.policy({"enabled": True, "max_total_bytes": adapter_upload.TOTAL_BYTES_CEILING + 1})
+    assert over.max_total_bytes == adapter_upload.TOTAL_BYTES_CEILING
+    assert adapter_upload.policy({"enabled": True, "max_total_bytes": 5 * GIB}).max_total_bytes == 5 * GIB
+
+
+def test_a_person_total_counts_their_own_uploads_only_and_leaves_out_the_one_replaced(tmp_path):
+    store = Store(tmp_path)
+    mine, theirs = store.add("robin", ALPHA), store.add("sam", BETA)
+    assert store.library.used_bytes("robin") == len(ALPHA)
+    assert store.library.used_bytes("sam") == len(BETA)
+    assert store.library.used_bytes("robin", excluding=mine) == 0
+    store.add("robin", UNKNOWN, marked=False)
+    assert store.library.used_bytes("robin") == len(ALPHA)         # a file no upload marked is not counted here
+    assert theirs != mine

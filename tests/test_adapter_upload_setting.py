@@ -13,7 +13,8 @@ def test_the_setting_is_off_by_default_with_the_default_cap(gateway):
     owner, *_ = owner_and_admin(gateway)
     reply = owner.get(PATH)
     assert reply.status_code == 200
-    assert reply.json() == {"enabled": False, "max_bytes": adapter_upload.DEFAULT_MAX_BYTES, "revision": "0",
+    assert reply.json() == {"enabled": False, "max_bytes": adapter_upload.DEFAULT_MAX_BYTES,
+                            "max_total_bytes": adapter_upload.DEFAULT_TOTAL_BYTES, "revision": "0",
                             "label": "Let members upload their own adapters"}
     assert adapter_upload.policy(None).enabled is False
 
@@ -42,6 +43,33 @@ def test_a_write_without_the_current_revision_is_refused(gateway):
 def test_a_setting_that_is_not_shaped_as_expected_is_refused_and_nothing_is_stored(gateway, body):
     owner, *_ = owner_and_admin(gateway)
     refused = owner.put(PATH, headers={**csrf_for(owner), "If-Match": "0"}, json=body)
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["code"] == "invalid_adapter_uploads"
+    assert admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=gateway.path) is None
+
+
+def test_the_owner_sets_the_per_person_total_and_reads_it_back(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    saved = owner.put(PATH, headers={**csrf_for(owner), "If-Match": "0"},
+                      json={"enabled": True, "max_bytes": 1 << 20, "max_total_bytes": 64 << 20})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["max_total_bytes"] == 64 << 20
+    assert owner.get(PATH).json()["max_total_bytes"] == 64 << 20
+    stored = admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=gateway.path)
+    assert adapter_upload.policy(stored["value"]).max_total_bytes == 64 << 20
+
+
+def test_a_write_that_names_no_total_stores_the_default(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    saved = owner.put(PATH, headers={**csrf_for(owner), "If-Match": "0"}, json={"enabled": True})
+    assert saved.json()["max_total_bytes"] == adapter_upload.DEFAULT_TOTAL_BYTES
+
+
+@pytest.mark.parametrize("total", [0, -1, "9", True, adapter_upload.TOTAL_BYTES_CEILING + 1, (1 << 20) - 1])
+def test_a_per_person_total_that_is_not_a_whole_number_in_bounds_is_refused(gateway, total):
+    owner, *_ = owner_and_admin(gateway)
+    refused = owner.put(PATH, headers={**csrf_for(owner), "If-Match": "0"},
+                        json={"enabled": True, "max_bytes": 1 << 20, "max_total_bytes": total})
     assert refused.status_code == 400, refused.text
     assert refused.json()["error"]["code"] == "invalid_adapter_uploads"
     assert admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=gateway.path) is None
