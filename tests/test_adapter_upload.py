@@ -103,9 +103,9 @@ def test_a_header_that_is_not_json_is_refused():
     assert refused_code(struct.pack("<Q", len(blob)) + blob) == "adapter_header_invalid"
 
 
-def test_a_header_that_is_not_an_object_is_refused():
+def test_a_header_that_does_not_open_with_a_brace_is_another_format():
     blob = b"[1, 2]"
-    assert refused_code(struct.pack("<Q", len(blob)) + blob) == "adapter_header_invalid"
+    assert refused_code(struct.pack("<Q", len(blob)) + blob) == "not_safetensors"
 
 
 def test_a_header_with_a_repeated_key_is_refused():
