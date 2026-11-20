@@ -557,10 +557,10 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
     assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 39
     assert counts["capability:backfill"] == 27
-    assert counts["requires:move"] == 27
-    assert counts["accepts:add"] == 31
+    assert counts["requires:move"] == 28
+    assert counts["accepts:add"] == 32
     assert counts.get("seed:add", 0) == 0
-    assert counts["generate:add"] == 27
+    assert counts["generate:add"] == 28
 
 
 def test_the_converted_corpus_has_no_authority_field_and_no_v1_shape():
