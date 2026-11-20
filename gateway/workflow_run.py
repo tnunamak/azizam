@@ -111,6 +111,20 @@ def run_limits_from_config(config: Mapping[str, Any]) -> RunLimits:
         max_depth=_lowered(bounds.get("max_depth"), ceilings["max_depth"]))
 
 
+# The most files one request returns, whatever the counts it asked for.
+MAX_FILES_PER_REQUEST = 10
+
+
+def _count_of(value: Any) -> int:
+    """A count the caller gave (1 when absent or not a whole number of at least 1: the contract check refuses those)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else 1
+
+
+def requested_file_count(inputs: Mapping[str, Any], options: Mapping[str, Any]) -> int:
+    """How many files a request asks for: ``options.n`` prompts, each making ``inputs.batch_size`` files."""
+    return _count_of(options.get("n")) * _count_of(inputs.get("batch_size"))
+
+
 INVALID_INPUTS = "invalid_inputs"
 BINDING_UNKNOWN = "binding_unknown"
 NEEDS_POLICY = "needs_policy"
@@ -697,6 +711,12 @@ class WorkflowRunCore:
             if error.code == "required_missing" and len(error.path) == 2 and error.path[1] in generated:
                 continue
             errors.append(error)
+        if not errors and requested_file_count(req.inputs, req.options) > MAX_FILES_PER_REQUEST:
+            # Refused whole: a run never makes fewer files than it was asked for and answers with success.
+            errors.append(ContractError(
+                ("inputs", "batch_size"), "value_invalid",
+                f"n x batch_size is {requested_file_count(req.inputs, req.options)}, "
+                f"more than the {MAX_FILES_PER_REQUEST} files one request makes"))
         for name, items in sorted(req.media.items()):
             accept = profile.accepts.get(name)
             if accept is None:

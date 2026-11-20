@@ -191,7 +191,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
 
     async def test_empty_and_partial_results_are_bounded_and_honestly_reported(self):
         for first, expected_status, expected_rounds in (
-            ([], 502, 2), ([b"one"], 200, 4),
+            ([], 502, 2), ([b"one"], 502, 4),
         ):
             with self.subTest(first=first):
                 run = AsyncMock(side_effect=[(None, first)] + [(None, [])] * 4)
@@ -199,9 +199,12 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                     response = await self.batch()
                 self.assertEqual(response.status_code, expected_status, response.body)
                 self.assertEqual(run.await_count, expected_rounds)
-                if expected_status == 200:
-                    self.assertEqual(response.headers["X-Image-Returned"], "1")
-                    self.assertIn("requested n=2 but produced 1", response.headers["X-Proxy-Warning"])
+                if first:
+                    # a partial set is an error naming both counts, never a 200 with fewer pictures
+                    error = json.loads(response.body)["error"]
+                    self.assertEqual(error["code"], "result_count_short")
+                    self.assertIn("2", error["message"])
+                    self.assertIn("1", error["message"])
 
     async def test_failed_upload_never_submits_a_generation(self):
         cases = [

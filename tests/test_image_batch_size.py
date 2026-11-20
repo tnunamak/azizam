@@ -1,4 +1,4 @@
-"""A workflow's batch_size is an image count: every image the graph makes is returned."""
+"""A workflow's batch_size is an image count: every image the graph makes is returned, and over ten is refused."""
 import asyncio
 import copy
 import json
@@ -70,8 +70,8 @@ def test_batch_size_two_returns_two_images_for_one_request(fake_comfy):
     assert response.headers["X-Image-Returned"] == "2"
 
 
-@pytest.mark.parametrize("n, batch, expected", [(1, 1, 1), (2, 2, 4), (6, 2, 10)])
-def test_n_times_batch_size_is_the_image_count_capped_at_ten(fake_comfy, n, batch, expected):
+@pytest.mark.parametrize("n, batch, expected", [(1, 1, 1), (2, 2, 4), (5, 2, 10)])
+def test_n_times_batch_size_is_the_image_count(fake_comfy, n, batch, expected):
     manifest, graph, meta = _krea_manifest_and_graph()
     graph["6"]["inputs"]["batch_size"] = batch
 
@@ -79,3 +79,14 @@ def test_n_times_batch_size_is_the_image_count_capped_at_ten(fake_comfy, n, batc
 
     assert response.status_code == 200
     assert len(fake_comfy.captured[0]) == expected
+
+
+def test_n_times_batch_size_over_ten_is_refused_with_no_engine_call(fake_comfy):
+    manifest, graph, meta = _krea_manifest_and_graph()
+    graph["6"]["inputs"]["batch_size"] = 2
+
+    response = _generate(graph, meta, manifest, n=6)
+
+    error = json.loads(response.body)["error"]
+    assert (response.status_code, error["param"]) == (400, "batch_size")
+    assert "12" in error["message"] and fake_comfy.submitted == [] and fake_comfy.captured == []

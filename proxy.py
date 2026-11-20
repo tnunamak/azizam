@@ -8837,8 +8837,23 @@ def _default_image_response_format(requested_model: Any) -> str:
     return "b64_json"
 
 
-# The public `n` range (1..10) also bounds the images one request may return.
-MAX_IMAGES_PER_REQUEST = 10
+# The public `n` range (1..10) also bounds the images one request may return: n x batch_size over it is refused.
+MAX_IMAGES_PER_REQUEST = workflow_run.MAX_FILES_PER_REQUEST
+
+
+def _image_count_over_limit_refusal(n: int, per_prompt: int) -> Response:
+    """The 400 for a request that asks for more pictures than one request makes (never a quiet short answer)."""
+    return _image_input_refusal(
+        f"n x batch_size is {n * per_prompt} (n={n}, batch_size={per_prompt}), more than the "
+        f"{MAX_IMAGES_PER_REQUEST} images one request makes. Ask for fewer, or send several requests.",
+        param="batch_size", code="invalid_request")
+
+
+def _image_count_short_response(requested: int, produced: int) -> Response:
+    """The 502 for a run that made fewer pictures than were asked for: nothing is returned, so no short set passes as whole."""
+    return openai_error_response(
+        f"Asked for {requested} images, but the image engine made {produced}. Nothing was returned.",
+        status_code=502, error_type="api_error", code="result_count_short")
 
 
 def _requested_batch_size(workflow: Mapping[str, Any], meta: Mapping[str, Any]) -> int:
@@ -9011,11 +9026,7 @@ async def _generate_images_with_adaptive_batching(
     per_prompt = _requested_batch_size(base_workflow, meta)
     images_total = n_requested * per_prompt
     if images_total > MAX_IMAGES_PER_REQUEST:
-        images_total = MAX_IMAGES_PER_REQUEST
-        warnings.append(
-            f"n={n_requested} x batch_size={per_prompt} exceeds the "
-            f"{MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}"
-        )
+        return _image_count_over_limit_refusal(n_requested, per_prompt)
 
     images_collected: list[bytes] = []
     # The contract's output the images came from; the job's bundle names its result by it.
@@ -9230,7 +9241,6 @@ async def _generate_images_with_adaptive_batching(
                 client, probe=probe, free_before=free_before, batch_target=batch_target,
                 workflow_name=workflow_name, width=width, height=height)
 
-    images_collected = images_collected[:images_total]
     if not images_collected:
         return Response(
             content=json.dumps({"error": {"message": "No images generated", "type": "api_error"}}),
@@ -9239,10 +9249,8 @@ async def _generate_images_with_adaptive_batching(
         )
 
     if len(images_collected) < images_total:
-        batch_note = f" x batch_size={per_prompt}" if per_prompt > 1 else ""
-        warnings.append(
-            f"requested n={n_requested}{batch_note} but produced {len(images_collected)} after {rounds_run} round(s)"
-        )
+        return _image_count_short_response(images_total, len(images_collected))
+    images_collected = images_collected[:images_total]
 
     if image_transform is not None:
         try:
@@ -27920,9 +27928,10 @@ class _AdaptiveBatching:
         n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 1 else 1
         total = n * per_prompt
         warnings: list[str] = []
-        if total > MAX_IMAGES_PER_REQUEST:
-            total = MAX_IMAGES_PER_REQUEST
-            warnings.append(f"n={n} x batch_size={per_prompt} exceeds the {MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}")
+        if total > MAX_IMAGES_PER_REQUEST:      # the run core refuses this at admission; a run that got here still never clamps
+            raise node_graph_runner.RunFailed(
+                "invalid_request", "invalid_input",
+                f"n x batch_size is {total}, more than the {MAX_IMAGES_PER_REQUEST} images one request makes.", upstream_status=400)
         name = str(contract.get("id") or "")
         state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
                             free_before=await graph_free_vram_bytes(session.client, _GRAPH_CAPABILITY),
