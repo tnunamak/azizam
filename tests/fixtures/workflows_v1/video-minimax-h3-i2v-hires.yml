@@ -28,6 +28,35 @@ inputs:
     help: The picture the video starts from.
     type: asset
     required: true
+  width:
+    label: Width
+    help: Video width in pixels. A multiple of 64.
+    type: integer
+    step: 64
+    minimum: 64
+    maximum: 1216
+  height:
+    label: Height
+    help: Video height in pixels. A multiple of 64.
+    type: integer
+    step: 64
+    minimum: 64
+    maximum: 704
+  length:
+    label: Length in frames
+    help: Frame count on the 17N+5 grid.
+    type: integer
+    step: 17
+    offset: 5
+    minimum: 22
+    maximum: 124
+  frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
+    type: integer
+    minimum: 1
+    maximum: 50
+    default: 24
 outputs:
   video:
     media_type: video/mp4
@@ -46,6 +75,18 @@ bindings:
       image:
       - node: 'ref'
         input: image
+      width:
+      - node: 'width'
+        input: value
+      height:
+      - node: 'height'
+        input: value
+      frame_rate:
+      - node: 'vid'
+        input: fps
+      length:
+      - node: 'length'
+        input: value
 requires:
   models:
   - role: diffusion_model
