@@ -62,7 +62,7 @@ inputs:
       maximum: 4294967295
   loras:
     label: style adapters
-    help: Add up to 3 style adapters the server has installed for this model. Each has a strength from -4 to 4; 1.0 is the usual setting.
+    help: Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.
     type: array
     max_items: 3
     items:

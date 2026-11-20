@@ -373,6 +373,13 @@ def _example_request(
     }
 
 
+def _example_values(inputs: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """One example value for each input a request can set. An optional list or object has no honest one-word example, so
+    an example leaves it out."""
+    return {str(item.get("name")): _example_value(item) for item in inputs
+            if item.get("accepted") and (item.get("required") or "default" in item or item.get("type") not in ("array", "object"))}
+
+
 def _example_body(
     record: WorkflowRecord,
     inputs: list[Mapping[str, Any]],
@@ -380,7 +387,7 @@ def _example_body(
     mapping: Mapping[str, Mapping[str, Any]],
     model: str | None = None,
 ) -> dict[str, Any]:
-    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    values = _example_values(inputs)
     body: dict[str, Any] = {}
     if model:
         body["model"] = model
@@ -426,7 +433,7 @@ def _example_multipart_parts(
     input, never the wire field.
     """
     rows = {str(item.get("name")): item for item in inputs}
-    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    values = _example_values(inputs)
     form: dict[str, Any] = {}
     if model:
         form["model"] = model
