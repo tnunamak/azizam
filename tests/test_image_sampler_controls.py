@@ -47,6 +47,11 @@ def image_cases():
     return cases
 
 
+def sampler_cases():
+    """The image cases whose graph has a caller-controllable sampler; the others are left out here, never skipped."""
+    return [case for case in image_cases() if controls(case.values[2], case.values[0]["id"]) is not None]
+
+
 def controls(graph, manifest_id=None):
     """Map each control to (node id, node class, input) in this graph, or None when it has no sampler."""
     if manifest_id in LEFT_OUT:
@@ -66,6 +71,7 @@ def controls(graph, manifest_id=None):
 
 def test_the_cases_cover_the_image_workflows():
     assert len(image_cases()) >= 12
+    assert len(sampler_cases()) == len(image_cases()) - len(set(LEFT_OUT) & {case.values[0]["id"] for case in image_cases()})
 
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
@@ -90,20 +96,16 @@ def test_every_image_manifest_with_a_sampler_exposes_the_three_controls(manifest
             assert len(spec["enum"]) == len(set(spec["enum"]))
 
 
-@pytest.mark.parametrize("manifest,binding,graph", image_cases())
+@pytest.mark.parametrize("manifest,binding,graph", sampler_cases())
 def test_defaults_leave_the_graph_unchanged(manifest, binding, graph):
     found = controls(graph, manifest["id"])
-    if found is None:
-        pytest.skip("no sampler")
     defaults = {name: manifest["inputs"][name]["default"] for name in found}
     result = bind_backend_request(manifest, "comfyui", graph, defaults)
     assert json.dumps(result.request, sort_keys=True) == json.dumps(graph, sort_keys=True)
 
 
-@pytest.mark.parametrize("manifest,binding,graph", image_cases())
+@pytest.mark.parametrize("manifest,binding,graph", sampler_cases())
 def test_bad_sampler_is_refused_and_lists_the_choices(manifest, binding, graph):
-    if controls(graph, manifest["id"]) is None:
-        pytest.skip("no sampler")
     result = validate_inputs(manifest, {"sampler": "no-such-sampler"})
     assert "sampler" in result.rejected
     assert result.rejected["sampler"].startswith("sampler must be one of: ")
@@ -113,21 +115,17 @@ def test_bad_sampler_is_refused_and_lists_the_choices(manifest, binding, graph):
     assert result.rejected["scheduler"].startswith("scheduler must be one of: ")
 
 
-@pytest.mark.parametrize("manifest,binding,graph", image_cases())
+@pytest.mark.parametrize("manifest,binding,graph", sampler_cases())
 def test_steps_out_of_range_is_refused(manifest, binding, graph):
-    if controls(graph, manifest["id"]) is None:
-        pytest.skip("no sampler")
     spec = manifest["inputs"]["steps"]
     assert "steps" in validate_inputs(manifest, {"steps": spec["minimum"] - 1}).rejected
     assert "steps" in validate_inputs(manifest, {"steps": spec["maximum"] + 1}).rejected
     assert "steps" not in validate_inputs(manifest, {"steps": spec["maximum"]}).rejected
 
 
-@pytest.mark.parametrize("manifest,binding,graph", image_cases())
+@pytest.mark.parametrize("manifest,binding,graph", sampler_cases())
 def test_only_steps_moves_when_steps_change(manifest, binding, graph):
     found = controls(graph, manifest["id"])
-    if found is None:
-        pytest.skip("no sampler")
     spec = manifest["inputs"]["steps"]
     low, high = spec["minimum"], spec["maximum"]
     seed = {"seed": 7, "prompt": "same prompt"} if "prompt" in manifest["inputs"] else {"seed": 7}
@@ -140,11 +138,9 @@ def test_only_steps_moves_when_steps_change(manifest, binding, graph):
     assert a == b_aligned, "a different step count must change nothing else"
 
 
-@pytest.mark.parametrize("manifest,binding,graph", image_cases())
+@pytest.mark.parametrize("manifest,binding,graph", sampler_cases())
 def test_chosen_sampler_and_scheduler_land_on_their_inputs(manifest, binding, graph):
     found = controls(graph, manifest["id"])
-    if found is None:
-        pytest.skip("no sampler")
     sampler = next(v for v in manifest["inputs"]["sampler"]["enum"] if v != manifest["inputs"]["sampler"]["default"])
     scheduler = next(v for v in manifest["inputs"]["scheduler"]["enum"] if v != manifest["inputs"]["scheduler"]["default"])
     request = bind_backend_request(manifest, "comfyui", graph, {"sampler": sampler, "scheduler": scheduler}).request

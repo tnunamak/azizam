@@ -91,7 +91,9 @@ def test_frontend_route_graph_is_frozen() -> None:
     # 963290051e2e622bd481c6a0c380f91e93878d051c9301d4006d41c2a1926162.
     # S7 (builder D4): POST /v1/meshes/generate left and POST /v1/3d/generations and POST /v1/3d/generations/glb arrived;
     # before that change the digest was f9b65e5b01c09f2cd8a1d8ddb5a5ec0ac38d219013cd3d36a2a69caf95185c58.
-    assert _digest(graph) == "8cf497463c537c485a6fbc2bb0404c1edf33e00d15bba4cc4308d3d82a1390e9"
+    # Train 101: POST /v1/assets and its /openai alias (upload an image once, send its id in a chat image part); before them the
+    # digest was 8cf497463c537c485a6fbc2bb0404c1edf33e00d15bba4cc4308d3d82a1390e9.
+    assert _digest(graph) == "dd0e9e635e60a905ee4c6671106eb9ff6cb4a442740a41cf8a5dd4b15bd0de75"
 
 
 def _build_registry() -> WorkflowRegistry:
@@ -175,7 +177,8 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # Re-captured 2026-11-08 (S5 projections): the face-likeness workflow's output modalities read from its contract and now
     # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
     # Train 54: face-likeness leaves the OpenAI model list because no OpenAI route runs it.
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "a99fdcb37a8ab05f76b4c983e78b3d3bba5a0d12fb8d0406e302c9c9caa8dbd5"
+    # Train 101: the capabilities gain "report_problem" (POST /gateway/v1/problem-reports); models and engine did not move.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "be12bfc0b9d5bdfb7d607ff7870b24990309d3355813e9ef7d03003e14086e96"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

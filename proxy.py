@@ -27288,7 +27288,7 @@ async def assets_create(request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
     except Exception:  # noqa: BLE001 - a body that is not multipart is the caller's mistake
         return openai_error_response("Send the image as one multipart/form-data file part named 'file'.",
                                      status_code=400, param="file", code="missing_file")
