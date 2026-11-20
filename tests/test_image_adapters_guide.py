@@ -75,9 +75,23 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
         self.assertRegex(self.section(), r"(?i)header[^.]*base model")
         self.assertRegex(self.section(), r"(?i)only on workflows (?:that use|for) that base model")
 
-    def test_member_section_does_not_promise_storage_quota(self):
-        self.assertNotRegex(
-            self.section(),
-            r"(?i)\bquota\b|\b(?:per[- ](?:person|member|user|account)|"
-            r"(?:total|combined|cumulative) storage)\b",
-        )
+    def test_member_section_explains_storage_total(self):
+        section = self.section()
+        self.assertRegex(section, r"(?i)owner sets[^.]*per-person total")
+        self.assertRegex(section, r"(?i)default total is 10 GiB")
+        self.assertRegex(section, r"(?i)refused[^.]*reply tells you[^.]*used[^.]*total")
+        self.assertRegex(section, r"(?i)same file[^.]*does not count twice")
+        self.assertRegex(section, r"(?i)deleting[^.]*frees room")
+
+    def test_member_section_distinguishes_label_from_upload_id(self):
+        section = self.section()
+        self.assertRegex(section, r"(?i)upload reply[^.]*`id`[^.]*`ast_`")
+        self.assertRegex(section, r"(?i)workflow.s listing[^.]*each ID[^.]*label")
+        self.assertRegex(section, r'(?i)my style[^.]*`ast_[^\x60]+`[^.]*loras[^.]*"name"\s*:\s*"ast_')
+
+    def test_member_section_explains_local_only_and_first_copy(self):
+        section = self.section()
+        self.assertRegex(section.split("1.", 1)[0], r"(?i)only on workflows[^.]*gateway.s own machine")
+        self.assertRegex(section, r"(?i)not on remote workflows")
+        self.assertRegex(section, r"(?i)first use[^.]*copies the file")
+        self.assertRegex(section, r"(?i)deleting[^.]*removes it from the choice list")
