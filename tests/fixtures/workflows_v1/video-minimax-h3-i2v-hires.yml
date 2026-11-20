@@ -4,6 +4,7 @@ version: 0.1.0
 id: video.generate.minimax-h3-i2v-hires
 license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
 intent: video.generate
+capability: video
 display_name: MiniMax H3 I2V Hi-Res (uncensored)
 purpose: Animate an image in high resolution with sound
 prompt_hint: Describe how the picture should move

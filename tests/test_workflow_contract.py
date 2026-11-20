@@ -555,7 +555,7 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
         _doc, notes = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         for note in notes:
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
-    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 38
+    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 39
     assert counts["capability:backfill"] == 27
     assert counts["requires:move"] == 27
     assert counts["accepts:add"] == 31
