@@ -22,7 +22,7 @@ import httpx
 import pytest
 
 import proxy
-from gateway import accounts, admin_store, mesh_api, receipt_store
+from gateway import accounts, adapter_choices, admin_store, mesh_api, receipt_store
 from gateway.runtime_auth import hash_api_key
 from gateway.admin_oidc import CookieConfig, encode_session_cookie, session_from_claims
 from tests.test_proxy_admin_integration import _test_backend_grid, _test_status_projection
@@ -61,6 +61,16 @@ def _go_cold(tmp_path, monkeypatch) -> None:
                 value.cache_clear()
             elif isinstance(value, dict) and ("CACHE" in attr.upper() or "MEMO" in attr.upper()):
                 monkeypatch.setattr(module, attr, type(value)())
+
+
+@pytest.fixture
+def engine_lists_no_adapter_files(monkeypatch):
+    """The member workflow listing reads the engine's adapter files (in a thread); the engine is not reachable from a test.
+    A test that lists the workflows uses this unless it brings its own list. The lists the listing keeps are this test's
+    own, so one test's empty list is never another's."""
+    for held in ("_LISTS", "_HEADERS", "_FAILED"):
+        monkeypatch.setattr(adapter_choices, held, {})
+    monkeypatch.setattr(adapter_choices, "default_list_files", lambda origin, node_type, input_name: [])
 
 
 _OWNED_VIDEO_PROMPT_ID = "guardownedvideo"
@@ -226,7 +236,7 @@ def _loop_thread_work(loop_calls: list[str]):
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_every_get_route_leaves_the_loop_free(gateway, route):
+def test_every_get_route_leaves_the_loop_free(gateway, engine_lists_no_adapter_files, route):
     loop_calls: list[str] = []
 
     async def call() -> int:
@@ -241,7 +251,7 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
     assert not loop_calls, f"{route} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
 
 
-def test_the_workflows_catalog_guard_exercises_the_handler_whatever_ran_before(gateway):
+def test_the_workflows_catalog_guard_exercises_the_handler_whatever_ran_before(gateway, engine_lists_no_adapter_files):
     """The probe is only worth anything if the route answers: a 500 from a missing table passes it by doing nothing."""
     loop_calls: list[str] = []
 
