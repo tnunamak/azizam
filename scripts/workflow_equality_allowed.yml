@@ -319,3 +319,98 @@ binding_edits:
     operation: add
     value: [{"node": "6", "input": "value"}]
     reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: image.generate.anima-turbo
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "7", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.anima-turbo
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "7", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.fibo-2-edit-turbo
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "7", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.fibo-2-edit-turbo
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "7", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.krea2-turbo
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "7", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.krea2-turbo
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "7", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.krea2-turbo-snofs
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "7", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.krea2-turbo-snofs
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "7", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.qwen-image-2.1-edit
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "8", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.qwen-image-2.1-edit
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "8", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.qwen-image-2.1-edit-multiref
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "8", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.qwen-image-2.1-edit-multiref
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "8", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.qwen-image-2.1-inpaint
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "11", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.edit.qwen-image-2.1-inpaint
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "11", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.moss-image-fast
+    path: [comfyui, map, steps]
+    operation: add
+    value: [{"node": "8", "input": "steps"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.moss-image-fast
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "7", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.moss-image-fast
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "8", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.moss-image-quality
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "7", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.moss-image-quality
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "8", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."

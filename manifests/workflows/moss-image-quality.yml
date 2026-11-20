@@ -37,11 +37,25 @@ inputs:
     default: 1024
   steps:
     label: steps
-    help: More steps add detail but take longer.
+    help: More steps add detail but take longer. 40 to 50 works well for this model.
     type: integer
     minimum: 1
     maximum: 100
     default: 50
+  sampler:
+    label: Generation method
+    help: The method the model uses to build the result. Keep the default unless you are comparing methods.
+    choices_from: {node_type: KSamplerSelect, input: sampler_name}
+    type: string
+    enum: [euler, euler_cfg_pp, euler_ancestral, euler_ancestral_cfg_pp, heun, heunpp2, exp_heun_2_x0, exp_heun_2_x0_sde, dpm_2, dpm_2_ancestral, lms, dpm_fast, dpm_adaptive, dpmpp_2s_ancestral, dpmpp_2s_ancestral_cfg_pp, dpmpp_sde, dpmpp_sde_gpu, dpmpp_2m, dpmpp_2m_cfg_pp, dpmpp_2m_sde, dpmpp_2m_sde_gpu, dpmpp_2m_sde_heun, dpmpp_2m_sde_heun_gpu, dpmpp_3m_sde, dpmpp_3m_sde_gpu, ddpm, lcm, ipndm, ipndm_v, deis, cfgpp_ud10_ab, res_multistep, res_multistep_cfg_pp, res_multistep_ancestral, res_multistep_ancestral_cfg_pp, gradient_estimation, gradient_estimation_cfg_pp, er_sde, seeds_2, seeds_3, sa_solver, sa_solver_pece, ddim, uni_pc, uni_pc_bh2]
+    default: euler
+  scheduler:
+    label: Step timing
+    help: How the refinement steps are spaced. Keep the default unless you are comparing results.
+    choices_from: {node_type: BasicScheduler, input: scheduler}
+    type: string
+    enum: [simple, sgm_uniform, karras, exponential, ddim_uniform, beta, normal, linear_quadratic, kl_optimal]
+    default: simple
   seed:
     type: integer
     minimum: 0
@@ -70,6 +84,12 @@ bindings:
       prompt:
         - node: '4'
           input: text
+      sampler:
+        - node: '7'
+          input: sampler_name
+      scheduler:
+        - node: '8'
+          input: scheduler
       width:
         - node: '10'
           input: width

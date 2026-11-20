@@ -13,138 +13,222 @@
    "description": "Combine two reference images into one",
    "inputs": [
     {
-     "name": "prompt",
-     "type": "string",
-     "required": true,
      "accepted": true,
-     "ignored": false,
      "applies": "Multipart form",
-     "request_field": "prompt",
      "description": "Describe the change you want.",
+     "help": "Describe the change you want.",
+     "ignored": false,
      "label": "what to make",
-     "help": "Describe the change you want."
+     "name": "prompt",
+     "request_field": "prompt",
+     "required": true,
+     "type": "string"
     },
     {
-     "name": "source_image",
-     "type": "string",
-     "required": true,
      "accepted": true,
-     "ignored": false,
      "applies": "File upload",
-     "request_field": "image[]",
+     "asset": true,
      "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
      "help": "The picture you want to change.",
-     "asset": true,
+     "ignored": false,
+     "label": "a main picture",
      "media_type": "image/*",
-     "label": "a main picture"
+     "name": "source_image",
+     "request_field": "image[]",
+     "required": true,
+     "type": "string"
     },
     {
-     "name": "reference_image_2",
-     "type": "string",
-     "required": true,
      "accepted": true,
-     "ignored": false,
      "applies": "File upload",
-     "request_field": "image[]",
+     "asset": true,
      "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. Another picture to take people, things or style from.",
      "help": "Another picture to take people, things or style from.",
-     "asset": true,
+     "ignored": false,
+     "label": "a second picture",
      "media_type": "image/*",
-     "label": "a second picture"
+     "name": "reference_image_2",
+     "request_field": "image[]",
+     "required": true,
+     "type": "string"
     },
     {
-     "name": "negative_prompt",
-     "type": "string",
-     "required": false,
      "accepted": true,
-     "ignored": false,
      "applies": "Workflow extension",
-     "request_field": "negative_prompt",
      "default": "",
-     "label": "what to avoid",
+     "description": "Describe anything you want left out.",
      "help": "Describe anything you want left out.",
-     "description": "Describe anything you want left out."
+     "ignored": false,
+     "label": "what to avoid",
+     "name": "negative_prompt",
+     "request_field": "negative_prompt",
+     "required": false,
+     "type": "string"
     },
     {
-     "name": "reference_resolution",
-     "type": "integer",
-     "required": false,
      "accepted": true,
-     "ignored": false,
      "applies": "Workflow extension",
-     "request_field": "reference_resolution",
      "default": 1024,
-     "minimum": 256,
-     "maximum": 2048,
-     "label": "reference picture resolution",
+     "description": "Sets the resolution value used when processing the two reference pictures.",
      "help": "Sets the resolution value used when processing the two reference pictures.",
-     "description": "Sets the resolution value used when processing the two reference pictures."
+     "ignored": false,
+     "label": "reference picture resolution",
+     "maximum": 2048,
+     "minimum": 256,
+     "name": "reference_resolution",
+     "request_field": "reference_resolution",
+     "required": false,
+     "type": "integer"
     },
     {
-     "name": "steps",
-     "type": "integer",
-     "required": false,
      "accepted": true,
-     "ignored": false,
      "applies": "Workflow extension",
-     "request_field": "steps",
      "default": 25,
-     "minimum": 1,
-     "maximum": 60,
+     "description": "More steps add detail but take longer. 20 to 30 works well for this model.",
+     "help": "More steps add detail but take longer. 20 to 30 works well for this model.",
+     "ignored": false,
      "label": "refinement steps",
-     "help": "More steps add detail but take longer.",
-     "description": "More steps add detail but take longer."
-    },
-    {
-     "name": "cfg",
-     "type": "number",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Workflow extension",
-     "request_field": "cfg",
-     "default": 1.0,
-     "minimum": 0,
-     "maximum": 10,
-     "label": "prompt strength",
-     "help": "Higher follows your words more closely.",
-     "description": "Higher follows your words more closely."
-    },
-    {
-     "name": "seed",
-     "type": "integer",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Workflow extension",
-     "request_field": "seed",
-     "minimum": 0,
-     "label": "variation number",
-     "help": "Use the same number to repeat a variation with the same settings.",
-     "description": "Use the same number to repeat a variation with the same settings."
-    },
-    {
-     "name": "n",
-     "type": "integer",
-     "required": false,
-     "accepted": true,
-     "ignored": false,
-     "applies": "Route option",
-     "request_field": "n",
+     "maximum": 60,
      "minimum": 1,
-     "maximum": 10,
-     "description": "Number of images.",
-     "label": "number of results"
+     "name": "steps",
+     "request_field": "steps",
+     "required": false,
+     "type": "integer"
     },
     {
-     "name": "size",
-     "type": "string",
-     "required": false,
      "accepted": true,
+     "applies": "Workflow extension",
+     "default": "euler",
+     "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+     "enum": [
+      "euler",
+      "euler_cfg_pp",
+      "euler_ancestral",
+      "euler_ancestral_cfg_pp",
+      "heun",
+      "heunpp2",
+      "exp_heun_2_x0",
+      "exp_heun_2_x0_sde",
+      "dpm_2",
+      "dpm_2_ancestral",
+      "lms",
+      "dpm_fast",
+      "dpm_adaptive",
+      "dpmpp_2s_ancestral",
+      "dpmpp_2s_ancestral_cfg_pp",
+      "dpmpp_sde",
+      "dpmpp_sde_gpu",
+      "dpmpp_2m",
+      "dpmpp_2m_cfg_pp",
+      "dpmpp_2m_sde",
+      "dpmpp_2m_sde_gpu",
+      "dpmpp_2m_sde_heun",
+      "dpmpp_2m_sde_heun_gpu",
+      "dpmpp_3m_sde",
+      "dpmpp_3m_sde_gpu",
+      "ddpm",
+      "lcm",
+      "ipndm",
+      "ipndm_v",
+      "deis",
+      "cfgpp_ud10_ab",
+      "res_multistep",
+      "res_multistep_cfg_pp",
+      "res_multistep_ancestral",
+      "res_multistep_ancestral_cfg_pp",
+      "gradient_estimation",
+      "gradient_estimation_cfg_pp",
+      "er_sde",
+      "seeds_2",
+      "seeds_3",
+      "sa_solver",
+      "sa_solver_pece",
+      "ddim",
+      "uni_pc",
+      "uni_pc_bh2"
+     ],
+     "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
      "ignored": false,
+     "label": "Generation method",
+     "name": "sampler",
+     "request_field": "sampler",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": "simple",
+     "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+     "enum": [
+      "simple",
+      "sgm_uniform",
+      "karras",
+      "exponential",
+      "ddim_uniform",
+      "beta",
+      "normal",
+      "linear_quadratic",
+      "kl_optimal"
+     ],
+     "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+     "ignored": false,
+     "label": "Step timing",
+     "name": "scheduler",
+     "request_field": "scheduler",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": 1.0,
+     "description": "Higher follows your words more closely.",
+     "help": "Higher follows your words more closely.",
+     "ignored": false,
+     "label": "prompt strength",
+     "maximum": 10,
+     "minimum": 0,
+     "name": "cfg",
+     "request_field": "cfg",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "description": "Use the same number to repeat a variation with the same settings.",
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "ignored": false,
+     "label": "variation number",
+     "minimum": 0,
+     "name": "seed",
+     "request_field": "seed",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "accepted": true,
      "applies": "Route option",
+     "description": "Number of images.",
+     "ignored": false,
+     "label": "number of results",
+     "maximum": 10,
+     "minimum": 1,
+     "name": "n",
+     "request_field": "n",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "accepted": true,
+     "applies": "Route option",
+     "description": "WIDTHxHEIGHT, e.g. 960x512.",
+     "ignored": false,
+     "name": "size",
      "request_field": "size",
-     "description": "WIDTHxHEIGHT, e.g. 960x512."
+     "required": false,
+     "type": "string"
     }
    ],
    "outputs": [
@@ -177,22 +261,22 @@
     "content_type": "multipart/form-data",
     "body": {},
     "form": {
+     "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}",
      "model": "qwen-image-2.1-edit-multiref",
-     "prompt": "A small teal fish mark on a clean white card.",
-     "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}"
+     "prompt": "A small teal fish mark on a clean white card."
     },
     "files": {
-     "source_image": {
-      "input": "source_image",
-      "required": true,
-      "media_type": "image/*",
-      "field": "image[]"
-     },
      "reference_image_2": {
+      "field": "image[]",
       "input": "reference_image_2",
-      "required": true,
       "media_type": "image/*",
-      "field": "image[]"
+      "required": true
+     },
+     "source_image": {
+      "field": "image[]",
+      "input": "source_image",
+      "media_type": "image/*",
+      "required": true
      }
     },
     "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit-multiref' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png' \\\n  -F 'image[]=@./reference-image-2.png' \\\n  --output workflow-output.bin",
@@ -278,46 +362,54 @@
     "execution": {
      "recommended": "sync",
      "sync": {
-      "method": "POST",
-      "path": "/v1/images/edits",
       "content_type": "multipart/form-data",
-      "model": "qwen-image-2.1-edit-multiref",
+      "extensions_field": "extensions (JSON string)",
       "fields": {
-       "source_image": {
-        "in": "file",
-        "field": "image[]"
-       },
-       "reference_image_2": {
-        "in": "file",
-        "field": "image[]"
-       },
-       "prompt": {
-        "in": "form",
-        "field": "prompt"
+       "cfg": {
+        "field": "cfg",
+        "in": "extension"
        },
        "negative_prompt": {
-        "in": "extension",
-        "field": "negative_prompt"
+        "field": "negative_prompt",
+        "in": "extension"
+       },
+       "prompt": {
+        "field": "prompt",
+        "in": "form"
+       },
+       "reference_image_2": {
+        "field": "image[]",
+        "in": "file"
        },
        "reference_resolution": {
-        "in": "extension",
-        "field": "reference_resolution"
+        "field": "reference_resolution",
+        "in": "extension"
        },
-       "steps": {
-        "in": "extension",
-        "field": "steps"
+       "sampler": {
+        "field": "sampler",
+        "in": "extension"
        },
-       "cfg": {
-        "in": "extension",
-        "field": "cfg"
+       "scheduler": {
+        "field": "scheduler",
+        "in": "extension"
        },
        "seed": {
-        "in": "extension",
-        "field": "seed"
+        "field": "seed",
+        "in": "extension"
+       },
+       "source_image": {
+        "field": "image[]",
+        "in": "file"
+       },
+       "steps": {
+        "field": "steps",
+        "in": "extension"
        }
       },
-      "extensions_field": "extensions (JSON string)",
+      "method": "POST",
+      "model": "qwen-image-2.1-edit-multiref",
       "output": "data[].b64_json or data[].url",
+      "path": "/v1/images/edits",
       "response": {
        "kind": "json"
       }
