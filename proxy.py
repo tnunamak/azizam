@@ -14493,7 +14493,6 @@ async def _serve(app: FastAPI):
     # in generated media survives a ComfyUI that is restarting at submit time.
     node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "graph_object_info"
     choice_lists.STORE = choice_lists.ChoiceStore(Path(__file__).resolve().parent / "cache" / "engine_choices.json")
-    adapter_choices.LISTING_READS_ENGINE = True
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -18963,6 +18962,7 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     graph_service = _graph_service(_GRAPH_CAPABILITY)
     adapter_files = await adapter_choices.offered(
         published_records, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
+        list_files=adapter_choices.default_list_files, read_header=adapter_choices.default_read_header,
         person_id=session.subject) \
         if graph_service.service_id else {}
 
@@ -23448,7 +23448,10 @@ async def _apply_workflow_extensions_to_image_request(
 
     # A request that names adapters is checked against the files the engine offers now; one that does not reads nothing.
     adapter_view: adapter_choices.Current | None = None
-    supplied_adapters = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
+    try:
+        supplied_adapters = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
+    except ExtensionError as e:
+        return None, _image_extension_error_response(receipt, str(e))
     if adapter_choices.names_adapters(supplied_adapters):
         graph_service = _graph_service(_GRAPH_CAPABILITY)
         try:

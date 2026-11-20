@@ -12,6 +12,9 @@ Where choices come from is the one function ``installed`` (the operator's files)
 person's own uploads (``UPLOADS``). An upload joins after the same header test, only for the person who owns it, and the
 engine learns its file only when a request uses it (``current`` swaps the upload's id for the engine's copy).
 
+Known limit: the engine lists names only, so a header is cached by (service, folder, name) and not by size or mtime; a
+file replaced under the same name keeps its old header for ``HEADER_AGE_S``.
+
 The module names no engine, model, node class or workflow: the loader class and its input come from the binding's chain
 data, the header keys from the architecture table, and the reads are passed in (``list_files``, ``read_header``).
 """
@@ -35,6 +38,8 @@ ENCODER_INPUT = "text_encoder"
 SETTING_KEY = "adapter_marks"
 MAX_AGE_S = 300.0          # a list read from the engine is used this long
 HEADER_AGE_S = 6 * 3600.0  # a header read is used this long; a file's header does not change while it stays listed
+STALE_LIST_S = 10.0        # a requested name missing from a list older than this makes one re-read before it is refused
+FAILED_READ_BACKOFF_S = 30.0  # after a failed list read the engine is not asked again for this long
 HEADER_READS_AT_ONCE = 8
 TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_architectures.yml"
 
@@ -45,10 +50,6 @@ log = logging.getLogger(__name__)
 # store; unset, no file is marked.
 MARKS: Callable[[], Any] = lambda: None
 
-
-# Whether a listing may read the engine's files. The gateway sets this at startup, as it does the choice store: a
-# process that never started serving (a test, a tool) lists no files and never reaches an engine from a listing.
-LISTING_READS_ENGINE = False
 
 
 class ChoicesUnavailable(RuntimeError):
@@ -130,16 +131,22 @@ def marked(setting: Any, architecture: str, kind: str) -> list[str]:
     return [name for name in names if isinstance(name, str)] if isinstance(names, list) else []
 
 
+def _plain(value: str) -> str:
+    """A header value as compared: case folded, with every character that is not a letter or digit dropped, so "Krea-2"
+    and " KREA2 " name the same base as "krea2"."""
+    return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+
 def compatible(installed: Sequence[str], headers: Mapping[str, Any], architecture: str,
                table: Mapping[str, Mapping[str, Sequence[str]]], marked: Sequence[str]) -> list[str]:
     """The installed files that suit ``architecture``, in installed order: the owner's marks, and files whose header holds
     a value the table lists for it. A file with no readable header is offered only if marked."""
-    wanted = table.get(architecture, {})
+    wanted = {key: {_plain(value) for value in values} for key, values in table.get(architecture, {}).items()}
     chosen = set(marked)
 
     def names_it(header: Any) -> bool:
         return isinstance(header, Mapping) and any(
-            isinstance(header.get(key), str) and header[key] in values for key, values in wanted.items())
+            isinstance(header.get(key), str) and _plain(header[key]) in values for key, values in wanted.items())
 
     return [name for name in installed if name in chosen or names_it(headers.get(name))]
 
@@ -163,11 +170,13 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
 
 _LISTS: dict[tuple[str, str, str, str], tuple[float, list[str]]] = {}
 _HEADERS: dict[tuple[str, str, str], tuple[float, Mapping[str, Any] | None]] = {}
+_FAILED: dict[tuple[str, str, str, str], float] = {}   # when a list read last failed, by the same key as _LISTS
 
 
 def reset() -> None:
     _LISTS.clear()
     _HEADERS.clear()
+    _FAILED.clear()
 
 
 def default_list_files(origin: str, node_type: str, input_name: str) -> list[str]:
@@ -188,32 +197,47 @@ async def installed(
     list_files: Callable[[str, str, str], list[str]] | None = None,
     read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
     table: Mapping[str, Mapping[str, Sequence[str]]] | None = None, now: float | None = None,
-    person_id: str | None = None, uploads: Uploads | None = None,
+    wanted: Sequence[str] = (), person_id: str | None = None, uploads: Uploads | None = None,
 ) -> AdapterChoices:
     """The choices for one binding: the operator's installed files, then ``person_id``'s own uploads when there is one.
-    Reads the engine only when its list is older than ``MAX_AGE_S``; a file header is read once. When the engine cannot
-    answer, the last good list stays in use; with none held, ``ChoicesUnavailable``. A header that cannot be read keeps
-    its file out of the list, never in it. The operator's list is the same for everyone and is cached; a person's
-    uploads are added after it and never enter a cache that another person reads."""
+    Reads the engine only when its list is older than ``MAX_AGE_S``, or older than ``STALE_LIST_S`` when a ``wanted`` name
+    is neither in it nor one of the person's uploads (a file added since); a file header is read once. When the engine
+    cannot answer, the last good list stays in use and the engine is left alone for ``FAILED_READ_BACKOFF_S``; with no
+    list held, ``ChoicesUnavailable``. A header that cannot be read keeps its file out of the list, never in it. The
+    operator's list is the same for everyone and is cached; a person's uploads are added after it and never enter a
+    cache that another person reads."""
     now = time.time() if now is None else now
     uploads = UPLOADS if uploads is None else uploads
+    own = await _own_uploads(uploads, person_id, decl)
+    wanted = [name for name in wanted if name not in own]   # an upload is not in the engine's list, and is not a stale one
     list_files, read_header = list_files or default_list_files, read_header or default_read_header
     key = (service_id, decl.node_type, decl.listing_input, decl.folder)
     held = _LISTS.get(key)
-    if held is None or now - held[0] >= MAX_AGE_S:
+    age = None if held is None else now - held[0]
+    due = held is None or age >= MAX_AGE_S or (age >= STALE_LIST_S and any(name not in held[1] for name in wanted))
+    failed_at = _FAILED.get(key)
+    if due and failed_at is not None and now - failed_at < FAILED_READ_BACKOFF_S:
+        if held is None:
+            raise ChoicesUnavailable("the engine could not list its adapter files")
+    elif due:
+        def read_list() -> list[str]:
+            files = list_files(origin, decl.node_type, decl.listing_input)
+            _LISTS[key] = (now, files)   # kept even when the caller stopped waiting
+            return files
         try:
-            files = await asyncio.to_thread(list_files, origin, decl.node_type, decl.listing_input)
-            _LISTS[key] = held = (now, files)
+            await asyncio.to_thread(read_list)
+            _FAILED.pop(key, None)
         except Exception as exc:  # noqa: BLE001 - any failed read keeps the last good list
+            _FAILED[key] = now
             if held is None:
                 raise ChoicesUnavailable("the engine could not list its adapter files") from exc
+        held = _LISTS.get(key, held)
     # The gateway's own copies of uploads sit in the engine's folder, so the engine lists them. They are one person's
     # files: they are never offered as the operator's, whatever their header says.
     files = [name for name in held[1] if uploads is None or not uploads.is_copy(name)]
     headers = await _headers(service_id, origin, decl.folder, files, read_header, now)
     table = architecture_table() if table is None else table
     loras = compatible(files, headers, decl.architecture, table, marked(marks, decl.architecture, "loras"))
-    own = await _own_uploads(uploads, person_id, decl)
     return AdapterChoices(tuple(loras) + tuple(name for name in own if name not in loras), decl.default_encoders,
                           tuple(own))
 
@@ -240,17 +264,27 @@ async def _headers(service_id: str, origin: str, folder: str, files: Sequence[st
             unknown.append(name)
     gate = asyncio.Semaphore(HEADER_READS_AT_ONCE)
 
+    def fetch(name: str) -> Mapping[str, Any] | None:
+        header = read_header(origin, folder, name)
+        _HEADERS[(service_id, folder, name)] = (now, header)   # kept even when the caller stopped waiting
+        return header
+
     async def read(name: str) -> None:
         async with gate:
             try:
-                header = await asyncio.to_thread(read_header, origin, folder, name)
+                found[name] = await asyncio.to_thread(fetch, name)
             except Exception:  # noqa: BLE001 - not offered this time, and not remembered as having no header
                 return
-        _HEADERS[(service_id, folder, name)] = (now, header)
-        found[name] = header
 
     await asyncio.gather(*(read(name) for name in unknown))
     return found
+
+
+def wanted_names(supplied: Mapping[str, Any]) -> list[str]:
+    """The file names a request picks, for ``installed``'s check that its list is not stale."""
+    items = supplied.get(LORAS_INPUT)
+    return [item["name"] for item in items if isinstance(item, Mapping) and isinstance(item.get("name"), str)] \
+        if isinstance(items, list) else []
 
 
 class Current(NamedTuple):
@@ -272,8 +306,9 @@ async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: 
     decl = declaration(contract, binding_key)
     if decl is None:
         return None
-    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS(), person_id=person_id)
     supplied = {} if supplied is None else supplied
+    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS(), person_id=person_id,
+                              wanted=wanted_names(supplied))
     copies = await _copies(decl, person_id, supplied, choices)
     if copies:
         choices = replace(choices, loras=tuple(copies.get(name, name) for name in choices.loras))
@@ -304,12 +339,17 @@ async def _copies(decl: Declaration, person_id: str | None, supplied: Mapping[st
 LISTING_WAIT_S = 5.0     # a listing waits this long for the engine, then shows no files for the workflows not yet read
 
 
-async def offered(records: Sequence[Any], binding_key: str, *, service_id: str, origin: str,
-                  person_id: str | None = None) -> dict[str, tuple[str, ...]]:
+async def offered(
+    records: Sequence[Any], binding_key: str, *, service_id: str, origin: str,
+    list_files: Callable[[str, str, str], list[str]] | None = None,
+    read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
+    person_id: str | None = None,
+) -> dict[str, tuple[str, ...]]:
     """The adapter files each record offers now, by record id, for a listing. A record that takes no adapters is left
-    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again).
+    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again; reads
+    that finish after the wait are kept). The caller passes the readers: with no ``list_files`` nothing is read.
     ``person_id``'s own uploads are on the list for that person only."""
-    if not LISTING_READS_ENGINE:
+    if list_files is None:
         return {}
     async def one(record: Any) -> tuple[str, tuple[str, ...]] | None:
         decl = declaration(record.contract, binding_key)
@@ -317,7 +357,9 @@ async def offered(records: Sequence[Any], binding_key: str, *, service_id: str, 
             return None
         try:
             choices = await asyncio.wait_for(
-                installed(decl, service_id=service_id, origin=origin, marks=MARKS(), person_id=person_id), LISTING_WAIT_S)
+                installed(decl, service_id=service_id, origin=origin, marks=MARKS(), list_files=list_files,
+                          read_header=read_header, person_id=person_id),
+                LISTING_WAIT_S)
         except (ChoicesUnavailable, asyncio.TimeoutError):
             return None
         return record.id, choices.loras

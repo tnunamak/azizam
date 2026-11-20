@@ -229,12 +229,13 @@ def test_the_pick_list_has_no_upload_that_is_unknown_or_off(uploads):
 
 def test_the_listing_offers_the_same_names_to_the_person_only(uploads, monkeypatch):
     asset_id = uploads.add(KREA)
-    monkeypatch.setattr(adapter_choices, "LISTING_READS_ENGINE", True)
     record = SimpleNamespace(id=WORKFLOW, contract=manifest_of(WORKFLOW))
 
     def listed(person):
         return asyncio.run(adapter_choices.offered([record], "comfyui", service_id="comfyui",
-                                                   origin="http://engine.invalid:7890", person_id=person))
+                                                   origin="http://engine.invalid:7890", person_id=person,
+                                                   list_files=adapter_choices.default_list_files,
+                                                   read_header=adapter_choices.default_read_header))
 
     assert listed(uploads.person)[WORKFLOW] == ("example_style_v1.safetensors", asset_id)
     assert listed(STRANGER)[WORKFLOW] == ("example_style_v1.safetensors",)
