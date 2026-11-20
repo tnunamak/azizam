@@ -1013,7 +1013,8 @@ domain_literals = 0  # 32 -> 0 (2026-11-13): data reads and reviewed wire contra
 # Train 46 lowered models 1 to 0: the models catalog is read per call (_models_catalog), so an owner edit applies at once.
 "import_time_config_reads.models" = 0
 "import_time_config_reads.proxy" = 2
-"import_time_config_reads.request_body_limits" = 1
+# Train 102 lowered request_body_limits 1 to 0: the adapter upload cap is read per request.
+"import_time_config_reads.request_body_limits" = 0
 "import_time_config_reads.roles" = 0
 "import_time_config_reads.videos" = 0
 # C4 (feat/config-homes-c4) lowered whole_config 6 to 5: the registry boot read no longer hands the startup config to the registry seed.
