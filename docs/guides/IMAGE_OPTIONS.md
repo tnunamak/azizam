@@ -22,7 +22,7 @@ Use the model identifier shown by your gateway's workflow listing. If the model 
 ## Discover accepted values and defaults
 
 Find the workflow in the listing and read its inputs. Use one of the listed choices, and check the minimum and maximum for steps.
-Omit an input to keep its default. If the input has no default, omitting it keeps the workflow's built-in value.
+If an optional input has no default listed, leaving it out keeps the workflow's built-in value. Required inputs, such as the prompt, still need a value.
 Ranges and choices can differ by workflow for guidance, width, height, and text encoder too. Don't copy them from another model.
 
 ## Workflows without sampler choices
