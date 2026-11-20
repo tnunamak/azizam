@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from gateway import adapter_choices as ac
-from gateway.manifests import validate_inputs
+from gateway.manifests import ContractError, validate_input_value, value_problems
 
 TABLE = {"base_a": {"ss_base_model_version": ["base_a"]}, "base_b": {"ss_base_model_version": ["base_b", "base_b_v2"]}}
 
@@ -109,8 +109,23 @@ def test_with_no_compatible_file_the_list_takes_no_items():
     assert shown["inputs"]["loras"]["max_items"] == 0
 
 
+class Outcome:
+    def __init__(self, rejected, errors):
+        self.rejected, self.errors = rejected, errors
+
+
 def run(shown, supplied):
-    return validate_inputs(shown, supplied)
+    """The checks a request gets, input by input, against the contract the overlay made."""
+    rejected, errors = {}, []
+    for name, value in supplied.items():
+        spec = shown["inputs"].get(name)
+        if spec is None:
+            continue
+        reason = validate_input_value(name, value, spec)
+        if reason is not None:
+            rejected[name] = reason
+            errors.extend(ContractError(*item) for item in value_problems(spec, value, ("inputs", name)))
+    return Outcome(rejected, errors)
 
 
 def test_a_chosen_adapter_and_encoder_pass_with_a_weight_in_bounds():
@@ -125,6 +140,7 @@ def test_a_name_that_is_not_offered_is_refused_and_the_message_lists_what_is():
     result = run(shown, {"prompt": "x", "loras": [{"name": "other.safetensors"}]})
     assert result.errors[0].path == ("inputs", "loras", 0, "name")
     assert "a.safetensors" in result.errors[0].message and "b.safetensors" in result.errors[0].message
+    assert "other.safetensors" not in result.errors[0].message
 
 
 def test_an_encoder_that_is_not_offered_is_refused_and_the_message_lists_what_is():

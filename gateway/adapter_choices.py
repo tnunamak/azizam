@@ -70,11 +70,13 @@ def declaration(contract: Mapping[str, Any], binding_key: str) -> Declaration | 
         return None
     architecture, folder = binding.get("adapter_architecture"), binding.get("adapter_lora_folder")
     mappings = (binding.get("map") or {}).get(LORAS_INPUT)
-    chain = next((m["chain"] for m in mappings if isinstance(m, Mapping) and isinstance(m.get("chain"), Mapping)), None) \
-        if isinstance(mappings, list) else None
-    listing_input = (chain.get("fields") or {}).get("name") if chain else None
-    if not (isinstance(architecture, str) and isinstance(folder, str) and isinstance(listing_input, str)
-            and isinstance(chain.get("node_type"), str)):
+    chains = [m["chain"] for m in mappings if isinstance(m, Mapping) and isinstance(m.get("chain"), Mapping)] \
+        if isinstance(mappings, list) else []
+    if not (isinstance(architecture, str) and isinstance(folder, str) and chains):
+        return None
+    chain = chains[0]
+    listing_input = (chain.get("fields") or {}).get("name")
+    if not (isinstance(listing_input, str) and isinstance(chain.get("node_type"), str)):
         return None
     encoder = (contract.get("inputs") or {}).get(ENCODER_INPUT)
     has_encoder = isinstance(encoder, Mapping) and ENCODER_INPUT in (binding.get("map") or {})
