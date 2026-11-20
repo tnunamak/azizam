@@ -186,17 +186,28 @@ def workflow_availability(
     service_records: Mapping[str, Any],
     evidence: Mapping[str, Mapping[str, Any]],
     records: Mapping[str, WorkflowRecord] | None = None,
+    inventories: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """What a capability row says about whether its workflow can run now, from the shared health record.
 
     ``{"available": bool, "reason": str | None, "last_healthy_at": int | None}``. ``available`` is false only when the
-    engine is known to be unreachable, off or not set up; an engine that is idle, busy, starting or not measured yet is
+    engine is known to be unreachable, off or not set up, or when a fresh node list of its engine lacks a model file or
+    node the workflow declares (see below); an engine that is idle, busy, starting or not measured yet is
     available (the job waits or the engine starts). ``reason`` says why it is not, or that it is not measured yet.
     ``last_healthy_at`` is when the engine last answered, when the record knows. A workflow built on several engines
     follows the one that limits it; one that can run on several takes the best of them.
+
+    ``inventories`` are the engines' fresh node lists by service id (``gateway.engine_inventory.fresh_all``). A workflow
+    whose every binding is judged by one and lacks something there is not available: the row then also carries
+    ``reason_code: "required_file_missing"`` and ``missing``, the ``{"kind", "name"}`` of each file or node. An engine that
+    is down keeps its own reason, and a binding with no fresh list is not judged (fail open).
     """
     services = _services_mapping(service_records)
     groups = _dependency_groups(record, records or {}, set())
+    if not any(groups):
+        # Bindings commonly declare the files and nodes they need but no services; the engines they run on still decide.
+        own = [backend for backend in dict.fromkeys(record.supported_backends) if backend in services]
+        groups = [own] if own else []
     if not any(groups):
         return {"available": True, "reason": "Not measured yet", "last_healthy_at": None}
     priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3, "unknown": 4, "idle": 5, "ready": 6}
@@ -208,7 +219,53 @@ def workflow_availability(
     down = pick.status == "unavailable"
     reason = None if pick.status in {"ready", "idle", "busy"} else (
         _dependency_reason(pick, services.get(pick.service_id) or {}) if down else pick.reason)
-    return {"available": not down, "reason": reason, "last_healthy_at": last_healthy_at(pick.service_id, evidence)}
+    row = {"available": not down, "reason": reason, "last_healthy_at": last_healthy_at(pick.service_id, evidence)}
+    if pick.status in MODEL_LIST_SERVING_STATUSES:
+        lacking = _lacking_files(record, inventories)
+        if lacking:
+            names = ", ".join(item["name"] for item in lacking)
+            row.update({"available": False, "reason": f"A model file or node it needs is missing on its engine: {names}.",
+                        "reason_code": "required_file_missing", "missing": lacking})
+    return row
+
+
+def required_files_missing(requires: Any, inventory: Any) -> list[dict[str, str]]:
+    """The ``{"kind", "name"}`` of each model file or node of ``requires`` that a fresh node list positively lacks.
+
+    ``[]`` when there is no list (``inventory`` is ``None``), when the block declares none and when it cannot be read.
+    Files are judged by name, in any folder. A file that carries a required hash counts as present when a file of that
+    name is listed: a list of names cannot check a hash, so the hash alone never marks a workflow.
+    """
+    if inventory is None or not isinstance(requires, Mapping) or not (requires.get("custom_nodes") or requires.get("models")):
+        return []
+    try:
+        issues = inventory.missing(requires)
+    except ValueError:
+        return []
+    return [{"kind": issue.kind, "name": issue.name} for issue in issues]
+
+
+def missing_files_state(missing: list[dict[str, str]]) -> dict[str, Any]:
+    """The listing value for a name whose engine lacks a file or node it needs: ``unavailable``, with the closed reason
+    code and, beside it, what is missing."""
+    return {"state": "unavailable", "reason": "required_file_missing", "missing": missing}
+
+
+def _lacking_files(record: WorkflowRecord, inventories: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    """What the workflow's own bindings lack, when every one of them is judged by a fresh node list and lacks something;
+    else ``[]``. A workflow that can run on several engines runs where it is not lacking, so one binding that is not
+    judged, or finds everything, keeps it available."""
+    bindings = record.contract.get("bindings") if isinstance(record.contract.get("bindings"), Mapping) else {}
+    if not inventories or not bindings:
+        return []
+    found: list[dict[str, str]] = []
+    for key, spec in bindings.items():
+        service_id = str(spec.get("service") or key) if isinstance(spec, Mapping) else str(key)
+        missing = required_files_missing(spec.get("requires") if isinstance(spec, Mapping) else None, inventories.get(service_id))
+        if not missing:
+            return []
+        found += [item for item in missing if item not in found]
+    return found
 
 
 def _dependency_groups(record: WorkflowRecord, records: Mapping[str, WorkflowRecord], seen: set[str]) -> list[list[str]]:

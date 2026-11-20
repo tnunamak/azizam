@@ -10,6 +10,7 @@ const gatewayReasons = [
   "service_disabled",
   "service_maintenance",
   "health_unknown",
+  "required_file_missing",
 ] as const;
 
 describe("availability reason copy", () => {

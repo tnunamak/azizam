@@ -22,6 +22,7 @@ export type AvailabilityReasonCode =
   | "service_disabled"
   | "service_maintenance"
   | "health_unknown"
+  | "required_file_missing"
   | string;
 
 const stateReason: Record<string, string> = {
@@ -45,6 +46,7 @@ const stateReason: Record<string, string> = {
   service_disabled: "This model's service is turned off. Ask the owner to enable it.",
   service_maintenance: "This model is down for maintenance. Ask the owner when it will return.",
   health_unknown: "This model's status could not be checked. Ask the owner to check its service.",
+  required_file_missing: "This model is missing a file it needs. Ask the owner to install it.",
 };
 
 export function availabilityReason(

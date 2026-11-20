@@ -34,6 +34,7 @@ CLOSED_SET = {
     "engine_transitioning",
     "health_unknown",
     "model_not_deployed",
+    "required_file_missing",
     "service_disabled",
     "service_maintenance",
 }
@@ -149,9 +150,10 @@ class ClosedSetTests(unittest.TestCase):
         self.assertEqual(set(availability_reasons.REASONS), CLOSED_SET)
 
     def test_a_reason_that_is_also_a_refusal_code_is_a_known_code(self) -> None:
-        # A code the gateway already puts in `error.code` keeps its name; only the three owner-and-health words are new.
+        # A code the gateway already puts in `error.code` keeps its name; only the owner, health and engine-file words are
+        # new (a run that finds a file missing fails inside the engine, so no refusal carries `required_file_missing`).
         new = CLOSED_SET - ERROR_CODES
-        self.assertEqual(new, {"health_unknown", "service_disabled", "service_maintenance"})
+        self.assertEqual(new, {"health_unknown", "required_file_missing", "service_disabled", "service_maintenance"})
 
     def test_the_client_doc_lists_exactly_the_closed_set(self) -> None:
         text = (ROOT / "docs" / "api" / "MODEL_METADATA.md").read_text()
