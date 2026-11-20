@@ -285,6 +285,7 @@ _VIDEO_WORKFLOW_IDS = [
     ("video-ltx-2.5-long", "video.generate.ltx-2.5-long", "video.generate"),
     ("video-minimax-h3-t2v", "video.generate.minimax-h3-t2v", "video.generate"),
     ("video-minimax-h3-i2v", "video.generate.minimax-h3-i2v", "video.generate"),
+    ("video-minimax-h3-i2v-hires", "video.generate.minimax-h3-i2v-hires", "video.generate"),
     ("video-minimax-h3-keyframes", "video.generate.minimax-h3-keyframes", "video.generate"),
     ("video-minimax-h3-keyframes-mid", "video.generate.minimax-h3-keyframes-mid", "video.generate"),
     ("video-minimax-h3-long", "video.generate.minimax-h3-long", "video.generate"),
@@ -296,7 +297,7 @@ def test_video_workflow_id_oracle_covers_every_shipped_key():
     shipped = yaml.safe_load(
         (ROOT / "registry" / "defaults" / "videos.yml").read_text(encoding="utf-8")
     )["workflows"]
-    assert len(_VIDEO_WORKFLOW_IDS) == len({row[0] for row in _VIDEO_WORKFLOW_IDS}) == 11
+    assert len(_VIDEO_WORKFLOW_IDS) == len({row[0] for row in _VIDEO_WORKFLOW_IDS}) == 12
     assert {row[0] for row in _VIDEO_WORKFLOW_IDS} == set(shipped)
 
 
