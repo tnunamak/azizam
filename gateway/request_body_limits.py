@@ -8,6 +8,8 @@ from typing import Mapping
 
 from starlette.responses import JSONResponse
 
+from gateway import adapter_upload
+
 
 _MIB = 1024 * 1024
 _MEDIA_PREFIXES = (
@@ -15,6 +17,9 @@ _MEDIA_PREFIXES = (
     "/gateway/v1/media", "/gateway/v1/workflows", "/gateway/v1/images", "/gateway/v1/faces",
     "/sdapi/v1",
 )
+# A member's adapter upload may be as large as the owner can allow (``adapter_upload.MAX_BYTES_CEILING``), plus its multipart framing.
+_ADAPTER_PATH = "/me/api/adapters"
+_ADAPTER_BODY_BYTES = adapter_upload.MAX_BYTES_CEILING + _MIB
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,8 @@ class RequestBodyLimits:
     def for_path(self, path: str) -> int:
         if path.startswith("/openai/"):
             path = path.removeprefix("/openai")
+        if path == _ADAPTER_PATH:
+            return _ADAPTER_BODY_BYTES
         if any(path == prefix or path.startswith(prefix + "/") for prefix in _MEDIA_PREFIXES):
             return self.media_bytes
         return self.json_bytes

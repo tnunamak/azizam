@@ -3406,8 +3406,8 @@ def create_admin_router(
             body = await _read_json_body(request)
             cap = body.get("max_bytes", adapter_upload.DEFAULT_MAX_BYTES)
             if (not set(body) <= {"enabled", "max_bytes"} or not isinstance(body.get("enabled"), bool)
-                    or type(cap) is not int or cap <= 0):
-                raise _RouteError(400, "invalid_adapter_uploads", "enabled must be a boolean and max_bytes a positive whole number of bytes")
+                    or type(cap) is not int or not 0 < cap <= adapter_upload.MAX_BYTES_CEILING):
+                raise _RouteError(400, "invalid_adapter_uploads", "enabled must be a boolean and max_bytes a positive whole number of bytes, at most the ceiling")
             value = {"enabled": body["enabled"], "max_bytes": cap}
             record = admin_store.put_operator_setting_with_audit(
                 adapter_upload.SETTING_KEY, value,

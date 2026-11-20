@@ -37,7 +37,8 @@ def test_a_write_without_the_current_revision_is_refused(gateway):
 
 
 @pytest.mark.parametrize("body", [{}, {"enabled": "yes"}, {"enabled": True, "max_bytes": 0}, {"enabled": True, "max_bytes": "9"},
-                                  {"enabled": True, "max_bytes": True}, {"enabled": True, "other": 1}])
+                                  {"enabled": True, "max_bytes": True}, {"enabled": True, "other": 1},
+                                  {"enabled": True, "max_bytes": adapter_upload.MAX_BYTES_CEILING + 1}])
 def test_a_setting_that_is_not_shaped_as_expected_is_refused_and_nothing_is_stored(gateway, body):
     owner, *_ = owner_and_admin(gateway)
     refused = owner.put(PATH, headers={**csrf_for(owner), "If-Match": "0"}, json=body)

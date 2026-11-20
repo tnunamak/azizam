@@ -31,6 +31,7 @@ SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enable
 SUBFOLDER = "azizam-uploads"         # the gateway's own folder inside the engine's adapter folder
 SUFFIX = ".safetensors"
 DEFAULT_MAX_BYTES = 2 * (1 << 30)    # a file over this is refused
+MAX_BYTES_CEILING = 8 * (1 << 30)    # the owner may raise the cap to this, and the request body limit follows it
 MAX_HEADER_BYTES = 8 << 20           # a header over this is refused before it is read
 IDLE_S = 24 * 3600.0                 # a copy no request used for this long is removed
 CACHE_MAX_BYTES = 16 * (1 << 30)     # all copies together stay under this; the least recently used go first
@@ -162,7 +163,8 @@ def policy(setting: Any) -> Policy:
     if not isinstance(setting, Mapping):
         return Policy()
     cap = setting.get("max_bytes")
-    return Policy(setting.get("enabled") is True, cap if type(cap) is int and cap > 0 else DEFAULT_MAX_BYTES)
+    return Policy(setting.get("enabled") is True,
+                  min(cap, MAX_BYTES_CEILING) if type(cap) is int and cap > 0 else DEFAULT_MAX_BYTES)
 
 
 def admit(rules: Policy, *, size: int, engine_local: bool) -> None:

@@ -517,3 +517,18 @@ def test_a_sweep_removes_copies_whose_asset_is_gone(tmp_path):
     del store.sidecars[gone]
     assert store.library.sweep(folder="loras") == [gone.split("_", 1)[1]]
     assert os.listdir(store.engine / adapter_upload.SUBFOLDER) == [f"{kept.split('_', 1)[1]}.safetensors"]
+
+
+# --- the body limit and the ceiling of the owner's cap --------------------------------------------------------------
+
+def test_the_adapter_route_may_carry_a_body_up_to_the_ceiling_and_other_routes_keep_their_limits():
+    from gateway.request_body_limits import RequestBodyLimits
+    limits = RequestBodyLimits()
+    assert limits.for_path("/me/api/adapters") > adapter_upload.MAX_BYTES_CEILING
+    assert limits.for_path("/me/api/prompt-memory") == limits.json_bytes
+    assert limits.for_path("/me/api/adapters/other") == limits.json_bytes
+
+
+def test_the_owners_cap_cannot_pass_the_ceiling():
+    assert adapter_upload.policy({"enabled": True, "max_bytes": adapter_upload.MAX_BYTES_CEILING + 1}).max_bytes == \
+        adapter_upload.MAX_BYTES_CEILING
