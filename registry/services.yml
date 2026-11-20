@@ -15,6 +15,8 @@ records:
       base_url_env: AZIZAM_LITELLM_BASE_URL
       default_base_url: http://127.0.0.1:4011
       health_endpoint: /health/liveliness
+      # The route answers a bare JSON string ("I'm alive!"), not an object: the whole body is the success value.
+      health_success_path: "."
       api_key_env: AZIZAM_LITELLM_API_KEY
       # Resolved relative to the gateway state dir (ADMIN_DB_PATH.parent, i.e.
       # data/), so this is a bare filename — NOT "data/litellm.config.yaml",

@@ -1439,3 +1439,35 @@ def test_a_service_the_probe_found_off_keeps_that_reading_over_a_new_request(tmp
     merged = evidence_with_current_receipts(cached, receipt_store_path=db, now_s=now)
 
     assert merged["svc"] == cached["svc"]
+
+
+@pytest.mark.parametrize("status,body,expected", [(200, "I'm alive!", "up"), (200, "", "unknown"), (500, "boom", "down")])
+def test_declared_whole_body_health_rule_reads_a_bare_string_reply(status, body, expected):
+    """A health route that answers a bare JSON string reads up when the record declares `.` as its success path."""
+    import asyncio
+    import json as _json
+    import status_endpoint
+
+    class Response:
+        status_code = status
+        def json(self):
+            return _json.loads(_json.dumps(body))
+    class Client:
+        async def get(self, url, **_kw):
+            return Response()
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://fixture/health", "required", None,
+                                             service={"health_success_path": "."}))
+    assert row["live_status"] == expected
+
+
+def test_declared_whole_body_health_rule_reads_a_bare_string_in_the_catalog_probe():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+
+    async def get_json(_url):
+        return "I'm alive!"
+    records = {"services": {"svc": {"config": {"health_endpoint": "http://svc/health", "health_success_path": "."}}}}
+    evidence = asyncio.run(probe_service_health(records, get_json=get_json))
+    assert evidence["svc"]["available"] is True and evidence["svc"]["status"] == "ready"
+    undeclared = {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}}
+    assert asyncio.run(probe_service_health(undeclared, get_json=get_json))["svc"]["status"] == "unknown"
