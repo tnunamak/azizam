@@ -26,7 +26,18 @@ from gateway.workflow_requirements import judge_by_names, validate_workflow_requ
 NOW = 1_700_000_000.0
 ENGINE = "eng"
 GRAPH_WORKFLOW = "image.generate.flux2-klein-snofs"   # a shipped manifest; its own requires block is what is judged
-PLAIN_WORKFLOW = "image.generate.flux2-klein"
+
+
+def _plain_workflow(records, engine):
+    """A shipped workflow on the same engine whose bindings declare no files or nodes. It is chosen from the manifests, so a
+    manifest that gains a requires block never turns this control into a judged workflow."""
+    for workflow_id in sorted(records):
+        record = records[workflow_id]
+        bindings = record.contract.get("bindings") or {}
+        if engine in record.supported_backends and isinstance(bindings, dict) and bindings and not any(
+                isinstance(spec, dict) and spec.get("requires") for spec in bindings.values()):
+            return workflow_id
+    raise AssertionError("no shipped workflow on the engine declares nothing")
 
 REQUIRES = {
     "custom_nodes": ["NodeA"],
@@ -250,6 +261,7 @@ def listing(monkeypatch):
     network: the kept node list is the only thing that says what the engine holds."""
     records = {r.id: r for r in proxy.GATEWAY_WORKFLOW_REGISTRY.records()}
     engine = next(iter(records[GRAPH_WORKFLOW].supported_backends))
+    plain = _plain_workflow(records, engine)
     registry = {"services": {engine: {"enabled": True, "config": {}}}}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     monkeypatch.setattr(proxy, "_operator_service_availability_overrides", lambda: {})
@@ -259,12 +271,12 @@ def listing(monkeypatch):
 
     def run(entries=None):
         data = entries or [{"id": "graph-model", "azizam_workflow_id": GRAPH_WORKFLOW},
-                           {"id": "plain-model", "azizam_workflow_id": PLAIN_WORKFLOW}]
+                           {"id": "plain-model", "azizam_workflow_id": plain}]
         return {item["id"]: item.get("azizam_availability")
                 for item in proxy._annotate_model_availability(copy.deepcopy(data), only_available=False,
                                                                status_payload=snapshot)}
 
-    return SimpleNamespace(engine=engine, records=records, run=run, snapshot=snapshot)
+    return SimpleNamespace(engine=engine, records=records, run=run, snapshot=snapshot, plain=plain)
 
 
 def live_shaped(engine_names: dict[str, list[str]] | None = None, *, with_node: bool = True) -> dict:
@@ -320,7 +332,7 @@ async def _owner_view(listing):
     with patch.object(proxy, "_gateway_capabilities_for_auth_context", lambda _auth: []), \
             patch.object(proxy, "_auth_context_from_scope", lambda _request: None), \
             patch.object(proxy, "_capabilities_availability_evidence", evidence):
-        return await proxy._mcp_availability(SimpleNamespace(), [GRAPH_WORKFLOW, PLAIN_WORKFLOW])
+        return await proxy._mcp_availability(SimpleNamespace(), [GRAPH_WORKFLOW, listing.plain])
 
 
 def test_a_stale_list_and_an_unreadable_list_leave_the_listing_as_it_was(listing):
