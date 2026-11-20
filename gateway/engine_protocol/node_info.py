@@ -95,3 +95,16 @@ def fetch_fresh(host: str, node_type: str) -> dict[str, Any]:
     if not isinstance(info, dict):
         raise ValueError(f"engine returned no definition for {node_type}")
     return info
+
+
+def fetch_header(host: str, folder: str, filename: str) -> Optional[dict[str, Any]]:
+    """The metadata block of one model file's header, or None when the engine has none for it (a 404: the file has no
+    metadata, or is not a safetensors file). Any other answer raises, so a failed read is never taken for "no metadata"."""
+    with engine_egress.client(timeout=httpx.Timeout(10, connect=3)) as client:
+        response = client.get(f"{host}/view_metadata/{quote(folder, safe='')}", params={"filename": filename},
+                              extensions=engine_egress.probe())
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    metadata = response.json()
+    return metadata if isinstance(metadata, dict) else None

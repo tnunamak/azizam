@@ -72,7 +72,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "498d28a05eddd563bc43333c75b4b3483b1d982e80a85849be5314cca864ca8a",
+      "source_sha256": "8ef759622b5dec54cf55f6e041ea5b577153bbd3138a4bfbd4df706b1912818a",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
@@ -152,7 +152,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_create",
-      "source_sha256": "db539bb1816c46d13572f532f28cde8efaa8ab7351b5e5df98d8cd57c3cf8e89",
+      "source_sha256": "1e2c978fafa8ba64604a954fb9731962243605d7dcdbe0120a7e1b743ae13c71",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -216,7 +216,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "498d28a05eddd563bc43333c75b4b3483b1d982e80a85849be5314cca864ca8a",
+      "source_sha256": "8ef759622b5dec54cf55f6e041ea5b577153bbd3138a4bfbd4df706b1912818a",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -264,7 +264,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "498d28a05eddd563bc43333c75b4b3483b1d982e80a85849be5314cca864ca8a",
+      "source_sha256": "8ef759622b5dec54cf55f6e041ea5b577153bbd3138a4bfbd4df706b1912818a",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -929,6 +929,12 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.get_adapter_uploads",
+      "method": "GET",
+      "path": "/admin/api/operator/adapter-uploads",
+      "access": "operational"
+    },
+    {
       "handler": "gateway.admin_api.create_admin_router.<locals>.get_engine_folders",
       "method": "GET",
       "path": "/admin/api/operator/engine-folders",
@@ -1076,6 +1082,12 @@
       "handler": "gateway.admin_api.create_admin_router.<locals>.update_host_commands",
       "method": "PUT",
       "path": "/admin/api/operator/host-commands",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_adapter_uploads",
+      "method": "PUT",
+      "path": "/admin/api/operator/adapter-uploads",
       "access": "operational"
     },
     {
@@ -1456,6 +1468,12 @@
       "handler": "gateway.home_api.create_home_router.<locals>.connection_test",
       "method": "POST",
       "path": "/me/api/connection-test",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_adapters.create_me_adapters_router.<locals>.upload_adapter",
+      "method": "POST",
+      "path": "/me/api/adapters",
       "access": "own-account"
     },
     {

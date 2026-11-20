@@ -6801,6 +6801,54 @@
         "type": "image"
       }
     },
+    "image.generate.flux2-klein": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-snofs": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "image.generate.krea2-turbo": {
       "fields": {
         "architecture": {
@@ -8393,6 +8441,8 @@
     "image.edit.qwen-image-2.1-inpaint",
     "image.edit.seedvr2-upscale",
     "image.generate.anima-turbo",
+    "image.generate.flux2-klein",
+    "image.generate.flux2-klein-snofs",
     "image.generate.krea2-turbo",
     "image.generate.krea2-turbo-snofs",
     "image.generate.moss-image",

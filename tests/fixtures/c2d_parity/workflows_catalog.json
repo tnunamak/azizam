@@ -1,14 +1,14 @@
 {
   "envelope": {
     "counts": {
-      "capabilities": 39,
-      "workflows": 39
+      "capabilities": 41,
+      "workflows": 41
     },
     "discovery_url": "https://gateway.example.test/gateway/v1/workflows",
     "groups": [
       {
         "capability": "image",
-        "count": 14,
+        "count": 16,
         "title": "Image",
         "workflow_ids": [
           "image.analyze.face-likeness",
@@ -19,6 +19,8 @@
           "image.edit.qwen-image-2.1-inpaint",
           "image.edit.seedvr2-upscale",
           "image.generate.anima-turbo",
+          "image.generate.flux2-klein",
+          "image.generate.flux2-klein-snofs",
           "image.generate.krea2-turbo",
           "image.generate.krea2-turbo-snofs",
           "image.generate.moss-image",
@@ -149,6 +151,8 @@
     "image.edit.qwen-image-2.1-inpaint",
     "image.edit.seedvr2-upscale",
     "image.generate.anima-turbo",
+    "image.generate.flux2-klein",
+    "image.generate.flux2-klein-snofs",
     "image.generate.krea2-turbo",
     "image.generate.krea2-turbo-snofs",
     "image.generate.moss-image",
@@ -1829,12 +1833,12 @@
     },
     "image.edit.qwen-image-2.1-edit": {
       "examples": {
-        "bytes": 4988,
+        "bytes": 5347,
         "full": {
           "example_request": {
             "body": {},
             "content_type": "multipart/form-data",
-            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png'",
+            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}' \\\n  -F 'image[]=@./source-image.png'",
             "files": {
               "source_image": {
                 "field": "image[]",
@@ -1844,25 +1848,25 @@
               }
             },
             "form": {
-              "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}",
+              "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}",
               "model": "qwen-image-2.1-edit",
               "prompt": "A small teal fish mark on a clean white card."
             },
-            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0,\\\"text_encoder\\\":\\\"qwen3vl_8b_w4a8.safetensors\\\"}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/images/edits",
-            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png'",
-            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}' \\\n  -F 'image[]=@./source-image.png'",
+            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0,\\\"text_encoder\\\":\\\"qwen3vl_8b_w4a8.safetensors\\\"}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
           }
         },
-        "sha256": "be9bb2e023797979aec5881821363e1c13eb6a78f09f457d8adcdb5775c7f880"
+        "sha256": "5cff7cc88a06cbdea93bf1ba8f5661d75da32c4219aca70d0b0b6c6bfef04b68"
       },
       "row": {
-        "bytes": 15377,
+        "bytes": 16970,
         "full": {
           "aliases": [],
           "availability": {
@@ -1932,7 +1936,7 @@
           "example_request": {
             "body": {},
             "content_type": "multipart/form-data",
-            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png'",
+            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}' \\\n  -F 'image[]=@./source-image.png'",
             "files": {
               "source_image": {
                 "field": "image[]",
@@ -1942,19 +1946,19 @@
               }
             },
             "form": {
-              "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}",
+              "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}",
               "model": "qwen-image-2.1-edit",
               "prompt": "A small teal fish mark on a clean white card."
             },
-            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0,\\\"text_encoder\\\":\\\"qwen3vl_8b_w4a8.safetensors\\\"}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/images/edits",
-            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}' \\\n  -F 'image[]=@./source-image.png'",
-            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+            "curl": "curl 'https://gateway.example.test/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=qwen-image-2.1-edit' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}' \\\n  -F 'image[]=@./source-image.png'",
+            "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"qwen-image-2.1-edit\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"negative_prompt\\\":\\\"\\\",\\\"reference_resolution\\\":1024,\\\"steps\\\":25,\\\"sampler\\\":\\\"euler\\\",\\\"scheduler\\\":\\\"simple\\\",\\\"cfg\\\":1.0,\\\"seed\\\":0,\\\"text_encoder\\\":\\\"qwen3vl_8b_w4a8.safetensors\\\"}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nconst response = await fetch(\"https://gateway.example.test/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n    ]\n    response = requests.request('POST', 'https://gateway.example.test/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'qwen-image-2.1-edit', 'prompt': 'A small teal fish mark on a clean white card.', 'extensions': '{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0,\"text_encoder\":\"qwen3vl_8b_w4a8.safetensors\"}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nprint(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
           },
           "id": "image.edit.qwen-image-2.1-edit",
           "inputs": [
@@ -2141,6 +2145,33 @@
             },
             {
               "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "ignored": false,
+              "label": "style adapters",
+              "name": "loras",
+              "request_field": "loras",
+              "required": false,
+              "type": "array"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "enum": [
+                "qwen3vl_8b_w4a8.safetensors"
+              ],
+              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "ignored": false,
+              "label": "text encoder",
+              "name": "text_encoder",
+              "request_field": "text_encoder",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
               "applies": "Route option",
               "description": "Number of images.",
               "ignored": false,
@@ -2179,6 +2210,10 @@
                     "field": "cfg",
                     "in": "extension"
                   },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
                   "negative_prompt": {
                     "field": "negative_prompt",
                     "in": "extension"
@@ -2209,6 +2244,10 @@
                   },
                   "steps": {
                     "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
                     "in": "extension"
                   }
                 },
@@ -2260,7 +2299,7 @@
           "try_url": "/try/?workflow=image.edit.qwen-image-2.1-edit",
           "typical_seconds": 20
         },
-        "sha256": "32ce136608c9ef06f95786abeddaa0683e3689b1d2dac95d7f0a33eeecc16780"
+        "sha256": "e5e257d83601c7692f70c463d8044fb73caa96a8712645c6372d8e55e12f7be0"
       }
     },
     "image.edit.qwen-image-2.1-edit-multiref": {
@@ -4022,9 +4061,1152 @@
         "sha256": "5660f372745bc5f126332b9faba4b4ab1ee4277322708a3a69c43a35c8f1d97a"
       }
     },
+    "image.generate.flux2-klein": {
+      "examples": {
+        "bytes": 4378,
+        "full": {
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4,
+                  "text_encoder": "qwen_3_8b_fp8mixed.safetensors"
+                }
+              },
+              "model": "flux2-klein",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          }
+        },
+        "sha256": "c312d56d1cbaf3cfd79277019a3c27e98e9eebbc7a0b30005b100239575b3e69"
+      },
+      "row": {
+        "bytes": 17395,
+        "full": {
+          "aliases": [],
+          "availability": {
+            "available": true,
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "capabilities": [
+            {
+              "availability": {
+                "available": false,
+                "configured": true,
+                "enabled": true,
+                "evidence": {
+                  "kind": "unknown"
+                },
+                "idle_startable": false,
+                "measured": false,
+                "reason": "Not measured yet",
+                "status": "unknown",
+                "up": null
+              },
+              "available": true,
+              "capability": "image",
+              "capability_title": "Images",
+              "caveats": [],
+              "execution": "job",
+              "exposure": "default",
+              "icon_key": "image",
+              "input_modalities": [
+                "text"
+              ],
+              "intent": "image.generate",
+              "output_modalities": [
+                "image"
+              ],
+              "recommended_model": "FLUX.2 Klein 9B",
+              "resource_tier": "batch",
+              "secondary_profile": false,
+              "streaming": false,
+              "summary": "Generate or edit images from your prompts.",
+              "tags": [],
+              "title": "FLUX.2 Klein 9B",
+              "trust_tier": "stable",
+              "use_name": "image.generate.flux2-klein",
+              "use_names": [
+                "image.generate.flux2-klein"
+              ],
+              "workflow": "image.generate.flux2-klein"
+            }
+          ],
+          "capability": "image",
+          "description": "Detailed images from a prompt",
+          "discovery_url": "https://gateway.example.test/gateway/v1/workflows/image.generate.flux2-klein",
+          "engine_binding": "comfyui",
+          "engine_binding_detail": {
+            "available": true,
+            "backends": [
+              "comfyui"
+            ],
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4,
+                  "text_encoder": "qwen_3_8b_fp8mixed.safetensors"
+                }
+              },
+              "model": "flux2-klein",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "id": "image.generate.flux2-klein",
+          "inputs": [
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Describe what you want to make.",
+              "help": "Describe what you want to make.",
+              "ignored": false,
+              "label": "description",
+              "name": "prompt",
+              "request_field": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture width in pixels.",
+              "help": "Picture width in pixels.",
+              "ignored": false,
+              "label": "width",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "width",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture height in pixels.",
+              "help": "Picture height in pixels.",
+              "ignored": false,
+              "label": "height",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "height",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": 4,
+              "description": "More steps add detail but take longer. 4 works well for this model.",
+              "help": "More steps add detail but take longer. 4 works well for this model.",
+              "ignored": false,
+              "label": "steps",
+              "maximum": 100,
+              "minimum": 1,
+              "name": "steps",
+              "request_field": "steps",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "euler",
+              "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "enum": [
+                "euler",
+                "euler_cfg_pp",
+                "euler_ancestral",
+                "euler_ancestral_cfg_pp",
+                "heun",
+                "heunpp2",
+                "exp_heun_2_x0",
+                "exp_heun_2_x0_sde",
+                "dpm_2",
+                "dpm_2_ancestral",
+                "lms",
+                "dpm_fast",
+                "dpm_adaptive",
+                "dpmpp_2s_ancestral",
+                "dpmpp_2s_ancestral_cfg_pp",
+                "dpmpp_sde",
+                "dpmpp_sde_gpu",
+                "dpmpp_2m",
+                "dpmpp_2m_cfg_pp",
+                "dpmpp_2m_sde",
+                "dpmpp_2m_sde_gpu",
+                "dpmpp_2m_sde_heun",
+                "dpmpp_2m_sde_heun_gpu",
+                "dpmpp_3m_sde",
+                "dpmpp_3m_sde_gpu",
+                "ddpm",
+                "lcm",
+                "ipndm",
+                "ipndm_v",
+                "deis",
+                "cfgpp_ud10_ab",
+                "res_multistep",
+                "res_multistep_cfg_pp",
+                "res_multistep_ancestral",
+                "res_multistep_ancestral_cfg_pp",
+                "gradient_estimation",
+                "gradient_estimation_cfg_pp",
+                "er_sde",
+                "seeds_2",
+                "seeds_3",
+                "sa_solver",
+                "sa_solver_pece",
+                "ddim",
+                "uni_pc",
+                "uni_pc_bh2"
+              ],
+              "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "ignored": false,
+              "label": "Generation method",
+              "name": "sampler",
+              "request_field": "sampler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "simple",
+              "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "enum": [
+                "simple",
+                "sgm_uniform",
+                "karras",
+                "exponential",
+                "ddim_uniform",
+                "beta",
+                "normal",
+                "linear_quadratic",
+                "kl_optimal"
+              ],
+              "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "ignored": false,
+              "label": "Step timing",
+              "name": "scheduler",
+              "request_field": "scheduler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Higher follows your words more closely.",
+              "help": "Higher follows your words more closely.",
+              "ignored": false,
+              "label": "prompt guidance",
+              "maximum": 20,
+              "minimum": 0,
+              "name": "guidance",
+              "request_field": "guidance",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Reuse this number and the same settings for a similar result.",
+              "help": "Reuse this number and the same settings for a similar result.",
+              "ignored": false,
+              "label": "variation number",
+              "minimum": 0,
+              "name": "seed",
+              "request_field": "seed",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "How many pictures to make at once.",
+              "help": "How many pictures to make at once.",
+              "ignored": false,
+              "label": "number of pictures",
+              "maximum": 8,
+              "minimum": 1,
+              "name": "batch_size",
+              "request_field": "batch_size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "ignored": false,
+              "label": "style adapters",
+              "name": "loras",
+              "request_field": "loras",
+              "required": false,
+              "type": "array"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "enum": [
+                "qwen_3_8b_fp8mixed.safetensors"
+              ],
+              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "ignored": false,
+              "label": "text encoder",
+              "name": "text_encoder",
+              "request_field": "text_encoder",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Number of images.",
+              "ignored": false,
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "request_field": "n",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "intent": "image.generate",
+          "machine_readable_discovery_url": "https://gateway.example.test/openapi.json#x-azizam-workflows",
+          "native_passthrough_route": null,
+          "native_route": null,
+          "openapi": {
+            "execution": {
+              "async": {
+                "cancel": {
+                  "method": "POST",
+                  "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+                },
+                "content": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}/content"
+                },
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "kind": "media_job",
+                "poll": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}"
+                },
+                "statuses": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ],
+                "submit": {
+                  "body": {
+                    "intent": "image.generate",
+                    "request": "<the sync request body>"
+                  },
+                  "content_type": "application/json",
+                  "method": "POST",
+                  "model": "flux2-klein",
+                  "path": "/gateway/v1/media/jobs"
+                },
+                "terminal": [
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ]
+              },
+              "recommended": "sync",
+              "sync": {
+                "content_type": "application/json",
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "method": "POST",
+                "model": "flux2-klein",
+                "output": "data[].b64_json or data[].url",
+                "path": "/v1/images/generations",
+                "response": {
+                  "kind": "json"
+                }
+              }
+            },
+            "inputs_schema": {
+              "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+            },
+            "route_inputs": [
+              {
+                "description": "Number of images.",
+                "field": "n",
+                "in": "body",
+                "label": "number of results",
+                "maximum": 10,
+                "minimum": 1,
+                "name": "n",
+                "type": "integer"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "purpose": "Detailed images from a prompt",
+          "recent_jobs": [],
+          "recent_jobs_url": "/me/api/media?workflow=image.generate.flux2-klein",
+          "recent_receipts": [],
+          "short_id": "flux2-klein",
+          "technical_notes": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+          "title": "FLUX.2 Klein 9B",
+          "try_url": "/try/?workflow=image.generate.flux2-klein",
+          "typical_seconds": 20
+        },
+        "sha256": "97859c7cfe59eed560e429258c77ef48f0177af7411121293aa472fc5dc4d925"
+      }
+    },
+    "image.generate.flux2-klein-snofs": {
+      "examples": {
+        "bytes": 4602,
+        "full": {
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "lora_strength": 1.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4,
+                  "text_encoder": "qwen_3_8b_fp8mixed.safetensors"
+                }
+              },
+              "model": "flux2-klein-snofs",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          }
+        },
+        "sha256": "f68fcd354a4a9c56218eac7daafdac28b2f037b520d3a627c8cb33eb16bb0bfe"
+      },
+      "row": {
+        "bytes": 18501,
+        "full": {
+          "aliases": [],
+          "availability": {
+            "available": true,
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "capabilities": [
+            {
+              "availability": {
+                "available": false,
+                "configured": true,
+                "enabled": true,
+                "evidence": {
+                  "kind": "unknown"
+                },
+                "idle_startable": false,
+                "measured": false,
+                "reason": "Not measured yet",
+                "status": "unknown",
+                "up": null
+              },
+              "available": true,
+              "capability": "image",
+              "capability_title": "Images",
+              "caveats": [],
+              "execution": "job",
+              "exposure": "default",
+              "icon_key": "image",
+              "input_modalities": [
+                "text"
+              ],
+              "intent": "image.generate",
+              "output_modalities": [
+                "image"
+              ],
+              "recommended_model": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+              "resource_tier": "batch",
+              "secondary_profile": false,
+              "streaming": false,
+              "summary": "Generate or edit images from your prompts.",
+              "tags": [],
+              "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+              "trust_tier": "stable",
+              "use_name": "image.generate.flux2-klein-snofs",
+              "use_names": [
+                "image.generate.flux2-klein-snofs"
+              ],
+              "workflow": "image.generate.flux2-klein-snofs"
+            }
+          ],
+          "capability": "image",
+          "description": "Uncensored detailed images from a prompt",
+          "discovery_url": "https://gateway.example.test/gateway/v1/workflows/image.generate.flux2-klein-snofs",
+          "engine_binding": "comfyui",
+          "engine_binding_detail": {
+            "available": true,
+            "backends": [
+              "comfyui"
+            ],
+            "measured": false,
+            "reason_code": "configured",
+            "status": "configured"
+          },
+          "example_request": {
+            "body": {
+              "extensions": {
+                "com.azizam.workflow": {
+                  "batch_size": 1,
+                  "guidance": 0.0,
+                  "lora_strength": 1.0,
+                  "sampler": "euler",
+                  "scheduler": "simple",
+                  "seed": 0,
+                  "steps": 4,
+                  "text_encoder": "qwen_3_8b_fp8mixed.safetensors"
+                }
+              },
+              "model": "flux2-klein-snofs",
+              "n": 1,
+              "prompt": "A small teal fish mark on a clean white card.",
+              "size": "64x64"
+            },
+            "content_type": "application/json",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "files": {},
+            "form": {},
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "examples": {
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"flux2-klein-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"64x64\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":4,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"guidance\":0.0,\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen_3_8b_fp8mixed.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"flux2-klein-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"64x64\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 4,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"guidance\": 0.0,\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen_3_8b_fp8mixed.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'flux2-klein-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 4, 'sampler': 'euler', 'scheduler': 'simple', 'guidance': 0.0, 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen_3_8b_fp8mixed.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+          },
+          "id": "image.generate.flux2-klein-snofs",
+          "inputs": [
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Describe what you want to make.",
+              "help": "Describe what you want to make.",
+              "ignored": false,
+              "label": "description",
+              "name": "prompt",
+              "request_field": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture width in pixels.",
+              "help": "Picture width in pixels.",
+              "ignored": false,
+              "label": "width",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "width",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Request body",
+              "description": "Picture height in pixels.",
+              "help": "Picture height in pixels.",
+              "ignored": false,
+              "label": "height",
+              "maximum": 2048,
+              "minimum": 64,
+              "name": "height",
+              "request_field": "size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": 4,
+              "description": "More steps add detail but take longer. 4 works well for this model.",
+              "help": "More steps add detail but take longer. 4 works well for this model.",
+              "ignored": false,
+              "label": "steps",
+              "maximum": 100,
+              "minimum": 1,
+              "name": "steps",
+              "request_field": "steps",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "euler",
+              "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "enum": [
+                "euler",
+                "euler_cfg_pp",
+                "euler_ancestral",
+                "euler_ancestral_cfg_pp",
+                "heun",
+                "heunpp2",
+                "exp_heun_2_x0",
+                "exp_heun_2_x0_sde",
+                "dpm_2",
+                "dpm_2_ancestral",
+                "lms",
+                "dpm_fast",
+                "dpm_adaptive",
+                "dpmpp_2s_ancestral",
+                "dpmpp_2s_ancestral_cfg_pp",
+                "dpmpp_sde",
+                "dpmpp_sde_gpu",
+                "dpmpp_2m",
+                "dpmpp_2m_cfg_pp",
+                "dpmpp_2m_sde",
+                "dpmpp_2m_sde_gpu",
+                "dpmpp_2m_sde_heun",
+                "dpmpp_2m_sde_heun_gpu",
+                "dpmpp_3m_sde",
+                "dpmpp_3m_sde_gpu",
+                "ddpm",
+                "lcm",
+                "ipndm",
+                "ipndm_v",
+                "deis",
+                "cfgpp_ud10_ab",
+                "res_multistep",
+                "res_multistep_cfg_pp",
+                "res_multistep_ancestral",
+                "res_multistep_ancestral_cfg_pp",
+                "gradient_estimation",
+                "gradient_estimation_cfg_pp",
+                "er_sde",
+                "seeds_2",
+                "seeds_3",
+                "sa_solver",
+                "sa_solver_pece",
+                "ddim",
+                "uni_pc",
+                "uni_pc_bh2"
+              ],
+              "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+              "ignored": false,
+              "label": "Generation method",
+              "name": "sampler",
+              "request_field": "sampler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": "simple",
+              "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "enum": [
+                "simple",
+                "sgm_uniform",
+                "karras",
+                "exponential",
+                "ddim_uniform",
+                "beta",
+                "normal",
+                "linear_quadratic",
+                "kl_optimal"
+              ],
+              "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+              "ignored": false,
+              "label": "Step timing",
+              "name": "scheduler",
+              "request_field": "scheduler",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Higher follows your words more closely.",
+              "help": "Higher follows your words more closely.",
+              "ignored": false,
+              "label": "prompt guidance",
+              "maximum": 20,
+              "minimum": 0,
+              "name": "guidance",
+              "request_field": "guidance",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Reuse this number and the same settings for a similar result.",
+              "help": "Reuse this number and the same settings for a similar result.",
+              "ignored": false,
+              "label": "variation number",
+              "minimum": 0,
+              "name": "seed",
+              "request_field": "seed",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "default": 1.0,
+              "description": "How strongly the added style applies. 1.0 is the usual setting.",
+              "help": "How strongly the added style applies. 1.0 is the usual setting.",
+              "ignored": false,
+              "label": "style strength",
+              "maximum": 1.5,
+              "minimum": 0,
+              "name": "lora_strength",
+              "request_field": "lora_strength",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "How many pictures to make at once.",
+              "help": "How many pictures to make at once.",
+              "ignored": false,
+              "label": "number of pictures",
+              "maximum": 8,
+              "minimum": 1,
+              "name": "batch_size",
+              "request_field": "batch_size",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "ignored": false,
+              "label": "style adapters",
+              "name": "loras",
+              "request_field": "loras",
+              "required": false,
+              "type": "array"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "enum": [
+                "qwen_3_8b_fp8mixed.safetensors"
+              ],
+              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "ignored": false,
+              "label": "text encoder",
+              "name": "text_encoder",
+              "request_field": "text_encoder",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
+              "applies": "Route option",
+              "description": "Number of images.",
+              "ignored": false,
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "request_field": "n",
+              "required": false,
+              "type": "integer"
+            }
+          ],
+          "intent": "image.generate",
+          "machine_readable_discovery_url": "https://gateway.example.test/openapi.json#x-azizam-workflows",
+          "native_passthrough_route": null,
+          "native_route": null,
+          "openapi": {
+            "execution": {
+              "async": {
+                "cancel": {
+                  "method": "POST",
+                  "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+                },
+                "content": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}/content"
+                },
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "lora_strength": {
+                    "field": "lora_strength",
+                    "in": "extension"
+                  },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "kind": "media_job",
+                "poll": {
+                  "method": "GET",
+                  "path": "/gateway/v1/media/jobs/{job_id}"
+                },
+                "statuses": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ],
+                "submit": {
+                  "body": {
+                    "intent": "image.generate",
+                    "request": "<the sync request body>"
+                  },
+                  "content_type": "application/json",
+                  "method": "POST",
+                  "model": "flux2-klein-snofs",
+                  "path": "/gateway/v1/media/jobs"
+                },
+                "terminal": [
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ]
+              },
+              "recommended": "sync",
+              "sync": {
+                "content_type": "application/json",
+                "fields": {
+                  "batch_size": {
+                    "field": "batch_size",
+                    "in": "extension"
+                  },
+                  "guidance": {
+                    "field": "guidance",
+                    "in": "extension"
+                  },
+                  "height": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  },
+                  "lora_strength": {
+                    "field": "lora_strength",
+                    "in": "extension"
+                  },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
+                  "prompt": {
+                    "field": "prompt",
+                    "in": "body"
+                  },
+                  "sampler": {
+                    "field": "sampler",
+                    "in": "extension"
+                  },
+                  "scheduler": {
+                    "field": "scheduler",
+                    "in": "extension"
+                  },
+                  "seed": {
+                    "field": "seed",
+                    "in": "extension"
+                  },
+                  "steps": {
+                    "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
+                    "in": "extension"
+                  },
+                  "width": {
+                    "combine": [
+                      "width",
+                      "height"
+                    ],
+                    "field": "size",
+                    "in": "body"
+                  }
+                },
+                "method": "POST",
+                "model": "flux2-klein-snofs",
+                "output": "data[].b64_json or data[].url",
+                "path": "/v1/images/generations",
+                "response": {
+                  "kind": "json"
+                }
+              }
+            },
+            "inputs_schema": {
+              "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs"
+            },
+            "route_inputs": [
+              {
+                "description": "Number of images.",
+                "field": "n",
+                "in": "body",
+                "label": "number of results",
+                "maximum": 10,
+                "minimum": 1,
+                "name": "n",
+                "type": "integer"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "purpose": "Uncensored detailed images from a prompt",
+          "recent_jobs": [],
+          "recent_jobs_url": "/me/api/media?workflow=image.generate.flux2-klein-snofs",
+          "recent_receipts": [],
+          "short_id": "flux2-klein-snofs",
+          "technical_notes": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+          "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+          "try_url": "/try/?workflow=image.generate.flux2-klein-snofs",
+          "typical_seconds": 20
+        },
+        "sha256": "7730b9a873c2c5e3ce186d7aafa79cae19ee213f2d6cffbcb6260138f7d6a104"
+      }
+    },
     "image.generate.krea2-turbo": {
       "examples": {
-        "bytes": 3873,
+        "bytes": 4280,
         "full": {
           "example_request": {
             "body": {
@@ -4034,7 +5216,8 @@
                   "sampler": "euler",
                   "scheduler": "simple",
                   "seed": 0,
-                  "steps": 8
+                  "steps": 8,
+                  "text_encoder": "qwen3vl_4b_fp8_scaled.safetensors"
                 }
               },
               "model": "krea2-turbo",
@@ -4043,24 +5226,24 @@
               "size": "1024x1024"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/images/generations",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "186d7b0b8b6ae4af1dc2ba353b538fa2543423397a7e6ca0d5d7cf069820b7de"
+        "sha256": "971a2859ba694a56bc29684bb907519d002dff45739203ad493a810d816cf3fb"
       },
       "row": {
-        "bytes": 14926,
+        "bytes": 16775,
         "full": {
           "aliases": [
             "image-quality"
@@ -4136,7 +5319,8 @@
                   "sampler": "euler",
                   "scheduler": "simple",
                   "seed": 0,
-                  "steps": 8
+                  "steps": 8,
+                  "text_encoder": "qwen3vl_4b_fp8_scaled.safetensors"
                 }
               },
               "model": "krea2-turbo",
@@ -4145,18 +5329,18 @@
               "size": "1024x1024"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/images/generations",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "image.generate.krea2-turbo",
           "inputs": [
@@ -4331,6 +5515,33 @@
             },
             {
               "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "ignored": false,
+              "label": "style adapters",
+              "name": "loras",
+              "request_field": "loras",
+              "required": false,
+              "type": "array"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "enum": [
+                "qwen3vl_4b_fp8_scaled.safetensors"
+              ],
+              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "ignored": false,
+              "label": "text encoder",
+              "name": "text_encoder",
+              "request_field": "text_encoder",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
               "applies": "Route option",
               "description": "Number of images.",
               "ignored": false,
@@ -4371,6 +5582,10 @@
                     "field": "size",
                     "in": "body"
                   },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
                   "prompt": {
                     "field": "prompt",
                     "in": "body"
@@ -4389,6 +5604,10 @@
                   },
                   "steps": {
                     "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
                     "in": "extension"
                   },
                   "width": {
@@ -4444,6 +5663,10 @@
                     "field": "size",
                     "in": "body"
                   },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
                   "prompt": {
                     "field": "prompt",
                     "in": "body"
@@ -4462,6 +5685,10 @@
                   },
                   "steps": {
                     "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
                     "in": "extension"
                   },
                   "width": {
@@ -4514,12 +5741,12 @@
           "try_url": "/try/?workflow=image.generate.krea2-turbo",
           "typical_seconds": 9
         },
-        "sha256": "06a31ed6a1e3aeb31bba7443bcb4bf274db92f1ae3d15a3ae1d400f7b96509a1"
+        "sha256": "94e1ce41f6baee460a7adda68ee6f0464a22e76bac818652cd871784236e10fe"
       }
     },
     "image.generate.krea2-turbo-snofs": {
       "examples": {
-        "bytes": 4097,
+        "bytes": 4504,
         "full": {
           "example_request": {
             "body": {
@@ -4530,7 +5757,8 @@
                   "sampler": "euler",
                   "scheduler": "simple",
                   "seed": 0,
-                  "steps": 8
+                  "steps": 8,
+                  "text_encoder": "qwen3vl_4b_fp8_scaled.safetensors"
                 }
               },
               "model": "krea2-turbo-snofs",
@@ -4539,24 +5767,24 @@
               "size": "1024x1024"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/images/generations",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "3d83ddda88093378c76289f6538a825efc14a9323692e85899e0a7a7ff629e7f"
+        "sha256": "1d0775aa79408e0741729323a76db2cd7cd30369f6fde5c50979626f561a2e70"
       },
       "row": {
-        "bytes": 16021,
+        "bytes": 17870,
         "full": {
           "aliases": [],
           "availability": {
@@ -4631,7 +5859,8 @@
                   "sampler": "euler",
                   "scheduler": "simple",
                   "seed": 0,
-                  "steps": 8
+                  "steps": 8,
+                  "text_encoder": "qwen3vl_4b_fp8_scaled.safetensors"
                 }
               },
               "model": "krea2-turbo-snofs",
@@ -4640,18 +5869,18 @@
               "size": "1024x1024"
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/v1/images/generations",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/v1/images/generations' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"krea2-turbo-snofs\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"size\":\"1024x1024\",\"n\":1,\"extensions\":{\"com.azizam.workflow\":{\"steps\":8,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"seed\":0,\"lora_strength\":1.0,\"batch_size\":1,\"text_encoder\":\"qwen3vl_4b_fp8_scaled.safetensors\"}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/v1/images/generations\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"krea2-turbo-snofs\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"size\": \"1024x1024\",\n  \"n\": 1,\n  \"extensions\": {\n    \"com.azizam.workflow\": {\n      \"steps\": 8,\n      \"sampler\": \"euler\",\n      \"scheduler\": \"simple\",\n      \"seed\": 0,\n      \"lora_strength\": 1.0,\n      \"batch_size\": 1,\n      \"text_encoder\": \"qwen3vl_4b_fp8_scaled.safetensors\"\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/v1/images/generations',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'krea2-turbo-snofs', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '1024x1024', 'n': 1, 'extensions': {'com.azizam.workflow': {'steps': 8, 'sampler': 'euler', 'scheduler': 'simple', 'seed': 0, 'lora_strength': 1.0, 'batch_size': 1, 'text_encoder': 'qwen3vl_4b_fp8_scaled.safetensors'}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "image.generate.krea2-turbo-snofs",
           "inputs": [
@@ -4841,6 +6070,33 @@
             },
             {
               "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+              "ignored": false,
+              "label": "style adapters",
+              "name": "loras",
+              "request_field": "loras",
+              "required": false,
+              "type": "array"
+            },
+            {
+              "accepted": true,
+              "applies": "Workflow extension",
+              "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "enum": [
+                "qwen3vl_4b_fp8_scaled.safetensors"
+              ],
+              "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+              "ignored": false,
+              "label": "text encoder",
+              "name": "text_encoder",
+              "request_field": "text_encoder",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "accepted": true,
               "applies": "Route option",
               "description": "Number of images.",
               "ignored": false,
@@ -4885,6 +6141,10 @@
                     "field": "lora_strength",
                     "in": "extension"
                   },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
                   "prompt": {
                     "field": "prompt",
                     "in": "body"
@@ -4903,6 +6163,10 @@
                   },
                   "steps": {
                     "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
                     "in": "extension"
                   },
                   "width": {
@@ -4962,6 +6226,10 @@
                     "field": "lora_strength",
                     "in": "extension"
                   },
+                  "loras": {
+                    "field": "loras",
+                    "in": "extension"
+                  },
                   "prompt": {
                     "field": "prompt",
                     "in": "body"
@@ -4980,6 +6248,10 @@
                   },
                   "steps": {
                     "field": "steps",
+                    "in": "extension"
+                  },
+                  "text_encoder": {
+                    "field": "text_encoder",
                     "in": "extension"
                   },
                   "width": {
@@ -5032,7 +6304,7 @@
           "try_url": "/try/?workflow=image.generate.krea2-turbo-snofs",
           "typical_seconds": 9
         },
-        "sha256": "15ca0aee996a45dcc635bf5c47b231f6cfde3b20356f010d1155ad09cd91d47b"
+        "sha256": "d0af60f60a4d01193ab246dadb8c12613f0888b667d9db3ad72014e98ff80895"
       }
     },
     "image.generate.moss-image": {

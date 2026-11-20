@@ -770,8 +770,12 @@ def conservative_asset_deleter(
     metadata_path_resolver: Callable[[str], Path | None],
     metadata_writer: Callable[[str, Mapping[str, Any]], None],
     prompt_memory_path: PathProvider | None = None,
+    on_removed: Callable[[str, Mapping[str, Any]], None] | None = None,
 ) -> AssetDeleter:
-    """Remove an asset file nobody else owns; for a shared one keep the file and release the caller's claim."""
+    """Remove an asset file nobody else owns; for a shared one keep the file and release the caller's claim.
+
+    ``on_removed(asset_id, metadata)`` runs when the file is about to go, with the sidecar it had, so a copy made from the
+    file elsewhere can go with it. A hook that fails does not stop the delete."""
     def delete(asset_id: str, *, release_owner_keys: Iterable[str] = (), release_person_id: str | None = None) -> bool:
         from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
         removed = False
@@ -801,6 +805,11 @@ def conservative_asset_deleter(
                     metadata_writer(asset_id, released)
                 return False
             source = asset_path_resolver(asset_id)
+            if on_removed is not None:
+                try:
+                    on_removed(asset_id, metadata)
+                except Exception:  # noqa: BLE001 - a copy elsewhere never keeps a Library item alive
+                    logging.getLogger(__name__).warning("on_removed hook failed for %s", asset_id, exc_info=True)
             thumbnails.remove_thumbnail(source)
             for path in (source, metadata_path_resolver(asset_id)):
                 if path is not None and path.exists():
@@ -967,6 +976,18 @@ def owned_library_asset(
         receipts_path=_resolve_path(receipts_path),
         prompt_memory_path=_resolve_path(prompt_memory_path),
     )
+
+
+def holds_cached_asset(
+    user_id: str, asset_id: str, *, asset_metadata_reader: AssetMetadataReader, admin_db_path: PathProvider,
+) -> bool:
+    """Whether the Library's rule makes this stored file the person's: they made it or hold its owner key. This is the
+    test every Library listing applies to a stored file (``_cache_in_library``), asked for one file without building a
+    listing. It reads the file's sidecar only: a claim goes when the person deletes the item, so a file they deleted
+    is not theirs, and the same bytes uploaded again are."""
+    admin_path = _resolve_path(admin_db_path)
+    metadata = dict(asset_metadata_reader(asset_id) or {})
+    return _cache_in_library(asset_id, metadata, None, _member_media_scope(user_id, admin_path), _Apps(admin_path))
 
 
 def _find_asset(

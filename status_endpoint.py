@@ -302,6 +302,8 @@ async def _probe(
                 if parsed_status == "unavailable" or available is False:
                     return {**base, "status": "down", "live_status": "down", "latency_ms": dt, "last_error": "readiness false"}
                 return {**base, "status": "unknown", "live_status": "unknown", "latency_ms": dt, "last_error": None}
+            if payload is not None and declared_health_success(service or {}, payload):
+                return {**base, "status": "up", "live_status": "up", "latency_ms": dt, "last_error": None}
             return {**base, "status": "unknown", "live_status": "unknown", "latency_ms": dt, "last_error": None}
         if r.status_code in (404, 405):
             return {

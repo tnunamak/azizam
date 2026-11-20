@@ -19,6 +19,8 @@ workflows:
   image.edit.qwen-image-2.1-inpaint: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.edit.seedvr2-upscale: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.anima-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.flux2-klein: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.flux2-klein-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.krea2-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.krea2-turbo-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.moss-image: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}

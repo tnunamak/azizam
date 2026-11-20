@@ -1108,7 +1108,7 @@
     }
   },
   "shared": {
-    "bytes": 9586,
+    "bytes": 9660,
     "full": {
       "info": {
         "description": "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content.",
@@ -1416,6 +1416,8 @@
         "image.edit.qwen-image-2.1-inpaint",
         "image.edit.seedvr2-upscale",
         "image.generate.anima-turbo",
+        "image.generate.flux2-klein",
+        "image.generate.flux2-klein-snofs",
         "image.generate.krea2-turbo",
         "image.generate.krea2-turbo-snofs",
         "image.generate.moss-image",
@@ -1445,7 +1447,7 @@
         "video.generate.minimax-h3-t2v"
       ]
     },
-    "sha256": "f0282f51e579d696b18d419000945068364e6b3a56b310c538ecf8cf71ff37d4"
+    "sha256": "742521cc77555552a69585440101ebbb635dc958fbe381aa2011febe0d5a19d7"
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
@@ -2911,7 +2913,7 @@
       "sha256": "8f2a08c3e9627e41f0fc63eb02d9f3958f603a39954ba96cabd8d1bb05348272"
     },
     "image.edit.qwen-image-2.1-edit": {
-      "bytes": 6379,
+      "bytes": 7693,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2926,6 +2928,10 @@
               "fields": {
                 "cfg": {
                   "field": "cfg",
+                  "in": "extension"
+                },
+                "loras": {
+                  "field": "loras",
                   "in": "extension"
                 },
                 "negative_prompt": {
@@ -2958,6 +2964,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 }
               },
@@ -3016,6 +3026,31 @@
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "negative_prompt": {
                 "default": "",
@@ -3117,6 +3152,13 @@
                 "maximum": 60,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_8b_w4a8.safetensors"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -3132,7 +3174,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit",
         "run_path": null
       },
-      "sha256": "135c074ef6c31d3d4bf7737843fb59a87771698fb4dcde233ddca6b1e4f97755"
+      "sha256": "d94897c73f4d8f857db10e98cd5c04d0d45399359b2bdc57e193cabafd9c6202"
     },
     "image.edit.qwen-image-2.1-edit-multiref": {
       "bytes": 6818,
@@ -4045,8 +4087,729 @@
       },
       "sha256": "5efacf1bcbe59fdcb0063260d6433cd0304edf34b599eb4ce6399cd7595f8828"
     },
+    "image.generate.flux2-klein": {
+      "bytes": 9506,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+          "display_name": "FLUX.2 Klein 9B",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "image.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "flux2-klein",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "flux2-klein",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.generate.flux2-klein",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+          },
+          "intent": "image.generate",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            }
+          ],
+          "short_id": "flux2-klein",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 20.0
+        },
+        "components": {
+          "WorkflowInputs_image_generate_flux2_klein": {
+            "additionalProperties": false,
+            "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+            "properties": {
+              "batch_size": {
+                "description": "How many pictures to make at once.",
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "guidance": {
+                "description": "Higher follows your words more closely.",
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "height": {
+                "description": "Picture height in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              "prompt": {
+                "description": "Describe what you want to make.",
+                "type": "string"
+              },
+              "sampler": {
+                "default": "euler",
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "enum": [
+                  "euler",
+                  "euler_cfg_pp",
+                  "euler_ancestral",
+                  "euler_ancestral_cfg_pp",
+                  "heun",
+                  "heunpp2",
+                  "exp_heun_2_x0",
+                  "exp_heun_2_x0_sde",
+                  "dpm_2",
+                  "dpm_2_ancestral",
+                  "lms",
+                  "dpm_fast",
+                  "dpm_adaptive",
+                  "dpmpp_2s_ancestral",
+                  "dpmpp_2s_ancestral_cfg_pp",
+                  "dpmpp_sde",
+                  "dpmpp_sde_gpu",
+                  "dpmpp_2m",
+                  "dpmpp_2m_cfg_pp",
+                  "dpmpp_2m_sde",
+                  "dpmpp_2m_sde_gpu",
+                  "dpmpp_2m_sde_heun",
+                  "dpmpp_2m_sde_heun_gpu",
+                  "dpmpp_3m_sde",
+                  "dpmpp_3m_sde_gpu",
+                  "ddpm",
+                  "lcm",
+                  "ipndm",
+                  "ipndm_v",
+                  "deis",
+                  "cfgpp_ud10_ab",
+                  "res_multistep",
+                  "res_multistep_cfg_pp",
+                  "res_multistep_ancestral",
+                  "res_multistep_ancestral_cfg_pp",
+                  "gradient_estimation",
+                  "gradient_estimation_cfg_pp",
+                  "er_sde",
+                  "seeds_2",
+                  "seeds_3",
+                  "sa_solver",
+                  "sa_solver_pece",
+                  "ddim",
+                  "uni_pc",
+                  "uni_pc_bh2"
+                ],
+                "type": "string"
+              },
+              "scheduler": {
+                "default": "simple",
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "enum": [
+                  "simple",
+                  "sgm_uniform",
+                  "karras",
+                  "exponential",
+                  "ddim_uniform",
+                  "beta",
+                  "normal",
+                  "linear_quadratic",
+                  "kl_optimal"
+                ],
+                "type": "string"
+              },
+              "seed": {
+                "description": "Reuse this number and the same settings for a similar result.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 4,
+                "description": "More steps add detail but take longer. 4 works well for this model.",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen_3_8b_fp8mixed.safetensors"
+                ],
+                "type": "string"
+              },
+              "width": {
+                "description": "Picture width in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "FLUX.2 Klein 9B",
+            "type": "object",
+            "x-azizam-workflow-id": "image.generate.flux2-klein"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
+        "run_path": null
+      },
+      "sha256": "6e09db75ee72ea64eea4b4cad758b961dd34be8e340a33a79264d22693f05daa"
+    },
+    "image.generate.flux2-klein-snofs": {
+      "bytes": 10101,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+          "display_name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "lora_strength": {
+                  "field": "lora_strength",
+                  "in": "extension"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "image.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "flux2-klein-snofs",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "lora_strength": {
+                  "field": "lora_strength",
+                  "in": "extension"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "flux2-klein-snofs",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.generate.flux2-klein-snofs",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs"
+          },
+          "intent": "image.generate",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            }
+          ],
+          "short_id": "flux2-klein-snofs",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 20.0
+        },
+        "components": {
+          "WorkflowInputs_image_generate_flux2_klein_snofs": {
+            "additionalProperties": false,
+            "description": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+            "properties": {
+              "batch_size": {
+                "description": "How many pictures to make at once.",
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "guidance": {
+                "description": "Higher follows your words more closely.",
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "height": {
+                "description": "Picture height in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "lora_strength": {
+                "default": 1.0,
+                "description": "How strongly the added style applies. 1.0 is the usual setting.",
+                "maximum": 1.5,
+                "minimum": 0,
+                "type": "number"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              "prompt": {
+                "description": "Describe what you want to make.",
+                "type": "string"
+              },
+              "sampler": {
+                "default": "euler",
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "enum": [
+                  "euler",
+                  "euler_cfg_pp",
+                  "euler_ancestral",
+                  "euler_ancestral_cfg_pp",
+                  "heun",
+                  "heunpp2",
+                  "exp_heun_2_x0",
+                  "exp_heun_2_x0_sde",
+                  "dpm_2",
+                  "dpm_2_ancestral",
+                  "lms",
+                  "dpm_fast",
+                  "dpm_adaptive",
+                  "dpmpp_2s_ancestral",
+                  "dpmpp_2s_ancestral_cfg_pp",
+                  "dpmpp_sde",
+                  "dpmpp_sde_gpu",
+                  "dpmpp_2m",
+                  "dpmpp_2m_cfg_pp",
+                  "dpmpp_2m_sde",
+                  "dpmpp_2m_sde_gpu",
+                  "dpmpp_2m_sde_heun",
+                  "dpmpp_2m_sde_heun_gpu",
+                  "dpmpp_3m_sde",
+                  "dpmpp_3m_sde_gpu",
+                  "ddpm",
+                  "lcm",
+                  "ipndm",
+                  "ipndm_v",
+                  "deis",
+                  "cfgpp_ud10_ab",
+                  "res_multistep",
+                  "res_multistep_cfg_pp",
+                  "res_multistep_ancestral",
+                  "res_multistep_ancestral_cfg_pp",
+                  "gradient_estimation",
+                  "gradient_estimation_cfg_pp",
+                  "er_sde",
+                  "seeds_2",
+                  "seeds_3",
+                  "sa_solver",
+                  "sa_solver_pece",
+                  "ddim",
+                  "uni_pc",
+                  "uni_pc_bh2"
+                ],
+                "type": "string"
+              },
+              "scheduler": {
+                "default": "simple",
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "enum": [
+                  "simple",
+                  "sgm_uniform",
+                  "karras",
+                  "exponential",
+                  "ddim_uniform",
+                  "beta",
+                  "normal",
+                  "linear_quadratic",
+                  "kl_optimal"
+                ],
+                "type": "string"
+              },
+              "seed": {
+                "description": "Reuse this number and the same settings for a similar result.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 4,
+                "description": "More steps add detail but take longer. 4 works well for this model.",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen_3_8b_fp8mixed.safetensors"
+                ],
+                "type": "string"
+              },
+              "width": {
+                "description": "Picture width in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+            "type": "object",
+            "x-azizam-workflow-id": "image.generate.flux2-klein-snofs"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
+        "run_path": null
+      },
+      "sha256": "419000e0cf78b6659a873b65eef04b0eaedac058aab8e52b72c6d58ce10e39b0"
+    },
     "image.generate.krea2-turbo": {
-      "bytes": 7650,
+      "bytes": 9172,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -4077,6 +4840,10 @@
                   "field": "size",
                   "in": "body"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4095,6 +4862,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4150,6 +4921,10 @@
                   "field": "size",
                   "in": "body"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4168,6 +4943,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4234,6 +5013,31 @@
                 "maximum": 2048,
                 "minimum": 64,
                 "type": "integer"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "prompt": {
                 "description": "Describe the picture you want.",
@@ -4319,6 +5123,13 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_4b_fp8_scaled.safetensors"
+                ],
+                "type": "string"
+              },
               "width": {
                 "default": 1024,
                 "description": "Picture width in pixels.",
@@ -4339,10 +5150,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo",
         "run_path": null
       },
-      "sha256": "f3882181a5b5bdb4711a156d4e50b8798775b0e687f0c7ef22073036cb78e51f"
+      "sha256": "0ab8386827189801ab183d4a4c6c5ba103e09171b676344f6fb045ca936ee6f3"
     },
     "image.generate.krea2-turbo-snofs": {
-      "bytes": 8281,
+      "bytes": 9803,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4375,6 +5186,10 @@
                   "field": "lora_strength",
                   "in": "extension"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4393,6 +5208,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4452,6 +5271,10 @@
                   "field": "lora_strength",
                   "in": "extension"
                 },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -4470,6 +5293,10 @@
                 },
                 "steps": {
                   "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
                   "in": "extension"
                 },
                 "width": {
@@ -4543,6 +5370,31 @@
                 "maximum": 1.5,
                 "minimum": 0,
                 "type": "number"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
               },
               "prompt": {
                 "description": "Describe what you want to make.",
@@ -4628,6 +5480,13 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_4b_fp8_scaled.safetensors"
+                ],
+                "type": "string"
+              },
               "width": {
                 "default": 1024,
                 "description": "Picture width in pixels.",
@@ -4648,7 +5507,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs",
         "run_path": null
       },
-      "sha256": "407c4b637749b16fe70e6e0fffd74af876d9800bcea2c7fb356b868095a5cb5d"
+      "sha256": "029c749e9de04dd8be29c3312c420497adeb5ad963a6b6c4aeaf178f2a43b999"
     },
     "image.generate.moss-image": {
       "bytes": 4816,

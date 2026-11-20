@@ -1078,7 +1078,7 @@
           "intent": "image.variation",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "8efe530ab308a85bfe13b99188b55cb9b207ee61dc0b8fb09cde997d18ed367b",
+          "manifest_hash": "755bd4cdc8431373fa2eeaa78af7c6f9432e76d25054d49a5306380fbc521b2e",
           "manifest_id": "image.edit.qwen-image-2.1-edit",
           "manifest_version": "0.1.0",
           "metadata": {
@@ -1173,7 +1173,7 @@
           "intent": "image.variation",
           "job_id": "<job:2>",
           "latency_ms": "<duration>",
-          "manifest_hash": "8efe530ab308a85bfe13b99188b55cb9b207ee61dc0b8fb09cde997d18ed367b",
+          "manifest_hash": "755bd4cdc8431373fa2eeaa78af7c6f9432e76d25054d49a5306380fbc521b2e",
           "manifest_id": "image.edit.qwen-image-2.1-edit",
           "manifest_version": "0.1.0",
           "metadata": {

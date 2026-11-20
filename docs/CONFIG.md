@@ -153,7 +153,8 @@ an empty name clears it even when the environment variable is set.
 Service records can declare `health_endpoint` and `health_success_path` in
 their configuration. The latter is a dot-separated JSON object path: an HTTP
 2xx response whose selected value is neither null nor false is positive health
-evidence. Explicit readiness failure, starting or busy states take precedence.
+evidence. The path `.` names the whole reply, for a route that answers a bare
+JSON string. Explicit readiness failure, starting or busy states take precedence.
 For example, a `/system_stats` probe can declare `health_success_path: system`.
 An opaque JSON response without such a declaration remains unknown. These
 fields are operator-authored registry data and apply after a registry edit;

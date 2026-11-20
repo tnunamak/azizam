@@ -45,11 +45,13 @@ ENTRIES_CHANGED_ON_PURPOSE = {
     # backends: the deployment fixture's graph engine record declares audio.generate, so the audio family selects it
     # by capability (train 47, 0764cb8b6); the golden is not regenerated.
     # images: graph_roles holds the non-input graph roles (image metadata migration step 2).
+    # backends, first run only: the shipped LiteLLM service record gained health_success_path (train 102, "the status
+    # page reads LiteLLM up from the first health probe"). The tracked and live-like inputs already list backends.
     # model_aliases: the deployment's OmniVoice speech engine declares custom_voice_transcript (train 59: whether an
     # engine takes a custom voice's reference transcript is data, not an engine name in code; set on live 2026-11-13).
     "tracked": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends", "model_aliases"},
     "live_like": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends", "model_aliases"},
-    "first_run": {"models", "workflow_execution", "videos", "images"},
+    "first_run": {"models", "workflow_execution", "videos", "images", "backends"},
 }
 
 

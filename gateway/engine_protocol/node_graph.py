@@ -93,9 +93,14 @@ def chain_join_error(join: Any) -> str | None:
     return None
 
 
+def make_node(kind: str, inputs: Any) -> dict[str, Any]:
+    """Build a submitted node envelope of the given type; the caller already resolved inputs."""
+    return {"class_type": kind, "inputs": inputs}
+
+
 def make_chain_node(template: Mapping[str, Any], inputs: Any) -> dict[str, Any]:
     """Build only the submitted node envelope; the caller already resolved inputs."""
-    return {"class_type": template["class_type"], "inputs": inputs}
+    return make_node(node_type(template), inputs)
 
 
 def make_chain_join_node(join: Mapping[str, Any], first: Any, following: Any) -> dict[str, Any]:

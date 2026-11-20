@@ -12,7 +12,7 @@ from PIL import Image
 
 import proxy
 from tests.support.graph_service import set_derived
-from gateway import workflows_catalog
+from gateway import adapter_choices, workflows_catalog
 from gateway.workflow_openapi import _execution
 from gateway.workflow_call import build_request
 from test_image_prompt_binding import image_round  # noqa: F401
@@ -100,6 +100,11 @@ def image_names(record):
 def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fake_upstreams, monkeypatch):
     monkeypatch.setattr(proxy, "_select_edit_workflow", SELECT_EDIT_WORKFLOW)
     example = example_request(record)
+    # The example may name an approved adapter file (the text encoder). The fake engine's file list holds exactly
+    # the files the manifest approves, as an engine with the default install does.
+    approved = list(record.manifest["inputs"].get("text_encoder", {}).get("enum", []))
+    adapter_choices.reset()
+    monkeypatch.setattr(adapter_choices, "default_list_files", lambda origin, node_type, input_name: list(approved))
     names = image_names(record)
     # Distinct names from the fake upload endpoint make a swapped binding visible.
     parts = [(part["input"], part.get("field", key)) for key, part in example["files"].items()]

@@ -275,6 +275,24 @@
       "equal": true
     }
   },
+  "manifests/workflows/flux2-klein-snofs.yml": {
+    "extension": {
+      "error": "node 31 input model does not hold a link to chain on"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein.yml": {
+    "extension": {
+      "error": "node 31 input model does not hold a link to chain on"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
   "manifests/workflows/image-identity.yml": {
     "extension": {
       "error": "manifest has no binding for backend: comfyui"
@@ -286,75 +304,7 @@
   },
   "manifests/workflows/krea2-turbo-snofs.yml": {
     "extension": {
-      "binding": {
-        "applied_inputs": [
-          "steps",
-          "sampler",
-          "scheduler",
-          "lora_strength",
-          "batch_size"
-        ],
-        "backend": "comfyui",
-        "backend_metadata": {
-          "workflow": "workflows/images/krea2-turbo-snofs.json"
-        },
-        "identity": {
-          "id": "image.generate.krea2-turbo-snofs",
-          "manifest_hash": "362e99adabedd8cbd7c1a634ba187f201aef3cae82d6903eb789b5d525d617a6",
-          "source": null,
-          "trusted": false,
-          "version": "0.1.0"
-        },
-        "ignored_inputs": {},
-        "request": {
-          "11": {
-            "inputs": {
-              "strength_model": 1.0
-            }
-          },
-          "4": {
-            "inputs": {
-              "text": "original"
-            }
-          },
-          "6": {
-            "inputs": {
-              "batch_size": 1,
-              "height": "original",
-              "width": "original"
-            }
-          },
-          "7": {
-            "inputs": {
-              "sampler_name": "euler",
-              "scheduler": "simple",
-              "seed": "original",
-              "steps": 8
-            }
-          }
-        }
-      },
-      "namespace": "com.azizam.workflow",
-      "unknown_top_level": {},
-      "validation": {
-        "accepted": {
-          "batch_size": 1,
-          "lora_strength": 1.0,
-          "sampler": "euler",
-          "scheduler": "simple",
-          "steps": 8
-        },
-        "gateway_controls": {},
-        "ignored": {},
-        "namespace": "com.azizam.workflow",
-        "rejected": {
-          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
-          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
-          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
-          "undeclared_probe": "unknown input",
-          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
-        }
-      }
+      "error": "node 7 input model does not hold a link to chain on"
     },
     "source": null,
     "validation": {
@@ -363,68 +313,7 @@
   },
   "manifests/workflows/krea2-turbo.yml": {
     "extension": {
-      "binding": {
-        "applied_inputs": [
-          "steps",
-          "sampler",
-          "scheduler",
-          "batch_size"
-        ],
-        "backend": "comfyui",
-        "backend_metadata": {
-          "workflow": "workflows/images/krea2-turbo.json"
-        },
-        "identity": {
-          "id": "image.generate.krea2-turbo",
-          "manifest_hash": "0c9d62e4debaaef227d05ba949061514f8d744d13c629413b5bcca1f5c12b8e5",
-          "source": null,
-          "trusted": false,
-          "version": "0.1.0"
-        },
-        "ignored_inputs": {},
-        "request": {
-          "4": {
-            "inputs": {
-              "text": "original"
-            }
-          },
-          "6": {
-            "inputs": {
-              "batch_size": 1,
-              "height": "original",
-              "width": "original"
-            }
-          },
-          "7": {
-            "inputs": {
-              "sampler_name": "euler",
-              "scheduler": "simple",
-              "seed": "original",
-              "steps": 8
-            }
-          }
-        }
-      },
-      "namespace": "com.azizam.workflow",
-      "unknown_top_level": {},
-      "validation": {
-        "accepted": {
-          "batch_size": 1,
-          "sampler": "euler",
-          "scheduler": "simple",
-          "steps": 8
-        },
-        "gateway_controls": {},
-        "ignored": {},
-        "namespace": "com.azizam.workflow",
-        "rejected": {
-          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
-          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
-          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
-          "undeclared_probe": "unknown input",
-          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
-        }
-      }
+      "error": "node 7 input model does not hold a link to chain on"
     },
     "source": null,
     "validation": {
@@ -800,76 +689,7 @@
   },
   "manifests/workflows/qwen-image-2.1-edit.yml": {
     "extension": {
-      "binding": {
-        "applied_inputs": [
-          "source_image",
-          "reference_resolution",
-          "steps",
-          "sampler",
-          "scheduler",
-          "cfg"
-        ],
-        "backend": "comfyui",
-        "backend_metadata": {
-          "workflow": "workflows/images/qwen-image-2.1-edit.json"
-        },
-        "identity": {
-          "id": "image.edit.qwen-image-2.1-edit",
-          "manifest_hash": "8efe530ab308a85bfe13b99188b55cb9b207ee61dc0b8fb09cde997d18ed367b",
-          "source": null,
-          "trusted": false,
-          "version": "0.1.0"
-        },
-        "ignored_inputs": {},
-        "request": {
-          "4": {
-            "inputs": {
-              "image": "asset:sample"
-            }
-          },
-          "6": {
-            "inputs": {
-              "text": "original"
-            }
-          },
-          "7": {
-            "inputs": {
-              "negative_prompt": "original",
-              "resolution": 1024
-            }
-          },
-          "8": {
-            "inputs": {
-              "cfg": 1.0,
-              "sampler_name": "euler",
-              "scheduler": "simple",
-              "seed": "original",
-              "steps": 25
-            }
-          }
-        }
-      },
-      "namespace": "com.azizam.workflow",
-      "unknown_top_level": {},
-      "validation": {
-        "accepted": {
-          "cfg": 1.0,
-          "reference_resolution": 1024,
-          "sampler": "euler",
-          "scheduler": "simple",
-          "source_image": "asset:sample",
-          "steps": 25
-        },
-        "gateway_controls": {},
-        "ignored": {},
-        "namespace": "com.azizam.workflow",
-        "rejected": {
-          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
-          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
-          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
-          "undeclared_probe": "unknown input"
-        }
-      }
+      "error": "node 5 input model does not hold a link to chain on"
     },
     "source": null,
     "validation": {

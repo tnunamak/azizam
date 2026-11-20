@@ -6,6 +6,7 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path
+from typing import BinaryIO
 
 
 def ensure_private_dir(path: Path | str) -> Path:
@@ -106,22 +107,28 @@ def atomic_write_text(path: Path | str, content: str, *, encoding: str = "utf-8"
     return atomic_write_bytes(path, content.encode(encoding))
 
 
-def atomic_copy_file(source: Path | str, target: Path | str) -> Path:
-    """Copy a file into a private atomic replacement without preserving its mode."""
-    source, target = Path(source), Path(target)
+def atomic_copy_stream(source: BinaryIO, target: Path | str) -> Path:
+    """Copy an open binary stream, from its start, into a private atomic replacement of ``target``."""
+    target = Path(target)
     fd, temporary = _stage(target)
     target_file = os.fdopen(fd, "wb")
     try:
         with target_file:
-            with source.open("rb") as source_file:
-                shutil.copyfileobj(source_file, target_file)
-                target_file.flush()
-                os.fchmod(target_file.fileno(), 0o600)
+            source.seek(0)
+            shutil.copyfileobj(source, target_file)
+            target_file.flush()
+            os.fchmod(target_file.fileno(), 0o600)
         os.replace(temporary, target)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
     return target
+
+
+def atomic_copy_file(source: Path | str, target: Path | str) -> Path:
+    """Copy a file into a private atomic replacement without preserving its mode."""
+    with Path(source).open("rb") as source_file:
+        return atomic_copy_stream(source_file, target)
 
 
 def copy_private_tree(source: Path | str, target: Path | str) -> Path:

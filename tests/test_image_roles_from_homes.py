@@ -52,15 +52,15 @@ def _release_section():
     return yaml.safe_load((ROOT / "registry" / "defaults" / "images.yml").read_text())
 
 
-def test_the_release_table_covers_all_twelve_shipped_graphs():
-    assert len(SHIPPED) == 12
+def test_the_release_table_covers_every_shipped_graph():
+    assert len(SHIPPED) == 14
     assert {param.values[1] for param in SHIPPED} == set(proxy._IMAGE_GRAPH_ROLES)
 
 
 def test_the_loader_the_boot_and_each_reload_use_checks_the_table_against_the_registry():
     registry = proxy.GATEWAY_WORKFLOW_REGISTRY
     binding = proxy.DERIVED._GRAPH_BINDING
-    assert len(proxy._load_image_graph_roles(_release_section(), registry, binding)) == 12
+    assert len(proxy._load_image_graph_roles(_release_section(), registry, binding)) == 14
     section = _release_section()
     section["graph_roles"]["workflows/images/not-a-graph.json"] = {}
     with pytest.raises(ValueError, match="not-a-graph"):

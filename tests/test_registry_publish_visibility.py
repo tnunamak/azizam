@@ -11,10 +11,13 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 import proxy
 from gateway import registry_snapshot as rs
-from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
+from tests.test_event_loop_guard import engine_lists_no_adapter_files, gateway  # noqa: F401 - fixtures
+
+pytestmark = pytest.mark.usefixtures("engine_lists_no_adapter_files")  # the listings read the engine's adapter files
 
 WORKFLOW_ID = "mesh.generate.trellis-2"
 

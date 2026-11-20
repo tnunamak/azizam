@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, browser_origin, config_fold, engine_admin, engine_check, egress, extension_packages, process_template, projection, projection_types, record_carriers, secret_commands, service_registry
+from gateway import adapter_upload, admin_catalog, admin_store, browser_origin, config_fold, engine_admin, engine_check, egress, extension_packages, process_template, projection, projection_types, record_carriers, secret_commands, service_registry
 from gateway.session_guard import BrowserSession, SessionEnded
 
 __all__ = [
@@ -3375,6 +3375,61 @@ def create_admin_router(
         response = egress.plain_json_response(
             {"folders": record["value"]["folders"], "revision": admin_store.operator_setting_revision(record)},
             response_class="engine_run_folders")
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        return response
+
+    @router.get("/operator/adapter-uploads")
+    def get_adapter_uploads(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=store.path)
+        rules = adapter_upload.policy(record["value"] if record else None)
+        response = egress.plain_json_response({
+            "enabled": rules.enabled, "max_bytes": rules.max_bytes, "max_total_bytes": rules.max_total_bytes,
+            "revision": admin_store.operator_setting_revision(record),
+            "label": "Let members upload their own adapters",
+        }, response_class="capped_switch")
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @router.put("/operator/adapter-uploads")
+    async def update_adapter_uploads(request: Request) -> JSONResponse:
+        # Whether members may upload adapter files (safetensors only) that the engine then loads, and the largest file.
+        ctx = await asyncio.to_thread(_guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(403, "owner_required", "Only the owner can change adapter uploads.").as_response()
+        try:
+            body = await _read_json_body(request)
+            cap = body.get("max_bytes", adapter_upload.DEFAULT_MAX_BYTES)
+            total = body.get("max_total_bytes", adapter_upload.DEFAULT_TOTAL_BYTES)
+            if (not set(body) <= {"enabled", "max_bytes", "max_total_bytes"} or not isinstance(body.get("enabled"), bool)
+                    or type(cap) is not int or not 0 < cap <= adapter_upload.MAX_BYTES_CEILING
+                    or type(total) is not int or not cap <= total <= adapter_upload.TOTAL_BYTES_CEILING):
+                raise _RouteError(400, "invalid_adapter_uploads", "enabled must be a boolean, max_bytes a positive whole number of bytes at most the ceiling, and max_total_bytes a whole number of bytes from max_bytes up to its ceiling")
+            value = {"enabled": body["enabled"], "max_bytes": cap, "max_total_bytes": total}
+            record = admin_store.put_operator_setting_with_audit(
+                adapter_upload.SETTING_KEY, value,
+                updated_by=ctx.subject,
+                audit_action="operator.adapter_uploads.update",
+                audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id,
+                audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting",
+                audit_target_id=adapter_upload.SETTING_KEY,
+                audit_metadata=value,
+                expected_revision=settings_revision(request),
+                path=store.path,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.SettingsConflictError:
+            return settings_conflict()
+        response = egress.plain_json_response(
+            {**record["value"], "revision": admin_store.operator_setting_revision(record)}, response_class="capped_switch")
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         return response
 

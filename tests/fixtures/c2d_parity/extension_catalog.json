@@ -814,10 +814,39 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "loras",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "loras",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps",
+                        "text_encoder"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "loras",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo"
                     },
@@ -825,10 +854,12 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "loras",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo-snofs"
                     },
@@ -903,12 +934,14 @@
                     {
                       "controls": [
                         "cfg",
+                        "loras",
                         "negative_prompt",
                         "reference_resolution",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.edit.qwen-image-2.1-edit"
                     },
@@ -1281,10 +1314,39 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "loras",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "loras",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps",
+                        "text_encoder"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "loras",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo"
                     },
@@ -1292,10 +1354,12 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "loras",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo-snofs"
                     },
@@ -1370,12 +1434,14 @@
                     {
                       "controls": [
                         "cfg",
+                        "loras",
                         "negative_prompt",
                         "reference_resolution",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.edit.qwen-image-2.1-edit"
                     },
@@ -1748,10 +1814,39 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "loras",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "loras",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps",
+                        "text_encoder"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "loras",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo"
                     },
@@ -1759,10 +1854,12 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "loras",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo-snofs"
                     },
@@ -1837,12 +1934,14 @@
                     {
                       "controls": [
                         "cfg",
+                        "loras",
                         "negative_prompt",
                         "reference_resolution",
                         "sampler",
                         "scheduler",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.edit.qwen-image-2.1-edit"
                     },

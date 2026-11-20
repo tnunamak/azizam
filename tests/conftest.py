@@ -198,6 +198,18 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(node_info, "lookup", lambda _host, _class_type: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_engine_choice_store_from_an_earlier_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway's startup sets ``choice_lists.STORE`` (a file under the checkout's cache/) and nothing unsets it.
+    With it set, the first run of a workflow with declared choices starts a background read of the engine's node list
+    (``GET /object_info/<node>``, cached for a day). That is meant for the running gateway; "unset means no snapshots and
+    no refresh" is what a test that never sets it expects. A test that ran startup earlier on the same worker must not
+    leave the store for the next, so each test starts with it unset and sets its own."""
+    from gateway.engine_protocol import choice_lists
+
+    monkeypatch.setattr(choice_lists, "STORE", None)
+
+
 @pytest.fixture
 def isolated_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Supply the store normally initialized by lifespan to direct route tests."""

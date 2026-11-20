@@ -1,0 +1,169 @@
+schema_version: 2
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.flux2-klein-snofs
+intent: image.generate
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
+display_name: FLUX.2 Klein 9B + SNOFS (uncensored)
+purpose: Uncensored detailed images from a prompt
+prompt_hint: Describe the picture you want
+description: Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.
+typical_seconds: 20  # the same graph as flux2-klein (measured 2026-10-21, 20 s warm) plus one LoRA node; not timed yet
+inputs:
+  prompt:
+    label: description
+    help: Describe what you want to make.
+    type: string
+    required: true
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    label: steps
+    help: More steps add detail but take longer. 4 works well for this model.
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 4
+  sampler:
+    label: Generation method
+    help: The method the model uses to build the result. Keep the default unless you are comparing methods.
+    choices_from: {node_type: KSampler, input: sampler_name}
+    type: string
+    enum: [euler, euler_cfg_pp, euler_ancestral, euler_ancestral_cfg_pp, heun, heunpp2, exp_heun_2_x0, exp_heun_2_x0_sde, dpm_2, dpm_2_ancestral, lms, dpm_fast, dpm_adaptive, dpmpp_2s_ancestral, dpmpp_2s_ancestral_cfg_pp, dpmpp_sde, dpmpp_sde_gpu, dpmpp_2m, dpmpp_2m_cfg_pp, dpmpp_2m_sde, dpmpp_2m_sde_gpu, dpmpp_2m_sde_heun, dpmpp_2m_sde_heun_gpu, dpmpp_3m_sde, dpmpp_3m_sde_gpu, ddpm, lcm, ipndm, ipndm_v, deis, cfgpp_ud10_ab, res_multistep, res_multistep_cfg_pp, res_multistep_ancestral, res_multistep_ancestral_cfg_pp, gradient_estimation, gradient_estimation_cfg_pp, er_sde, seeds_2, seeds_3, sa_solver, sa_solver_pece, ddim, uni_pc, uni_pc_bh2]
+    default: euler
+  scheduler:
+    label: Step timing
+    help: How the refinement steps are spaced. Keep the default unless you are comparing results.
+    choices_from: {node_type: KSampler, input: scheduler}
+    type: string
+    enum: [simple, sgm_uniform, karras, exponential, ddim_uniform, beta, normal, linear_quadratic, kl_optimal]
+    default: simple
+  guidance:
+    label: prompt guidance
+    help: Higher follows your words more closely.
+    type: number
+    minimum: 0
+    maximum: 20
+  seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+    type: integer
+    minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
+  lora_strength:
+    label: style strength
+    help: How strongly the added style applies. 1.0 is the usual setting.
+    type: number
+    minimum: 0
+    maximum: 1.5
+    default: 1.0
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 8
+  loras:
+    label: style adapters
+    help: Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.
+    type: array
+    max_items: 3
+    items:
+      type: object
+      properties:
+        name:
+          label: adapter
+          help: One of the installed adapters listed for this model.
+          type: string
+          required: true
+        weight:
+          label: strength
+          help: How strongly the adapter applies. 1.0 is the usual setting.
+          type: number
+          minimum: -4
+          maximum: 4
+          default: 1.0
+  text_encoder:
+    label: text encoder
+    help: Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.
+    type: string
+    enum: [qwen_3_8b_fp8mixed.safetensors]
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein-snofs.json
+    selectors:
+      image: {node: '9', key: images, from: output_dir, decode: none, take: all}
+    adapter_architecture: flux2_klein_9b
+    adapter_lora_folder: loras
+    map:
+      loras:
+        - node: "31"
+          input: model
+          chain:
+            node_type: LoraLoaderModelOnly
+            link: model
+            fields: {name: lora_name, weight: strength_model}
+      text_encoder:
+        - node: "2"
+          input: clip_name
+      prompt:
+        - node: "6"
+          input: text
+      width:
+        - node: "27"
+          input: width
+      height:
+        - node: "27"
+          input: height
+      steps:
+        - node: "31"
+          input: steps
+      sampler:
+        - node: "31"
+          input: sampler_name
+      scheduler:
+        - node: "31"
+          input: scheduler
+      guidance:
+        - node: "35"
+          input: guidance
+      seed:
+        - node: "31"
+          input: seed
+      lora_strength:
+        - node: "11"
+          input: strength_model
+      batch_size:
+        - node: "27"
+          input: batch_size
+    requires:
+      custom_nodes:
+        - RMBG
+      models:
+        - role: diffusion_model
+          path: unet/flux-2-klein-9b-Q8_0.gguf
+        - role: text_encoder
+          path: text_encoders/qwen_3_8b_fp8mixed.safetensors
+        - role: lora
+          path: loras/klein_snofs_v1_4.safetensors
+        - role: vae
+          path: vae/flux2-vae.safetensors

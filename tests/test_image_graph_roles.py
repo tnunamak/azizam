@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 NAMES = [
     "anima-turbo",
     "fibo-2-edit-turbo",
+    "flux2-klein",
+    "flux2-klein-snofs",
     "krea2-turbo",
     "krea2-turbo-snofs",
     "moss-image",
@@ -111,11 +113,11 @@ def test_loader_follows_node_type_in_temporary_graph_data(tmp_path):
     assert image_graph_roles.load(section, registry, "synthetic") == expected
 
 
-def test_all_twelve_shipped_entries_load(corpus):
+def test_all_shipped_entries_load(corpus):
     section, registry, _ = corpus
     result = load(section, registry)
     assert set(result) == {f"workflows/images/{name}.json" for name in NAMES}
-    assert len(result) == 12
+    assert len(result) == 14
     assert not {path for path, roles in result.items() if "batch_size" in roles}
     assert {path for path, roles in result.items() if "reference_order" in roles} == {
         'workflows/images/fibo-2-edit-turbo.json',
@@ -232,7 +234,7 @@ def test_loading_does_not_need_or_mutate_graph_meta(corpus):
         graph = json.loads(path.read_text())
         graph.pop("_meta")
         path.write_text(json.dumps(graph))
-    assert len(load(section, registry)) == 12
+    assert len(load(section, registry)) == 14
     assert section == before
 
 

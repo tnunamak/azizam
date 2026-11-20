@@ -143,6 +143,18 @@
         "image.generate",
         "comfyui",
         null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -761,6 +773,18 @@
         "image.generate",
         "comfyui",
         null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -899,6 +923,18 @@
         "image.generate",
         "comfyui",
         null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
         "image.generate.krea2-turbo"
       ],
       [
@@ -944,6 +980,18 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -1038,6 +1086,18 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -1264,6 +1324,18 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -1620,6 +1692,18 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -2095,6 +2179,18 @@
         "comfyui",
         null,
         "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
       ],
       [
         "image.generate",
@@ -2960,8 +3056,8 @@
   ],
   "catalog_counts": {
     "aliases": 3,
-    "capabilities": 59,
-    "models": 49
+    "capabilities": 61,
+    "models": 51
   },
   "catalog_models": [
     {
@@ -4473,6 +4569,204 @@
       },
       "id": "image.generate.anima-turbo",
       "sha256": "ea32871da5757302e08b34d434b4b9bdc0c1c10e976327851a0cdf171b28c6ae"
+    },
+    {
+      "bytes": 2194,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "image",
+            "icon_key": "image",
+            "input_modalities": [
+              "text"
+            ],
+            "intent": "image.generate",
+            "label": "Images",
+            "output_modalities": [
+              "image"
+            ],
+            "streaming": false
+          }
+        ],
+        "capability": "image",
+        "capability_title": "Images",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "Generate or edit images from your prompts.",
+        "display_name": "FLUX.2 Klein 9B",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": {
+              "model": "image.generate.flux2-klein",
+              "prompt": "A small red cabin"
+            },
+            "kind": "image"
+          }
+        ],
+        "icon_key": "image",
+        "id": "image.generate.flux2-klein",
+        "io": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "image"
+          ]
+        },
+        "locality": "unknown",
+        "name": "FLUX.2 Klein 9B",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "comfyui",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "FLUX.2 Klein 9B",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "FLUX.2 Klein 9B",
+        "use": {
+          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image.generate.flux2-klein\",\"prompt\":\"A small red cabin\"}'",
+          "javascript": {
+            "model": "image.generate.flux2-klein",
+            "path": "/v1/images/generations"
+          },
+          "model": "image.generate.flux2-klein",
+          "path": "/v1/images/generations",
+          "python": {
+            "model": "image.generate.flux2-klein",
+            "path": "/v1/images/generations"
+          }
+        },
+        "use_names": [
+          "image.generate.flux2-klein"
+        ],
+        "workflow": "image.generate.flux2-klein"
+      },
+      "id": "image.generate.flux2-klein",
+      "sha256": "1a7576da2923433d42238ffe3649705f4ad72526c37cd1647fa64f29d6c51173"
+    },
+    {
+      "bytes": 2326,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "image",
+            "icon_key": "image",
+            "input_modalities": [
+              "text"
+            ],
+            "intent": "image.generate",
+            "label": "Images",
+            "output_modalities": [
+              "image"
+            ],
+            "streaming": false
+          }
+        ],
+        "capability": "image",
+        "capability_title": "Images",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "Generate or edit images from your prompts.",
+        "display_name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": {
+              "model": "image.generate.flux2-klein-snofs",
+              "prompt": "A small red cabin"
+            },
+            "kind": "image"
+          }
+        ],
+        "icon_key": "image",
+        "id": "image.generate.flux2-klein-snofs",
+        "io": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "image"
+          ]
+        },
+        "locality": "unknown",
+        "name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "comfyui",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+        "use": {
+          "curl": "curl $AZIZAM_BASE/v1/images/generations -H \"Authorization: Bearer $AZIZAM_API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\":\"image.generate.flux2-klein-snofs\",\"prompt\":\"A small red cabin\"}'",
+          "javascript": {
+            "model": "image.generate.flux2-klein-snofs",
+            "path": "/v1/images/generations"
+          },
+          "model": "image.generate.flux2-klein-snofs",
+          "path": "/v1/images/generations",
+          "python": {
+            "model": "image.generate.flux2-klein-snofs",
+            "path": "/v1/images/generations"
+          }
+        },
+        "use_names": [
+          "image.generate.flux2-klein-snofs"
+        ],
+        "workflow": "image.generate.flux2-klein-snofs"
+      },
+      "id": "image.generate.flux2-klein-snofs",
+      "sha256": "226222f66bdd646e3efa9dad4408c4739d7776fd7cd66a49f98521fb5ef10c0e"
     },
     {
       "bytes": 2196,
@@ -8352,6 +8646,18 @@
       "comfyui",
       null,
       "image.generate.anima-turbo"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.flux2-klein"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.flux2-klein-snofs"
     ],
     [
       "image.generate",

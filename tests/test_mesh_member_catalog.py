@@ -11,11 +11,14 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 import proxy
 from gateway import mesh_api
-from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
+from tests.test_event_loop_guard import engine_lists_no_adapter_files, gateway  # noqa: F401 - fixtures
 from tests.support.mesh_harness import OBSERVER_URL, PIXAL3D_URL, TRELLIS_URL, Harness
+
+pytestmark = pytest.mark.usefixtures("engine_lists_no_adapter_files")  # the listings read the engine's adapter files
 
 MESH_WORKFLOW = "mesh.generate.trellis-2"
 MESH_KEY = ("mesh.generate", MESH_WORKFLOW)

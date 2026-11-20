@@ -7,7 +7,7 @@ workflows or inspect backend files.
 
 from __future__ import annotations
 
-
+import copy
 import inspect
 import json
 import re
@@ -81,8 +81,10 @@ def build_workflows_catalog(
     recent_receipts: Iterable[Mapping[str, Any]] = (),
     recent_jobs: Iterable[Mapping[str, Any]] = (),
     base_url: str = "",
+    adapter_inputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Build the policy-filtered member workflow catalog."""
+    """Build the policy-filtered member workflow catalog. ``adapter_inputs`` maps a workflow id to its adapter inputs with
+    the choices on offer now put in (``adapter_choices.offered``); a workflow absent from it lists no choices."""
 
     records_by_id = {record.id: record for record in records}
     allowed_caps = [cap for cap in capabilities if cap.workflow and cap.policy_available is not False]
@@ -107,6 +109,7 @@ def build_workflows_catalog(
             receipts=receipt_rows.get(workflow_id, []),
             jobs=job_rows.get(workflow_id, []),
             base_url=base_url,
+            adapter_inputs=(adapter_inputs or {}).get(workflow_id),
         )
         workflows.append(workflow)
 
@@ -146,6 +149,7 @@ def _workflow_row(
     receipts: list[dict[str, Any]],
     jobs: list[dict[str, Any]],
     base_url: str,
+    adapter_inputs: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     summary = summarize_workflow(record, "client")
     routes = _execution(record, _typical_seconds(openapi_row))
@@ -157,6 +161,15 @@ def _workflow_row(
     # The OpenAPI projection owns alias resolution; an empty list there is a decision, not a gap.
     stable_aliases = list(openapi_row["aliases"])
     effective_inputs = _input_rows(record, routes)
+    for input_row in effective_inputs:
+        shown = (adapter_inputs or {}).get(input_row["name"])
+        if shown is None:
+            continue
+        # The overlaid manifest input is what a request is checked against: its item fields and limit, and for an
+        # encoder its list, are shown as they are.
+        for key in ("items", "max_items", "enum"):
+            if key in shown:
+                input_row[key] = copy.deepcopy(shown[key])
     example = _example_request(record, effective_inputs, preferred or sync_route or async_route, base_url)
     engine_binding = _engine_binding_label(summary.get("supported_backends") or [], capability_rows)
     availability = _availability(capability_rows)
@@ -373,6 +386,13 @@ def _example_request(
     }
 
 
+def _example_values(inputs: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """One example value for each input a request can set. An optional list or object has no honest one-word example, so
+    an example leaves it out."""
+    return {str(item.get("name")): _example_value(item) for item in inputs
+            if item.get("accepted") and (item.get("required") or "default" in item or item.get("type") not in ("array", "object"))}
+
+
 def _example_body(
     record: WorkflowRecord,
     inputs: list[Mapping[str, Any]],
@@ -380,7 +400,7 @@ def _example_body(
     mapping: Mapping[str, Mapping[str, Any]],
     model: str | None = None,
 ) -> dict[str, Any]:
-    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    values = _example_values(inputs)
     body: dict[str, Any] = {}
     if model:
         body["model"] = model
@@ -426,7 +446,7 @@ def _example_multipart_parts(
     input, never the wire field.
     """
     rows = {str(item.get("name")): item for item in inputs}
-    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    values = _example_values(inputs)
     form: dict[str, Any] = {}
     if model:
         form["model"] = model

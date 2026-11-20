@@ -1211,6 +1211,115 @@
         "map",
         "scheduler"
       ]
+    },
+    {
+      "after": {
+        "label": "style adapters",
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "type": "array",
+        "max_items": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "label": "adapter",
+              "help": "One of the installed adapters listed for this model.",
+              "type": "string",
+              "required": true
+            },
+            "weight": {
+              "label": "strength",
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "type": "number",
+              "minimum": -4,
+              "maximum": 4,
+              "default": 1.0
+            }
+          }
+        }
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "label": "text encoder",
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "type": "string",
+        "enum": [
+          "qwen3vl_8b_w4a8.safetensors"
+        ]
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "qwen_image_2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "5",
+          "input": "model",
+          "chain": {
+            "node_type": "LoraLoaderModelOnly",
+            "link": "model",
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            }
+          }
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "2",
+          "input": "clip_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
+      ]
     }
   ],
   "image.edit.qwen-image-2.1-edit-multiref": [
@@ -2053,6 +2162,540 @@
       ]
     }
   ],
+  "image.generate.flux2-klein": [
+    {
+      "after": "More steps add detail but take longer. 4 works well for this model.",
+      "before": "More steps take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": 4,
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "default"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "31",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "31",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
+    },
+    {
+      "after": {
+        "label": "style adapters",
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "type": "array",
+        "max_items": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "label": "adapter",
+              "help": "One of the installed adapters listed for this model.",
+              "type": "string",
+              "required": true
+            },
+            "weight": {
+              "label": "strength",
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "type": "number",
+              "minimum": -4,
+              "maximum": 4,
+              "default": 1.0
+            }
+          }
+        }
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "label": "text encoder",
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "type": "string",
+        "enum": [
+          "qwen_3_8b_fp8mixed.safetensors"
+        ]
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "flux2_klein_9b",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "31",
+          "input": "model",
+          "chain": {
+            "node_type": "LoraLoaderModelOnly",
+            "link": "model",
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            }
+          }
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "2",
+          "input": "clip_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
+    }
+  ],
+  "image.generate.flux2-klein-snofs": [
+    {
+      "after": "More steps add detail but take longer. 4 works well for this model.",
+      "before": "More steps take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": 4,
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "steps",
+        "default"
+      ]
+    },
+    {
+      "after": {
+        "label": "Generation method",
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "sampler_name"
+        },
+        "type": "string",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "default": "euler"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "label": "Step timing",
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "choices_from": {
+          "node_type": "KSampler",
+          "input": "scheduler"
+        },
+        "type": "string",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "default": "simple"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "31",
+          "input": "sampler_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "31",
+          "input": "scheduler"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
+    },
+    {
+      "after": {
+        "label": "style adapters",
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "type": "array",
+        "max_items": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "label": "adapter",
+              "help": "One of the installed adapters listed for this model.",
+              "type": "string",
+              "required": true
+            },
+            "weight": {
+              "label": "strength",
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "type": "number",
+              "minimum": -4,
+              "maximum": 4,
+              "default": 1.0
+            }
+          }
+        }
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "label": "text encoder",
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "type": "string",
+        "enum": [
+          "qwen_3_8b_fp8mixed.safetensors"
+        ]
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "flux2_klein_9b",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "31",
+          "input": "model",
+          "chain": {
+            "node_type": "LoraLoaderModelOnly",
+            "link": "model",
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            }
+          }
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "2",
+          "input": "clip_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "guidance",
+        "help"
+      ]
+    }
+  ],
   "image.generate.krea2-turbo": [
     {
       "after": "what to make",
@@ -2235,6 +2878,115 @@
         "map",
         "scheduler"
       ]
+    },
+    {
+      "after": {
+        "label": "style adapters",
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "type": "array",
+        "max_items": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "label": "adapter",
+              "help": "One of the installed adapters listed for this model.",
+              "type": "string",
+              "required": true
+            },
+            "weight": {
+              "label": "strength",
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "type": "number",
+              "minimum": -4,
+              "maximum": 4,
+              "default": 1.0
+            }
+          }
+        }
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "label": "text encoder",
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "type": "string",
+        "enum": [
+          "qwen3vl_4b_fp8_scaled.safetensors"
+        ]
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "krea2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "model",
+          "chain": {
+            "node_type": "LoraLoaderModelOnly",
+            "link": "model",
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            }
+          }
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "2",
+          "input": "clip_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
+      ]
     }
   ],
   "image.generate.krea2-turbo-snofs": [
@@ -2378,6 +3130,115 @@
         "comfyui",
         "map",
         "scheduler"
+      ]
+    },
+    {
+      "after": {
+        "label": "style adapters",
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "type": "array",
+        "max_items": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "label": "adapter",
+              "help": "One of the installed adapters listed for this model.",
+              "type": "string",
+              "required": true
+            },
+            "weight": {
+              "label": "strength",
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "type": "number",
+              "minimum": -4,
+              "maximum": 4,
+              "default": 1.0
+            }
+          }
+        }
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "label": "text encoder",
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "type": "string",
+        "enum": [
+          "qwen3vl_4b_fp8_scaled.safetensors"
+        ]
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "krea2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "7",
+          "input": "model",
+          "chain": {
+            "node_type": "LoraLoaderModelOnly",
+            "link": "model",
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            }
+          }
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "node": "2",
+          "input": "clip_name"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
       ]
     }
   ],
