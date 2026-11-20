@@ -86,8 +86,14 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
     def test_member_section_distinguishes_label_from_upload_id(self):
         section = self.section()
         self.assertRegex(section, r"(?i)upload reply[^.]*`id`[^.]*`ast_`")
-        self.assertRegex(section, r"(?i)workflow.s listing[^.]*each ID[^.]*label")
+        self.assertRegex(section, r"(?i)workflow.s listing[^.]*label")
         self.assertRegex(section, r'(?i)my style[^.]*`ast_[^\x60]+`[^.]*loras[^.]*"name"\s*:\s*"ast_')
+
+    def test_member_section_explains_unreadable_header_refusal(self):
+        self.assertRegex(self.section(), r"(?i)\b(?:unreadable|damaged) header[^.]*\brefused\b")
+
+    def test_member_section_explains_unlabelled_upload_listing(self):
+        self.assertRegex(self.section(), r"(?i)an upload without a label[^.]*is listed by its ID\b")
 
     def test_member_section_explains_local_only_and_first_copy(self):
         section = self.section()

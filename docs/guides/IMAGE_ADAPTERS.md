@@ -58,14 +58,15 @@ machine, not on remote workflows.
 2. Upload your style file in the Library or send it to `POST /me/api/adapters`.
    Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
    and `.bin` are refused.
+   A file with an unreadable header is also refused.
 3. The gateway reads the file header to find its base model. Your adapter is
    offered only on workflows that use that base model. If the header names no
    known base model, the file is still stored, but the upload reply says it
    won't be offered.
 4. Uploads are private to the person who uploaded them. The workflow's listing
-   shows each ID with the label you gave it. The upload reply's `id` field is
-   your upload ID and starts with `ast_`. Use the ID, not your label, in
-   `loras`. For example, if you called an upload “my style” and its ID is
+   shows each ID with the label you gave it. An upload without a label is
+   listed by its ID. The upload reply's `id` field is your upload ID and starts
+   with `ast_`. Use the ID, not your label, in `loras`. For example, if you called an upload “my style” and its ID is
    `ast_example123`, put `{"loras":[{"name":"ast_example123","weight":1.0}]}`
    in your request.
 5. The first use on a local workflow copies the file. Deleting your adapter
