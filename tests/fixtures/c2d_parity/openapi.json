@@ -1108,7 +1108,7 @@
     }
   },
   "shared": {
-    "bytes": 9586,
+    "bytes": 9660,
     "full": {
       "info": {
         "description": "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content.",
@@ -1416,6 +1416,8 @@
         "image.edit.qwen-image-2.1-inpaint",
         "image.edit.seedvr2-upscale",
         "image.generate.anima-turbo",
+        "image.generate.flux2-klein",
+        "image.generate.flux2-klein-snofs",
         "image.generate.krea2-turbo",
         "image.generate.krea2-turbo-snofs",
         "image.generate.moss-image",
@@ -1445,7 +1447,7 @@
         "video.generate.minimax-h3-t2v"
       ]
     },
-    "sha256": "f0282f51e579d696b18d419000945068364e6b3a56b310c538ecf8cf71ff37d4"
+    "sha256": "742521cc77555552a69585440101ebbb635dc958fbe381aa2011febe0d5a19d7"
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
@@ -3656,6 +3658,459 @@
         "run_path": null
       },
       "sha256": "39b13162eb6882c6f1003f4751009464c79f5f92026ceec0553db1b9cfcbc977"
+    },
+    "image.generate.flux2-klein": {
+      "bytes": 5468,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+          "display_name": "FLUX.2 Klein 9B",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "image.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "flux2-klein",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "flux2-klein",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.generate.flux2-klein",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+          },
+          "intent": "image.generate",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            }
+          ],
+          "short_id": "flux2-klein",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 20.0
+        },
+        "components": {
+          "WorkflowInputs_image_generate_flux2_klein": {
+            "additionalProperties": false,
+            "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+            "properties": {
+              "batch_size": {
+                "description": "How many pictures to make at once.",
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "guidance": {
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "height": {
+                "description": "Picture height in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "prompt": {
+                "description": "Describe what you want to make.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Reuse this number and the same settings for a similar result.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "description": "More steps take longer.",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Picture width in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "FLUX.2 Klein 9B",
+            "type": "object",
+            "x-azizam-workflow-id": "image.generate.flux2-klein"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
+        "run_path": null
+      },
+      "sha256": "e1e5e518d6f19684bb3368648e011acb40f2bb76f9d0d25809eb55a5dbd7d70e"
+    },
+    "image.generate.flux2-klein-snofs": {
+      "bytes": 6063,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+          "display_name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "lora_strength": {
+                  "field": "lora_strength",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "image.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "flux2-klein-snofs",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "guidance": {
+                  "field": "guidance",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "lora_strength": {
+                  "field": "lora_strength",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "flux2-klein-snofs",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.generate.flux2-klein-snofs",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs"
+          },
+          "intent": "image.generate",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            }
+          ],
+          "short_id": "flux2-klein-snofs",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 20.0
+        },
+        "components": {
+          "WorkflowInputs_image_generate_flux2_klein_snofs": {
+            "additionalProperties": false,
+            "description": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+            "properties": {
+              "batch_size": {
+                "description": "How many pictures to make at once.",
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "guidance": {
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "height": {
+                "description": "Picture height in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "lora_strength": {
+                "default": 1.0,
+                "description": "How strongly the added style applies. 1.0 is the usual setting.",
+                "maximum": 1.5,
+                "minimum": 0,
+                "type": "number"
+              },
+              "prompt": {
+                "description": "Describe what you want to make.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Reuse this number and the same settings for a similar result.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "description": "More steps take longer.",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Picture width in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+            "type": "object",
+            "x-azizam-workflow-id": "image.generate.flux2-klein-snofs"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
+        "run_path": null
+      },
+      "sha256": "5d0cb37008a6591ecb79e2a0faa9f9fd8df324177f0592f2ed8dfafaaeec24d0"
     },
     "image.generate.krea2-turbo": {
       "bytes": 5267,

@@ -263,6 +263,155 @@
       "equal": true
     }
   },
+  "manifests/workflows/flux2-klein-snofs.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "guidance",
+          "lora_strength",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/flux2-klein-snofs.json"
+        },
+        "identity": {
+          "id": "image.generate.flux2-klein-snofs",
+          "manifest_hash": "fbbacdee250095d9cf8b0603aab88304a49d4ceccf0af97553725fd93173eb4d",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "11": {
+            "inputs": {
+              "strength_model": 1.0
+            }
+          },
+          "27": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "35": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "guidance": 1.0,
+          "lora_strength": 1.0,
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "guidance",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/flux2-klein.json"
+        },
+        "identity": {
+          "id": "image.generate.flux2-klein",
+          "manifest_hash": "245344d1fc5622a87cb966f0ecd96707b1df40495518b8f377ec0bf855c78029",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "27": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "35": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "guidance": 1.0,
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
   "manifests/workflows/image-identity.yml": {
     "extension": {
       "error": "manifest has no binding for backend: comfyui"

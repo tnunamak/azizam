@@ -193,7 +193,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # which adds the reviewed missing/retryable output responses, the App key security schemes, and the security each
     # operation declares (API reference security; the route graph leaves that security out of each route's extra).
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
-             "image.generate.moss-image-quality", "image.edit.fibo-2-edit-turbo",
+             "image.generate.moss-image-quality", "image.generate.flux2-klein",
+             "image.generate.flux2-klein-snofs", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
              "video.generate.minimax-h3-i2v-hires",

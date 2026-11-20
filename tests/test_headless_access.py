@@ -555,6 +555,8 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     only that input schema moved. choice_labels never enters the API document.
     Re-captured 2026-11-18 (train 77, six more workflows name their choices): reworded help for RIFE's frame multiplier
     and SeedVR2's two choices; only those input schemas moved (the RIFE form, the RIFE and SeedVR2 inputs).
+    Re-captured 2026-11-19: the FLUX.2 Klein 9B workflow and its SNOFS variant are bundled again, so the two image
+    generation paths and ImageGenerationRequest list their two extension entries; nothing else moved.
     """
     # Re-captured 2026-11-12: the generic run schema lists the five additive mesh.edit forms.
     schema = proxy.app.openapi()

@@ -132,10 +132,12 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
     before_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in before_closure["data"]]
     assert before_surface == model_surface
-    # Freeze the original catalog separately from MOSS, FIBO and keyframe additions.
+    # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
         "fibo-2-edit-turbo": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
+        "flux2-klein": ("image", text_to_image),
+        "flux2-klein-snofs": ("image", text_to_image),
         "moss-image": ("image", text_to_image),
         "moss-image-fast": ("image", text_to_image),
         "moss-image-quality": ("image", text_to_image),

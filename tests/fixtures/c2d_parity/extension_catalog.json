@@ -812,6 +812,25 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
                         "seed",
                         "steps"
                       ],
@@ -1260,6 +1279,25 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
                         "seed",
                         "steps"
                       ],
@@ -1704,6 +1742,25 @@
                         "steps"
                       ],
                       "id": "image.generate.anima-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
                     },
                     {
                       "controls": [
