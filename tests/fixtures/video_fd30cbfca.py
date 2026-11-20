@@ -1001,3 +1001,128 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
     if ui is not None:
         workflow["__ui_workflow__"] = ui
     return workflow
+
+
+# Frozen from main 3f0e89ac2: train 101 added the availability reason to the service refusal.
+def _service_availability_response(
+    service_id: str,
+    *,
+    service_label: str | None = None,
+) -> Response | None:
+    override = _operator_service_availability_overrides().get(service_id, {})
+    if not isinstance(override, Mapping):
+        return None
+    state = str(override.get("state") or "available").strip().lower()
+    if state not in {"disabled", "maintenance", "draining"}:
+        return None
+
+    label = service_label or service_id
+    message = str(override.get("reason") or "").strip() or f"{label} is {state}."
+    retry_after = _optional_int_config(override, "retry_after_seconds") or 10
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": message,
+                "type": "service_unavailable",
+                "code": "backend_unavailable",
+                "service": service_id,
+                "state": state,
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+# Frozen from main 3f0e89ac2: train 101 names the refusal reason with the model list's word.
+def _dispatch_admission_response(
+    intent: str, *, auth_context: AuthContext | None = None,
+    service_id: str | None = None, service_available: bool | None = None,
+    resource_class: str, protocol: str = "openai", receipt: RouteReceipt | None = None,
+    queue_key: str | None = None,
+) -> Response | None:
+    """Apply configured admission before execution, without guessing runtime load.
+
+    Availability is a declaration of route configuration, never a health/GPU
+    measurement. Queue/app limits apply only to tracked media work. Other
+    direct requests have no occupancy producer and do not use these limits.
+    With no admission settings, the existing dispatch owns availability errors.
+    """
+    cfg = _effective_media_job_admission_cfg()
+    override = _operator_service_availability_overrides().get(service_id, {})
+    tracks_media = queue_key == _MEDIA_JOB_QUEUE_KEY
+    configured = any(cfg.get(key) for key in (
+        "disabled_intents", "disabled_resource_classes", "reserved_tokens",
+    )) or (tracks_media and (bool(cfg.get("max_app_concurrency"))
+                            or _optional_int_config(cfg, "max_queue_depth") is not None))
+    enforce = configured or bool(override)
+    state_name = str(override.get("state") or "").strip().lower()
+    if state_name in {"disabled", "maintenance", "draining"}:
+        service_available = False
+    elif state_name in {"available", "degraded"}:
+        service_available = True
+    if service_available is None and service_id:
+        service = (config.get("backends") or {}).get(service_id)
+        if isinstance(service, Mapping):
+            service_available = service.get("enabled", True) is not False
+    identity = auth_context.identity if auth_context is not None else None
+    count_media = tracks_media and not _ADMISSION_WORKER.get()
+    app_id = identity.app_id if identity else (receipt.app_id if receipt else None)
+    app_limits = cfg.get("max_app_concurrency") if count_media else None
+    active_by_app = _media_job_app_load(app_id, app_limits)
+    queue_limit = _optional_int_config(cfg, "max_queue_depth") if count_media else None
+    queue_depths = ({queue_key: _media_job_queue_depth(queue_limit, admission_cfg=cfg)}
+                    if queue_limit is not None and queue_key == _MEDIA_JOB_QUEUE_KEY else {})
+    decision = resource_admission_http.advise_route_admission(
+        intent=intent, resource_class=resource_class,
+        service_available=service_available, service_degraded=state_name == "degraded",
+        require_service_availability=enforce,
+        service_retry_after=_optional_int_config(override, "retry_after_seconds"),
+        service_reasons=_string_tuple_config(override, "reason"),
+        app_id=app_id, active_by_app=active_by_app,
+        queue_key=queue_key, queue_depths=queue_depths,
+        observed_at=time.time(), load_quality="measured" if queue_depths or active_by_app else "unavailable",
+        disabled_intents=_string_tuple_config(cfg, "disabled_intents"),
+        disabled_resource_classes=_string_tuple_config(cfg, "disabled_resource_classes"),
+        reserved_tokens=_string_tuple_config(cfg, "reserved_tokens"),
+        max_queue_depth=queue_limit,
+        max_app_concurrency=app_limits,
+        constraint_retry_after=_optional_int_config(cfg, "retry_after_seconds"),
+        load_retry_after=_optional_int_config(cfg, "queue_retry_after_seconds") or 30,
+    )
+    evidence = decision.details.as_dict(decision.outcome.value)
+    evidence["wait_deadline"] = time.time() + 60
+    if service_id:
+        # Private evidence: which service the decision was about. Owner views show it; caller views never do.
+        evidence["service_id"] = service_id
+    if receipt is not None and enforce:
+        receipt.resource_decision = evidence
+    if decision.allowed:
+        return None
+    advised = resource_admission_http.admission_http_response(
+        decision, wait_deadline=evidence["wait_deadline"], protocol=protocol,
+    )
+    return _gateway_refusal(Response(content=json.dumps(advised.body), status_code=advised.status_code,
+                                     media_type="application/json", headers=dict(advised.headers)), "capacity")
+
+
+# Frozen from main 3f0e89ac2: train 101 stamps the availability reason onto the compatibility error.
+def model_compatibility_error(error: "str | Exception") -> Response:
+    code = getattr(error, "code", None)
+    status_code = 503 if code in ("model_not_deployed", "alias_not_configured") else 404 if code == "model_not_found" else 400
+    body: dict[str, Any] = {
+        "message": str(error),
+        "type": "service_unavailable" if status_code == 503 else "invalid_request_error",
+    }
+    if code:
+        body["param"] = "model"
+        body["code"] = code
+    details = getattr(error, "details", None)
+    if details:
+        body["details"] = details
+    return Response(
+        content=json.dumps({"error": body}),
+        status_code=status_code,
+        media_type="application/json",
+    )

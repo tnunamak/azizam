@@ -135,6 +135,8 @@
       "binding": {
         "applied_inputs": [
           "steps",
+          "sampler",
+          "scheduler",
           "batch_size"
         ],
         "backend": "comfyui",
@@ -143,7 +145,7 @@
         },
         "identity": {
           "id": "image.generate.anima-turbo",
-          "manifest_hash": "b2ee6abdf49912e19ff15659c4aea4b9db6dfb0db085adfd14d375aa990e9748",
+          "manifest_hash": "0b10726070fec37dfccacedea087b46dd7d596a3e433ad74333e447fee92ad28",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -164,6 +166,8 @@
           },
           "7": {
             "inputs": {
+              "sampler_name": "euler",
+              "scheduler": "simple",
               "seed": "original",
               "steps": 10
             }
@@ -175,6 +179,8 @@
       "validation": {
         "accepted": {
           "batch_size": 1,
+          "sampler": "euler",
+          "scheduler": "simple",
           "steps": 10
         },
         "gateway_controls": {},
@@ -208,7 +214,9 @@
       "binding": {
         "applied_inputs": [
           "source_image",
-          "steps"
+          "steps",
+          "sampler",
+          "scheduler"
         ],
         "backend": "comfyui",
         "backend_metadata": {
@@ -216,7 +224,7 @@
         },
         "identity": {
           "id": "image.edit.fibo-2-edit-turbo",
-          "manifest_hash": "47ad4d29cf6811a5a9b728bbafc3e4394dba48621c53139b3021e23643a8a637",
+          "manifest_hash": "a3951b8affae4dec9848a205f4275d4e78757958d3115c1a875b105a9cb9831d",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -235,6 +243,8 @@
           },
           "7": {
             "inputs": {
+              "sampler_name": "euler",
+              "scheduler": "simple",
               "seed": "original",
               "steps": 4
             }
@@ -245,6 +255,8 @@
       "unknown_top_level": {},
       "validation": {
         "accepted": {
+          "sampler": "euler",
+          "scheduler": "simple",
           "source_image": "asset:sample",
           "steps": 4
         },
@@ -277,6 +289,8 @@
       "binding": {
         "applied_inputs": [
           "steps",
+          "sampler",
+          "scheduler",
           "lora_strength",
           "batch_size"
         ],
@@ -286,7 +300,7 @@
         },
         "identity": {
           "id": "image.generate.krea2-turbo-snofs",
-          "manifest_hash": "677bfcda18a7034a6436f551345a424d0dd3a9c22eedd8d9c9f7d93d0623141a",
+          "manifest_hash": "362e99adabedd8cbd7c1a634ba187f201aef3cae82d6903eb789b5d525d617a6",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -312,6 +326,8 @@
           },
           "7": {
             "inputs": {
+              "sampler_name": "euler",
+              "scheduler": "simple",
               "seed": "original",
               "steps": 8
             }
@@ -324,6 +340,8 @@
         "accepted": {
           "batch_size": 1,
           "lora_strength": 1.0,
+          "sampler": "euler",
+          "scheduler": "simple",
           "steps": 8
         },
         "gateway_controls": {},
@@ -348,6 +366,8 @@
       "binding": {
         "applied_inputs": [
           "steps",
+          "sampler",
+          "scheduler",
           "batch_size"
         ],
         "backend": "comfyui",
@@ -356,7 +376,7 @@
         },
         "identity": {
           "id": "image.generate.krea2-turbo",
-          "manifest_hash": "d1067511c92271a87b6884944d58da1407de9d748d79d4e4067cc2214540ae8c",
+          "manifest_hash": "0c9d62e4debaaef227d05ba949061514f8d744d13c629413b5bcca1f5c12b8e5",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -377,6 +397,8 @@
           },
           "7": {
             "inputs": {
+              "sampler_name": "euler",
+              "scheduler": "simple",
               "seed": "original",
               "steps": 8
             }
@@ -388,6 +410,8 @@
       "validation": {
         "accepted": {
           "batch_size": 1,
+          "sampler": "euler",
+          "scheduler": "simple",
           "steps": 8
         },
         "gateway_controls": {},
@@ -474,6 +498,9 @@
     "extension": {
       "binding": {
         "applied_inputs": [
+          "steps",
+          "sampler",
+          "scheduler",
           "batch_size"
         ],
         "backend": "comfyui",
@@ -482,7 +509,7 @@
         },
         "identity": {
           "id": "image.generate.moss-image-fast",
-          "manifest_hash": "48cd5f825a3e5c023eb6189d58b0554088f3441758c4954ae254064c496bc2ae",
+          "manifest_hash": "f72d5a57a2f50fd098eaca0ec868b791ea8855d5b55e57cffeb5d5543f0ec210",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -501,6 +528,17 @@
               "text": "original"
             }
           },
+          "7": {
+            "inputs": {
+              "sampler_name": "euler"
+            }
+          },
+          "8": {
+            "inputs": {
+              "scheduler": "simple",
+              "steps": 8
+            }
+          },
           "9": {
             "inputs": {
               "noise_seed": "original"
@@ -512,7 +550,10 @@
       "unknown_top_level": {},
       "validation": {
         "accepted": {
-          "batch_size": 1
+          "batch_size": 1,
+          "sampler": "euler",
+          "scheduler": "simple",
+          "steps": 8
         },
         "gateway_controls": {},
         "ignored": {},
@@ -536,6 +577,8 @@
       "binding": {
         "applied_inputs": [
           "steps",
+          "sampler",
+          "scheduler",
           "batch_size"
         ],
         "backend": "comfyui",
@@ -544,7 +587,7 @@
         },
         "identity": {
           "id": "image.generate.moss-image-quality",
-          "manifest_hash": "76c9834454b007baa1491e29dd6893b3c46631798ad5f0e64f7664abd2dba23f",
+          "manifest_hash": "32caba68f286975d5013b2d50910d1400603b8d31ae611d3f44df241cbd0a3ba",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -563,8 +606,14 @@
               "text": "original"
             }
           },
+          "7": {
+            "inputs": {
+              "sampler_name": "euler"
+            }
+          },
           "8": {
             "inputs": {
+              "scheduler": "simple",
               "steps": 50
             }
           },
@@ -580,6 +629,8 @@
       "validation": {
         "accepted": {
           "batch_size": 1,
+          "sampler": "euler",
+          "scheduler": "simple",
           "steps": 50
         },
         "gateway_controls": {},
@@ -667,6 +718,8 @@
           "source_image",
           "reference_resolution",
           "steps",
+          "sampler",
+          "scheduler",
           "cfg"
         ],
         "backend": "comfyui",
@@ -678,7 +731,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-edit-multiref",
-          "manifest_hash": "7b156d344fb83abd3ca79d6210af36772370e798566833f3fd67294512d01c57",
+          "manifest_hash": "0e481d17f081c61db14d092dc3a39a3776e921a10d915f3ef8041bdac98cb434",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -709,6 +762,8 @@
           "8": {
             "inputs": {
               "cfg": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
               "seed": "original",
               "steps": 25
             }
@@ -721,6 +776,8 @@
         "accepted": {
           "cfg": 1.0,
           "reference_resolution": 1024,
+          "sampler": "euler",
+          "scheduler": "simple",
           "source_image": "asset:sample",
           "steps": 25
         },
@@ -748,6 +805,8 @@
           "source_image",
           "reference_resolution",
           "steps",
+          "sampler",
+          "scheduler",
           "cfg"
         ],
         "backend": "comfyui",
@@ -756,7 +815,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-edit",
-          "manifest_hash": "36c71f707cfe34bab9e65c003724b2237cab33e710aacfd6b1001d1d75ac7ed5",
+          "manifest_hash": "8efe530ab308a85bfe13b99188b55cb9b207ee61dc0b8fb09cde997d18ed367b",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -782,6 +841,8 @@
           "8": {
             "inputs": {
               "cfg": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
               "seed": "original",
               "steps": 25
             }
@@ -794,6 +855,8 @@
         "accepted": {
           "cfg": 1.0,
           "reference_resolution": 1024,
+          "sampler": "euler",
+          "scheduler": "simple",
           "source_image": "asset:sample",
           "steps": 25
         },
@@ -819,6 +882,8 @@
         "applied_inputs": [
           "source_image",
           "steps",
+          "sampler",
+          "scheduler",
           "cfg",
           "mask_expand",
           "mask_feather",
@@ -832,7 +897,7 @@
         },
         "identity": {
           "id": "image.edit.qwen-image-2.1-inpaint",
-          "manifest_hash": "3b225a6d6bf318223d1d751c3ad9f631d5820fd22b74becab48faf23fafec3b7",
+          "manifest_hash": "9979ce355bbca515054365af7b8a4b3574eb566acb7ac6964a4c23bd997e7f98",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -844,6 +909,8 @@
               "LanPaint_NumSteps": 5,
               "LanPaint_PromptMode": "Image First",
               "cfg": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "karras",
               "seed": "original",
               "steps": 25
             }
@@ -887,6 +954,8 @@
           "mask_expand": 0,
           "mask_feather": 1,
           "prompt_mode": "Image First",
+          "sampler": "euler",
+          "scheduler": "karras",
           "source_image": "asset:sample",
           "steps": 25
         },
@@ -1036,7 +1105,7 @@
         },
         "identity": {
           "id": "image.generate.sdxl-seamless-tile",
-          "manifest_hash": "d47d9db49b49dbf2b6e8f3a2935fc5dcad135aada627f82296e02d413b7554ba",
+          "manifest_hash": "4104c240e2b9091a07fa8d7932972e2f8a07012c9afa250880c9aa27b7c21281",
           "source": null,
           "trusted": false,
           "version": "0.1.1"
@@ -1053,10 +1122,10 @@
           "31": {
             "inputs": {
               "cfg": 1.0,
-              "sampler_name": "euler",
+              "sampler_name": "dpmpp_2m",
               "scheduler": "karras",
               "seed": "original",
-              "steps": 1
+              "steps": 28
             }
           },
           "33": {
@@ -1088,9 +1157,9 @@
         "accepted": {
           "batch_size": 1,
           "guidance": 1.0,
-          "sampler": "euler",
+          "sampler": "dpmpp_2m",
           "scheduler": "karras",
-          "steps": 1
+          "steps": 28
         },
         "gateway_controls": {},
         "ignored": {},

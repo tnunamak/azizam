@@ -518,6 +518,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "seed",
       {
         "field": "seed",
@@ -544,6 +558,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -862,6 +890,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "cfg",
       {
         "field": "cfg",
@@ -909,6 +951,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -971,6 +1027,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "cfg",
       {
         "field": "cfg",
@@ -1029,6 +1099,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "cfg",
       {
         "field": "cfg",
@@ -1069,6 +1153,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -1141,6 +1239,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -1285,6 +1397,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "seed",
       {
         "field": "seed",
@@ -1333,6 +1459,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -1389,6 +1529,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "seed",
       {
         "field": "seed",
@@ -1441,6 +1595,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "seed",
       {
         "field": "seed",
@@ -1489,6 +1657,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -1548,6 +1730,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -1694,6 +1890,27 @@
       }
     ],
     [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "seed",
       {
         "field": "seed",
@@ -1736,6 +1953,27 @@
         ],
         "field": "size",
         "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
       }
     ],
     [
@@ -1791,6 +2029,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "seed",
       {
         "field": "seed",
@@ -1839,6 +2091,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],

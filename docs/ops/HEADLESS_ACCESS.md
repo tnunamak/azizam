@@ -144,6 +144,12 @@ moment) and is never rewritten. A later request carries the new name.
 An MCP client the person signed in to can rename the person's own apps and keys with the `rename_app` and
 `rename_key` tools, by current name or id, if that connection's consent included renaming (connections made before it existed must be disconnected and connected again). An app key cannot.
 
+Any App key can file a problem report without MCP: `POST /gateway/v1/problem-reports` takes the arguments of the MCP
+`report_problem` tool (`summary` required; `category`, `workaround`, `target`, `job_id` optional) and answers
+`{"status": "recorded", "report_id", "duplicate", "count", "known_workaround", "note"}`. A bad argument is a `400` with
+`error.code` `invalid_report` and `error.param`; the hourly limit is a `429` `rate_limited`. `GET /gateway/v1/capabilities`
+names the route in its `report_problem` field.
+
 There is no Azizam-specific command line for apps. On the gateway host, `python proxy.py generate-admin-key`
 (above) makes an owner key with no browser; use it with the Restish commands, or `curl`, as shown.
 

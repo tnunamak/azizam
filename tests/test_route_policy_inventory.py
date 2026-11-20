@@ -675,6 +675,7 @@ def _table(rows):
 _DISCOVERY = "audience-scoped discovery metadata; running an entry is policy-checked"
 _A1111_METADATA = "A1111 translator metadata derived from the same discovery catalog"
 _OWN_RECORDS = "the caller's own records, scoped by owner"
+_FILES_A_REPORT = "stores a plain-text report for the operator; runs no model"
 _METADATA_CONTRACT = {
     ("GET", "/gateway/v1/capabilities"): "discovery annotated with this caller's decision",
     ("GET", "/gateway/v1/workflows"): _DISCOVERY,
@@ -697,6 +698,7 @@ _METADATA_CONTRACT = {
     ("GET", "/me/api/usage/summary"): _OWN_RECORDS,
     ("GET", "/gateway/v1/requests"): "the caller's own kept requests, scoped by owner and by the App or connection that made them (content_access.visible_maker_rows)",
     ("GET", "/gateway/v1/me/retention"): "the caller's own request history setting, scoped to its App key or MCP grant",
+    ("POST", "/gateway/v1/problem-reports"): _FILES_A_REPORT,
     ("POST", "/me/api/media/remove-missing"): "removes only the caller's own entries whose files are gone; runs no model",
     ("POST", "/me/api/media/confirm-folder"): "owner only; writes the media folder marker and removes nothing; runs no model",
 }
@@ -735,6 +737,16 @@ def _metadata_contract(method, template, response, row):
         if code == "privacy_permission_required":
             row["outcome"] = "metadata (contract)"
             row["rule"] = "retention setting requires privacy permission; no model runs"
+            row["detail"] = ""
+        return
+    if (method, template) == ("POST", "/gateway/v1/problem-reports") and response.status_code == 400:
+        try:
+            code = response.json()["error"]["code"]
+        except (KeyError, TypeError, ValueError):
+            code = None
+        if code == "invalid_report":  # the inventory's sample body is no report: refused before anything is stored
+            row["outcome"] = "metadata (contract)"
+            row["rule"] = _FILES_A_REPORT
             row["detail"] = ""
         return
     reason = _METADATA_CONTRACT.get((method, template))

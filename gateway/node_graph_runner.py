@@ -34,7 +34,7 @@ from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.engine_protocol.node_validation import input_refusals
 from gateway.engine_protocol.types import AssetsResult, CanonicalRequest, ResultBundle, ResultContext
-from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, with_wire_id
+from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, requested_file_count, with_wire_id
 from gateway.workflow_runtime_types import AUDIO_FACT, RESULT_REFUSED_MESSAGE
 
 LOG = logging.getLogger("azizam.node_graph_runner")
@@ -51,10 +51,6 @@ def _has_alpha(raw: bytes) -> bool:
             return "A" in picture.getbands() or "transparency" in picture.info
     except Exception:  # noqa: BLE001 - a file that is no picture carries no transparency
         return False
-
-
-# The most files one request returns, whatever the counts it asked for.
-MAX_FILES_PER_REQUEST = 10
 
 
 KEEP_PROMPT_FLAG = "keep_engine_prompt"   # a request's job metadata: keep the engine's prompt id under ENGINE_PROMPT_KEY
@@ -361,11 +357,7 @@ class NodeGraphRunner:
             if resume is not None:
                 # Harvest one saved prompt, but keep its requested batch rather than one file. The count is the one the host's
                 # plan reads: ``options.n`` times the per-prompt ``batch_size`` input.
-                count = options.get("n")
-                count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 1 else 1
-                per_prompt = ctx.inputs.get("batch_size")
-                per_prompt = per_prompt if isinstance(per_prompt, int) and not isinstance(per_prompt, bool) and per_prompt >= 1 else 1
-                plan.total = min(MAX_FILES_PER_REQUEST, count * per_prompt)
+                plan.total = requested_file_count(ctx.inputs, options)
             batching = batching if resume is None else None
             offset = 0
             remaining = plan.total
@@ -395,12 +387,14 @@ class NodeGraphRunner:
                 remaining -= len(round_files)
                 if rounds == 1 and batching is not None:
                     await batching.measured(plan, session, rounds, target, probe)
-        collected = collected[:plan.total]
         if not collected:
             raise RunFailed("no_result", "upstream", f"No {output_noun(outputs)} generated", upstream_status=500)
         if len(collected) < plan.total:
-            plan.warnings.append(f"requested {plan.total} but produced {len(collected)} after {rounds} round(s)")
-        return collected, result_name, rounds, models_freed, plan
+            # Never a success with fewer files than were asked for: the caller counts on N of N.
+            raise RunFailed("result_count_short", "upstream",
+                            f"Asked for {plan.total} {output_noun(outputs)}, but {adapter.label} made {len(collected)} "
+                            f"after {rounds} round(s). Nothing was returned.", upstream_status=502)
+        return collected[:plan.total], result_name, rounds, models_freed, plan
 
     async def _one_round(self, ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, target,
                          probe, headers, binding, outputs, limits, poll, label, failure_binding, conn, *, retry_freed, staged, edit=None, resume=None):

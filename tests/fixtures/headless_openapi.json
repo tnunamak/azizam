@@ -1909,6 +1909,74 @@
             "description": "Describe the change you want.",
             "type": "string"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
@@ -2096,6 +2164,74 @@
             "minimum": 256,
             "type": "integer"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
@@ -2108,7 +2244,7 @@
           },
           "steps": {
             "default": 25,
-            "description": "More steps add detail but take longer.",
+            "description": "More steps add detail but take longer. 20 to 30 works well for this model.",
             "maximum": 60,
             "minimum": 1,
             "type": "integer"
@@ -2154,6 +2290,74 @@
             "minimum": 256,
             "type": "integer"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
@@ -2166,7 +2370,7 @@
           },
           "steps": {
             "default": 25,
-            "description": "More steps add detail but take longer.",
+            "description": "More steps add detail but take longer. 20 to 30 works well for this model.",
             "maximum": 60,
             "minimum": 1,
             "type": "integer"
@@ -2230,6 +2434,74 @@
             ],
             "type": "string"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "karras",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
@@ -2242,7 +2514,7 @@
           },
           "steps": {
             "default": 25,
-            "description": "More steps add detail but take longer.",
+            "description": "More steps add detail but take longer. 20 to 30 works well for this model.",
             "maximum": 60,
             "minimum": 1,
             "type": "integer"
@@ -2320,6 +2592,74 @@
             "description": "Describe what you want to make.",
             "type": "string"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Reuse this number and the same settings for a similar result.",
             "minimum": 0,
@@ -2367,6 +2707,74 @@
           },
           "prompt": {
             "description": "Describe the picture you want.",
+            "type": "string"
+          },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
             "type": "string"
           },
           "seed": {
@@ -2423,6 +2831,74 @@
           },
           "prompt": {
             "description": "Describe what you want to make.",
+            "type": "string"
+          },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
             "type": "string"
           },
           "seed": {
@@ -2516,9 +2992,84 @@
             "description": "Describe what you want to make.",
             "type": "string"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Reuse this number and the same settings for a similar result.",
             "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 8,
+            "description": "This model is trained for 8 steps. 4 to 12 works well.",
+            "maximum": 16,
+            "minimum": 1,
             "type": "integer"
           },
           "width": {
@@ -2558,6 +3109,74 @@
             "description": "Describe what you want to make.",
             "type": "string"
           },
+          "sampler": {
+            "default": "euler",
+            "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+            "enum": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ],
+            "type": "string"
+          },
+          "scheduler": {
+            "default": "simple",
+            "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+            "enum": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ],
+            "type": "string"
+          },
           "seed": {
             "description": "Reuse this number and the same settings for a similar result.",
             "minimum": 0,
@@ -2565,7 +3184,7 @@
           },
           "steps": {
             "default": 50,
-            "description": "More steps add detail but take longer.",
+            "description": "More steps add detail but take longer. 40 to 50 works well for this model.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -2616,6 +3235,7 @@
             "type": "string"
           },
           "sampler": {
+            "default": "dpmpp_2m",
             "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
             "enum": [
               "euler",
@@ -2628,6 +3248,7 @@
             "type": "string"
           },
           "scheduler": {
+            "default": "karras",
             "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
             "enum": [
               "karras",
@@ -2650,7 +3271,8 @@
             "type": "integer"
           },
           "steps": {
-            "description": "More steps add detail but take longer.",
+            "default": 28,
+            "description": "More steps add detail but take longer. 25 to 35 works well for this model.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -21573,6 +22195,83 @@
         ]
       }
     },
+    "/gateway/v1/problem-reports": {
+      "post": {
+        "description": "Tell the operator a tool failed, differed from its description or forced a workaround.\n\nTakes the arguments of the MCP `report_problem` tool and answers what it answers (`report_id`, `duplicate`,\n`count`, `known_workaround`). One report per distinct problem; a repeat folds into the same report.",
+        "operationId": "file_report_gateway_v1_problem_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "category": {
+                    "default": "failure",
+                    "description": "failure: a call failed. differs_from_description: it worked but not as described. workaround: you took another path. missing_capability: nothing here can do it.",
+                    "enum": [
+                      "failure",
+                      "differs_from_description",
+                      "workaround",
+                      "missing_capability"
+                    ],
+                    "type": "string"
+                  },
+                  "job_id": {
+                    "description": "The job id involved, if there is one.",
+                    "type": "string"
+                  },
+                  "summary": {
+                    "description": "What happened, in plain words.",
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "target": {
+                    "description": "The workflow, alias or `speech` involved, if you know it.",
+                    "type": "string"
+                  },
+                  "workaround": {
+                    "description": "What you did instead, if anything.",
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "summary"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "File Report",
+        "tags": [
+          "Problem reports"
+        ]
+      }
+    },
     "/gateway/v1/providers": {
       "get": {
         "description": "List provider-native lanes visible to this authenticated caller.",
@@ -23660,6 +24359,85 @@
           }
         ],
         "summary": "Ollama Version"
+      }
+    },
+    "/openai/v1/assets": {
+      "post": {
+        "description": "Store one image for the caller and return its id, so a large picture need not ride in a JSON body.",
+        "operationId": "assets_create_openai_v1_assets_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "description": "One image. Its type is read from its bytes. The size limit is the media input limit (AZIZAM_MEDIA_FETCH_MAX_BYTES), not the JSON body limit.",
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "enum": [
+                        "gateway.asset"
+                      ],
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "object",
+                    "media_type",
+                    "size_bytes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The image is stored. Send its id as chat image_url.url instead of the image."
+          },
+          "400": {
+            "description": "No file, an empty file, or a file that is not an image."
+          },
+          "413": {
+            "description": "file_too_large: the image is over the media input limit."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Assets Create"
       }
     },
     "/openai/v1/assets/{asset_id}": {
@@ -30890,6 +31668,85 @@
           }
         ],
         "summary": "Row:Mesh-Glb:/V1/3D/Generations/Glb"
+      }
+    },
+    "/v1/assets": {
+      "post": {
+        "description": "Store one image for the caller and return its id, so a large picture need not ride in a JSON body.",
+        "operationId": "assets_create_v1_assets_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "description": "One image. Its type is read from its bytes. The size limit is the media input limit (AZIZAM_MEDIA_FETCH_MAX_BYTES), not the JSON body limit.",
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "enum": [
+                        "gateway.asset"
+                      ],
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "object",
+                    "media_type",
+                    "size_bytes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The image is stored. Send its id as chat image_url.url instead of the image."
+          },
+          "400": {
+            "description": "No file, an empty file, or a file that is not an image."
+          },
+          "413": {
+            "description": "file_too_large: the image is over the media input limit."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Assets Create"
       }
     },
     "/v1/assets/{asset_id}": {
@@ -38966,6 +39823,14 @@
               "field": "prompt",
               "in": "form"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
               "in": "extension"
@@ -39173,6 +40038,14 @@
               "field": "reference_resolution",
               "in": "extension"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
               "in": "extension"
@@ -39259,6 +40132,14 @@
             },
             "reference_resolution": {
               "field": "reference_resolution",
+              "in": "extension"
+            },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
               "in": "extension"
             },
             "seed": {
@@ -39355,6 +40236,14 @@
             },
             "prompt_mode": {
               "field": "prompt_mode",
+              "in": "extension"
+            },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
               "in": "extension"
             },
             "seed": {
@@ -39519,6 +40408,14 @@
               "field": "prompt",
               "in": "body"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
               "in": "extension"
@@ -39583,6 +40480,14 @@
             "prompt": {
               "field": "prompt",
               "in": "body"
+            },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
             },
             "seed": {
               "field": "seed",
@@ -39671,6 +40576,14 @@
               "field": "prompt",
               "in": "body"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
               "in": "extension"
@@ -39735,6 +40648,14 @@
             "prompt": {
               "field": "prompt",
               "in": "body"
+            },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
             },
             "seed": {
               "field": "seed",
@@ -39827,6 +40748,14 @@
               "field": "prompt",
               "in": "body"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
               "in": "extension"
@@ -39895,6 +40824,14 @@
             "prompt": {
               "field": "prompt",
               "in": "body"
+            },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
             },
             "seed": {
               "field": "seed",
@@ -40125,8 +41062,20 @@
               "field": "prompt",
               "in": "body"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
+              "in": "extension"
+            },
+            "steps": {
+              "field": "steps",
               "in": "extension"
             },
             "width": {
@@ -40186,8 +41135,20 @@
               "field": "prompt",
               "in": "body"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
+              "in": "extension"
+            },
+            "steps": {
+              "field": "steps",
               "in": "extension"
             },
             "width": {
@@ -40267,6 +41228,14 @@
               "field": "prompt",
               "in": "body"
             },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
+            },
             "seed": {
               "field": "seed",
               "in": "extension"
@@ -40331,6 +41300,14 @@
             "prompt": {
               "field": "prompt",
               "in": "body"
+            },
+            "sampler": {
+              "field": "sampler",
+              "in": "extension"
+            },
+            "scheduler": {
+              "field": "scheduler",
+              "in": "extension"
             },
             "seed": {
               "field": "seed",

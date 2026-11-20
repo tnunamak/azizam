@@ -64,6 +64,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/gateway/v1/media/jobs/{job_id}/events` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `append_media_job_event` |
 | `GET` | `/gateway/v1/media/jobs/{job_id}/results/{name:path}` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `get_media_job_result` |
 | `GET` | `/gateway/v1/models/{model}/capabilities` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `get_model_capabilities` |
+| `POST` | `/gateway/v1/problem-reports` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/problem_reports.py](../gateway/problem_reports.py) `file_report` |
 | `GET` | `/gateway/v1/providers` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `provider_native_list` |
 | `GET` | `/gateway/v1/providers/{provider}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `provider_native_detail` |
 | `DELETE` | `/gateway/v1/providers/{provider}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `provider_native_request` |
@@ -116,6 +117,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/ollama/api/show` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_show` |
 | `GET` | `/ollama/api/tags` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_tags` |
 | `GET` | `/ollama/api/version` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_version` |
+| `POST` | `/openai/v1/assets` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_create` |
 | `DELETE` | `/openai/v1/assets/{asset_id}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_delete` |
 | `GET` | `/openai/v1/assets/{asset_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_content` |
 | `DELETE` | `/openai/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
@@ -203,6 +205,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/typesafe/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `POST` | `/v1/3d/generations` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/row_routes.py](../gateway/row_routes.py) `serve` |
 | `POST` | `/v1/3d/generations/glb` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/row_routes.py](../gateway/row_routes.py) `serve` |
+| `POST` | `/v1/assets` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_create` |
 | `DELETE` | `/v1/assets/{asset_id}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_delete` |
 | `GET` | `/v1/assets/{asset_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_content` |
 | `GET` | `/v1/assets/{asset_id}/thumbnail` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_thumbnail` |

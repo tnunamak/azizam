@@ -101,7 +101,7 @@
      }
     },
     "form": {
-     "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"cfg\":1.0,\"seed\":0}}",
+     "extensions": "{\"com.azizam.workflow\":{\"negative_prompt\":\"\",\"reference_resolution\":1024,\"steps\":25,\"sampler\":\"euler\",\"scheduler\":\"simple\",\"cfg\":1.0,\"seed\":0}}",
      "model": "qwen-image-2.1-edit",
      "prompt": "A small teal fish mark on a clean white card."
     },
@@ -120,14 +120,14 @@
     {
      "accepted": true,
      "applies": "Multipart form",
+     "description": "Describe the change you want.",
+     "help": "Describe the change you want.",
      "ignored": false,
+     "label": "what to make",
      "name": "prompt",
      "request_field": "prompt",
      "required": true,
-     "type": "string",
-     "label": "what to make",
-     "help": "Describe the change you want.",
-     "description": "Describe the change you want."
+     "type": "string"
     },
     {
      "accepted": true,
@@ -147,14 +147,14 @@
      "accepted": true,
      "applies": "Workflow extension",
      "default": "",
+     "description": "Describe anything you want left out.",
+     "help": "Describe anything you want left out.",
      "ignored": false,
+     "label": "what to avoid",
      "name": "negative_prompt",
      "request_field": "negative_prompt",
      "required": false,
-     "type": "string",
-     "label": "what to avoid",
-     "help": "Describe anything you want left out.",
-     "description": "Describe anything you want left out."
+     "type": "string"
     },
     {
      "accepted": true,
@@ -175,8 +175,8 @@
      "accepted": true,
      "applies": "Workflow extension",
      "default": 25,
-     "description": "More steps add detail but take longer.",
-     "help": "More steps add detail but take longer.",
+     "description": "More steps add detail but take longer. 20 to 30 works well for this model.",
+     "help": "More steps add detail but take longer. 20 to 30 works well for this model.",
      "ignored": false,
      "label": "steps",
      "maximum": 60,
@@ -185,6 +185,90 @@
      "request_field": "steps",
      "required": false,
      "type": "integer"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": "euler",
+     "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+     "enum": [
+      "euler",
+      "euler_cfg_pp",
+      "euler_ancestral",
+      "euler_ancestral_cfg_pp",
+      "heun",
+      "heunpp2",
+      "exp_heun_2_x0",
+      "exp_heun_2_x0_sde",
+      "dpm_2",
+      "dpm_2_ancestral",
+      "lms",
+      "dpm_fast",
+      "dpm_adaptive",
+      "dpmpp_2s_ancestral",
+      "dpmpp_2s_ancestral_cfg_pp",
+      "dpmpp_sde",
+      "dpmpp_sde_gpu",
+      "dpmpp_2m",
+      "dpmpp_2m_cfg_pp",
+      "dpmpp_2m_sde",
+      "dpmpp_2m_sde_gpu",
+      "dpmpp_2m_sde_heun",
+      "dpmpp_2m_sde_heun_gpu",
+      "dpmpp_3m_sde",
+      "dpmpp_3m_sde_gpu",
+      "ddpm",
+      "lcm",
+      "ipndm",
+      "ipndm_v",
+      "deis",
+      "cfgpp_ud10_ab",
+      "res_multistep",
+      "res_multistep_cfg_pp",
+      "res_multistep_ancestral",
+      "res_multistep_ancestral_cfg_pp",
+      "gradient_estimation",
+      "gradient_estimation_cfg_pp",
+      "er_sde",
+      "seeds_2",
+      "seeds_3",
+      "sa_solver",
+      "sa_solver_pece",
+      "ddim",
+      "uni_pc",
+      "uni_pc_bh2"
+     ],
+     "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+     "ignored": false,
+     "label": "Generation method",
+     "name": "sampler",
+     "request_field": "sampler",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "accepted": true,
+     "applies": "Workflow extension",
+     "default": "simple",
+     "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+     "enum": [
+      "simple",
+      "sgm_uniform",
+      "karras",
+      "exponential",
+      "ddim_uniform",
+      "beta",
+      "normal",
+      "linear_quadratic",
+      "kl_optimal"
+     ],
+     "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+     "ignored": false,
+     "label": "Step timing",
+     "name": "scheduler",
+     "request_field": "scheduler",
+     "required": false,
+     "type": "string"
     },
     {
      "accepted": true,
@@ -204,15 +288,15 @@
     {
      "accepted": true,
      "applies": "Workflow extension",
+     "description": "Use the same number to repeat a variation with the same settings.",
+     "help": "Use the same number to repeat a variation with the same settings.",
      "ignored": false,
+     "label": "variation number",
      "minimum": 0,
      "name": "seed",
      "request_field": "seed",
      "required": false,
-     "type": "integer",
-     "label": "variation number",
-     "help": "Use the same number to repeat a variation with the same settings.",
-     "description": "Use the same number to repeat a variation with the same settings."
+     "type": "integer"
     },
     {
      "accepted": true,
@@ -264,6 +348,14 @@
        },
        "reference_resolution": {
         "field": "reference_resolution",
+        "in": "extension"
+       },
+       "sampler": {
+        "field": "sampler",
+        "in": "extension"
+       },
+       "scheduler": {
+        "field": "scheduler",
         "in": "extension"
        },
        "seed": {

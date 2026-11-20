@@ -63,9 +63,22 @@ recorded in receipts or media-job metadata.
 
 Image count is `n × batch_size`. `n` (1..10) counts prompts; a workflow's
 `batch_size` control (manifest maximum applies) counts the pictures one prompt
-makes. The gateway returns every picture up to 10 per request and adds a
-`X-Proxy-Warning` when the product is capped. The round loop still sizes each
-ComfyUI run to free VRAM, so a `batch_size: 2` request may take two runs.
+makes. A request gets every picture it asked for, or an error: never a
+success with fewer pictures.
+
+- A product above 10 is a `400` (`param: batch_size`) before any engine work.
+  Through the run core (`/gateway/v1/media/jobs/image-generations`, the MCP
+  `run` tool) the same refusal is a `422` with a problem at `inputs.batch_size`.
+- If the engine makes fewer pictures than were asked for, the answer is a `502`
+  with code `result_count_short` that names both counts, and nothing is
+  returned.
+- `/sdapi/v1/txt2img` counts `batch_size × n_iter` the same way and refuses
+  above 10.
+
+The round loop still sizes each ComfyUI run to free VRAM, so a `batch_size: 2`
+request may take two runs. The `tangoflux` audio workflow is the one exception
+to this contract: its `batch_size` makes several clips and returns the first
+only, as its input help says.
 
 Variant semantics are not a separate extension family. Use top-level `n` where
 the public protocol owns batch count, and use manifest-backed `seed` or

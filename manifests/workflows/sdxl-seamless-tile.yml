@@ -32,10 +32,11 @@ inputs:
     maximum: 2048
   steps:
     label: Refinement steps
-    help: More steps add detail but take longer.
+    help: More steps add detail but take longer. 25 to 35 works well for this model.
     type: integer
     minimum: 1
     maximum: 100
+    default: 28
   guidance:
     label: Prompt strength
     help: Higher follows your words more closely.
@@ -67,6 +68,7 @@ inputs:
     choices_from: {node_type: KSampler, input: sampler_name}
     type: string
     enum: [euler, euler_ancestral, dpmpp_2m, dpmpp_2m_sde, dpmpp_sde, uni_pc]
+    default: dpmpp_2m
     choice_labels: {"euler": "Euler", "euler_ancestral": "Euler ancestral", "dpmpp_2m": "DPM++ 2M", "dpmpp_2m_sde": "DPM++ 2M SDE", "dpmpp_sde": "DPM++ SDE", "uni_pc": "UniPC"}
   scheduler:
     label: Step timing
@@ -74,6 +76,7 @@ inputs:
     choices_from: {node_type: KSampler, input: scheduler}
     type: string
     enum: [karras, normal, simple, sgm_uniform, beta]
+    default: karras
     choice_labels: {"karras": "Karras", "normal": "Normal", "simple": "Simple", "sgm_uniform": "SGM uniform", "beta": "Beta"}
   seam_blending:
     label: Seam blending

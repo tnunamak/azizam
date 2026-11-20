@@ -79,7 +79,7 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Response | `results[]` and `data[]` (same items: `index`, `relevance_score` in 0..1, optional `document.text`), `id`, `usage`, `meta` | same |
 | | Errors | 400 with `message` (Cohere), `detail` (Jina, Voyage) and `error{}` (gateway) in one body; TEI bodies get TEI's `error` and `error_type` | same |
 | | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
-| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech`; plus `rename_app` and `rename_key` for the signed-in person's own apps and keys | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
+| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech`; plus `rename_app` and `rename_key` for the signed-in person's own apps and keys, and `report_problem` (also `POST /gateway/v1/problem-reports`) | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
 | | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
 | | Auth | Bearer app key, or sign-in through the gateway's OAuth flow for hosted clients; see [Recipe: MCP clients](#recipe-mcp-clients-chatgpt-claudeai-claude-code-cursor-pi-codex). A 401 carries an RFC 9728 `resource_metadata` challenge. | same |
 | | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
@@ -1453,6 +1453,36 @@ Expected unsupported features:
   Realtime HTTP routes such as `/v1/realtime/calls`, `client_secrets`, SIP and WebRTC are not supported;
   registered HTTP compatibility routes return `unsupported_operation`.
 
+## Recipe: send a large image to a vision model
+
+An inline picture (`data:image/png;base64,...`) rides in the JSON body, and every route outside the media routes limits that
+body (`request_body_limits.json_bytes`, 32 MiB by default). A full-resolution crop can go over it, because base64 adds a
+third. Upload the picture once, then name it by id:
+
+```bash
+# 1. Upload. This route has the media body limit; the image limit is AZIZAM_MEDIA_FETCH_MAX_BYTES (256 MiB by default).
+curl -s "$AZIZAM_BASE_URL/v1/assets" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
+  -F "file=@crop.png"
+# {"id":"img_<64 hex digits>","object":"gateway.asset","media_type":"image/png","size_bytes":4812331}
+
+# 2. Reference the id where the picture would go. The request body stays a few hundred bytes.
+curl -s "$AZIZAM_BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"'"$AZIZAM_MODEL"'","messages":[{"role":"user","content":[
+        {"type":"text","text":"Is the text in this crop legible?"},
+        {"type":"image_url","image_url":{"url":"img_<64 hex digits>"}}]}]}'
+```
+
+The gateway reads the stored image and sends the engine a data URI, so no engine changes. Only a caller that may read the asset
+in the Library (the same owner check as `DELETE /v1/assets/{id}`) can use its id. An id that is unknown, or not readable by the caller,
+answers HTTP 400 with `code: asset_missing` and `param` naming the part (`messages[0].content[1].image_url.url`). A value
+with no `:` and no `/` that is not an id answers `invalid_image_url`. An id of a file that is not an image answers
+`invalid_image_format`. Any `image_url.url` that is an address (`https://...`) or a data URI is passed on as before.
+
+Images made by the gateway (`img_...` ids from image generation) can be referenced the same way. Delete an uploaded image
+with `DELETE /v1/assets/{id}`. The reference is read on `POST /v1/chat/completions` and its `/openai/v1` alias.
+
 ## Recipe: MCP clients (ChatGPT, Claude.ai, Claude Code, Cursor, Pi, Codex)
 
 The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three media tools, so an
@@ -1467,6 +1497,7 @@ person signed in to, not an App key):
 | `job` | Poll a `job_id`, wait for it (`wait_seconds`), or `cancel` it. |
 | `rename_app` | Give one of your apps a new `name`. `app` is its current name (or its id when two share a name). |
 | `rename_key` | Give an active key of one of your apps a new `name`. `app` and `key` are current names (or ids). |
+| `report_problem` | Tell the operator a tool failed, differed from its description or forced a workaround. `summary` is required; `category`, `workaround`, `target` and `job_id` are optional. It is a tool, not a `run` target. A client that cannot list tools sends the same JSON to `POST /gateway/v1/problem-reports` with its key; `capabilities` names both ways in its `report_problem` field. |
 
 Arguments for `job`:
 
