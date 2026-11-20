@@ -315,3 +315,9 @@ def test_each_shipped_adapter_workflow_binds_a_chain_into_its_own_graph_and_a_ba
     first, last = list(added.values())[0], list(added)[-1]
     assert first["inputs"]["model"] == base_link == bare[anchor]["inputs"]["model"]
     assert chosen[anchor]["inputs"]["model"] == [last, 0]
+
+
+def test_the_upload_sweep_visits_every_folder_a_workflow_declares_for_adapters():
+    """After a restart no upload may name a folder, so the sweep learns the folders from the workflows."""
+    assert "loras" in proxy._declared_adapter_folders()
+    assert proxy._declared_adapter_folders() <= proxy.ADAPTER_LIBRARY.folders()
