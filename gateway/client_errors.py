@@ -370,14 +370,29 @@ def _stt_list(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
 
 
+_STT_FORMAT_NAME = re.compile(r"[a-z_]{1,24}")
+
+
+def _stt_advice(option: str, split_formats: Collection[str] | None) -> str | None:
+    """What to do about one blocking option. A response_format option names only the formats the record can cut,
+    when the caller knows them; with none, there is no format to suggest."""
+    if split_formats is None or not option.startswith("response_format"):
+        return STT_SPLIT_BLOCKERS[option]
+    names = [name for name in dict.fromkeys(split_formats) if _STT_FORMAT_NAME.fullmatch(name)]
+    return f"use response_format={' or '.join(names)}" if names else None
+
+
 def stt_audio_cannot_be_split(
     reason: str, limit_seconds: float, *, duration_seconds: float | None = None, blocked_by: Collection[str] = (),
+    split_formats: Collection[str] | None = None,
 ) -> Response:
     """A plain refusal built from the validated service limit and a fixed local reason, never media-tool text.
 
     The limit always comes from the engine record's declared maximum (a record with none is never refused).
     ``duration_seconds`` is the file's length when it is known; ``blocked_by`` names the request options that
-    prevented cutting, kept only when they are keys of ``STT_SPLIT_BLOCKERS``.
+    prevented cutting, kept only when they are keys of ``STT_SPLIT_BLOCKERS``. ``split_formats`` lists the
+    response formats the engine record can cut (``stt_declared_options.capability_limits``); when given, the
+    advice for a response_format option names those formats instead of the fixed table's.
     """
     status = _STT_SPLIT_REASONS[reason]
     if not math.isfinite(limit_seconds) or limit_seconds <= 0:
@@ -396,9 +411,10 @@ def stt_audio_cannot_be_split(
             message = (f"{subject}, and the gateway could not cut it into pieces, so it did not send it whole. "
                        f"Try again, or send audio of {limit} seconds or less.")
         elif options:
-            advice = _stt_list(list(dict.fromkeys(STT_SPLIT_BLOCKERS[name] for name in options)))
+            advice = [item for item in dict.fromkeys(_stt_advice(name, split_formats) for name in options) if item]
+            todo = f"To transcribe it, {_stt_list(advice)}, or send" if advice else "Send"
             message = (f"{subject}, and the request uses {_stt_list(options)}, which cannot be preserved across pieces, "
-                       f"so the gateway did not send it whole. To transcribe it, {advice}, or send audio of {limit} seconds or less.")
+                       f"so the gateway did not send it whole. {todo} audio of {limit} seconds or less.")
         else:
             message = (f"{subject}, and the request cannot be preserved across pieces, so the gateway did not send it "
                        f"whole. Send audio of {limit} seconds or less.")

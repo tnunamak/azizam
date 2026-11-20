@@ -6080,10 +6080,14 @@ async def _stt_terminal_response(
     return response
 
 
-def _stt_audio_not_splittable_response(error: stt_chunking.SttAudioNotSplittable) -> Response:
-    """Turn an unverified or uncut upload into a plain gateway refusal."""
+def _stt_audio_not_splittable_response(
+    error: stt_chunking.SttAudioNotSplittable, execution: stt_chunking.SttExecutionConfig,
+) -> Response:
+    """Turn an unverified or uncut upload into a plain gateway refusal whose advice follows the record's declarations."""
+    split = stt_declared_options.capability_limits(execution)["split_response_formats"]
     return client_errors.stt_audio_cannot_be_split(
-        error.reason, error.limit_seconds, duration_seconds=error.duration_seconds, blocked_by=error.blocked_by)
+        error.reason, error.limit_seconds, duration_seconds=error.duration_seconds, blocked_by=error.blocked_by,
+        split_formats=split)
 
 
 def _stt_error(message: str, *, status_code: int, code: str) -> Response:
@@ -6448,7 +6452,7 @@ async def proxy_stt_request(
             return model_compatibility_error(error)
         except stt_chunking.SttAudioNotSplittable as error:
             owner.report(status="failed", reason="failed")
-            return _stt_audio_not_splittable_response(error)
+            return _stt_audio_not_splittable_response(error, execution)
         except stt_chunking.SttInvalidAudio:
             owner.report(status="failed", reason="failed")
             return openai_error_response(
@@ -6481,8 +6485,12 @@ async def proxy_stt_request(
         except stt_chunking.SttCleanupFailure:
             owner.report(status="failed", reason="failed")
             return _stt_error("STT request cleanup failed.", status_code=502, code="stt_cleanup_failed")
-        except Exception:
+        except Exception as error:
             owner.report(status="failed", reason="failed")
+            # The class and the innermost place only: the exception's text may quote a path or a key.
+            frame = traceback.extract_tb(error.__traceback__)[-1] if error.__traceback__ else None
+            where = f"{Path(frame.filename).name}:{frame.lineno}" if frame else "unknown place"
+            print(f"[stt] unexpected {type(error).__name__} at {where}; answered 502 stt_proxy_error", flush=True)
             return _stt_error("STT proxy request failed.", status_code=502, code="stt_proxy_error")
         if not cleanup_deferred:
             succeeded = stt_chunking.upstream_response_succeeded(response.status_code)
