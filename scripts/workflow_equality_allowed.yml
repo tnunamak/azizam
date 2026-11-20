@@ -416,3 +416,23 @@ binding_edits:
     operation: add
     value: [{"node": "8", "input": "scheduler"}]
     reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.flux2-klein
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "31", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.flux2-klein
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "31", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.flux2-klein-snofs
+    path: [comfyui, map, sampler]
+    operation: add
+    value: [{"node": "31", "input": "sampler_name"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
+  - workflow: image.generate.flux2-klein-snofs
+    path: [comfyui, map, scheduler]
+    operation: add
+    value: [{"node": "31", "input": "scheduler"}]
+    reason: "The sampler controls (steps, sampler, scheduler) are manifest inputs bound to the graph's sampler inputs; the old binding had no entry."
