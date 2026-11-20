@@ -60,6 +60,31 @@ inputs:
       generator: random_integer
       minimum: 0
       maximum: 4294967295
+  loras:
+    label: style adapters
+    help: Add up to 3 style adapters the server has installed for this model. Each has a strength from -4 to 4; 1.0 is the usual setting.
+    type: array
+    max_items: 3
+    items:
+      type: object
+      properties:
+        name:
+          label: adapter
+          help: One of the installed adapters listed for this model.
+          type: string
+          required: true
+        weight:
+          label: strength
+          help: How strongly the adapter applies. 1.0 is the usual setting.
+          type: number
+          minimum: -4
+          maximum: 4
+          default: 1.0
+  text_encoder:
+    label: text encoder
+    help: Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.
+    type: string
+    enum: [qwen3vl_8b_w4a8.safetensors]
 outputs:
   image:
     media_type: image/png
@@ -68,7 +93,19 @@ bindings:
     workflow: workflows/images/qwen-image-2.1-edit.json
     selectors:
       image: {node: '10', key: images, from: output_dir, decode: none, take: all}
+    adapter_architecture: qwen_image_2
+    adapter_lora_folder: loras
     map:
+      loras:
+        - node: "5"
+          input: model
+          chain:
+            node_type: LoraLoaderModelOnly
+            link: model
+            fields: {name: lora_name, weight: strength_model}
+      text_encoder:
+        - node: "2"
+          input: clip_name
       prompt:
         - node: "6"
           input: text

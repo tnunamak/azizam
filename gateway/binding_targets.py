@@ -89,6 +89,8 @@ def _check_graph_mapping(mapping: Any, at: tuple[PathPart, ...], template: Mappi
                 errors.add(at + ("node",), "template_node_invalid", "the inputs of this template node are not a mapping")
             elif node_inputs is None or name not in node_inputs:
                 errors.add(at + ("input",), "target_missing", "the template node has no such input")
+            elif "chain" in mapping and not _is_link(node_inputs[name]):
+                errors.add(at + ("input",), "chain_edge_not_a_link", "a chain needs an input that holds a link")
         _note_write(written, (node, "inputs", name), at, errors)
         return
     path = mapping.get("path")
@@ -103,6 +105,11 @@ def _check_graph_mapping(mapping: Any, at: tuple[PathPart, ...], template: Mappi
     if problem:
         errors.add(at + ("path",), *problem)
     _note_write(written, tuple(parts), at, errors)
+
+
+def _is_link(value: Any) -> bool:
+    return isinstance(value, list) and len(value) == 2 and isinstance(value[0], str) and isinstance(value[1], int) \
+        and not isinstance(value[1], bool)
 
 
 def _path_problem(template: Mapping[str, Any] | None, parts: list[str]) -> tuple[str, str] | None:
