@@ -25,6 +25,52 @@ vi.mock("@/components/ui/textarea", async (importOriginal) => {
   };
 });
 
+const select = vi.hoisted(() => ({
+  change: undefined as ((id: string) => void) | undefined,
+  options: new Map<string, string>(),
+}));
+
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ children, onValueChange }: ComponentProps<"div"> & { onValueChange: (id: string) => void }) => {
+    select.change = onValueChange;
+    return children;
+  },
+  SelectTrigger: ({ children }: ComponentProps<"div">) => children,
+  SelectContent: ({ children }: ComponentProps<"div">) => children,
+  SelectValue: () => null,
+  SelectItem: ({ children, value }: ComponentProps<"div"> & { value: string }) => {
+    select.options.set(String(children), value);
+    return children;
+  },
+}));
+
+function selectChoice(input: WorkflowInput, value: unknown, label: string) {
+  select.options.clear();
+  select.change = undefined;
+  const onChange = vi.fn();
+  renderToStaticMarkup(createElement(WorkflowInputs, {
+    inputs: [input], json: JSON.stringify({ choice: value }), onChange,
+  }));
+  const id = select.options.get(label);
+  if (!id || !select.change) throw new Error("The select choice was not rendered.");
+  select.change(id);
+  expect(onChange).toHaveBeenCalledOnce();
+  return JSON.parse(onChange.mock.calls[0][0]);
+}
+
+it("sends a declared reserved-looking choice and separately omits an optional choice", () => {
+  const input: WorkflowInput = {
+    name: "choice", type: "string", enum: ["__unset__", "a"], choice_labels: { __unset__: "Declared choice" },
+  };
+  expect(selectChoice(input, undefined, "Declared choice")).toEqual({ choice: "__unset__" });
+  expect(selectChoice(input, "__unset__", "Not set")).toEqual({});
+});
+
+it("sends a numeric select choice without converting it to text", () => {
+  const input: WorkflowInput = { name: "choice", type: "number", enum: [1, 2] };
+  expect(selectChoice(input, 1, "2")).toEqual({ choice: 2 });
+});
+
 function renderPrompt(value = "") {
   const html = renderToStaticMarkup(
     createElement(WorkflowInputs, {
