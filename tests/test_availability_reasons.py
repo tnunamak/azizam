@@ -25,7 +25,7 @@ import proxy  # noqa: E402
 import status_endpoint  # noqa: E402
 from gateway import availability_reasons  # noqa: E402
 from gateway.client_errors import ERROR_CODES  # noqa: E402
-from tests.test_dispatch_admission import dispatch_env  # noqa: E402,F401 - fixture
+from tests.test_dispatch_admission import dispatch_env, fake_upstreams  # noqa: E402,F401 - fixtures
 from tests.test_model_metadata_endpoints import _start_model_list_patches  # noqa: E402
 
 CLOSED_SET = {

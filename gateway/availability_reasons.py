@@ -23,6 +23,9 @@ REASONS: dict[str, str] = {
     "health_unknown": "The gateway has no recent health reading for the service.",
 }
 
+# The delay a refusal and the list give for an operator override that sets none.
+DEFAULT_RETRY_AFTER_S = 10
+
 # What an operator override of a service says, as the reason a caller sees. `available` and `degraded` take a
 # service out of no use.
 OVERRIDE_REASONS: dict[str, str] = {
@@ -44,3 +47,13 @@ def override_reason(override: Mapping[str, Any] | None) -> str | None:
     """The reason code for an operator override of a service, or ``None`` when it leaves the service in use."""
     state = str((override or {}).get("state") or "").strip().lower()
     return OVERRIDE_REASONS.get(state)
+
+
+def override_retry_after_s(override: Mapping[str, Any] | None) -> int:
+    """The delay in whole seconds an operator override gives, or the default when it sets none; one reading for the
+    refusal's ``Retry-After`` and the list's ``retry_after_s``."""
+    try:
+        seconds = int((override or {}).get("retry_after_seconds"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_RETRY_AFTER_S
+    return seconds if seconds > 0 else DEFAULT_RETRY_AFTER_S

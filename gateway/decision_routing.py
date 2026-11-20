@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from gateway import client_errors, runtime_secrets
+from gateway import availability_reasons, client_errors, runtime_secrets
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
 from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
@@ -302,8 +302,9 @@ class DecisionRuntime:
         if attempts.fallback_declared and len(attempts.fallbacks) > 1:
             headers["x-azizam-fallback"] = ",".join(attempts.fallbacks)
         return DecisionDispatchResult(
-            {"error": {"message": "The local decision engines are starting or unavailable." if attempts.fallback_declared else "The configured decision engine is unavailable. No fallback is configured.",
-                       "type": "server_error", "code": "overloaded" if attempts.fallback_declared else "model_not_deployed"}},
+            {"error": availability_reasons.stamp({
+                "message": "The local decision engines are starting or unavailable." if attempts.fallback_declared else "The configured decision engine is unavailable. No fallback is configured.",
+                "type": "server_error", "code": "overloaded" if attempts.fallback_declared else "model_not_deployed"})},
             status_code=status, headers=headers,
             backend=attempts.backend, fallback_reasons=tuple(attempts.fallbacks),
         )

@@ -28,6 +28,7 @@ NAMES = {
     "both-down-model": ["svc-down", "svc-down-too"],
     "unseen-model": ["svc-unseen"],
 }
+UNKNOWN = {"state": "unknown", "reason": "health_unknown"}
 UNMAPPED = "unmapped-model"
 OFF_MODEL = "off-model"
 REAL_INDEX = proxy._model_service_ids_index
@@ -102,7 +103,7 @@ class ModelAvailabilityTests(unittest.TestCase):
     def test_only_service_down_is_unavailable_and_hidden_only_on_request(self) -> None:
         entry = self._entries()["down-model"]
         self.assertEqual(entry["azizam_availability"]["state"], "unavailable")
-        self.assertTrue(entry["azizam_availability"]["reason"])
+        self.assertEqual(entry["azizam_availability"]["reason"], "backend_unavailable")
         self.assertNotIn("down-model", self._entries("?available=true"))
         self.assertIn("up-model", self._entries("?available=true"))
         self.assertEqual(self._entries("?available=true")["up-model"]["azizam_availability"], {"state": "available"})
@@ -111,10 +112,10 @@ class ModelAvailabilityTests(unittest.TestCase):
         self.status = _snapshot(fresh=False)
         listed = self._entries("?available=true")
         for name in NAMES:
-            self.assertEqual(listed[name]["azizam_availability"], {"state": "unknown"})
+            self.assertEqual(listed[name]["azizam_availability"], UNKNOWN)
         # A service with no row in a fresh snapshot is unknown too.
         self.status = _snapshot()
-        self.assertEqual(self._entries("?available=true")["unseen-model"]["azizam_availability"], {"state": "unknown"})
+        self.assertEqual(self._entries("?available=true")["unseen-model"]["azizam_availability"], UNKNOWN)
 
     def test_several_services_follow_the_any_available_rule(self) -> None:
         listed = self._entries()
@@ -172,7 +173,7 @@ class ModelAvailabilityTests(unittest.TestCase):
 
     def test_alias_with_a_down_target_and_an_unmapped_target_is_unknown(self) -> None:
         mixed = {"id": "alias", "azizam_resolves_to": {"chat": "down-model", "embeddings": "no-such-model"}}
-        self.assertEqual(self._judge(mixed), {"state": "unknown"})
+        self.assertEqual(self._judge(mixed), UNKNOWN)
         down = {"id": "alias", "azizam_resolves_to": {"chat": "down-model", "embeddings": "both-down-model"}}
         self.assertEqual(self._judge(down)["state"], "unavailable")
         nothing = {"id": "alias", "azizam_resolves_to": {"chat": "no-such-model", "embeddings": "also-none"}}
@@ -189,9 +190,9 @@ class ModelAvailabilityTests(unittest.TestCase):
         down = {"wf": record(["svc-down"], ["missing-workflow"])}
         self.assertEqual(self._judge(entry, workflows=down)["state"], "unavailable")
         up = {"wf": record(["svc-up"], ["missing-workflow"])}
-        self.assertEqual(self._judge(entry, workflows=up), {"state": "unknown"})
+        self.assertEqual(self._judge(entry, workflows=up), UNKNOWN)
         only_missing = {"wf": record([], ["missing-workflow"])}
-        self.assertEqual(self._judge(entry, workflows=only_missing), {"state": "unknown"})
+        self.assertEqual(self._judge(entry, workflows=only_missing), UNKNOWN)
         self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], [])}), {"state": "available"})
 
     def test_a_workflow_is_judged_by_its_engine_even_when_it_declares_other_requirements(self) -> None:
@@ -209,14 +210,14 @@ class ModelAvailabilityTests(unittest.TestCase):
                 self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-down", "svc-up"], requires)}),
                                  {"state": "available"})
                 self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], requires)}, fresh=False),
-                                 {"state": "unknown"})
+                                 UNKNOWN)
         # The engine and each required service must all be there at once.
         with_service = dict(files_only, services=["svc-down"])
         self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], with_service)})["state"], "unavailable")
         self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-down"], dict(files_only, services=["svc-up"]))})
                          ["state"], "unavailable")
         self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], dict(files_only, services=["svc-unseen"]))}),
-                         {"state": "unknown"})
+                         UNKNOWN)
         # A required workflow's engine is required too.
         two = {"wf": record(["svc-up"], {"workflows": ["dep"]}),
                "dep": SimpleNamespace(id="dep", contract={"bindings": {}}, supported_backends=["svc-down"], manifest={})}
@@ -230,7 +231,7 @@ class ModelAvailabilityTests(unittest.TestCase):
         self.assertEqual(self._judge(entry, workflows=mixed("svc-down", ["svc-up"])), {"state": "available"})
         self.assertEqual(self._judge(entry, workflows=mixed("svc-up", ["svc-down"])), {"state": "available"})
         self.assertEqual(self._judge(entry, workflows=mixed("svc-down", ["svc-down-too"]))["state"], "unavailable")
-        self.assertEqual(self._judge(entry, workflows=mixed("svc-down", [])), {"state": "unknown"})
+        self.assertEqual(self._judge(entry, workflows=mixed("svc-down", [])), UNKNOWN)
         # A backend that is no registry service (the gateway composing it) leaves the requirements to decide.
         self.assertEqual(self._judge(entry, workflows={"wf": record(["gateway"], {"services": ["svc-up"]})}),
                          {"state": "available"})
@@ -261,7 +262,7 @@ class ModelAvailabilityTests(unittest.TestCase):
                 patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
             entry = self._entries()[OFF_MODEL]
             self.assertEqual(entry["azizam_availability"]["state"], "unavailable")
-            self.assertEqual(entry["azizam_availability"]["reason"], "The service is disabled.")
+            self.assertEqual(entry["azizam_availability"]["reason"], "service_disabled")
             self.assertNotIn(OFF_MODEL, self._entries("?available=true"))
 
     def test_a_remote_provider_counts_only_under_its_prefixed_name(self) -> None:
@@ -344,7 +345,7 @@ class ModelAvailabilityTests(unittest.TestCase):
 
     def test_expired_status_snapshot_reads_as_unknown(self) -> None:
         payload = {"backends": [{"service_id": "svc-up", "status": "up"}]}
-        for age_s, expected in ((1.0, {"state": "available"}), (status_endpoint.SNAPSHOT_FRESH_S + 1, {"state": "unknown"})):
+        for age_s, expected in ((1.0, {"state": "available"}), (status_endpoint.SNAPSHOT_FRESH_S + 1, UNKNOWN)):
             snapshot = {"payload": payload, "section_at": {"backends": 10_000.0 - age_s}}
             with self.subTest(age_s=age_s), \
                     patch.object(status_endpoint, "_now", return_value=10_000.0), \
@@ -390,10 +391,10 @@ class ModelAvailabilityTests(unittest.TestCase):
     def test_an_engine_alias_reads_unknown_without_a_fresh_snapshot(self) -> None:
         engines = self._engines("speech", ("first", "svc-up", True))
         alias = self._engine_alias("speech", ["first"], "first")
-        self.assertEqual(self._judge(alias, engines_by_op=engines, fresh=False), {"state": "unknown"})
+        self.assertEqual(self._judge(alias, engines_by_op=engines, fresh=False), UNKNOWN)
         # A service with no row in a fresh snapshot is unknown too.
         unseen = self._engines("speech", ("first", "svc-unseen", True))
-        self.assertEqual(self._judge(alias, engines_by_op=unseen), {"state": "unknown"})
+        self.assertEqual(self._judge(alias, engines_by_op=unseen), UNKNOWN)
 
     def test_an_undeployed_first_candidate_is_skipped(self) -> None:
         # The undeployed first candidate is up and the deployed second one is down: the request can only reach the
@@ -432,8 +433,7 @@ class ModelAvailabilityTests(unittest.TestCase):
             engines = self._engines("speech", ("first", service, False), ("second", service, False))
             with self.subTest(service=label):
                 state = self._judge(self._engine_alias("speech", ["first", "second"], None), engines_by_op=engines)
-                self.assertEqual(state["state"], "unavailable")
-                self.assertTrue(state["reason"])
+                self.assertEqual(state, {"state": "unavailable", "reason": "model_not_deployed"})
         # Idle and startable on demand is still not deployed.
         idle = {"svc-idle": {"status": "idle"}}
         records = {"services": {"svc-idle": {"enabled": True, "config": {"lifecycle": {"mode": "on_demand"}}}}}
@@ -552,7 +552,7 @@ class ModelAvailabilityTests(unittest.TestCase):
                 patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
             state = self._entries()[name]["azizam_availability"]
             self.assertEqual(state["state"], "unavailable")
-            self.assertNotEqual(state["reason"], "The service is disabled.")
+            self.assertEqual(state["reason"], "current_model_unavailable")
 
     def test_a_turned_off_listing_does_not_mark_a_name_an_enabled_service_serves(self) -> None:
         registry = {"services": {

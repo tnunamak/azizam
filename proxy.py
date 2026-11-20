@@ -267,7 +267,8 @@ from gateway.admin_runtime import (
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway import availability
-from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
+from gateway import availability_reasons
+from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities, unknown_state
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -3777,7 +3778,7 @@ def model_compatibility_error(error: "str | Exception") -> Response:
     if details:
         body["details"] = details
     return Response(
-        content=json.dumps({"error": body}),
+        content=json.dumps({"error": availability_reasons.stamp(body)}),
         status_code=status_code,
         media_type="application/json",
     )
@@ -3799,7 +3800,7 @@ def openai_error_response(
         "code": code,
     }
     return Response(
-        content=json.dumps({"error": error}),
+        content=json.dumps({"error": availability_reasons.stamp(error)}),
         status_code=status_code,
         media_type="application/json",
     )
@@ -3955,11 +3956,11 @@ def _litellm_activation_failure_response(
         )
     return Response(
         content=json.dumps({
-            "error": {
+            "error": availability_reasons.stamp({
                 "message": message,
                 "type": "service_unavailable",
                 "code": "backend_unavailable",
-            }
+            })
         }),
         status_code=503,
         media_type="application/json",
@@ -5061,12 +5062,12 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     if await ensure_target(service_id, None):
         return None
     return Response(
-        content=json.dumps({"error": {
+        content=json.dumps({"error": availability_reasons.stamp({
             "message": f"{label} could not be started.",
             "type": "service_unavailable",
             "code": "backend_unavailable",
             "service": service_id,
-        }}),
+        })}),
         status_code=503,
         media_type="application/json",
         headers={"Retry-After": "5"},
@@ -17303,10 +17304,10 @@ async def _identity_ensure_face_service() -> Response | None:
     if await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT):
         return None
     return Response(
-        content=json.dumps({"error": {
+        content=json.dumps({"error": availability_reasons.stamp({
             "message": "The face service could not be started.", "type": "service_unavailable",
             "code": "backend_unavailable", "service": "faces",
-        }}),
+        })}),
         status_code=503, media_type="application/json", headers={"Retry-After": "5"},
     )
 
@@ -19509,13 +19510,14 @@ def _service_availability_response(
 
     label = service_label or service_id
     message = str(override.get("reason") or "").strip() or f"{label} is {state}."
-    retry_after = _optional_int_config(override, "retry_after_seconds") or 10
+    retry_after = availability_reasons.override_retry_after_s(override)
     return Response(
         content=json.dumps({
             "error": {
                 "message": message,
                 "type": "service_unavailable",
                 "code": "backend_unavailable",
+                "reason": availability_reasons.override_reason(override),
                 "service": service_id,
                 "state": state,
             }
@@ -25214,6 +25216,12 @@ def _dispatch_admission_response(
     advised = resource_admission_http.admission_http_response(
         decision, wait_deadline=evidence["wait_deadline"], protocol=protocol,
     )
+    # A refusal that is only about the service says why, with the word the model list uses.
+    if "service_unavailable" in decision.reason_codes and isinstance(advised.body.get("error"), dict):
+        registry_off = service_id is not None and ((config.get("backends") or {}).get(service_id) or {}).get("enabled", True) is False
+        reason = availability_reasons.override_reason(override) or ("service_disabled" if registry_off else None)
+        if reason:
+            advised.body["error"]["reason"] = reason
     return _gateway_refusal(Response(content=json.dumps(advised.body), status_code=advised.status_code,
                                      media_type="application/json", headers=dict(advised.headers)), "capacity")
 
@@ -30755,8 +30763,12 @@ def _model_entry_availability(
     projected: dict[str, Any] | None = None,
     engines_by_op: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     internal_route_targets: Mapping[str, list[str]] | None = None,
-) -> dict[str, str] | None:
+    overrides: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """The `azizam_availability` value for one model entry, or None when no service can be mapped to it.
+
+    A value other than `available` carries a `reason` code (`gateway.availability_reasons`) and, when known,
+    `retry_after_s`. `overrides` are the operator's per-service availability settings.
 
     A name maps through a workflow it is (the services the workflow needs, all at once), through the services
     that serve it by name, or through the names an alias resolves to. An engine-operation alias maps to the services
@@ -30769,17 +30781,18 @@ def _model_entry_availability(
     engines_by_op = engines_by_op or {}
     internal_route_targets = internal_route_targets or {}
 
-    def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, str] | None:
+    def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, Any] | None:
         if not service_ids:
             return None
         if not snapshot_fresh:
-            return {"state": "unknown"}
+            return unknown_state()
         return model_availability(service_ids, service_records=service_records, evidence=evidence,
-                                  require_all=require_all, services=services, projected=projected)
+                                  require_all=require_all, services=services, projected=projected,
+                                  overrides=overrides)
 
     registry_services = service_records.get("services") if isinstance(service_records.get("services"), Mapping) else {}
 
-    def by_backend(backend: str | None, requirements: Mapping[str, Any]) -> dict[str, str] | None:
+    def by_backend(backend: str | None, requirements: Mapping[str, Any]) -> dict[str, Any] | None:
         # One way to run the workflow: its engine, when that is a registry service (the gateway composing it itself is
         # none), and every service it requires, all at once. A known-down part decides, even when another requirement
         # cannot be resolved.
@@ -30797,12 +30810,12 @@ def _model_entry_availability(
         if down is not None:
             return down
         if unresolved:
-            return {"state": "unknown"}
+            return unknown_state()
         if not judged:
             return None
-        return {"state": "available"} if all(state["state"] == "available" for state in judged) else {"state": "unknown"}
+        return next((state for state in judged if state["state"] != "available"), {"state": "available"})
 
-    def by_workflow(workflow_id: str) -> dict[str, str] | None:
+    def by_workflow(workflow_id: str) -> dict[str, Any] | None:
         record = workflows.get(workflow_id)
         if record is None:
             return None
@@ -30818,53 +30831,49 @@ def _model_entry_availability(
         if all(state is None for state in states):
             return None
         # A backend nothing can be judged for counts as unknown beside the others.
-        states = [state or {"state": "unknown"} for state in states]
+        return settle([state or unknown_state() for state in states])
+
+    def settle(states: list[dict[str, Any]]) -> dict[str, Any]:
+        """One value for alternatives: any available one serves; all unavailable says why the first is; else unknown."""
         if any(state["state"] == "available" for state in states):
             return {"state": "available"}
         if all(state["state"] == "unavailable" for state in states):
             return states[0]
-        return {"state": "unknown"}
+        return next(state for state in states if state["state"] == "unknown")
 
-    def by_name_or_workflow(name: str) -> dict[str, str] | None:
+    def by_name_or_workflow(name: str) -> dict[str, Any] | None:
         workflow_id = workflow_ids_by_model.get(name)
         if workflow_id:
             return by_workflow(workflow_id)
         routed = internal_route_targets.get(normalize_model_id(name))
         if routed is not None:
             # The route resolves its target at request time. With none to resolve to, a request is refused.
-            return judge(routed) or {"state": "unavailable", "reason": "No service can answer this name now."}
+            return judge(routed) or {"state": "unavailable", "reason": "current_model_unavailable"}
         return judge(by_name.get(normalize_model_id(name), []))
 
-    def any_of(states: list[dict[str, str]]) -> dict[str, str]:
-        if any(state["state"] == "available" for state in states):
-            return {"state": "available"}
-        if all(state["state"] == "unavailable" for state in states):
-            return states[0]
-        return {"state": "unknown"}
-
-    def engine_state(rows: list[Mapping[str, Any]]) -> dict[str, str] | None:
+    def engine_state(rows: list[Mapping[str, Any]]) -> dict[str, Any] | None:
         # Known engines, none deployed: a request gets model_not_deployed whatever their services' health says. No
         # known engine at all is no information, as before.
         if not rows:
             return None
         deployed = [row for row in rows if row.get("deployed")]
         if not deployed:
-            return {"state": "unavailable", "reason": "No engine behind this name is deployed."}
+            return {"state": "unavailable", "reason": "model_not_deployed"}
         return judge(list(dict.fromkeys(str(row["service"]) for row in deployed if row.get("service"))))
 
-    def by_engine_candidates(operation: str, engine_ids: list[Any]) -> dict[str, str] | None:
+    def by_engine_candidates(operation: str, engine_ids: list[Any]) -> dict[str, Any] | None:
         known = engines_by_op.get(operation, {})
         return engine_state([known[engine_id] for engine_id in engine_ids
                              if isinstance(engine_id, str) and engine_id in known])
 
-    def by_engine_name(name: str) -> dict[str, str] | None:
+    def by_engine_name(name: str) -> dict[str, Any] | None:
         # Only an entry of an engine operation. Inside each operation the name resolves as a request routes: an engine
         # id selects that engine alone; the model an engine serves is searched only when no engine id matched. The
         # operations then combine: one that can serve the name is enough.
         wanted = normalize_model_id(name)
         if not wanted:
             return None
-        states: list[dict[str, str]] = []
+        states: list[dict[str, Any]] = []
         for operation in _engine_operations_of_entry(entry):
             known = engines_by_op.get(operation) or {}
             rows = [row for engine_id, row in known.items() if normalize_model_id(engine_id) == wanted]
@@ -30873,7 +30882,7 @@ def _model_entry_availability(
             state = engine_state(rows) if rows else None
             if state is not None:
                 states.append(state)
-        return any_of(states) if states else None
+        return settle(states) if states else None
 
     workflow_id = entry.get("azizam_workflow_id")
     if isinstance(workflow_id, str) and workflow_id:
@@ -30884,7 +30893,7 @@ def _model_entry_availability(
     if resolves_to or candidates:
         # Per operation: an engine operation is judged by its engine candidates; any other target by the services
         # that serve its name. A target that maps to no service is one more unknown alternative, not a missing one.
-        judged: list[dict[str, str] | None] = []
+        judged: list[dict[str, Any] | None] = []
         for operation in dict.fromkeys([*resolves_to, *candidates]):
             target = resolves_to.get(operation)
             engine_ids = candidates.get(operation)
@@ -30896,7 +30905,7 @@ def _model_entry_availability(
             judged.append(state)
         if all(state is None for state in judged):
             return None
-        return any_of([state or {"state": "unknown"} for state in judged])
+        return settle([state or unknown_state() for state in judged])
     return by_name_or_workflow(model_id) or by_engine_name(model_id)
 
 
@@ -30947,6 +30956,11 @@ def _annotate_model_availability(
     # The names the gateway's own `current` route answers resolve at request time, to the backends it tries.
     candidates = _llm_backend_candidates()
     internal_route_targets = {normalize_model_id(name): candidates for name in USE_LOADED_MODEL_ALIASES}
+    try:
+        overrides = _operator_service_availability_overrides()
+    except Exception:  # noqa: BLE001
+        # A list that cannot read the operator's settings still lists; the refusal says what they are.
+        overrides = {}
     kept: list[Any] = []
     for item in data:
         if isinstance(item, dict):
@@ -30954,7 +30968,7 @@ def _annotate_model_availability(
                 item, by_name=by_name, workflows=workflows, workflow_ids_by_model=workflow_ids_by_model,
                 service_records=service_records, evidence=evidence, snapshot_fresh=snapshot_fresh,
                 services=services, projected=projected, engines_by_op=engines_by_op,
-                internal_route_targets=internal_route_targets,
+                internal_route_targets=internal_route_targets, overrides=overrides,
             )
             if state is None:
                 item.pop("azizam_availability", None)
@@ -34573,11 +34587,11 @@ async def _forward_litellm_proxy_request(
             owner.report(status="failed", reason="connect_error")
             return Response(
                 content=json.dumps({
-                    "error": {
+                    "error": availability_reasons.stamp({
                         "message": "LiteLLM execution backend is unavailable.",
                         "type": "service_unavailable",
                         "code": "backend_unavailable",
-                    }
+                    })
                 }),
                 status_code=503,
                 media_type="application/json",
@@ -34690,11 +34704,11 @@ async def _forward_litellm_proxy_request(
             owner.report(status="failed", reason="connect_error")
             return Response(
                 content=json.dumps({
-                    "error": {
+                    "error": availability_reasons.stamp({
                         "message": "LiteLLM execution backend is unavailable.",
                         "type": "service_unavailable",
                         "code": "backend_unavailable",
-                    }
+                    })
                 }),
                 status_code=503,
                 media_type="application/json",
