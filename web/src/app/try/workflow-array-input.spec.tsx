@@ -3,7 +3,7 @@ import { act, createElement, useState, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
-import { WorkflowInputs, type WorkflowInput } from "./workflow-inputs";
+import { WorkflowInputs, parseWorkflowInputs, workflowInputProblems, type WorkflowInput } from "./workflow-inputs";
 
 const controls = vi.hoisted(() => ({
   buttons: new Map<string, ComponentProps<"button">>(),
@@ -94,6 +94,32 @@ beforeEach(() => {
   controls.numbers.clear();
   controls.choices.clear();
   controls.options.length = 0;
+});
+
+it.each([
+  [{ weight: "" }, "Weight, row 1"],
+  [{ weight: null }, "Weight, row 1"],
+  [{ name: "" }, "Name, row 1"],
+])("refuses present invalid optional record fields: %j", (row, label) => {
+  const input = { ...array, name: "rows", label: "Rows" };
+  const json = JSON.stringify({ rows: [row] });
+  expect(workflowInputProblems(json, [input]).rows).toContain(label);
+  expect(() => parseWorkflowInputs(json, [input])).toThrow(label);
+});
+
+it("preserves explicit zero and false in a valid record", () => {
+  const input: WorkflowInput = {
+    name: "rows", label: "Rows", type: "array", items: {
+      type: "object", properties: {
+        weight: { type: "number" },
+        active: { type: "boolean" },
+      },
+    },
+  };
+  const data = { rows: [{ weight: 0, active: false }, {}] };
+  const json = JSON.stringify(data);
+  expect(workflowInputProblems(json, [input])).toEqual({});
+  expect(parseWorkflowInputs(json, [input])).toEqual(data);
 });
 
 it("adds a defaulted row, names every control, edits the JSON, and removes the final key", () => {

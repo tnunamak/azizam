@@ -17,12 +17,25 @@ describe("availability reason copy", () => {
     const copy = availabilityReason("unavailable", code);
     expect(copy).toMatch(/\S.*\.$/);
     expect(copy).not.toMatch(/\b(?:engine|comfyui|backend)\b|[\w-]+\.(?:py|json|ya?ml|safetensors|ckpt|tsx?)\b/i);
-    if (code === "engine_transitioning" || code === "health_unknown") {
+    if (code === "engine_transitioning") {
       expect(copy).toContain("Try again shortly.");
     } else {
       expect(copy).toContain("Ask the owner");
       expect(copy).not.toContain("Try again shortly.");
     }
+  });
+
+  it("asks the owner to check the service when health is unknown", () => {
+    const copy = availabilityReason("unavailable", "health_unknown");
+    expect(copy).toContain("Ask the owner to check its service");
+    expect(copy).not.toMatch(/try again/i);
+  });
+
+  it("suggests retrying only while a gateway availability reason is transitioning", () => {
+    const retryReasons = gatewayReasons.filter((code) =>
+      /try again/i.test(availabilityReason("unavailable", code) ?? "")
+    );
+    expect(retryReasons).toEqual(["engine_transitioning"]);
   });
 
   it.each([

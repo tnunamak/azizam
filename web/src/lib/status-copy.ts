@@ -44,7 +44,7 @@ const stateReason: Record<string, string> = {
   current_model_unavailable: "No model is loaded. Ask the owner to load one.",
   service_disabled: "This model's service is turned off. Ask the owner to enable it.",
   service_maintenance: "This model is down for maintenance. Ask the owner when it will return.",
-  health_unknown: "This model's status could not be checked. Try again shortly.",
+  health_unknown: "This model's status could not be checked. Ask the owner to check its service.",
 };
 
 export function availabilityReason(

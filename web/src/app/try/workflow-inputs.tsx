@@ -798,13 +798,16 @@ function validateWorkflowInputValue(
       throw new Error(`${named(input)} allows at most ${max} items.`);
     for (const [index, row] of rows.entries()) {
       for (const field of properties) {
-        const entry = Object.hasOwn(row, field.name) ? row[field.name] : undefined;
         const label = `${named(field)}, row ${index + 1}`;
-        if (entry == null || (typeof entry === "string" && !entry.trim())) {
+        if (!Object.hasOwn(row, field.name)) {
           if (field.required) throw new Error(`${label} is required.`);
-        } else {
-          validateWorkflowInputValue({ ...field, label }, entry, {});
+          continue;
         }
+        const entry = row[field.name];
+        if (field.required && (entry == null || (typeof entry === "string" && !entry.trim()))) {
+          throw new Error(`${label} is required.`);
+        }
+        validateWorkflowInputValue({ ...field, label }, entry, {});
       }
     }
     return;
