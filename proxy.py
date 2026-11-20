@@ -16521,15 +16521,22 @@ def _store_adapter_upload(stream: BinaryIO, checked: adapter_upload.Validated, p
     asset_id = f"ast_{digest}"
     target = IMAGE_CACHE_DIR / f"{digest}{adapter_upload.SUFFIX}"
     private_io.ensure_private_dir(IMAGE_CACHE_DIR)
-    if not target.exists():
+    created = not target.exists()
+    if created:
         private_io.atomic_copy_stream(stream, target)
-    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
-        metadata = _read_asset_metadata(asset_id)
-        marker = dict(metadata.get("adapter") or {})
-        marker["label"] = marker.get("label") or label
-        marker["content_sha256"] = checked.digest
-        _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": [person_id],
-                                         "adapter": marker, "updated_at": int(time.time())})
+    try:
+        with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+            metadata = _read_asset_metadata(asset_id)
+            marker = dict(metadata.get("adapter") or {})
+            marker["label"] = marker.get("label") or label
+            marker["content_sha256"] = checked.digest
+            _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": [person_id],
+                                             "adapter": marker, "updated_at": int(time.time())})
+    except BaseException:
+        # A file this call wrote must not stay without its sidecar: nothing would list it and a retry would skip the copy.
+        if created:
+            target.unlink(missing_ok=True)
+        raise
     return asset_id
 
 

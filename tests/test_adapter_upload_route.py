@@ -255,12 +255,26 @@ def test_repeated_upload_keeps_one_asset_file_and_one_offer(world):
     assert [offer.name for offer in offers(world, "robin")] == [asset_id]
 
 
-@pytest.mark.parametrize("retry", [False, True], ids=["clean-refusal", "same-file-retry"])
-def test_adapter_store_write_failure_cleanup_and_retry(world, retry):
-    pytest.skip(
-        "Missing fault seam inside proxy._store_adapter_upload: the fixture captures the whole store "
-        "callback; need its internal file-write step after staging and before commit to exercise cleanup."
-    )
+@pytest.mark.parametrize("failing", ["file-write", "sidecar-write"])
+def test_a_store_write_failure_is_a_refusal_that_leaves_nothing_and_a_retry_works(world, monkeypatch, failing):
+    from gateway import private_io
+
+    world.turn_on()
+
+    def broken(*_args, **_kwargs):
+        raise OSError("disk full")
+    with monkeypatch.context() as patch:
+        if failing == "file-write":
+            patch.setattr(private_io, "atomic_copy_stream", broken)
+        else:
+            patch.setattr(proxy, "_write_asset_metadata", broken)
+        refused = upload(world, ALPHA)
+    assert refused.status_code == 507
+    assert error_code(refused) == "adapter_store_failed"
+    assert stored_files(world) == []
+    retry = upload(world, ALPHA)
+    assert retry.status_code == 200, retry.text
+    assert [offer.name for offer in offers(world, "robin")] == [retry.json()["id"]]
 
 
 def test_two_people_with_the_same_file_each_have_their_own_asset_and_one_cannot_hide_the_others(world):
