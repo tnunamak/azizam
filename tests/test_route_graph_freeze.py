@@ -321,7 +321,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-19 for POST /admin/api/engines/process-preview and GET and PUT /admin/api/operator/engine-folders
         # (see ADDED_PATHS): only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and
         # nothing else). Before it the digest was ae29ca8c59c34f568113a516bccbf63d98b6cc52642771b8a28fc3bcf3e88361.
-        # Re-captured 2026-11-20 for POST /gateway/v1/problem-reports, POST /v1/assets and POST /openai/v1/assets (see
+        # Re-captured 2026-11-20 for the image workflows' steps, sampler and scheduler inputs and for POST
+        # /gateway/v1/problem-reports, POST /v1/assets and POST /openai/v1/assets (see
         # ADDED_PATHS): only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing
         # else). Before them the digest was ed6835d2d53b1985153826c22a9e09f7c812363cd4b01c6d829ef5cd798cb891.
         assert route_graph.openapi_digest(proxy.app) == "f8dffd6bfecf107f9378595e4cfb8a8cd680a7e69bbcae1d065d5e43e5498a03"
