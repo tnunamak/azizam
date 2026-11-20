@@ -239,6 +239,30 @@ def test_a_client_that_hangs_up_mid_upload_leaves_nothing(world: World) -> None:
     world.assert_nothing_left()
 
 
+def test_the_asset_upload_route_closes_its_spilled_part_when_the_request_ends(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    samples: list[list[str]] = []
+
+    def store(data: bytes, auth_context: object) -> JSONResponse:
+        samples.append(world.held_files_holding())
+        return JSONResponse({"size_bytes": len(data)})
+
+    monkeypatch.setattr(proxy, "authenticate_request", lambda request, path: object())
+    monkeypatch.setattr(proxy, "_store_uploaded_image", store)
+    app = FastAPI()
+    app.add_api_route("/v1/assets", proxy.assets_create, methods=["POST"])
+    body, content_type = _multipart(_large_upload())
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+
+    async def post() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as client:
+            return await client.post("/v1/assets", content=body, headers={"content-type": content_type})
+
+    assert asyncio.run(post()).status_code == 200
+    (during,) = samples
+    assert during, "positive control: the spilled part is held open while the route runs"
+    world.assert_nothing_left()
+
+
 def test_a_small_part_never_touches_a_file(world: World) -> None:
     samples: list[dict] = []
     body, content_type = _multipart(MARKER.encode() + b"small")
