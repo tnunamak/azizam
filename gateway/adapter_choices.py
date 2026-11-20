@@ -25,6 +25,7 @@ import asyncio
 import copy
 import logging
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -66,15 +67,41 @@ class Uploads(Protocol):
     def offered(self, person_id: str, *, folder: str, architecture: str) -> Sequence[str]:
         """The names that person may choose for a workflow of ``architecture``: their own uploads whose header names it."""
 
-    def engine_names(self, person_id: str, names: Sequence[str], *, folder: str) -> Mapping[str, str]:
-        """The engine's name for each of those uploads, copied into the engine's folder now. ``LookupError`` when a name
-        is not one that person is offered; any other error means the copy could not be made."""
+    def engine_names(self, person_id: str, names: Sequence[str], *, folder: str, hold: str | None = None,
+                     hold_ttl_s: float = ...) -> Mapping[str, str]:
+        """The engine's name for each of those uploads, copied into the engine's folder now and held for ``hold`` until
+        ``release(hold)``. ``LookupError`` (its first argument the name) when a name is not one that person is offered or
+        the upload is gone; any other error means the copy could not be made."""
+
+    def hold_copies(self, key: str, names: Sequence[Any], *, ttl_s: float = ...) -> None:
+        """Hold the copies of these engine names for ``key``."""
+
+    def release(self, key: str | None) -> None:
+        """End the holds of ``key``."""
 
     def is_copy(self, name: str) -> bool:
         """Whether an engine file name is one of the gateway's own copies. A copy is never an operator's file."""
 
 
 UPLOADS: Uploads | None = None
+HOLD_TTL_S = 1800.0        # a copy chosen for a request is held this long when the request cannot say it has ended
+
+
+def hold_run(key: str, supplied: Mapping[str, Any]) -> None:
+    """Hold the gateway's copies a run's adapter inputs name, for ``key`` (the job id), until ``release(key)``. The run
+    core calls it when a job is made and again when a recovered job starts."""
+    items = supplied.get(LORAS_INPUT) if isinstance(supplied, Mapping) else None
+    if UPLOADS is not None and isinstance(items, list):
+        UPLOADS.hold_copies(key, [item.get("name") for item in items if isinstance(item, Mapping)], ttl_s=RUN_HOLD_TTL_S)
+
+
+def release(key: str | None) -> None:
+    """End a hold taken by ``current`` (``Current.hold``) or ``hold_run``. A key that holds nothing is not an error."""
+    if UPLOADS is not None and key is not None:
+        UPLOADS.release(key)
+
+
+RUN_HOLD_TTL_S = 6 * 3600.0   # a run's copies are held until it ends, or this long if it never says
 
 
 @dataclass(frozen=True)
@@ -291,10 +318,12 @@ class Current(NamedTuple):
     decl: Declaration
     contract: dict[str, Any]       # the contract with the choices put in
     supplied: Mapping[str, Any]    # the adapter inputs the request supplied, each upload named as the engine knows it
+    hold: str | None = None        # the key the copies are held under until the caller calls ``release(hold)``
 
 
 async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: str, origin: str,
-                  person_id: str | None = None, supplied: Mapping[str, Any] | None = None) -> Current | None:
+                  person_id: str | None = None, supplied: Mapping[str, Any] | None = None,
+                  hold_ttl_s: float = HOLD_TTL_S) -> Current | None:
     """The contract as a request sees it now: the declaration the binding makes, the contract with the choices put in,
     and the request's adapter inputs. None when the binding takes no adapters. Raises ``ChoicesUnavailable`` when the
     engine cannot list its files.
@@ -302,38 +331,54 @@ async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: 
     A request names a person's upload by its asset id. Here each upload that ``person_id`` is offered and the request
     names is copied into the engine's folder, and the request and the contract's list name it as the engine does. A
     name that is an asset id the person is not offered (another person's, deleted, unknown) is left alone, so the
-    contract refuses it exactly as it refuses any name that is not on the list."""
+    contract refuses it exactly as it refuses any name that is not on the list.
+
+    The copies are held under ``Current.hold`` for ``hold_ttl_s`` or until the caller releases it: the caller holds them
+    for the life of the run that names them (``hold_run``), then calls ``release(hold)``."""
     decl = declaration(contract, binding_key)
     if decl is None:
         return None
     supplied = {} if supplied is None else supplied
     choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS(), person_id=person_id,
                               wanted=wanted_names(supplied))
-    copies = await _copies(decl, person_id, supplied, choices)
+    hold = f"adapters-{uuid.uuid4().hex}"
+    copies, choices = await _copies(decl, person_id, supplied, choices, hold=hold, hold_ttl_s=hold_ttl_s)
     if copies:
         choices = replace(choices, loras=tuple(copies.get(name, name) for name in choices.loras))
         supplied = {**supplied, LORAS_INPUT: [
-            {**item, "name": copies.get(item.get("name"), item.get("name"))} if isinstance(item, Mapping) else item
+            {**item, "name": _engine_name(item, copies)} if isinstance(item, Mapping) else item
             for item in supplied[LORAS_INPUT]]}
-    return Current(decl, overlay(contract, decl, choices), supplied)
+    return Current(decl, overlay(contract, decl, choices), supplied, hold if copies else None)
 
 
-async def _copies(decl: Declaration, person_id: str | None, supplied: Mapping[str, Any], choices: AdapterChoices
-                  ) -> dict[str, str]:
+def _engine_name(item: Mapping[str, Any], copies: Mapping[str, str]) -> Any:
+    name = item.get("name")
+    return copies.get(name, name) if isinstance(name, str) else name      # a name that is not text stays, and the contract refuses it
+
+
+async def _copies(decl: Declaration, person_id: str | None, supplied: Mapping[str, Any], choices: AdapterChoices, *,
+                  hold: str, hold_ttl_s: float) -> tuple[dict[str, str], AdapterChoices]:
+    """The engine's name for each upload the request names, and the choices without any upload that turned out to be gone
+    (deleted since the list was read): such a name is then refused as any name that is not offered."""
     items = supplied.get(LORAS_INPUT)
     if UPLOADS is None or not person_id or not choices.uploads or not isinstance(items, list):
-        return {}
-    named = [item["name"] for item in items
-             if isinstance(item, Mapping) and isinstance(item.get("name"), str) and item["name"] in choices.uploads]
-    if not named:
-        return {}
-    try:
-        return dict(await asyncio.to_thread(UPLOADS.engine_names, person_id, list(dict.fromkeys(named)), folder=decl.folder))
-    except LookupError:       # deleted since the list was read: the name stays, and the contract refuses it
-        return {}
-    except Exception as exc:  # noqa: BLE001 - the file could not be copied
-        log.exception("an adapter upload could not be copied for the engine")
-        raise UploadUnavailable("an uploaded adapter could not be made ready for the engine") from exc
+        return {}, choices
+    named = list(dict.fromkeys(item["name"] for item in items
+                               if isinstance(item, Mapping) and isinstance(item.get("name"), str) and item["name"] in choices.uploads))
+    while named:
+        try:
+            made = dict(await asyncio.to_thread(UPLOADS.engine_names, person_id, list(named), folder=decl.folder,
+                                                hold=hold, hold_ttl_s=hold_ttl_s))
+            return made, choices
+        except LookupError as gone:
+            lost = gone.args[0] if gone.args and gone.args[0] in named else named[0]
+            named.remove(lost)
+            choices = replace(choices, loras=tuple(name for name in choices.loras if name != lost),
+                              uploads=tuple(name for name in choices.uploads if name != lost))
+        except Exception as exc:  # noqa: BLE001 - the file could not be copied
+            log.exception("an adapter upload could not be copied for the engine")
+            raise UploadUnavailable("an uploaded adapter could not be made ready for the engine") from exc
+    return {}, choices
 
 
 LISTING_WAIT_S = 5.0     # a listing waits this long for the engine, then shows no files for the workflows not yet read

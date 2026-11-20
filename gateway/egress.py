@@ -203,7 +203,7 @@ PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
     "credentials": frozenset({"credential", "credentials"}),
     "overrides": frozenset({"service_availability", "media_job_admission", "revision"}),
     "switch": frozenset({"enabled", "revision", "label", "running_processes", "note"}),
-    "capped_switch": frozenset({"enabled", "max_bytes", "revision", "label"}),
+    "capped_switch": frozenset({"enabled", "max_bytes", "max_total_bytes", "revision", "label"}),
     "probe": frozenset({"probe", "detected"}),
     "keys": frozenset({"keys", "key", "deleted"}),
     "activity": frozenset({"records", "next_cursor", "automated_count", "event"}),

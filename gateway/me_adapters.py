@@ -2,13 +2,17 @@
 
 The file is checked before it is stored (``gateway/adapter_upload.py``): safetensors only, by its own header, within the
 owner's size cap, and only while the owner's setting is on and the engine runs on this computer. The refusals that need
-no body (setting off, engine elsewhere) come before the body is read. A stored upload is a Library item of kind
-``adapter`` that belongs to the signed-in person; the Library's own Delete removes it.
+no body (setting off, engine elsewhere) come before the body is read, and so does a Content-Length past the cap. The
+global body limit (``request_body_limits``) follows the owner's current cap and stops a body that passes it chunk by
+chunk, so the multipart parser never spools more than the cap plus framing. A person's uploads together stay within the
+owner's per-person total. A stored upload is a Library item of kind ``adapter`` that belongs to the signed-in person;
+the Library's own Delete removes it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from typing import Any, BinaryIO
 
@@ -21,6 +25,7 @@ from gateway.admin_oidc import AdminSession
 SessionProvider = Callable[[Request], AdminSession | None]
 MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
 Store = Callable[[BinaryIO, adapter_upload.Validated, str, str], str]
+UsedBytes = Callable[..., int]       # (person_id, *, excluding=asset_id): what the person's other uploads take
 
 NOT_OFFERED_NOTE = ("Stored in your Library, but its header names no base model this gateway knows, so it is not offered "
                     "for any workflow.")
@@ -36,9 +41,11 @@ def create_me_adapters_router(
     rules: Callable[[], adapter_upload.Policy],
     engine_local: Callable[[], bool],
     store: Store,
+    used_bytes: UsedBytes,
     mutation_validator: MutationValidator | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/me/api", tags=["me"])
+    storing = threading.Lock()       # the person's total is read and then stored under this, so two uploads cannot both fit
 
     @router.post("/adapters", include_in_schema=False)
     async def upload_adapter(request: Request) -> JSONResponse:
@@ -55,6 +62,12 @@ def create_me_adapters_router(
             adapter_upload.admit(policy, size=1, engine_local=engine_local())
         except adapter_upload.Refused as exc:
             return _error(exc.code, exc.status, exc.message)
+        try:
+            declared = int(request.headers.get("content-length", "0"))
+        except ValueError:
+            declared = 0
+        if declared > policy.max_bytes + adapter_upload.FRAMING_BYTES:
+            return _error("adapter_too_large", 413, f"The file is larger than the {policy.max_bytes}-byte limit for adapters.")
         try:
             form = await request.form()
         except Exception:  # noqa: BLE001 - a body that is not multipart is the caller's mistake
@@ -74,7 +87,13 @@ def create_me_adapters_router(
             except adapter_upload.Refused as exc:
                 return _error(exc.code, exc.status, exc.message)
             found = adapter_upload.architectures(checked.header.metadata, adapter_upload.architecture_table())
-            asset_id = store(stream, checked, session.subject, label)
+            would_be = f"ast_{adapter_upload.asset_digest(session.subject, checked.digest)}"
+            with storing:
+                try:
+                    adapter_upload.admit_total(policy, used=used_bytes(session.subject, excluding=would_be), size=checked.size)
+                except adapter_upload.Refused as exc:
+                    return _error(exc.code, exc.status, exc.message)
+                asset_id = store(stream, checked, session.subject, label)
             body: dict[str, Any] = {
                 "id": asset_id, "object": "gateway.asset", "kind": "adapter", "media_type": "adapter/safetensors",
                 "size_bytes": checked.size, "architectures": list(found), "offered": bool(found),

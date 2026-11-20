@@ -338,3 +338,20 @@ def test_the_image_route_holds_its_copy_for_a_bounded_time(uploads):
     asset_id = uploads.add(KREA)
     image_call(uploads, {"loras": [{"name": asset_id}]}, person=uploads.person)
     assert proxy.ADAPTER_LIBRARY.held_digests() == {hashlib.sha256(KREA).hexdigest()}
+
+
+def test_a_queued_job_that_is_canceled_lets_go_of_its_copy_and_a_waiting_delete_then_takes_effect(world, uploads, monkeypatch):
+    asset_id = uploads.add(KREA)
+    serve(world)
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", lambda job_id: None)
+    queued = call("post", f"/gateway/v1/workflows/{WORKFLOW}/run", json={"inputs": {"prompt": "x", "loras": [{"name": asset_id}]}})
+    assert queued.status_code == 202, queued.text
+    copy_path = uploads.folder / COPIES / f"{hashlib.sha256(KREA).hexdigest()}.safetensors"
+    proxy._LIBRARY_ASSET_DELETER(asset_id, release_person_id=uploads.person)
+    assert copy_path.exists() and proxy.ADAPTER_LIBRARY.held_digests()
+    job_id = queued.json()["job_id"]
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "can_cancel", lambda job, caller: True)     # the caller's rights are not what is tried here
+    service = proxy._workflow_job_service()
+    monkeypatch.setattr(service, "_readable", lambda jid, caller: media_jobs.get(jid, audience="internal", path=world.media))
+    assert service.cancel(job_id, None).status == "canceled"
+    assert proxy.ADAPTER_LIBRARY.held_digests() == set() and not copy_path.exists()

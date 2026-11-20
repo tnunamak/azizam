@@ -14614,6 +14614,8 @@ async def _serve(app: FastAPI):
 
     prompt_memory_stop = asyncio.Event()
     prompt_memory_task = asyncio.create_task(_prompt_memory_maintenance_loop(prompt_memory_stop))
+    adapter_sweep_stop = asyncio.Event()
+    adapter_sweep_task = asyncio.create_task(_adapter_sweep_loop(adapter_sweep_stop))
     metadata_migration_task = asyncio.create_task(prompt_metadata_migration.background_migration(
         IMAGE_CACHE_DIR, _prompt_migration_state_path(),
     ))
@@ -14629,8 +14631,10 @@ async def _serve(app: FastAPI):
     await status_endpoint.stop_backend_samples()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
+    adapter_sweep_stop.set()
+    adapter_sweep_task.cancel()
     metadata_migration_task.cancel()
-    await asyncio.gather(prompt_memory_task, metadata_migration_task, return_exceptions=True)
+    await asyncio.gather(prompt_memory_task, adapter_sweep_task, metadata_migration_task, return_exceptions=True)
     state.shutdown_requested = True
     if watchdog is not None:
         watchdog.stop()
@@ -16448,8 +16452,8 @@ def _adapter_engine_local() -> bool:
         return False
     try:
         return not engine_egress.is_remote_destination(_graph_service(_GRAPH_CAPABILITY).host)
-    except Exception:  # noqa: BLE001 - no engine selected: nothing to be remote
-        return True
+    except Exception:  # noqa: BLE001 - where the engine runs cannot be read: it is not shown to be here, so no uploads
+        return False
 
 
 def _adapter_lora_root(folder: str) -> Path | None:
@@ -16457,9 +16461,13 @@ def _adapter_lora_root(folder: str) -> Path | None:
 
 
 def _note_adapter_copy(asset_id: str, folder: str) -> None:
+    """Record in the upload's sidecar that a copy of it is in ``folder``. ``LookupError`` when the upload is gone: the
+    Library's delete runs under the same lock, so a sidecar is never written back for an asset deleted meanwhile."""
     with prompt_metadata_migration.CACHE_MUTATION_LOCK:
         metadata = _read_asset_metadata(asset_id)
-        marker = dict(metadata.get("adapter") or {})
+        if not isinstance(metadata.get("adapter"), Mapping) or asset_cache_path(asset_id) is None:
+            raise LookupError(asset_id)
+        marker = dict(metadata["adapter"])
         marker["copies"] = sorted({*marker.get("copies", ()), folder})
         _write_asset_metadata(asset_id, {**metadata, "adapter": marker})
 
@@ -16512,7 +16520,8 @@ _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
 app.include_router(me_adapters.create_me_adapters_router(
     session_provider=lambda request: _oidc_session_from_request(request),
     mutation_validator=lambda request, session: _require_user_action_header(request, session),
-    rules=_adapter_rules, engine_local=_adapter_engine_local, store=_store_adapter_upload))
+    rules=_adapter_rules, engine_local=_adapter_engine_local, store=_store_adapter_upload,
+    used_bytes=ADAPTER_LIBRARY.used_bytes))
 
 app.include_router(
     me_media.create_me_media_router(
@@ -24058,6 +24067,21 @@ async def _prompt_memory_maintenance_loop(stop_event: asyncio.Event) -> None:
             await _drain_prompt_purges_on_wake(stop_event, wake, 60)
     finally:
         _PROMPT_PURGE_WAKE = None
+
+
+async def _adapter_sweep_loop(stop_event: asyncio.Event) -> None:
+    """Every ``adapter_upload.SWEEP_EVERY_S``: remove the engine's copies of uploads that are gone, the idle ones and a
+    crash's scratch files. A copy a run holds stays until the run ends."""
+    while True:          # the first pass comes after one interval, when recovered runs have taken their holds again
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=adapter_upload.SWEEP_EVERY_S)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            await asyncio.to_thread(ADAPTER_LIBRARY.sweep_all)
+        except Exception as exc:  # noqa: BLE001 - the next pass tries again
+            print(f"[proxy] adapter copy sweep pending: {type(exc).__name__}", flush=True)
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
@@ -36923,9 +36947,16 @@ app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
+
+
+def _request_body_limits() -> RequestBodyLimits:
+    """The body limits: the configured ones, and for an adapter upload the owner's cap as it is at that moment."""
+    return dataclasses.replace(RequestBodyLimits.from_config(config), adapter_bytes=lambda: _adapter_rules().max_bytes)
+
+
 app.add_middleware(request_history_capture.RequestHistoryMiddleware,
                    admin_path=lambda: ADMIN_STORE.path, media_path=lambda: media_jobs.DB_PATH)
-app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
+app.add_middleware(RequestBodyLimitMiddleware, limits=_request_body_limits())
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)
 from gateway.json_compression import JsonCompressionMiddleware

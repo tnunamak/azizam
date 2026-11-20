@@ -307,7 +307,8 @@ def test_a_body_past_the_spool_size_is_held_on_disk_under_the_temporary_director
     real = adapter_upload.validate_stream
 
     def watching(stream, size, rules):
-        seen.append(getattr(getattr(stream, "_file", None), "name", None))
+        backing = getattr(getattr(stream, "_file", None), "name", None)       # an open file: a path, or on Linux its descriptor
+        seen.append(os.readlink(f"/proc/self/fd/{backing}") if isinstance(backing, int) else backing)
         return real(stream, size, rules)
 
     monkeypatch.setattr(adapter_upload, "validate_stream", watching)
@@ -386,4 +387,4 @@ def test_the_gateway_sweeps_its_adapter_copies_on_a_timer_and_the_lifespan_start
 
     asyncio.run(go())
     assert len(calls) >= 2
-    assert "_adapter_sweep_loop" in inspect.getsource(proxy.lifespan)
+    assert "_adapter_sweep_loop" in inspect.getsource(proxy._serve)

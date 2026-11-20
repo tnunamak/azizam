@@ -3386,7 +3386,7 @@ def create_admin_router(
         record = admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=store.path)
         rules = adapter_upload.policy(record["value"] if record else None)
         response = egress.plain_json_response({
-            "enabled": rules.enabled, "max_bytes": rules.max_bytes,
+            "enabled": rules.enabled, "max_bytes": rules.max_bytes, "max_total_bytes": rules.max_total_bytes,
             "revision": admin_store.operator_setting_revision(record),
             "label": "Let members upload their own adapters",
         }, response_class="capped_switch")
@@ -3405,10 +3405,12 @@ def create_admin_router(
         try:
             body = await _read_json_body(request)
             cap = body.get("max_bytes", adapter_upload.DEFAULT_MAX_BYTES)
-            if (not set(body) <= {"enabled", "max_bytes"} or not isinstance(body.get("enabled"), bool)
-                    or type(cap) is not int or not 0 < cap <= adapter_upload.MAX_BYTES_CEILING):
-                raise _RouteError(400, "invalid_adapter_uploads", "enabled must be a boolean and max_bytes a positive whole number of bytes, at most the ceiling")
-            value = {"enabled": body["enabled"], "max_bytes": cap}
+            total = body.get("max_total_bytes", adapter_upload.DEFAULT_TOTAL_BYTES)
+            if (not set(body) <= {"enabled", "max_bytes", "max_total_bytes"} or not isinstance(body.get("enabled"), bool)
+                    or type(cap) is not int or not 0 < cap <= adapter_upload.MAX_BYTES_CEILING
+                    or type(total) is not int or not cap <= total <= adapter_upload.TOTAL_BYTES_CEILING):
+                raise _RouteError(400, "invalid_adapter_uploads", "enabled must be a boolean, max_bytes a positive whole number of bytes at most the ceiling, and max_total_bytes a whole number of bytes from max_bytes up to its ceiling")
+            value = {"enabled": body["enabled"], "max_bytes": cap, "max_total_bytes": total}
             record = admin_store.put_operator_setting_with_audit(
                 adapter_upload.SETTING_KEY, value,
                 updated_by=ctx.subject,

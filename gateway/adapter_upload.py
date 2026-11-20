@@ -20,6 +20,7 @@ import re
 import struct
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ from typing import Any, BinaryIO
 
 from gateway.adapter_choices import architecture_table, compatible
 
-SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enabled": bool, "max_bytes": int}
+SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enabled": bool, "max_bytes": int, "max_total_bytes": int}
 SUBFOLDER = "azizam-uploads"         # the gateway's own folder inside the engine's adapter folder
 SUFFIX = ".safetensors"
 DEFAULT_MAX_BYTES = 2 * (1 << 30)    # a file over this is refused
@@ -35,12 +36,20 @@ MAX_BYTES_CEILING = 8 * (1 << 30)    # the owner may raise the cap to this, and 
 MAX_HEADER_BYTES = 8 << 20           # a header over this is refused before it is read
 IDLE_S = 24 * 3600.0                 # a copy no request used for this long is removed
 CACHE_MAX_BYTES = 16 * (1 << 30)     # all copies together stay under this; the least recently used go first
+DEFAULT_TOTAL_BYTES = 10 * (1 << 30)  # one person's uploads together stay under this
+TOTAL_BYTES_CEILING = 512 * (1 << 30)  # the owner may raise the per-person total to this
+HOLD_TTL_S = 6 * 3600.0              # a hold the run never released (a lost worker) ends after this
+SCRATCH_MAX_AGE_S = 3600.0           # a half-written copy older than this is a crash leftover
+FRAMING_BYTES = 1 << 20              # what a multipart body may carry beyond the file
+SWEEP_EVERY_S = 600.0                # how often the gateway sweeps the engine's folders
 
 _METADATA = "__metadata__"
-_DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_COPY_NAME = re.compile(r"^([0-9a-f]{64})" + re.escape(SUFFIX) + r"$")
-_FOLDER = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_ASSET_ID = re.compile(r"^ast_([0-9a-f]{64})$")
+# Every pattern is used with ``fullmatch``: ``$`` would also accept a trailing newline.
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+_COPY_NAME = re.compile(r"([0-9a-f]{64})" + re.escape(SUFFIX))
+_SCRATCH_NAME = re.compile(r"\.[0-9a-f]{64}\.\d+\.\d+\.tmp")
+_FOLDER = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_ASSET_ID = re.compile(r"ast_([0-9a-f]{64})")
 _CHUNK = 1 << 20
 _LOOKS_LIKE_JSON = b"{"
 
@@ -105,7 +114,7 @@ def read_header(stream: BinaryIO, size: int, *, max_header_bytes: int = MAX_HEAD
         raise _not_safetensors()
     try:
         header = json.loads(blob.decode("utf-8"), object_pairs_hook=_no_repeats)
-    except (UnicodeDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:   # a deeply nested header is not a header
         raise _invalid("it is not JSON with distinct keys") from exc
     if not isinstance(header, dict):
         raise _invalid("it is not an object")
@@ -147,16 +156,21 @@ def architectures(metadata: Mapping[str, str], table: Mapping[str, Mapping[str, 
 @dataclass(frozen=True)
 class Policy:
     enabled: bool = False
-    max_bytes: int = DEFAULT_MAX_BYTES
+    max_bytes: int = DEFAULT_MAX_BYTES                # the largest file
+    max_total_bytes: int = DEFAULT_TOTAL_BYTES        # the most one person stores in all
+
+
+def _bounded(value: Any, default: int, ceiling: int) -> int:
+    return min(value, ceiling) if type(value) is int and value > 0 else default
 
 
 def policy(setting: Any) -> Policy:
-    """The owner's setting as a policy. Anything not shaped as expected leaves uploads off and the cap at its default."""
+    """The owner's setting as a policy. Anything not shaped as expected leaves uploads off and the caps at their defaults."""
     if not isinstance(setting, Mapping):
         return Policy()
-    cap = setting.get("max_bytes")
     return Policy(setting.get("enabled") is True,
-                  min(cap, MAX_BYTES_CEILING) if type(cap) is int and cap > 0 else DEFAULT_MAX_BYTES)
+                  _bounded(setting.get("max_bytes"), DEFAULT_MAX_BYTES, MAX_BYTES_CEILING),
+                  _bounded(setting.get("max_total_bytes"), DEFAULT_TOTAL_BYTES, TOTAL_BYTES_CEILING))
 
 
 def admit(rules: Policy, *, size: int, engine_local: bool) -> None:
@@ -170,6 +184,14 @@ def admit(rules: Policy, *, size: int, engine_local: bool) -> None:
         raise _not_safetensors()
     if size > rules.max_bytes:
         raise Refused("adapter_too_large", 413, f"The file is larger than the {rules.max_bytes}-byte limit for adapters.")
+
+
+def admit_total(rules: Policy, *, used: int, size: int) -> None:
+    """Refuse an upload that would take a person past the owner's total: ``used`` is what their other uploads hold."""
+    if used + size > rules.max_total_bytes:
+        raise Refused("adapter_total_too_large", 413,
+                      f"Your adapters already use {used} of the {rules.max_total_bytes} bytes the owner allows each person, "
+                      f"and this file adds {size}. Delete one from your Library first.")
 
 
 @dataclass(frozen=True)
@@ -210,14 +232,14 @@ def label_of(filename: str | None) -> str:
 def lora_root(models_dir: Path | None, folder: str) -> Path | None:
     """The engine's folder for one kind of adapter file: ``folder`` (the workflow binding's) inside the engine's models
     folder. None when the engine's models folder is not on this computer, or the folder name is not a plain name."""
-    if models_dir is None or not _FOLDER.match(folder):
+    if models_dir is None or not _FOLDER.fullmatch(folder):
         return None
     root = models_dir / folder
     return root if root.is_dir() and not root.is_symlink() else None
 
 
 def _check_digest(digest: str) -> str:
-    if not isinstance(digest, str) or not _DIGEST.match(digest):
+    if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
         raise ValueError("a digest is 64 lowercase hex characters")
     return digest
 
@@ -225,12 +247,19 @@ def _check_digest(digest: str) -> str:
 class Materializer:
     """Copies of uploaded adapters inside the engine's folder, named by content hash and found by the engine as
     ``<SUBFOLDER>/<hash>.safetensors``. A copy is made when a request uses the upload. The cache is bounded by idle time
-    and total size. Only files this class names (64 hex characters and the suffix) are ever listed or removed."""
+    and total size. Only files this class names (64 hex characters and the suffix) are ever listed or removed.
+
+    One instance serves one folder for the life of the process (``Library`` keeps it), so its lock and its holds are shared
+    by every caller. A run holds the copies it names under a key of its own until it ends; a held copy is never reaped, and
+    a removal asked for while it is held waits for the last hold to end. A hold also ends by itself after a time bound, so a
+    run that is lost cannot keep a file for ever."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
         self._lock = threading.Lock()
-        self._held: dict[str, int] = {}
+        self._holds: dict[str, tuple[set[str], float]] = {}     # key -> (digests, when the hold ends by itself)
+        self._removal_waiting: set[str] = set()
+        self._verified: set[str] = set()                         # copies whose content this process has checked
 
     @property
     def folder(self) -> Path:
@@ -246,86 +275,192 @@ class Materializer:
         if not folder.exists():
             if not create:
                 return None
-            folder.mkdir()
+            folder.mkdir(exist_ok=True)          # another maker may have made it since the look
         if folder.resolve().parent != self._root.resolve():
             raise Refused("adapter_folder_unsafe", 500, "The gateway's adapter folder is not inside the engine's folder.")
         return folder
 
-    def materialize(self, digest: str, source: Path) -> str:
-        """The name the engine lists for a copy of ``source``, which must hold the content ``digest`` names."""
+    # -- holds (the caller holds the lock)
+
+    def _held_now(self, now: float) -> set[str]:
+        for key in [key for key, (_, ends) in self._holds.items() if ends <= now]:
+            del self._holds[key]
+        return set().union(*(digests for digests, _ in self._holds.values())) if self._holds else set()
+
+    def _hold_locked(self, key: str, digests: Iterable[str], ttl_s: float) -> None:
+        held, _ = self._holds.get(key, (set(), 0.0))
+        self._holds[key] = (held | set(digests), time.time() + ttl_s)
+
+    def _finish_removals(self, folder: Path | None, now: float) -> list[str]:
+        """Remove each copy whose removal waited for a hold that has ended."""
+        done: list[str] = []
+        held = self._held_now(now)
+        for digest in sorted(self._removal_waiting - held):
+            self._removal_waiting.discard(digest)
+            self._verified.discard(digest)
+            if folder is not None:
+                (folder / f"{digest}{SUFFIX}").unlink(missing_ok=True)
+                done.append(digest)
+        return done
+
+    def hold_for(self, key: str, digests: Iterable[str], *, ttl_s: float = HOLD_TTL_S) -> None:
+        """Hold the copies of ``digests`` for ``key`` until ``release(key)`` or the time bound."""
+        wanted = [_check_digest(digest) for digest in digests]
+        with self._lock:
+            self._hold_locked(key, wanted, ttl_s)
+
+    def release(self, key: str) -> list[str]:
+        """End ``key``'s hold. Returns the copies whose removal had waited for it and is now done."""
+        with self._lock:
+            self._holds.pop(key, None)
+            return self._finish_removals(self._safe_folder(create=False), time.time())
+
+    def held_digests(self) -> set[str]:
+        with self._lock:
+            return self._held_now(time.time())
+
+    @contextlib.contextmanager
+    def hold(self, digest: str) -> Iterator[None]:
+        """While held, ``reap`` leaves the copy alone: a request that has chosen it is still being served."""
+        key = f"scope-{uuid.uuid4().hex}"
+        self.hold_for(key, [digest])
+        try:
+            yield
+        finally:
+            self.release(key)
+
+    # -- the copies
+
+    def materialize(self, digest: str, source: Path, *, hold: str | None = None, ttl_s: float = HOLD_TTL_S) -> str:
+        """The name the engine lists for a copy of ``source``, which must hold the content ``digest`` names. With ``hold``,
+        the copy is held for that key from the moment it exists, so no reap can come between."""
         _check_digest(digest)
         with self._lock:
             folder = self._safe_folder(create=True)
             assert folder is not None
             target = folder / f"{digest}{SUFFIX}"
-            if target.is_file() and not target.is_symlink() and target.stat().st_size == source.stat().st_size:
+            self._removal_waiting.discard(digest)
+            if not self._trusted(digest, target, source):
+                self._copy(digest, source, folder, target)
+            else:
                 os.utime(target, None)
-                return self.name_for(digest)
-            scratch = folder / f".{digest}.{os.getpid()}.{threading.get_ident()}.tmp"
-            actual = hashlib.sha256()
-            try:
-                with source.open("rb") as src, scratch.open("wb") as dst:
-                    while chunk := src.read(_CHUNK):
-                        actual.update(chunk)
-                        dst.write(chunk)
-                if actual.hexdigest() != digest:
-                    raise ValueError("the source does not hold the content its digest names")
-                os.replace(scratch, target)
-            finally:
-                scratch.unlink(missing_ok=True)
+            if hold is not None:
+                self._hold_locked(hold, [digest], ttl_s)
         return self.name_for(digest)
 
-    def remove(self, digest: str) -> None:
+    def _trusted(self, digest: str, target: Path, source: Path) -> bool:
+        """Whether the copy already there holds the content its name says: the size matches, and this process has read it
+        and found its hash right (once per copy per process; a file placed or damaged by someone else is made again)."""
+        if not (target.is_file() and not target.is_symlink() and target.stat().st_size == source.stat().st_size):
+            return False
+        if digest in self._verified:
+            return True
+        actual = hashlib.sha256()
+        with target.open("rb") as handle:
+            while chunk := handle.read(_CHUNK):
+                actual.update(chunk)
+        if actual.hexdigest() != digest:
+            return False
+        self._verified.add(digest)
+        return True
+
+    def _copy(self, digest: str, source: Path, folder: Path, target: Path) -> None:
+        scratch = folder / f".{digest}.{os.getpid()}.{threading.get_ident()}.tmp"
+        actual = hashlib.sha256()
+        try:
+            with source.open("rb") as src, scratch.open("wb") as dst:
+                while chunk := src.read(_CHUNK):
+                    actual.update(chunk)
+                    dst.write(chunk)
+            if actual.hexdigest() != digest:
+                raise ValueError("the source does not hold the content its digest names")
+            os.replace(scratch, target)
+            self._verified.add(digest)
+        finally:
+            scratch.unlink(missing_ok=True)
+
+    def remove(self, digest: str) -> bool:
+        """Remove the copy, or, when a run holds it, when the last hold ends. True when it is removed now."""
+        _check_digest(digest)
         with self._lock:
+            if digest in self._held_now(time.time()):
+                self._removal_waiting.add(digest)
+                return False
             folder = self._safe_folder(create=False)
+            self._verified.discard(digest)
             if folder is not None:
-                (folder / f"{_check_digest(digest)}{SUFFIX}").unlink(missing_ok=True)
+                (folder / f"{digest}{SUFFIX}").unlink(missing_ok=True)
+            return True
 
     def digests(self) -> list[str]:
         with self._lock:
             folder = self._safe_folder(create=False)
             if folder is None:
                 return []
-            return sorted(m.group(1) for name in os.listdir(folder) if (m := _COPY_NAME.match(name)))
-
-    @contextlib.contextmanager
-    def hold(self, digest: str) -> Iterator[None]:
-        """While held, ``reap`` leaves the copy alone: a request that has chosen it is still being served."""
-        _check_digest(digest)
-        with self._lock:
-            self._held[digest] = self._held.get(digest, 0) + 1
-        try:
-            yield
-        finally:
-            with self._lock:
-                self._held[digest] -= 1
-                if not self._held[digest]:
-                    del self._held[digest]
+            try:
+                return sorted(m.group(1) for name in os.listdir(folder) if (m := _COPY_NAME.fullmatch(name)))
+            except FileNotFoundError:
+                return []
 
     def reap(self, *, now: float | None = None, idle_s: float = IDLE_S, max_bytes: int = CACHE_MAX_BYTES) -> list[str]:
         """Remove copies idle longer than ``idle_s``, then the least recently used until the total is within
-        ``max_bytes``. Returns the digests removed."""
+        ``max_bytes``. A held copy stays. Returns the digests removed."""
         now = time.time() if now is None else now
         removed: list[str] = []
         with self._lock:
             folder = self._safe_folder(create=False)
             if folder is None:
                 return removed
+            held = self._held_now(now)
             found = []
-            for entry in os.scandir(folder):
-                match = _COPY_NAME.match(entry.name)
-                if match is None or not entry.is_file(follow_symlinks=False) or match.group(1) in self._held:
+            try:
+                entries = list(os.scandir(folder))
+            except FileNotFoundError:
+                return removed
+            for entry in entries:
+                match = _COPY_NAME.fullmatch(entry.name)
+                if match is None or match.group(1) in held:
                     continue
-                stat = entry.stat(follow_symlinks=False)
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:        # removed since the listing
+                    continue
                 found.append((stat.st_mtime, stat.st_size, match.group(1), Path(entry.path)))
             found.sort()
             total = sum(size for _, size, _, _ in found)
             for mtime, size, digest, path in found:
                 if now - mtime > idle_s or total > max_bytes:
                     path.unlink(missing_ok=True)
+                    self._verified.discard(digest)
                     removed.append(digest)
                     total -= size
+            removed.extend(self._finish_removals(folder, now))
         return removed
+
+    def clear_scratch(self, *, now: float | None = None, max_age_s: float = SCRATCH_MAX_AGE_S) -> int:
+        """Remove half-written copies a crash left (``.<digest>.<pid>.<thread>.tmp``) that are older than ``max_age_s``."""
+        now = time.time() if now is None else now
+        cleared = 0
+        with self._lock:
+            folder = self._safe_folder(create=False)
+            if folder is None:
+                return 0
+            try:
+                entries = list(os.scandir(folder))
+            except FileNotFoundError:
+                return 0
+            for entry in entries:
+                if _SCRATCH_NAME.fullmatch(entry.name) is None:
+                    continue
+                try:
+                    if entry.is_file(follow_symlinks=False) and now - entry.stat(follow_symlinks=False).st_mtime > max_age_s:
+                        Path(entry.path).unlink(missing_ok=True)
+                        cleared += 1
+                except FileNotFoundError:
+                    continue
+        return cleared
 
 
 # ------------------------------------------------------------------------------------------------------ the pick-list
@@ -362,7 +497,7 @@ def asset_digest(person_id: str, content_digest: str) -> str:
 
 def digest_of(name: str) -> str | None:
     """The digest an upload's asset id carries, or None for a name that is not an upload's asset id."""
-    match = _ASSET_ID.match(name) if isinstance(name, str) else None
+    match = _ASSET_ID.fullmatch(name) if isinstance(name, str) else None
     return match.group(1) if match else None
 
 
@@ -391,6 +526,13 @@ class Library:
         self._policy, self._lora_root, self._note_copy = policy, lora_root, note_copy
         self._table = table
         self._headers: dict[tuple[str, int, int], tuple[str, ...]] = {}
+        self._materializers: dict[Path, Materializer] = {}     # one per folder for the process: its lock and holds are shared
+        self._seen_folders: set[str] = set()
+        self._guard = threading.Lock()
+
+    def _copies(self, root: Path) -> Materializer:
+        with self._guard:
+            return self._materializers.setdefault(root, Materializer(root))
 
     def _architectures_of(self, path: Path) -> tuple[str, ...] | None:
         try:
@@ -419,7 +561,7 @@ class Library:
     def _content_digest(self, asset_id: str) -> str | None:
         marker = self._metadata(asset_id).get("adapter")
         found = marker.get("content_sha256") if isinstance(marker, Mapping) else None
-        return found if isinstance(found, str) and _DIGEST.match(found) else None
+        return found if isinstance(found, str) and _DIGEST.fullmatch(found) else None
 
     def _content_digests(self, *, excluding: str | None = None) -> set[str]:
         """The content digests of every stored upload (but ``excluding``), whoever owns it."""
@@ -451,10 +593,14 @@ class Library:
             return None
         return self._offer(person_id, name)
 
-    def engine_names(self, person_id: str, names: Iterable[str], *, folder: str) -> dict[str, str]:
+    def engine_names(self, person_id: str, names: Iterable[str], *, folder: str, hold: str | None = None,
+                     hold_ttl_s: float = HOLD_TTL_S) -> dict[str, str]:
         """The engine's name for each chosen upload, copied into the engine's folder when a request uses it. A name
         that is not an upload's asset id (an operator's file) is not in the answer. A name that is an asset id but not
-        one of this person's offered uploads raises ``UnknownAdapter``, whoever owns it, if anyone does."""
+        one of this person's offered uploads raises ``UnknownAdapter``, whoever owns it, if anyone does.
+
+        With ``hold``, each copy is held for that key from the moment it exists, until ``release(hold)`` or the time
+        bound; the caller releases it when the run that names the copy has ended. When this call fails, nothing stays held."""
         wanted = [name for name in dict.fromkeys(names) if digest_of(name) is not None]
         found = {name: self.resolve(person_id, name, folder=folder) for name in wanted}
         if any(offer is None for offer in found.values()):
@@ -462,43 +608,116 @@ class Library:
         root = self._lora_root(folder)
         if root is None or not wanted:
             return {}
-        copies = Materializer(root)
+        copies = self._copies(root)
         copies.reap()
         chosen: dict[str, str] = {}
-        for name in wanted:
-            source = self._path(name)
-            digest = self._content_digest(name)
-            if source is None or digest is None:
-                raise UnknownAdapter(name)
-            chosen[name] = copies.materialize(digest, source)
-            self._note_copy(name, folder)
+        try:
+            for name in wanted:
+                source = self._path(name)
+                digest = self._content_digest(name)
+                if source is None or digest is None:
+                    raise UnknownAdapter(name)
+                chosen[name] = copies.materialize(digest, source, hold=hold, ttl_s=hold_ttl_s)
+                self._seen_folders.add(folder)
+                try:
+                    self._note_copy(name, folder)
+                except LookupError as gone:       # the upload was deleted while the copy was made
+                    self._unwanted(copies, digest, excluding=name)
+                    raise UnknownAdapter(name) from gone
+        except BaseException:
+            if hold is not None:
+                self.release(hold)
+            raise
         return chosen
+
+    def _unwanted(self, copies: Materializer, digest: str, *, excluding: str) -> None:
+        """Remove a copy that no stored upload (but ``excluding``) names."""
+        if digest not in self._content_digests(excluding=excluding):
+            copies.remove(digest)
+
+    def hold_copies(self, key: str, names: Iterable[Any], *, ttl_s: float = HOLD_TTL_S) -> None:
+        """Hold the copies the engine names ``names`` for ``key``: the names a request carries after ``engine_names``. A
+        name that is not one of the gateway's copies is left alone. A copy is held in each engine folder this gateway
+        uses, so a run that comes back after a restart can hold its copies again."""
+        digests = [m.group(1) for name in names if isinstance(name, str) and self.is_copy(name)
+                   and (m := _COPY_NAME.fullmatch(name.replace("\\", "/").rsplit("/", 1)[-1])) is not None]
+        if not digests:
+            return
+        for folder in sorted(self.folders()):
+            root = self._lora_root(folder)
+            if root is not None:
+                self._copies(root).hold_for(key, digests, ttl_s=ttl_s)
+
+    def release(self, key: str | None) -> None:
+        """End ``key``'s holds in every folder, and finish the removals that waited for them."""
+        if key is None:
+            return
+        for materializer in list(self._materializers.values()):
+            materializer.release(key)
+
+    def held_digests(self) -> set[str]:
+        return set().union(*(m.held_digests() for m in list(self._materializers.values())), set())
+
+    def used_bytes(self, person_id: str, *, excluding: str | None = None) -> int:
+        """What the person's own stored uploads take, but ``excluding`` (the one an upload would replace). Only what the
+        Library's ownership rule says the person holds is counted."""
+        total = 0
+        for asset_id in self._asset_ids():
+            if asset_id == excluding or digest_of(asset_id) is None:
+                continue
+            if not isinstance(self._metadata(asset_id).get("adapter"), Mapping) or not self._holds(person_id, asset_id):
+                continue
+            path = self._path(asset_id)
+            try:
+                total += path.stat().st_size if path is not None else 0
+            except OSError:
+                continue
+        return total
 
     def forget(self, asset_id: str, metadata: Mapping[str, Any]) -> None:
         """The asset is going: remove its copies from the folders its sidecar says it was copied to. A copy is named by the
-        file's content, so one that another person's upload of the same bytes also uses stays until that goes too."""
+        file's content, so one that another person's upload of the same bytes also uses stays until that goes too. A copy
+        a run still holds goes when the run ends."""
         marker = metadata.get("adapter") if isinstance(metadata, Mapping) else None
         copied = marker.get("copies") if isinstance(marker, Mapping) else None
         digest = marker.get("content_sha256") if isinstance(marker, Mapping) else None
-        if not (isinstance(digest, str) and _DIGEST.match(digest) and isinstance(copied, list)):
+        if not (isinstance(digest, str) and _DIGEST.fullmatch(digest) and isinstance(copied, list)):
             return
         if digest in self._content_digests(excluding=asset_id):
             return
         for folder in copied:
             root = self._lora_root(folder) if isinstance(folder, str) else None
             if root is not None:
-                Materializer(root).remove(digest)
+                self._copies(root).remove(digest)
 
     def sweep(self, *, folder: str) -> list[str]:
-        """Remove the copies in a folder whose asset is no longer stored, and the idle or over-bound ones."""
+        """Remove the copies in a folder whose asset is no longer stored, and the idle or over-bound ones, and the scratch
+        files a crash left. A copy a run holds stays until the run ends. Returns the digests removed."""
         root = self._lora_root(folder)
         if root is None:
             return []
-        copies = Materializer(root)
+        copies = self._copies(root)
         stored = self._content_digests()
         removed = copies.reap()
         for digest in copies.digests():
-            if digest not in stored:
-                copies.remove(digest)
+            if digest not in stored and copies.remove(digest):
                 removed.append(digest)
+        copies.clear_scratch()
+        return removed
+
+    def folders(self) -> set[str]:
+        """The engine folders this gateway has copied uploads to: the ones this process has used, and the ones the stored
+        uploads' sidecars say were used before."""
+        found = set(self._seen_folders)
+        for asset_id in self._asset_ids():
+            marker = self._metadata(asset_id).get("adapter") if digest_of(asset_id) is not None else None
+            copied = marker.get("copies") if isinstance(marker, Mapping) else None
+            found.update(item for item in copied or () if isinstance(item, str))
+        return found
+
+    def sweep_all(self) -> list[str]:
+        """``sweep`` for every folder in ``folders``: the periodic task's one call."""
+        removed: list[str] = []
+        for folder in sorted(self.folders()):
+            removed.extend(self.sweep(folder=folder))
         return removed
