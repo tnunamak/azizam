@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
-from typing import Mapping
+from typing import Callable, Mapping
 
 from starlette.responses import JSONResponse
+
+from gateway import adapter_upload
 
 
 _MIB = 1024 * 1024
@@ -15,6 +17,10 @@ _MEDIA_PREFIXES = (
     "/gateway/v1/media", "/gateway/v1/workflows", "/gateway/v1/images", "/gateway/v1/faces",
     "/sdapi/v1",
 )
+# A member's adapter upload may be as large as the owner's cap now allows, plus its multipart framing. The cap is a setting
+# the owner can change at any time, so the limit is read from it for each request (``RequestBodyLimits.adapter_bytes``).
+_ADAPTER_PATH = "/me/api/adapters"
+_ADAPTER_FRAMING_BYTES = adapter_upload.FRAMING_BYTES
 
 
 @dataclass(frozen=True)
@@ -22,6 +28,8 @@ class RequestBodyLimits:
     json_bytes: int = 32 * _MIB
     # STT accepts a 512 MiB input file; leave room for multipart metadata.
     media_bytes: int = 513 * _MIB
+    # The owner's current cap on one adapter file. Without one, the cap's default applies.
+    adapter_bytes: Callable[[], int] | None = field(default=None, compare=False, repr=False)
 
     @classmethod
     def from_config(cls, config: Mapping) -> RequestBodyLimits:
@@ -39,6 +47,9 @@ class RequestBodyLimits:
     def for_path(self, path: str) -> int:
         if path.startswith("/openai/"):
             path = path.removeprefix("/openai")
+        if path == _ADAPTER_PATH:
+            cap = self.adapter_bytes() if self.adapter_bytes is not None else adapter_upload.DEFAULT_MAX_BYTES
+            return cap + _ADAPTER_FRAMING_BYTES
         if any(path == prefix or path.startswith(prefix + "/") for prefix in _MEDIA_PREFIXES):
             return self.media_bytes
         return self.json_bytes

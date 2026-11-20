@@ -475,9 +475,9 @@ def test_the_stored_id_tables_derive_from_the_asset_kind_rows():
 
 # --- Home's Recent shows a kind by what its row says, not by what the web knows ---------------------------------------
 
-def test_the_shipped_rows_decide_recent_and_text_is_the_only_hidden_kind():
+def test_the_shipped_rows_decide_recent_and_text_and_adapters_are_the_only_hidden_kinds():
     table = asset_types.load_kind_names()
-    assert {kind for kind, row in table.items() if row.get("recent") is False} == {"text"}
+    assert {kind for kind, row in table.items() if row.get("recent") is False} == {"text", "adapter"}
     for kind in table:
         assert asset_types.kind_names(kind)["recent"] is table[kind].get("recent", True)
     assert asset_types.kind_names("smell")["recent"] is True

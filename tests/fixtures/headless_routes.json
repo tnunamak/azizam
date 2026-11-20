@@ -705,6 +705,22 @@
   },
   {
     "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.get_adapter_uploads",
+    "method": "GET",
+    "path": "/admin/api/operator/adapter-uploads",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.admin_api.update_adapter_uploads",
+    "method": "PUT",
+    "path": "/admin/api/operator/adapter-uploads",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner role required",
     "handler": "gateway.admin_api.get_engine_folders",
     "method": "GET",
@@ -1429,6 +1445,14 @@
     "handler": "proxy.user_portal_activity",
     "method": "GET",
     "path": "/me/api/activity",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header; refused unless the owner allows member adapter uploads; safetensors files only, up to the owner's size cap",
+    "handler": "gateway.me_adapters.upload_adapter",
+    "method": "POST",
+    "path": "/me/api/adapters",
     "schema": false
   },
   {

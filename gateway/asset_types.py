@@ -106,6 +106,9 @@ SUFFIX_MEDIA_TYPES: dict[str, str] = {
     ".stl": "model/stl",
     ".ply": "model/ply",
     ".usdz": "model/vnd.usdz+zip",
+    # A person's own adapter file (gateway/adapter_upload.py). Its kind, ``adapter``, has no stored-id prefix: it is stored
+    # under the generic one, and the Library derives the kind from this row.
+    ".safetensors": "adapter/safetensors",
 }
 
 

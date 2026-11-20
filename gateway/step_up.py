@@ -49,6 +49,8 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
     ("PUT", "/admin/api/operator/host-commands"),
     # Which folders engines may be started from (a template engine runs a program found in one).
     ("PUT", "/admin/api/operator/engine-folders"),
+    # Whether members may put adapter files in the engine's folder (and the largest file).
+    ("PUT", "/admin/api/operator/adapter-uploads"),
     # Who is in, and with which role.
     ("POST", "/admin/api/invites"),
     ("GET", "/admin/api/invites/*/link"),

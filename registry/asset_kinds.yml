@@ -18,4 +18,5 @@ kinds:
   audio: {label: Audio, plural: Audio, untitled: Audio, input: recording, items: audios, prefix: aud, making: true}
   model: {label: 3D model, plural: 3D models, untitled: 3D model, input: 3D model}
   text: {label: Text, plural: Text, untitled: Text file, input: text file, recent: false}
+  adapter: {label: Adapter, plural: Adapters, untitled: Adapter, input: adapter, items: adapters, recent: false}
   file: {label: File, plural: Files, untitled: File, input: file}

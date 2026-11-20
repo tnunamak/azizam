@@ -67,6 +67,7 @@ RECEIPT_OUTCOMES = {
 RUN_RECEIPT_ID_KEY = "run_receipt_id"        # the request id of the receipt a run filed for itself (``run_receipt_path``)
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
 ADAPTER_CHOICES_UNAVAILABLE = "adapter_choices_unavailable"
+ADAPTER_UPLOAD_UNAVAILABLE = "adapter_upload_unavailable"
 REQUEST_FACTS_KEY = "request_facts"          # where the request facts sit in the job's metadata: written once with the row
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
@@ -234,6 +235,9 @@ class RunPort(Protocol):
     # who is asking
     def owner_scope(self, caller: CallerContext) -> str: ...
     def maker(self, caller: CallerContext) -> str: ...
+    def person_id(self, caller: CallerContext) -> str | None:
+        """The person the caller acts for, or None when it is not tied to one (their own uploads are offered to a person)."""
+        ...
     def is_owner(self, caller: CallerContext) -> bool: ...
     def reader(self, caller: CallerContext) -> Reader: ...
     def audience(self, caller: CallerContext) -> str: ...
@@ -680,29 +684,41 @@ class WorkflowRunCore:
         from gateway.engine_protocol.choice_lists import choices_for_run
         choices = choices_for_run(identity, plain(entry.contract).get("inputs") or {})
         contract_now: dict[str, Any] | None = None
+        view = None
         if adapter_choices.names_adapters(req.inputs) and adapter_choices.declaration(plain(entry.contract), binding_key):
             try:
                 if identity is None:
                     raise adapter_choices.ChoicesUnavailable("the engine behind this workflow is not known")
-                contract_now = (await adapter_choices.current(plain(entry.contract), binding_key,
-                                                              service_id=identity.service_id, origin=identity.origin,
-                                                              wanted=adapter_choices.wanted_names(req.inputs)))[1]
+                view = await adapter_choices.current(plain(entry.contract), binding_key,
+                                                     service_id=identity.service_id, origin=identity.origin,
+                                                     person_id=port.person_id(caller), supplied=req.inputs)
+            except adapter_choices.UploadUnavailable:
+                return RunRefused(503, ADAPTER_UPLOAD_UNAVAILABLE,
+                                  "an uploaded adapter could not be made ready for the engine; try again shortly",
+                                  retry_after_s=RETRY_AFTER_S)
             except adapter_choices.ChoicesUnavailable:
                 return RunRefused(503, ADAPTER_CHOICES_UNAVAILABLE, "the engine could not list its adapter files; try again shortly",
                                   retry_after_s=RETRY_AFTER_S)
-        errors = self._validate(entry, req, profile, choices=choices, contract=contract_now)
-        if errors:
-            return RunRefused(422, INVALID_INPUTS, "the run request is not valid", problems=tuple(errors))
-        refused = port.admission_refusal(profile.resource_class, caller, count_queue=True)
-        if refused is not None:
-            return refused
-        try:
-            return await asyncio.to_thread(self._create, req, caller, entry, binding_key, profile, fence, identity)
-        except _AdmissionLost as lost:
-            return lost.refused
-        except (ManifestError, generated_defaults.GeneratedValueUnavailable) as exc:
-            return RunRefused(422, INVALID_INPUTS, "a generated input could not be filled",
-                              problems=(ContractError(("inputs",), "generated_value_invalid", _wire_text(str(exc))),))
+            contract_now = view.contract
+            req = dataclasses.replace(req, inputs=view.supplied)    # an upload is named as the engine knows its copy
+        try:     # the copies of uploads the request names stay held until the job holds them in its own name
+            errors = self._validate(entry, req, profile, choices=choices, contract=contract_now)
+            if errors:
+                return RunRefused(422, INVALID_INPUTS, "the run request is not valid", problems=tuple(errors))
+            refused = port.admission_refusal(profile.resource_class, caller, count_queue=True)
+            if refused is not None:
+                return refused
+            try:
+                created = await asyncio.to_thread(self._create, req, caller, entry, binding_key, profile, fence, identity)
+            except _AdmissionLost as lost:
+                return lost.refused
+            except (ManifestError, generated_defaults.GeneratedValueUnavailable) as exc:
+                return RunRefused(422, INVALID_INPUTS, "a generated input could not be filled",
+                                  problems=(ContractError(("inputs",), "generated_value_invalid", _wire_text(str(exc))),))
+            adapter_choices.hold_run(str(created["job_id"]), req.inputs)     # until the job ends (``execute_run``, ``cancel``)
+            return created
+        finally:
+            adapter_choices.release(view.hold if view is not None else None)
 
     def _validate(self, entry: WorkflowEntry, req: RunRequest, profile, *, choices=None,
                   contract: dict[str, Any] | None = None) -> list[ContractError]:
@@ -829,6 +845,15 @@ class WorkflowRunCore:
             self._settle_crash(job_id)
         finally:
             await self.close_receipt(job_id)
+            self._release_adapter_copies(job_id)
+
+    def _release_adapter_copies(self, job_id: str) -> None:
+        """Let go of the engine copies of uploads the job named, once the job is over (or gone). A job still unfinished (its
+        worker was cancelled, or it waits to be polled) keeps them; they end by the hold's time bound at the latest."""
+        with contextlib.suppress(Exception):
+            job = media_jobs.get(job_id, audience="internal", path=self._path)
+            if job is None or media_jobs.is_terminal(str(job["status"])):
+                adapter_choices.release(job_id)
 
     async def _execute(self, job_id: str) -> None:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
@@ -935,6 +960,7 @@ class WorkflowRunCore:
             self._fail(job_id, SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start.")
             return
         caller = port.caller_from_payload(payload)
+        adapter_choices.hold_run(job_id, (payload.get("body") or {}).get("inputs") or {})     # again: a restart drops every hold
         if checks:
             problem = self._dispatch_problem(job, pin, caller)
             if problem is not None:
@@ -1350,6 +1376,7 @@ class WorkflowJobService:
             current = media_jobs.get(job_id, audience="internal", path=self._path) or job
             if media_jobs.is_terminal(str(current["status"])):
                 self._port.drop_payload(job_id)
+                adapter_choices.release(job_id)
             job = current
         return job_view(job, self._path, disposition="replay")
 

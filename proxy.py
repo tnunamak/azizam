@@ -70,7 +70,7 @@ import dataclasses
 import contextvars
 import io
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Awaitable, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import Any, AsyncIterator, BinaryIO, Awaitable, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
@@ -103,6 +103,8 @@ from gateway import (
     me_avatar,
     me_make,
     me_media,
+    adapter_upload,
+    me_adapters,
     native_lane,
     prompt_memory,
     receipt_store,
@@ -14629,6 +14631,8 @@ async def _serve(app: FastAPI):
 
     prompt_memory_stop = asyncio.Event()
     prompt_memory_task = asyncio.create_task(_prompt_memory_maintenance_loop(prompt_memory_stop))
+    adapter_sweep_stop = asyncio.Event()
+    adapter_sweep_task = asyncio.create_task(_adapter_sweep_loop(adapter_sweep_stop))
     metadata_migration_task = asyncio.create_task(prompt_metadata_migration.background_migration(
         IMAGE_CACHE_DIR, _prompt_migration_state_path(),
     ))
@@ -14644,8 +14648,10 @@ async def _serve(app: FastAPI):
     await status_endpoint.stop_backend_samples()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
+    adapter_sweep_stop.set()
+    adapter_sweep_task.cancel()
     metadata_migration_task.cancel()
-    await asyncio.gather(prompt_memory_task, metadata_migration_task, return_exceptions=True)
+    await asyncio.gather(prompt_memory_task, adapter_sweep_task, metadata_migration_task, return_exceptions=True)
     state.shutdown_requested = True
     if watchdog is not None:
         watchdog.stop()
@@ -16447,6 +16453,77 @@ def _record_make_dispatch(job_id: str, receipt: RouteReceipt) -> None:
 _SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
 
 
+def _adapter_rules() -> adapter_upload.Policy:
+    """The owner's setting for member adapter uploads (off until the owner turns it on)."""
+    try:
+        setting = admin_store.get_operator_setting(adapter_upload.SETTING_KEY, path=ADMIN_STORE.path)
+    except Exception:  # noqa: BLE001 - a setting that cannot be read leaves uploads off
+        return adapter_upload.Policy()
+    return adapter_upload.policy(setting["value"] if setting else None)
+
+
+def _adapter_engine_local() -> bool:
+    """Whether the image engine's models folder is on this computer: the engine directory is set and the engine is not
+    reached as a remote destination."""
+    if host_memory_admission.engine_models_dir() is None:
+        return False
+    try:
+        return not engine_egress.is_remote_destination(_graph_service(_GRAPH_CAPABILITY).host)
+    except Exception:  # noqa: BLE001 - where the engine runs cannot be read: it is not shown to be here, so no uploads
+        return False
+
+
+def _adapter_lora_root(folder: str) -> Path | None:
+    return adapter_upload.lora_root(host_memory_admission.engine_models_dir(), folder) if _adapter_engine_local() else None
+
+
+def _note_adapter_copy(asset_id: str, folder: str) -> None:
+    """Record in the upload's sidecar that a copy of it is in ``folder``. ``LookupError`` when the upload is gone: the
+    Library's delete runs under the same lock, so a sidecar is never written back for an asset deleted meanwhile."""
+    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+        metadata = _read_asset_metadata(asset_id)
+        if not isinstance(metadata.get("adapter"), Mapping) or asset_cache_path(asset_id) is None:
+            raise LookupError(asset_id)
+        marker = dict(metadata["adapter"])
+        marker["copies"] = sorted({*marker.get("copies", ()), folder})
+        _write_asset_metadata(asset_id, {**metadata, "adapter": marker})
+
+
+def _store_adapter_upload(stream: BinaryIO, checked: adapter_upload.Validated, person_id: str, label: str) -> str:
+    """Store a checked upload in the cache for the person who sent it, streamed (not held in memory). Its asset id is
+    personal (``adapter_upload.asset_digest``): the person is the sole maker, so the Library's own rule shows it to them
+    and to no one else, whoever else uploads the same bytes. The sidecar marks it an adapter and keeps the label the
+    person gave it and the content digest the engine's copy is named by."""
+    from gateway import private_io
+    digest = adapter_upload.asset_digest(person_id, checked.digest)
+    asset_id = f"ast_{digest}"
+    target = IMAGE_CACHE_DIR / f"{digest}{adapter_upload.SUFFIX}"
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
+    if not target.exists():
+        private_io.atomic_copy_stream(stream, target)
+    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+        metadata = _read_asset_metadata(asset_id)
+        marker = dict(metadata.get("adapter") or {})
+        marker["label"] = marker.get("label") or label
+        marker["content_sha256"] = checked.digest
+        _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": [person_id],
+                                         "adapter": marker, "updated_at": int(time.time())})
+    return asset_id
+
+
+ADAPTER_LIBRARY = adapter_upload.Library(
+    asset_ids=lambda: [i for i in me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)() if i.startswith("ast_")],
+    metadata=lambda asset_id: _read_asset_metadata(asset_id),
+    path=lambda asset_id: asset_cache_path(asset_id),
+    holds=lambda person_id, asset_id: me_media.holds_cached_asset(
+        person_id, asset_id, asset_metadata_reader=_read_asset_metadata, admin_db_path=lambda: ADMIN_STORE.path),
+    policy=_adapter_rules,
+    lora_root=_adapter_lora_root,
+    note_copy=_note_adapter_copy,
+)
+adapter_choices.UPLOADS = ADAPTER_LIBRARY     # a person's own uploads join the pick-lists built for that person
+
+
 # Removes a Library item (the member's Delete, and a canceled mesh job's model); it keeps one that has several owners.
 _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
     metadata_reader=_read_asset_metadata,
@@ -16454,7 +16531,14 @@ _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
     metadata_path_resolver=_asset_metadata_path,
     metadata_writer=_write_asset_metadata,
     prompt_memory_path=lambda: media_jobs.DB_PATH,
+    on_removed=lambda asset_id, metadata: ADAPTER_LIBRARY.forget(asset_id, metadata),
 )
+
+app.include_router(me_adapters.create_me_adapters_router(
+    session_provider=lambda request: _oidc_session_from_request(request),
+    mutation_validator=lambda request, session: _require_user_action_header(request, session),
+    rules=_adapter_rules, engine_local=_adapter_engine_local, store=_store_adapter_upload,
+    used_bytes=ADAPTER_LIBRARY.used_bytes))
 
 app.include_router(
     me_media.create_me_media_router(
@@ -18913,7 +18997,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     graph_service = _graph_service(_GRAPH_CAPABILITY)
     adapter_files = await adapter_choices.offered(
         published_records, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
-        list_files=adapter_choices.default_list_files, read_header=adapter_choices.default_read_header) \
+        list_files=adapter_choices.default_list_files, read_header=adapter_choices.default_read_header,
+        person_id=session.subject) \
         if graph_service.service_id else {}
 
     def build_catalog() -> dict[str, Any]:
@@ -23398,22 +23483,30 @@ async def _apply_workflow_extensions_to_image_request(
         return dict(backend_request), None
 
     # A request that names adapters is checked against the files the engine offers now; one that does not reads nothing.
-    adapter_view: tuple[adapter_choices.Declaration, dict[str, Any]] | None = None
+    adapter_view: adapter_choices.Current | None = None
     try:
-        named = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
+        supplied_adapters = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
     except ExtensionError as e:
         return None, _image_extension_error_response(receipt, str(e))
-    if adapter_choices.names_adapters(named):
+    if adapter_choices.names_adapters(supplied_adapters):
         graph_service = _graph_service(_GRAPH_CAPABILITY)
         try:
             adapter_view = await adapter_choices.current(
                 manifest, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
-                wanted=adapter_choices.wanted_names(named))
+                person_id=_auth_person_id(auth_context), supplied=supplied_adapters)
+        except adapter_choices.UploadUnavailable:
+            return None, openai_error_response(
+                "an uploaded adapter could not be made ready for the engine; try again shortly",
+                status_code=503, error_type="api_error", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}",
+                code=workflow_run.ADAPTER_UPLOAD_UNAVAILABLE)
         except adapter_choices.ChoicesUnavailable:
             return None, openai_error_response(
                 "the engine could not list its adapter files; try again shortly",
                 status_code=503, error_type="api_error", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}",
                 code=workflow_run.ADAPTER_CHOICES_UNAVAILABLE)
+        if adapter_view is not None:       # an upload is named as the engine knows its copy
+            extension_body = {**extension_body, "extensions": {
+                **extension_body["extensions"], WORKFLOW_EXTENSION_NAMESPACE: dict(adapter_view.supplied)}}
     try:
         result = bind_workflow_extensions(
             extension_body,
@@ -24001,6 +24094,21 @@ async def _prompt_memory_maintenance_loop(stop_event: asyncio.Event) -> None:
             await _drain_prompt_purges_on_wake(stop_event, wake, 60)
     finally:
         _PROMPT_PURGE_WAKE = None
+
+
+async def _adapter_sweep_loop(stop_event: asyncio.Event) -> None:
+    """Every ``adapter_upload.SWEEP_EVERY_S``: remove the engine's copies of uploads that are gone, the idle ones and a
+    crash's scratch files. A copy a run holds stays until the run ends."""
+    while True:          # the first pass comes after one interval, when recovered runs have taken their holds again
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=adapter_upload.SWEEP_EVERY_S)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            await asyncio.to_thread(ADAPTER_LIBRARY.sweep_all)
+        except Exception as exc:  # noqa: BLE001 - the next pass tries again
+            print(f"[proxy] adapter copy sweep pending: {type(exc).__name__}", flush=True)
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
@@ -27782,6 +27890,9 @@ class _WorkflowRunPort:
     def maker(self, caller: AuthContext) -> str:
         identity = caller.identity
         return _auth_person_id(caller) or (getattr(identity, "name", None) or "")
+
+    def person_id(self, caller: AuthContext) -> str | None:
+        return _auth_person_id(caller)
 
     def is_owner(self, caller: AuthContext) -> bool:
         person_id = _auth_person_id(caller)
@@ -36943,9 +37054,16 @@ app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
+
+
+def _request_body_limits() -> RequestBodyLimits:
+    """The body limits: the configured ones, and for an adapter upload the owner's cap as it is at that moment."""
+    return dataclasses.replace(RequestBodyLimits.from_config(config), adapter_bytes=lambda: _adapter_rules().max_bytes)
+
+
 app.add_middleware(request_history_capture.RequestHistoryMiddleware,
                    admin_path=lambda: ADMIN_STORE.path, media_path=lambda: media_jobs.DB_PATH)
-app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
+app.add_middleware(RequestBodyLimitMiddleware, limits=_request_body_limits())
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)
 from gateway.json_compression import JsonCompressionMiddleware
