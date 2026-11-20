@@ -127,10 +127,11 @@ it("adds a defaulted row, names every control, edits the JSON, and removes the f
   render();
   click("Add Styles");
   render();
-  expect(controls.choices.get("Name, row 1")?.value).toBe("");
+  expect(controls.choices.get("Name, row 1")?.value).toBe("unset");
   const weight = controls.numbers.get("Weight, row 1");
   expect(weight).toMatchObject({ value: "1", min: -4, max: 4 });
-  controls.choices.get("Name, row 1")?.change?.("b.safetensors");
+  const b = controls.options.find((option) => option.label === "b.safetensors");
+  controls.choices.get("Name, row 1")?.change?.(b!.value);
   render();
   const change = controls.numbers.get("Weight, row 1")?.onChange;
   change?.({ currentTarget: { value: "0.5" } } as Parameters<NonNullable<typeof change>>[0]);
@@ -225,7 +226,7 @@ it("sends the value, never the label, when a readable name is chosen", () => {
   click("Add Styles");
   render();
   const mine = controls.options.find((option) => option.label === "My watercolour");
-  expect(mine?.value).toBe("ast_1");
+  expect(mine?.value).toMatch(/^choice-\d+$/);
   controls.choices.get("Name, row 1")?.change?.(mine!.value);
   render();
   expect(JSON.parse(onChange.mock.lastCall![0])).toEqual({
@@ -261,7 +262,7 @@ it("shows a member-uploaded LoRA label and keeps its ID through request parsing"
   expect(controls.options.map(({ label }) => label)).toContain("style-a.safetensors");
   expect(controls.options.map(({ label }) => label)).not.toContain("ast_0123");
   const choice = controls.options.find(({ label }) => label === "My watercolour");
-  expect(choice?.value).toBe("ast_0123");
+  expect(choice?.value).toMatch(/^choice-\d+$/);
   controls.choices.get("Name, row 1")?.change?.(choice!.value);
   const emitted = onChange.mock.lastCall![0];
   expect(JSON.parse(emitted).loras).toEqual([{ name: "ast_0123", strength: 1 }]);
