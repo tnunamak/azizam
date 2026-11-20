@@ -27,7 +27,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple, Protocol
@@ -66,6 +66,9 @@ class Uploads(Protocol):
 
     def offered(self, person_id: str, *, folder: str, architecture: str) -> Sequence[str]:
         """The names that person may choose for a workflow of ``architecture``: their own uploads whose header names it."""
+
+    def labels(self, person_id: str, *, folder: str, architecture: str) -> Mapping[str, str]:
+        """The label that person gave each of those uploads; an upload with no label is left out."""
 
     def engine_names(self, person_id: str, names: Sequence[str], *, folder: str, hold: str | None = None,
                      hold_ttl_s: float = ...) -> Mapping[str, str]:
@@ -109,6 +112,7 @@ class AdapterChoices:
     loras: tuple[str, ...]
     text_encoders: tuple[str, ...]
     uploads: tuple[str, ...] = ()     # the part of ``loras`` that is the asking person's own uploads
+    labels: Mapping[str, str] = field(default_factory=dict)   # the labels that person gave those uploads, by name
 
 
 @dataclass(frozen=True)
@@ -185,7 +189,11 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
     inputs = shown["inputs"]
     loras = inputs[LORAS_INPUT]
     if choices.loras:
-        loras["items"]["properties"]["name"]["enum"] = list(choices.loras)
+        name = loras["items"]["properties"]["name"]
+        name["enum"] = list(choices.loras)
+        named = {key: label for key, label in choices.labels.items() if key in choices.loras}
+        if named:
+            name["choice_labels"] = named
     else:
         loras["max_items"] = 0
     if decl.encoder_input is not None:
@@ -235,7 +243,7 @@ async def installed(
     cache that another person reads."""
     now = time.time() if now is None else now
     uploads = UPLOADS if uploads is None else uploads
-    own = await _own_uploads(uploads, person_id, decl)
+    own, labels = await _own_uploads(uploads, person_id, decl)
     wanted = [name for name in wanted if name not in own]   # an upload is not in the engine's list, and is not a stale one
     list_files, read_header = list_files or default_list_files, read_header or default_read_header
     key = (service_id, decl.node_type, decl.listing_input, decl.folder)
@@ -266,17 +274,24 @@ async def installed(
     table = architecture_table() if table is None else table
     loras = compatible(files, headers, decl.architecture, table, marked(marks, decl.architecture, "loras"))
     return AdapterChoices(tuple(loras) + tuple(name for name in own if name not in loras), decl.default_encoders,
-                          tuple(own))
+                          tuple(own), labels)
 
 
-async def _own_uploads(uploads: Uploads | None, person_id: str | None, decl: Declaration) -> list[str]:
+async def _own_uploads(uploads: Uploads | None, person_id: str | None, decl: Declaration
+                       ) -> tuple[list[str], dict[str, str]]:
     if uploads is None or not person_id:
-        return []
+        return [], {}
+
+    def read() -> tuple[list[str], dict[str, str]]:
+        names = list(uploads.offered(person_id, folder=decl.folder, architecture=decl.architecture))
+        labels = uploads.labels(person_id, folder=decl.folder, architecture=decl.architecture)
+        return names, {name: label for name, label in labels.items() if name in names and label}
+
     try:
-        return list(await asyncio.to_thread(uploads.offered, person_id, folder=decl.folder, architecture=decl.architecture))
+        return await asyncio.to_thread(read)
     except Exception:  # noqa: BLE001 - a failure here costs the person their uploads on this list, never the operator's files
         log.exception("a person's adapter uploads could not be listed")
-        return []
+        return [], {}
 
 
 async def _headers(service_id: str, origin: str, folder: str, files: Sequence[str],
@@ -389,14 +404,16 @@ async def offered(
     list_files: Callable[[str, str, str], list[str]] | None = None,
     read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
     person_id: str | None = None,
-) -> dict[str, tuple[str, ...]]:
-    """The adapter files each record offers now, by record id, for a listing. A record that takes no adapters is left
-    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again; reads
-    that finish after the wait are kept). The caller passes the readers: with no ``list_files`` nothing is read.
-    ``person_id``'s own uploads are on the list for that person only."""
+) -> dict[str, dict[str, Any]]:
+    """The adapter inputs each record offers now, by record id, for a listing: the manifest's ``loras`` (and encoder)
+    input with this moment's choices put in by ``overlay``, the same shape a request is checked against. A record that
+    takes no adapters is left out; so is one whose files could not be read in time (the listing then shows none, and the
+    next one tries again; reads that finish after the wait are kept). The caller passes the readers: with no
+    ``list_files`` nothing is read. ``person_id``'s own uploads, and the labels they gave them, are on the list for that
+    person only."""
     if list_files is None:
         return {}
-    async def one(record: Any) -> tuple[str, tuple[str, ...]] | None:
+    async def one(record: Any) -> tuple[str, dict[str, Any]] | None:
         decl = declaration(record.contract, binding_key)
         if decl is None:
             return None
@@ -407,7 +424,8 @@ async def offered(
                 LISTING_WAIT_S)
         except (ChoicesUnavailable, asyncio.TimeoutError):
             return None
-        return record.id, choices.loras
+        shown = overlay(record.contract, decl, choices)["inputs"]
+        return record.id, {name: shown[name] for name in (LORAS_INPUT, decl.encoder_input) if name}
 
     return dict(found for found in await asyncio.gather(*(one(record) for record in records)) if found)
 
