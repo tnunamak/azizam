@@ -144,6 +144,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
                  "video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"}
     expected_added.update({name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
                            for name in keyframes})
+    expected_added["video-minimax-h3-i2v-hires"] = ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
     added = set(expected_added)
     assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
     model_surface = [row for row in model_surface if row[0] not in added]

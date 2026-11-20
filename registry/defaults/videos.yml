@@ -101,7 +101,7 @@ workflows:
       prompt_field: "value"
     requires_input_reference: true
     min_seconds: 2
-    max_seconds: 2
+    max_seconds: 5.17
     max_size: 1216x704
     default_size: 1216x704
     frame_rate: 24

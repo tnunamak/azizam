@@ -9,7 +9,7 @@ display_name: MiniMax H3 I2V Hi-Res (uncensored)
 purpose: Animate an image in high resolution with sound
 prompt_hint: Describe how the picture should move
 description: Make a high-resolution video with stereo sound from a starting picture and a description, without the usual content filtering. It only shows adults.
-typical_seconds: 70
+typical_seconds: 195
 video:
   roles:
     width: width
@@ -18,7 +18,7 @@ video:
     frame_rate: frame_rate
     image: image
   size: {default: 1216x704, max: 1216x704, multiple: 64}
-  length: {min_seconds: 2, max_seconds: 2}
+  length: {min_seconds: 2, max_seconds: 5.17}
   grid: {fps: 24, step: 17, offset: 5}
   requires: [image]
 inputs:
@@ -64,7 +64,7 @@ inputs:
     step: 17
     offset: 5
     minimum: 22
-    maximum: 39
+    maximum: 124
   frame_rate:
     label: Frames per second
     help: How many frames the video shows each second.

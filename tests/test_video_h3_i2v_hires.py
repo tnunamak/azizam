@@ -61,7 +61,10 @@ def test_identity_and_catalog_facts() -> None:
     assert identity.trusted
     assert manifest["intent"] == "video.generate"
     assert "US, EU, UK" in manifest["license"]
-    assert manifest["video"]["size"] == {"default": "1216x704", "max": manifest["video"]["size"]["max"], "multiple": 64}
+    # Proven by real runs: 1216x704 for 124 frames (5.17 s) peaked at 20354 MiB on the 24 GiB card.
+    assert manifest["video"]["size"] == {"default": "1216x704", "max": "1216x704", "multiple": 64}
+    assert manifest["video"]["length"] == {"min_seconds": 2, "max_seconds": 5.17}
+    assert manifest["inputs"]["length"]["maximum"] == 124
     assert manifest["video"]["grid"] == {"fps": 24, "step": 17, "offset": 5}
     assert manifest["video"]["requires"] == ["image"]
     # Users never type a model id, and the sigma ladders are fixed in the graph.
@@ -153,3 +156,19 @@ def test_binding_does_not_mutate_the_template() -> None:
 def test_notes_page_exists_and_explains_the_second_conditioning_node() -> None:
     text = NOTES.read_text(encoding="utf-8")
     assert "second conditioning node" in text
+
+
+def test_the_video_route_finds_the_workflow_and_its_node_roles_name_graph_nodes() -> None:
+    import proxy
+
+    name, config = proxy._resolve_video_workflow("video-minimax-h3-i2v-hires")
+    assert name == "video-minimax-h3-i2v-hires"
+    graph = json.loads(GRAPH.read_text(encoding="utf-8"))
+    roles = config["node_roles"]
+    assert roles["prompt_node"] == "prompt" and roles["prompt_field"] == "value"
+    assert roles["size_node"] == ["width", "height"] and roles["length_nodes"] == ["length"]
+    for key, value in roles.items():
+        if key.endswith(("_node", "_nodes")):
+            assert all(node in graph for node in (value if isinstance(value, list) else [value])), key
+    assert config["max_size"] == config["default_size"] == "1216x704"
+    assert config["requires_input_reference"] is True
