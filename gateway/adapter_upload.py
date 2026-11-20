@@ -734,7 +734,7 @@ class Library:
             marker = self._metadata(asset_id).get("adapter") if digest_of(asset_id) is not None else None
             copied = marker.get("copies") if isinstance(marker, Mapping) else None
             found.update(item for item in copied or () if isinstance(item, str))
-        return found
+        return {folder for folder in found if _FOLDER.fullmatch(folder)}
 
     def sweep_all(self) -> list[str]:
         """``sweep`` for every folder in ``folders``: the periodic task's one call."""
