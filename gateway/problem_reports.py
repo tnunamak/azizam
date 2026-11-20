@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, log_scrub, secret_refs, secret_store
 from gateway.admin_api import AdminAuth, _require_admin
-from gateway.problem_report_tool import CATEGORIES, REPORT_HINT, SUMMARY_MAX, TOOL, WORKAROUND_MAX  # noqa: F401
+from gateway.problem_report_tool import CATEGORIES, REPORT_HINT, REST_PATH, SUMMARY_MAX, TOOL, WORKAROUND_MAX  # noqa: F401
 from gateway.session_guard import SessionEnded
 
 SETTING_KEY = "problem_report_destinations"
@@ -49,9 +49,10 @@ NOTIFY_TIMEOUT_S = 5.0
 MAX_APPS = 20
 
 class ProblemReportError(Exception):
-    def __init__(self, message: str, code: str = "invalid_report") -> None:
+    def __init__(self, message: str, code: str = "invalid_report", param: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.param = param  # the argument a refused report got wrong, for the REST door
 
 
 @dataclass(frozen=True)
@@ -198,16 +199,16 @@ class ProblemReports:
     def _validate(self, args: Mapping[str, Any]) -> dict[str, Any]:
         unknown = sorted(set(args) - set(TOOL["inputSchema"]["properties"]))
         if unknown:
-            raise ProblemReportError(f"unknown argument {unknown[0]!r}")
+            raise ProblemReportError(f"unknown argument {unknown[0]!r}", param=unknown[0])
         summary = args.get("summary")
         if not isinstance(summary, str) or not summary.strip():
-            raise ProblemReportError("`summary` is required: say what happened")
+            raise ProblemReportError("`summary` is required: say what happened", param="summary")
         category = args.get("category", "failure")
         if category not in CATEGORIES:
-            raise ProblemReportError(f"`category` must be one of {', '.join(CATEGORIES)}")
+            raise ProblemReportError(f"`category` must be one of {', '.join(CATEGORIES)}", param="category")
         for name in ("workaround", "target", "job_id"):
             if args.get(name) is not None and not isinstance(args[name], str):
-                raise ProblemReportError(f"`{name}` must be text")
+                raise ProblemReportError(f"`{name}` must be text", param=name)
         return {"category": category, "summary": clean_text(summary.strip(), SUMMARY_MAX),
                 "workaround": clean_text(args["workaround"].strip(), WORKAROUND_MAX) if args.get("workaround") else None,
                 "target": (args.get("target") or "").strip()[:128] or None,
@@ -582,5 +583,35 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports,
         except ValueError:
             return _error(400, "invalid_request", "the body must be JSON")
         return row if row else _error(404, "report_not_found", "No such report.")
+
+    return router
+
+
+def create_runtime_problem_reports_router(*, submit: Callable[[Request, Mapping[str, Any]], Awaitable[dict[str, Any]]]) -> APIRouter:
+    """``POST /gateway/v1/problem-reports``: the MCP ``report_problem`` tool for a client that cannot list MCP tools.
+
+    ``submit`` is the same core the tool calls, so the two doors answer alike. The App key layer has already
+    named the caller (the ``/gateway/v1`` prefix is gated by the gateway's auth middleware)."""
+    router = APIRouter(tags=["Problem reports"])
+
+    def _error(status: int, code: str, message: str, param: str | None = None) -> JSONResponse:
+        return JSONResponse(status_code=status, content={"error": {"code": code, "message": message, "param": param}})
+
+    @router.post(REST_PATH, openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": TOOL["inputSchema"]}}}})
+    async def file_report(request: Request):
+        """Tell the operator a tool failed, differed from its description or forced a workaround.
+
+        Takes the arguments of the MCP `report_problem` tool and answers what it answers (`report_id`, `duplicate`,
+        `count`, `known_workaround`). One report per distinct problem; a repeat folds into the same report."""
+        try:
+            args = await request.json()
+        except ValueError:
+            args = None
+        if not isinstance(args, dict):
+            return _error(400, "invalid_report", "Send a JSON object with at least `summary`: what happened, in plain words.")
+        try:
+            return JSONResponse(status_code=200, content=await submit(request, args))
+        except ProblemReportError as exc:
+            return _error(429 if exc.code == "rate_limited" else 400, exc.code, str(exc), exc.param)
 
     return router

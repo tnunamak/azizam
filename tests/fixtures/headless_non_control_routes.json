@@ -160,6 +160,7 @@
   ["POST", "/gateway/v1/media/jobs/image-generations", "proxy.gateway_image_generations_media_job"],
   ["POST", "/gateway/v1/media/jobs/{job_id}/cancel", "gateway.api.cancel_media_job"],
   ["POST", "/gateway/v1/media/jobs/{job_id}/events", "gateway.api.append_media_job_event"],
+  ["POST", "/gateway/v1/problem-reports", "gateway.problem_reports.file_report"],
   ["POST", "/gateway/v1/providers/{provider}/{native_path:path}", "proxy.provider_native_request"],
   ["POST", "/gateway/v1/workflows/{workflow_id}/run", "proxy.run_video_manifest_workflow"],
   ["POST", "/internal/litellm/current/v1/chat/completions", "proxy.internal_litellm_current_chat_completions"],

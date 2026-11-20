@@ -42,6 +42,20 @@ happened, required, 1000 characters), `workaround` (what you did instead, option
 Error results of `run` and `job` carry a short `report_hint` field, so the nudge sits in the failure the agent is
 already reading, not only in a description it may have skipped.
 
+## Other doors to the same core
+
+A client may list MCP tools and still not offer `report_problem` to its model, or drive only `run` with targets taken
+from `capabilities` (an agent tried `report_problem` as a run target and found no way to file). Three additions
+reach it from every client shape, all on the one core (`PROBLEM_REPORTS.submit`, the caller built by
+`_mcp_problem_caller`):
+
+- `POST /gateway/v1/problem-reports` takes the tool's JSON arguments with any App key and answers what the tool
+  answers. A bad argument is `400 invalid_report` with `error.param`; the hourly limit is `429 rate_limited`.
+- `run` (and `capabilities` with a `target`) given `report_problem` or `report-problem` answers an error that says it is
+  a tool, not a run target, and names the tool and the REST route. It never becomes a real target.
+- The `capabilities` answer (MCP, and `GET /gateway/v1/capabilities`) has one field, `report_problem`:
+  `{"tool": "report_problem", "rest": "POST /gateway/v1/problem-reports"}`.
+
 ## Context the gateway attaches
 
 The agent writes only `summary` and `workaround`. The gateway adds:
