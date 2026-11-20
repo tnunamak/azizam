@@ -177,6 +177,15 @@ class VoiceDesignDifferentialTests(unittest.TestCase):
         self.assertIn("not configured", case["response"]["json"]["error"]["message"])
 
 
+def _without_refusal_reason(result: dict) -> dict:
+    """The result without the ``error.reason`` word train 101 adds to a refusal (here ``model_not_deployed``); the golden predates it."""
+    error = (result["response"].get("json") or {}).get("error")
+    if not isinstance(error, dict) or "reason" not in error:
+        return result
+    assert error["reason"] == error["code"] == "model_not_deployed", error
+    return {**result, "response": {**result["response"], "json": {"error": {k: v for k, v in error.items() if k != "reason"}}}}
+
+
 class SpeechVoiceDifferentialTests(unittest.TestCase):
     """Every request matches, except where a voice was silently replaced; the listing is what is accepted."""
 
@@ -190,7 +199,7 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
             observed = asyncio.run(_observe_speech(proxy, client, upstream, (model,)))
             golden = {case: value for case, value in _GOLDEN["speech"].items() if case.split(" voice=")[0] == model}
             self.assertEqual(set(observed), set(golden))
-            identical = {case for case in golden if observed[case] == golden[case]}
+            identical = {case for case in golden if _without_refusal_reason(observed[case]) == golden[case]}
             refused, now_listed, rerouted = [], [], []
             for case in sorted(set(golden) - identical):
                 old, new = golden[case], observed[case]
