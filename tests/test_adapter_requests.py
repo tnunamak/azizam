@@ -241,7 +241,9 @@ def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypat
 # the node whose model input the chain takes over, and the link that input held before (the base loader's output)
 ANCHORS = [("image.generate.krea2-turbo", "7", ["1", 0]),
            ("image.generate.krea2-turbo-snofs", "7", ["11", 0]),
-           ("image.edit.qwen-image-2.1-edit", "5", ["1", 0])]
+           ("image.edit.qwen-image-2.1-edit", "5", ["1", 0]),
+           ("image.generate.flux2-klein", "31", ["1", 0]),
+           ("image.generate.flux2-klein-snofs", "31", ["11", 0])]
 
 
 @pytest.mark.parametrize("workflow_id,anchor,base_link", ANCHORS)
