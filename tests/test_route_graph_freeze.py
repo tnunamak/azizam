@@ -324,7 +324,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-20 for POST /gateway/v1/problem-reports, POST /v1/assets and POST /openai/v1/assets (see
         # ADDED_PATHS): only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing
         # else). Before them the digest was ed6835d2d53b1985153826c22a9e09f7c812363cd4b01c6d829ef5cd798cb891.
-        assert route_graph.openapi_digest(proxy.app) == "PENDING"
+        assert route_graph.openapi_digest(proxy.app) == "4058c7d5f8da81e83424d26f9fcb2c6021804579206124fba830642390320ada"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
