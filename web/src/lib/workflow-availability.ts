@@ -53,6 +53,8 @@ export interface WorkflowAvailabilityView {
 
 export const READY_TO_START = "Ready to start";
 
+const OWNER_SETUP_NOTE = "Unavailable. Check its setup.";
+
 export const MEMBER_SETUP_NOTE =
   "Not available right now. The person who manages Azizam can set it up.";
 
@@ -104,8 +106,8 @@ function ownerSetupHelp(
     };
   if (code === "policy_denied")
     return {
-      text: "An access plan blocks it. Review plans in People.",
-      fix: { href: "/people?tab=plans", action: "Open access plans" },
+      text: "An access plan blocks it. Check its setup in Engines.",
+      fix: engines,
     };
   if (status === "unknown" || code === "unknown")
     return {
@@ -141,7 +143,15 @@ export function workflowAvailabilityView(
       fix: null,
     };
   const code = availability.reason_code;
-  if (status in WAIT_NOTE && code !== "required_file_missing")
+  if (code === "engine_transitioning")
+    return {
+      readiness: "wait",
+      runnable: false,
+      pickerNote: "Starting",
+      text: "Try again shortly.",
+      fix: null,
+    };
+  if (status in WAIT_NOTE && code !== "required_file_missing" && code !== "policy_denied")
     return {
       readiness: "wait",
       runnable: false,
@@ -152,6 +162,7 @@ export function workflowAvailabilityView(
   // A setup code decides the state; the gateway's prose only explains it.
   const needsSetup =
     code === "required_file_missing" ||
+    code === "policy_denied" ||
     code === "unavailable_disabled" ||
     code === "unavailable_unconfigured" ||
     code === "not_available" ||
@@ -178,12 +189,20 @@ export function workflowAvailabilityView(
       text: MEMBER_SETUP_NOTE,
       fix: null,
     };
-  const help = ownerSetupHelp(availability ?? {}, availability?.engine ?? engineBinding);
+  if (!reason && !(code === "required_file_missing" && availability.missing?.some(({ name }) => name)))
+    return {
+      readiness: "setup",
+      runnable: false,
+      pickerNote: "Unavailable",
+      text: OWNER_SETUP_NOTE,
+      fix: null,
+    };
+  const help = ownerSetupHelp(availability, availability.engine ?? engineBinding);
   return {
     readiness: "setup",
     runnable: false,
     pickerNote: "Unavailable",
-    text: code === "required_file_missing" ? help.text : reason ?? help.text,
+    text: code === "required_file_missing" || code === "policy_denied" ? help.text : reason ?? help.text,
     fix: help.fix,
   };
 }

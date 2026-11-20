@@ -12,14 +12,15 @@ describe("workflowAvailabilityView", () => {
       { owner: true },
     )).toEqual({
       readiness: "setup", runnable: false, pickerNote: "Unavailable",
-      text: "Its engine is not answering. See Status.",
-      fix: { href: "/status", action: "Open Status" },
+      text: "Unavailable. Check its setup.",
+      fix: null,
     });
   });
 
   it("gives only the owner the Engines fix for a disabled idle workflow", () => {
     const availability = {
       status: "idle", available: false, reason_code: "unavailable_disabled",
+      reason: "Turned off. Turn it on in Engines.",
     };
     expect(workflowAvailabilityView(availability, {
       owner: true, engineBinding: "worker one",
@@ -93,7 +94,6 @@ describe("workflowAvailabilityView", () => {
     { missing: [{ kind: "model", name: "sample.bin" }, { kind: "node", name: "SampleNode" }] as const,
       reason: "Gateway fallback.", text: "A file it needs is missing on its engine: sample.bin, SampleNode. Install it in Engines; the list refreshes within 5 minutes." },
     { missing: [], reason: "Gateway fallback.", text: "Gateway fallback." },
-    { missing: undefined, reason: undefined, text: "A file it needs is missing on its engine. Install it in Engines." },
   ])("gives an owner missing-file setup help: $text", ({ missing, reason, text }) => {
     expect(workflowAvailabilityView({
       available: false, reason_code: "required_file_missing", engine: "worker one",
@@ -101,6 +101,30 @@ describe("workflowAvailabilityView", () => {
     }, { owner: true, engineBinding: "other worker" })).toEqual({
       readiness: "setup", runnable: false, pickerNote: "Unavailable", text,
       fix: { href: "/engines?service=worker%20one", action: "Open Engines" },
+    });
+  });
+
+  it("routes a policy refusal with gateway prose to the owner Engines remedy", () => {
+    const row = { available: false, reason_code: "policy_denied", reason: "Not allowed.", engine: "worker one" };
+    expect(workflowAvailabilityView(row, { owner: true })).toEqual({
+      readiness: "setup", runnable: false, pickerNote: "Unavailable",
+      text: "An access plan blocks it. Check its setup in Engines.",
+      fix: { href: "/engines?service=worker%20one", action: "Open Engines" },
+    });
+    expect(workflowAvailabilityView(row, { owner: false }).fix).toBeNull();
+  });
+
+  it("treats an engine transition as wait even when gateway prose sounds like an error", () => {
+    expect(workflowAvailabilityView({
+      available: false, reason_code: "engine_transitioning", reason: "Engine unavailable.",
+    }, { owner: true })).toEqual({
+      readiness: "wait", runnable: false, pickerNote: "Starting", text: "Try again shortly.", fix: null,
+    });
+  });
+
+  it.each(["policy_denied", "required_file_missing"])("does not name a page without prose or structured evidence (%s)", (reason_code) => {
+    expect(workflowAvailabilityView({ available: false, reason_code, engine: "worker one" }, { owner: true })).toEqual({
+      readiness: "setup", runnable: false, pickerNote: "Unavailable", text: "Unavailable. Check its setup.", fix: null,
     });
   });
 
