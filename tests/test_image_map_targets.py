@@ -45,11 +45,11 @@ class ImageMapTargetsTests(unittest.TestCase):
     def result(self, filename: str):
         return targets(self.entries[filename][0])
 
-    def test_registry_covers_all_12_non_ui_image_graphs(self) -> None:
+    def test_registry_covers_every_non_ui_image_graph(self) -> None:
         self.assertEqual(self.registry.errors, [])
         graphs = {path.name for path in (ROOT / "workflows/images").glob("*.json")
                   if ".ui" not in path.name}
-        self.assertEqual(len(graphs), 12)
+        self.assertEqual(len(graphs), 14)
         self.assertEqual(set(self.entries), graphs)
 
     def test_fibo_and_qwen_prompt_inputs(self) -> None:
