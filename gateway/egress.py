@@ -104,6 +104,7 @@ UNMANAGED_ME_ROUTES: dict[tuple[str, str], str] = {
     ("PUT", "/me/api/mcp/connections/{grant_id}/privacy-permission"): "the signed-in person changes request-history access for one of their own MCP connections",
     ("GET", "/me/api/mcp/requests/{request_id}"): "the person's own MCP connections and consent requests: no service record content",
     ("POST", "/me/api/mcp/requests/{request_id}"): "the person's own MCP connections and consent requests: no service record content",
+    ("POST", "/me/api/adapters"): "the person's own adapter upload, stored in their Library: no service record content",
     ("GET", "/me/api/media"): "the person's own media, jobs and usage: no service record content",
     ("POST", "/me/api/media/confirm-folder"): "the person's own media, jobs and usage: no service record content",
     ("POST", "/me/api/media/remove-missing"): "the person's own media, jobs and usage: no service record content",

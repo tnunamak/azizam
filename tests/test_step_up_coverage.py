@@ -33,6 +33,7 @@ RISKY_PATHS = (
     (r"/operator/services($|/\*$|/\*/secret-entries$)", "can move or replace a stored credential", CHANGES),
     (r"/host-commands$", "lets the gateway run commands", CHANGES),
     (r"/engine-folders$", "chooses the folders engines may run programs from", CHANGES),
+    (r"/adapter-uploads$", "lets members put files in the engine's folder", CHANGES),
     (r"/trusted-addresses$", "lets a device in with no key", CHANGES),
     (r"/extensions/enable$", "enables code that can read this computer", CHANGES),
     (r"/mcp/requests/\*$", "connects a client with a lasting grant", CHANGES),
