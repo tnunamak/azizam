@@ -46,3 +46,25 @@ def test_decoder_capacity_error_is_reported_as_refused() -> None:
             adapter_upload.read_header(stream, len(data), max_header_bytes=length)
     assert caught.value.code == "adapter_header_invalid"
     assert stream.read_bytes == 8 + length
+
+
+@pytest.mark.parametrize(
+    ("folder", "accepted"),
+    [
+        ("lora", True),
+        ("LoraV2", True),
+        ("adapter-pack", True),
+        ("adapter_pack", True),
+        ("a" * 64, True),
+        ("a" * 65, False),
+        ("", False),
+    ],
+)
+def test_lora_root_accepts_plain_directories_within_the_folder_name_limit(tmp_path, folder, accepted):
+    if accepted:
+        expected = tmp_path / folder
+        expected.mkdir()
+        assert adapter_upload.lora_root(tmp_path, folder) == expected
+    else:
+        assert adapter_upload.lora_root(tmp_path, folder) is None
+        assert list(tmp_path.iterdir()) == []
