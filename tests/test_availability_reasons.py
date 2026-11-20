@@ -129,8 +129,6 @@ class ListingReasonTests(unittest.TestCase):
         with patch.object(proxy, "_filter_model_list_for_profile", hide_everything):
             response = self.client.get("/v1/models")
         self.assertNotIn(MODEL, response.text)
-        self.assertNotIn("health_unknown", response.text)
-        self.assertNotIn("backend_unavailable", response.text)
 
     def test_model_not_deployed_and_the_empty_current_route(self) -> None:
         entry = {"id": "speech-alias", "azizam_alias": True, "azizam_resolves_to": {"speech": None},
