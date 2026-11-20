@@ -239,7 +239,8 @@ def test_the_frozen_schema_1_copy_excludes_workflows_introduced_in_schema_two():
     assert len(frozen) == 32
     assert set(bundled) - set(frozen) == {
         "mesh.generate.pixal3d", "mesh.edit.retopo", "mesh.edit.rig-auto",
-        "mesh.edit.rig-humanoid", "mesh.edit.texture-refine", "mesh.edit.uv-unwrap"}
+        "mesh.edit.rig-humanoid", "mesh.edit.texture-refine", "mesh.edit.uv-unwrap",
+        "video.generate.minimax-h3-i2v-hires"}
     assert set(frozen) <= set(bundled)
     assert all(document["schema_version"] == 1 for document in frozen.values())
     for record_id, document in bundled.items():

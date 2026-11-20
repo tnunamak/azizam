@@ -1796,6 +1796,84 @@
       "equal": true
     }
   },
+  "manifests/workflows/video-minimax-h3-i2v-hires.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-minimax-h3-i2v-hires.json"
+        },
+        "identity": {
+          "id": "video.generate.minimax-h3-i2v-hires",
+          "manifest_hash": "a4bb5bb8fa0ab2cb0bc6a879c17a26f5ea3754483102a7a5044f5a2bb50844d5",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "height": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "length": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "noise": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "prompt": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "ref": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "vid": {
+            "inputs": {
+              "fps": "original"
+            }
+          },
+          "width": {
+            "inputs": {
+              "value": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {},
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "length": "length is managed by the standard seconds request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
   "manifests/workflows/video-minimax-h3-i2v.yml": {
     "extension": {
       "binding": {

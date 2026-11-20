@@ -104,6 +104,7 @@ workflows:
     max_seconds: 5.17
     max_size: 1216x704
     default_size: 1216x704
+    size_multiple: 64
     frame_rate: 24
     length_step: 17
     length_offset: 5
