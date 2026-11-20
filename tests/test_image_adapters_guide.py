@@ -66,6 +66,7 @@ class OperatorImageAdapterGuideTest(unittest.TestCase):
         self.assertTrue(heading, "The guide must include operator instructions")
         section = " ".join(tail.split("\n## ", 1)[0].split())
         self.assertRegex(section, r"(?i)\brow (?:to|in) the registry[^.!?]*\brestart the gateway\b")
+        self.assertRegex(section, r"(?is)\brestart the gateway\b.*?\brefresh the workflow listing\b")
 
 
 class MemberImageAdapterGuideTest(unittest.TestCase):
