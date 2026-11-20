@@ -173,3 +173,44 @@ def test_the_image_route_keeps_the_unknown_input_refusal_for_a_workflow_without_
     graph, response, _ = image_call({"loras": [{"name": "example_style_v1.safetensors"}]}, manifest=manifest_of(PLAIN_WORKFLOW))
     assert graph is None and response is not None and response.status_code == 400
     assert "unknown input" in json.loads(response.body)["error"]["message"]
+
+
+# ------------------------------------------------------------------------------------------------------------- discovery
+
+import httpx  # noqa: E402
+
+from tests.test_event_loop_guard import gateway  # noqa: E402,F401  (fixture)
+
+
+def member_workflows(gateway, monkeypatch):
+    monkeypatch.setattr(proxy, "_graph_service", lambda _capability: SERVICE)
+
+    async def get():
+        transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", timeout=20, cookies=gateway["cookies"]) as client:
+            return await client.get("/me/api/workflows")
+
+    answer = asyncio.run(get())
+    assert answer.status_code == 200, answer.text
+    return {row["id"]: row for row in answer.json()["workflows"]}
+
+
+def adapter_row(workflows, workflow_id):
+    return next((row for row in workflows[workflow_id]["inputs"] if row["name"] == "loras"), None)
+
+
+def test_the_member_listing_shows_the_adapter_files_on_offer_now(gateway, monkeypatch):
+    rows = member_workflows(gateway, monkeypatch)
+    assert adapter_row(rows, WORKFLOW)["adapter_files"] == ["example_style_v1.safetensors"]
+
+
+def test_a_listing_when_the_engine_cannot_list_shows_no_files_and_is_still_served(gateway, monkeypatch, engine_files):
+    engine_files.listing_fails = True
+    rows = member_workflows(gateway, monkeypatch)
+    assert "adapter_files" not in adapter_row(rows, WORKFLOW)
+
+
+def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypatch):
+    rows = member_workflows(gateway, monkeypatch)
+    assert adapter_row(rows, PLAIN_WORKFLOW) is None
+

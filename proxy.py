@@ -18882,10 +18882,14 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
 
     activity, jobs, service_records = await asyncio.to_thread(read_activity_and_jobs)
     evidence = await _capabilities_availability_evidence(capabilities, service_records)
+    # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
+    published_records = list(SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records())
+    graph_service = _graph_service(_GRAPH_CAPABILITY)
+    adapter_files = await adapter_choices.offered(
+        published_records, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host) \
+        if graph_service.service_id else {}
 
     def build_catalog() -> dict[str, Any]:
-        # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
-        published_records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
         projected = project_capabilities(
             capabilities, service_records=service_records,
             evidence=evidence,
@@ -18898,6 +18902,7 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             recent_receipts=activity.get("receipts") or (),
             recent_jobs=jobs,
             base_url=_public_base_url(request),
+            adapter_files=adapter_files,
         )
 
     return await asyncio.to_thread(build_catalog)

@@ -215,6 +215,26 @@ async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: 
     return decl, overlay(contract, decl, choices)
 
 
+LISTING_WAIT_S = 5.0     # a listing waits this long for the engine, then shows no files for the workflows not yet read
+
+
+async def offered(records: Sequence[Any], binding_key: str, *, service_id: str, origin: str) -> dict[str, tuple[str, ...]]:
+    """The adapter files each record offers now, by record id, for a listing. A record that takes no adapters is left
+    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again)."""
+    async def one(record: Any) -> tuple[str, tuple[str, ...]] | None:
+        decl = declaration(record.contract, binding_key)
+        if decl is None:
+            return None
+        try:
+            choices = await asyncio.wait_for(
+                installed(decl, service_id=service_id, origin=origin, marks=MARKS()), LISTING_WAIT_S)
+        except (ChoicesUnavailable, asyncio.TimeoutError):
+            return None
+        return record.id, choices.loras
+
+    return dict(found for found in await asyncio.gather(*(one(record) for record in records)) if found)
+
+
 def names_adapters(supplied: Mapping[str, Any]) -> bool:
     """Whether a request supplies an adapter input. A request that does not needs no list of files."""
     return LORAS_INPUT in supplied or ENCODER_INPUT in supplied
