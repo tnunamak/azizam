@@ -8,7 +8,9 @@ import copy
 
 import pytest
 
-from gateway.manifests import ManifestError, bind_backend_request
+from gateway.manifests import ManifestError, ManifestIdentity, bind_backend_request
+
+IDENTITY = ManifestIdentity("demo", "1", "hash", True, "local")
 
 CHAIN = {
     "node": "7",
@@ -36,8 +38,15 @@ def manifest(*targets, items=ITEMS):
     }
 
 
-def bind(items, *targets, template=None):
-    return bind_backend_request(manifest(*targets), "graph", template or graph(), {"adapters": items})
+def bind(items, *targets, template=None, items_spec=ITEMS):
+    return bind_backend_request(manifest(*targets, items=items_spec), "graph", template or graph(), {"adapters": items},
+                                identity=IDENTITY)
+
+
+def refusal_code(*args, **kwargs):
+    with pytest.raises(ManifestError) as caught:
+        bind(*args, **kwargs)
+    return caught.value.code
 
 
 def test_two_items_make_a_chain_in_order_and_the_sampler_takes_the_last():
@@ -71,45 +80,35 @@ def test_the_binding_does_not_change_its_template_and_is_repeatable():
 
 
 def test_a_missing_node_fails_closed():
-    missing = {**CHAIN, "node": "99"}
-    with pytest.raises(ManifestError) as caught:
-        bind([{"name": "a.safetensors", "weight": 1.0}], missing)
-    assert "target_missing" in repr(getattr(caught.value, "errors", caught.value)) or "missing" in str(caught.value)
+    assert refusal_code([{"name": "a.safetensors", "weight": 1.0}], {**CHAIN, "node": "99"}) == "target_missing"
 
 
 def test_a_missing_input_fails_closed():
-    missing = {**CHAIN, "input": "nope"}
-    with pytest.raises(ManifestError):
-        bind([{"name": "a.safetensors", "weight": 1.0}], missing)
+    assert refusal_code([{"name": "a.safetensors", "weight": 1.0}], {**CHAIN, "input": "nope"}) == "target_missing"
 
 
 def test_an_edge_that_holds_no_link_fails_closed():
     template = graph()
     template["7"]["inputs"]["model"] = "not-a-link"
-    with pytest.raises(ManifestError):
-        bind([{"name": "a.safetensors", "weight": 1.0}], template=template)
+    assert refusal_code([{"name": "a.safetensors", "weight": 1.0}], template=template) == "chain_edge_not_a_link"
 
 
 def test_an_empty_list_still_fails_closed_on_a_missing_node():
-    with pytest.raises(ManifestError):
-        bind([], {**CHAIN, "node": "99"})
+    assert refusal_code([], {**CHAIN, "node": "99"}) == "target_missing"
 
 
 def test_an_id_already_in_the_graph_fails_closed():
     template = graph()
     template["7-model-chain-0"] = {"class_type": "Other", "inputs": {}}
-    with pytest.raises(ManifestError):
-        bind([{"name": "a.safetensors", "weight": 1.0}], template=template)
+    assert refusal_code([{"name": "a.safetensors", "weight": 1.0}], template=template) == "chain_id_taken"
 
 
 def test_an_item_field_the_mapping_does_not_place_is_refused():
-    with pytest.raises(ManifestError):
-        bind([{"name": "a.safetensors", "weight": 1.0, "extra": 1}])
+    assert refusal_code([{"name": "a.safetensors", "weight": 1.0, "extra": 1}]) == "chain_item_invalid"
 
 
 def test_a_value_that_is_not_a_list_of_objects_is_refused():
-    with pytest.raises(ManifestError):
-        bind("a.safetensors")
+    assert refusal_code("a.safetensors") == "chain_item_invalid"
 
 
 def test_a_field_left_out_takes_the_default_its_input_declares():
@@ -119,5 +118,4 @@ def test_a_field_left_out_takes_the_default_its_input_declares():
 
 def test_a_field_left_out_with_no_declared_default_is_refused_not_invented():
     bare = {"type": "object", "properties": {"name": {"type": "string"}, "weight": {"type": "number"}}}
-    with pytest.raises(ManifestError):
-        bind_backend_request(manifest(items=bare), "graph", graph(), {"adapters": [{"name": "a.safetensors"}]})
+    assert refusal_code([{"name": "a.safetensors"}], items_spec=bare) == "chain_item_invalid"

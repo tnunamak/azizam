@@ -769,7 +769,7 @@ def bind_backend_request(
             ignored[input_name] = f"empty mapping for input under backend {backend}"
             continue
         for index, mapping in enumerate(mappings):
-            _apply_mapping(request, mapping, value, ("bindings", backend, "map", input_name, index))
+            _apply_mapping(request, mapping, value, ("bindings", backend, "map", input_name, index), spec)
         applied.append(input_name)
 
     backend_metadata = _backend_metadata(backend_binding)
@@ -942,9 +942,13 @@ def _array_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...
             yield from value_problems(items, item, at + (index,))
 
 
-def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any, at: tuple[PathPart, ...]) -> None:
+def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any, at: tuple[PathPart, ...],
+                   spec: Mapping[str, Any] | None = None) -> None:
     if not isinstance(mapping, dict):
         raise refusal(at, "type_mismatch", "binding mapping must be a mapping")
+    if "chain" in mapping:
+        _apply_chain(request, mapping, value, at, spec)
+        return
 
     has_node = "node" in mapping
     has_input = "input" in mapping
@@ -970,6 +974,59 @@ def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any,
         return
 
     raise refusal(at, "mapping_incomplete", "binding mapping needs node/input or path")
+
+
+def _is_link(value: Any) -> bool:
+    return isinstance(value, list) and len(value) == 2 and isinstance(value[0], str) and isinstance(value[1], int) \
+        and not isinstance(value[1], bool)
+
+
+def _apply_chain(request: dict[str, Any], mapping: dict[str, Any], value: Any, at: tuple[PathPart, ...],
+                 spec: Mapping[str, Any] | None) -> None:
+    """Add one node per item of a list value on the edge a graph input holds, in order, and point that input at the last.
+
+    ``chain`` is data: ``node_type`` (the class of each added node), ``link`` (its input that takes the link that came in)
+    and ``fields`` (an item field name to the added node's input). The edge is the link the target input holds now; each
+    added node reads the one before it, so the order of the list is the order of the chain. A field an item leaves out takes
+    the default its input declares for that field; with none, the item is refused. The ids are ``<node>-<input>-chain-<n>``.
+    Nothing here knows a node class: a graph without the target, or with a value that is not a link there, is refused."""
+    if "node" not in mapping or "input" not in mapping:
+        raise refusal(at, "mapping_incomplete", "a chain mapping needs node and input")
+    node_id, input_name = str(mapping["node"]), str(mapping["input"])
+    node = request.get(node_id)
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict) or input_name not in inputs:
+        raise refusal(at, "target_missing", f"binding target missing: node {node_id} input {input_name}")
+    link = inputs[input_name]
+    if not _is_link(link):
+        raise refusal(at, "chain_edge_not_a_link", f"node {node_id} input {input_name} does not hold a link to chain on")
+    chain = mapping["chain"]
+    fields = chain.get("fields") if isinstance(chain, dict) else None
+    if (not isinstance(chain, dict) or set(chain) != {"node_type", "link", "fields"}
+            or not isinstance(chain["node_type"], str) or not isinstance(chain["link"], str)
+            or not isinstance(fields, dict) or not fields
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in fields.items())):
+        raise refusal(at + ("chain",), "type_mismatch", "chain needs node_type, link and fields, all text")
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise refusal(at, "chain_item_invalid", "a chain takes a list of objects")
+    declared = ((spec or {}).get("items") or {}).get("properties") or {}
+    for index, item in enumerate(value):
+        if set(item) - set(fields):
+            raise refusal(at, "chain_item_invalid", f"item {index} has a field the chain does not place")
+        added = {chain["link"]: link}
+        for name, target in fields.items():
+            if name in item:
+                added[target] = copy.deepcopy(item[name])
+            elif isinstance(declared.get(name), Mapping) and "default" in declared[name]:
+                added[target] = copy.deepcopy(declared[name]["default"])
+            else:
+                raise refusal(at, "chain_item_invalid", f"item {index} leaves out {name}, which has no default")
+        new_id = f"{node_id}-{input_name}-chain-{index}"
+        if new_id in request:
+            raise refusal(at, "chain_id_taken", f"the graph already has a node {new_id}")
+        request[new_id] = {"class_type": chain["node_type"], "inputs": added}
+        link = [new_id, 0]
+    inputs[input_name] = link
 
 
 def _set_path(target: dict[str, Any], parts: list[str], value: Any, at: tuple[PathPart, ...]) -> None:
