@@ -990,6 +990,8 @@ def _apply_chain(request: dict[str, Any], mapping: dict[str, Any], value: Any, a
     added node reads the one before it, so the order of the list is the order of the chain. A field an item leaves out takes
     the default its input declares for that field; with none, the item is refused. The ids are ``<node>-<input>-chain-<n>``.
     Nothing here knows a node class: a graph without the target, or with a value that is not a link there, is refused."""
+    from gateway.engine_protocol.node_graph import make_node  # the adapter owns the node envelope; it imports this module
+
     if "node" not in mapping or "input" not in mapping:
         raise refusal(at, "mapping_incomplete", "a chain mapping needs node and input")
     node_id, input_name = str(mapping["node"]), str(mapping["input"])
@@ -1024,7 +1026,7 @@ def _apply_chain(request: dict[str, Any], mapping: dict[str, Any], value: Any, a
         new_id = f"{node_id}-{input_name}-chain-{index}"
         if new_id in request:
             raise refusal(at, "chain_id_taken", f"the graph already has a node {new_id}")
-        request[new_id] = {"class_type": chain["node_type"], "inputs": added}
+        request[new_id] = make_node(chain["node_type"], added)
         link = [new_id, 0]
     inputs[input_name] = link
 
