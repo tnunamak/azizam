@@ -175,6 +175,25 @@ def test_the_image_route_keeps_the_unknown_input_refusal_for_a_workflow_without_
     assert "unknown input" in json.loads(response.body)["error"]["message"]
 
 
+def test_the_image_route_refuses_a_malformed_extension_block_with_a_400_not_a_500():
+    receipt = RouteReceipt(protocol="openai", intent="image.generate", path="/v1/images/generations", request_id="req-bad-ext")
+    with patch.object(proxy, "_graph_service", lambda _capability: SERVICE):
+        graph, response = asyncio.run(proxy._apply_workflow_extensions_to_image_request(
+            request_body={"prompt": "x", "extensions": {EXT: ["x"]}},
+            manifest=manifest_of(WORKFLOW), backend_request=copy.deepcopy(template_of(manifest_of(WORKFLOW))),
+            standard_fields=proxy.STANDARD_IMAGE_GENERATE_FIELDS, receipt=receipt))
+    assert graph is None and response is not None and response.status_code == 400
+    assert json.loads(response.body)["error"]["type"] == "invalid_request_error"
+
+
+def test_a_run_naming_an_encoder_the_manifest_does_not_list_is_refused_with_a_422(world):
+    engine = serve(world)
+    response = run(WORKFLOW, {"prompt": "x", "text_encoder": "not_listed_encoder.safetensors"})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["problems"][0]["path"] == "/inputs/text_encoder"
+    assert engine.calls == []
+
+
 # ------------------------------------------------------------------------------------------------------------- discovery
 
 import httpx  # noqa: E402
@@ -182,9 +201,8 @@ import httpx  # noqa: E402
 from tests.test_event_loop_guard import gateway  # noqa: E402,F401  (fixture)
 
 
-def member_workflows(gateway, monkeypatch, serving=True):
+def member_workflows(gateway, monkeypatch):
     monkeypatch.setattr(proxy, "_graph_service", lambda _capability: SERVICE)
-    monkeypatch.setattr(adapter_choices, "LISTING_READS_ENGINE", serving)
 
     async def get():
         transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000))
@@ -211,11 +229,6 @@ def test_a_listing_when_the_engine_cannot_list_shows_no_files_and_is_still_serve
     assert "adapter_files" not in adapter_row(rows, WORKFLOW)
 
 
-def test_a_process_that_is_not_serving_lists_no_files_and_reads_nothing_from_the_engine(gateway, monkeypatch, engine_files):
-    rows = member_workflows(gateway, monkeypatch, serving=False)
-    assert "adapter_files" not in adapter_row(rows, WORKFLOW) and engine_files.listed == 0
-
-
 def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypatch):
     rows = member_workflows(gateway, monkeypatch)
     assert adapter_row(rows, PLAIN_WORKFLOW) is None
@@ -225,8 +238,14 @@ def test_a_workflow_that_takes_no_adapters_has_no_adapter_row(gateway, monkeypat
 # -------------------------------------------------------------------------------------- the shipped adapter workflows
 
 
-@pytest.mark.parametrize("workflow_id", ["image.generate.krea2-turbo", "image.generate.krea2-turbo-snofs", "image.edit.qwen-image-2.1-edit"])
-def test_each_shipped_adapter_workflow_binds_a_chain_into_its_own_graph_and_a_bare_request_changes_nothing(workflow_id):
+# the node whose model input the chain takes over, and the link that input held before (the base loader's output)
+ANCHORS = [("image.generate.krea2-turbo", "7", ["1", 0]),
+           ("image.generate.krea2-turbo-snofs", "7", ["11", 0]),
+           ("image.edit.qwen-image-2.1-edit", "5", ["1", 0])]
+
+
+@pytest.mark.parametrize("workflow_id,anchor,base_link", ANCHORS)
+def test_each_shipped_adapter_workflow_binds_a_chain_into_its_own_graph_and_a_bare_request_changes_nothing(workflow_id, anchor, base_link):
     from gateway.engine_protocol.node_graph import compile_workflow
 
     manifest = manifest_of(workflow_id)
@@ -242,4 +261,7 @@ def test_each_shipped_adapter_workflow_binds_a_chain_into_its_own_graph_and_a_ba
         ("LoraLoaderModelOnly", "example_style_v1.safetensors", 0.75), ("LoraLoaderModelOnly", "example_second_v1.safetensors", 1.0)]
     # the chain sits on one edge: nothing else in the graph moved except that edge's target
     moved = [key for key in bare if bare[key] != chosen[key]]
-    assert len(moved) == 1
+    assert moved == [anchor]
+    first, last = list(added.values())[0], list(added)[-1]
+    assert first["inputs"]["model"] == base_link == bare[anchor]["inputs"]["model"]
+    assert chosen[anchor]["inputs"]["model"] == [last, 0]

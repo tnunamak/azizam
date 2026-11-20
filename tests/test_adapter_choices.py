@@ -191,7 +191,8 @@ def source(files, headers, calls=None, **kw):
     listing, header, calls = make_fetchers(files, headers, calls)
     decl = ac.declaration(contract(), "graph")
     return asyncio.run(ac.installed(decl, service_id="svc", origin="http://engine", list_files=listing, read_header=header,
-                                    table=TABLE, marks=kw.get("marks"), now=kw.get("now", 1000.0))), calls
+                                    table=TABLE, marks=kw.get("marks"), now=kw.get("now", 1000.0),
+                                    wanted=kw.get("wanted", ()))), calls
 
 
 def test_the_installed_list_is_filtered_by_header_and_a_header_that_cannot_be_read_is_not_offered():
@@ -242,6 +243,107 @@ def test_a_new_file_appears_after_the_age_limit():
     source(["a.safetensors"], headers, now=1000.0)
     choices, _ = source(["a.safetensors", "n.safetensors"], headers, now=1000.0 + ac.MAX_AGE_S + 1)
     assert choices.loras == ("a.safetensors", "n.safetensors")
+
+
+def test_a_name_missing_from_a_list_older_than_ten_seconds_is_read_again_before_it_is_refused():
+    headers = {"a.safetensors": {"ss_base_model_version": "base_a"}, "n.safetensors": {"ss_base_model_version": "base_a"}}
+    source(["a.safetensors"], headers, now=1000.0)
+    assert source(["a.safetensors", "n.safetensors"], headers, now=1005.0, wanted=["n.safetensors"])[0].loras == ("a.safetensors",)
+    choices, _ = source(["a.safetensors", "n.safetensors"], headers, now=1011.0, wanted=["n.safetensors"])
+    assert choices.loras == ("a.safetensors", "n.safetensors")
+
+
+def test_a_name_that_is_listed_never_makes_an_early_re_read():
+    headers = {"a.safetensors": {"ss_base_model_version": "base_a"}}
+    calls = []
+    source(["a.safetensors"], headers, calls, now=1000.0)
+    source(["a.safetensors"], headers, calls, now=1100.0, wanted=["a.safetensors"])
+    assert [c[0] for c in calls] == ["list", "header"]
+
+
+def test_a_failed_list_read_is_not_retried_for_thirty_seconds_and_a_held_list_keeps_serving():
+    headers = {"a.safetensors": {"ss_base_model_version": "base_a"}}
+    source(["a.safetensors"], headers, now=1000.0)
+    calls = []
+    late = 1000.0 + ac.MAX_AGE_S + 1
+    assert source(None, headers, calls, now=late)[0].loras == ("a.safetensors",)
+    assert source(None, headers, calls, now=late + 29)[0].loras == ("a.safetensors",)
+    assert [c[0] for c in calls] == ["list"]
+    source(None, headers, calls, now=late + 31)
+    assert [c[0] for c in calls] == ["list", "list"]
+
+
+def test_with_no_list_held_a_failed_read_answers_unavailable_without_asking_the_engine_again_for_thirty_seconds():
+    calls = []
+    for at in (1000.0, 1010.0):
+        with pytest.raises(ac.ChoicesUnavailable):
+            source(None, {}, calls, now=at)
+    assert [c[0] for c in calls] == ["list"]
+    choices, _ = source(["a.safetensors"], {"a.safetensors": {"ss_base_model_version": "base_a"}}, calls, now=1031.0)
+    assert choices.loras == ("a.safetensors",)
+
+
+# ---- the listing --------------------------------------------------------------------------------------------------
+
+class Record:
+    id = "rec"
+    contract = contract()
+
+
+def listing(monkeypatch=None, **kw):
+    return asyncio.run(ac.offered([Record()], "graph", service_id="svc", origin="http://engine", **kw))
+
+
+def test_a_listing_with_no_reader_passed_never_calls_the_engine(monkeypatch):
+    """No module state decides this (a switch a running app set once leaked across tests): only the readers the caller
+    passes do, so the module defaults, which reach an engine, are never used by a listing that passes none."""
+    called = []
+    monkeypatch.setattr(ac, "default_list_files", lambda *a: called.append(a) or ["a.safetensors"])
+    monkeypatch.setattr(ac, "default_read_header", lambda *a: called.append(a) or {})
+    assert listing() == {} and called == []
+
+
+def test_a_listing_that_outlasts_its_wait_returns_promptly_with_no_files_offered(monkeypatch):
+    import time
+
+    monkeypatch.setattr(ac, "LISTING_WAIT_S", 0.05)
+    release = []
+
+    def slow_list(*_):
+        time.sleep(0.4)
+        release.append(1)
+        return ["a.safetensors"]
+
+    async def timed():
+        started = time.monotonic()
+        found = await ac.offered([Record()], "graph", service_id="svc", origin="http://engine",
+                                 list_files=slow_list, read_header=lambda *_: {})
+        return found, time.monotonic() - started
+
+    found, took = asyncio.run(timed())   # (asyncio.run itself then joins the sleeping thread; the listing did not wait)
+    assert found == {} and took < 0.3
+
+
+def test_header_reads_that_finish_after_the_listing_wait_are_kept_so_the_next_listing_does_not_repeat_them(monkeypatch):
+    import time
+
+    monkeypatch.setattr(ac, "architecture_table", lambda: TABLE)
+    monkeypatch.setattr(ac, "LISTING_WAIT_S", 0.05)
+    reads = []
+
+    def slow_header(origin, folder, name):
+        reads.append(name)
+        time.sleep(0.3)
+        return {"ss_base_model_version": "base_a"}
+
+    def files(*_):
+        return ["a.safetensors"]
+
+    assert listing(list_files=files, read_header=slow_header) == {}
+    time.sleep(0.5)   # the abandoned read finishes in its thread and writes the cache
+    assert reads == ["a.safetensors"]
+    assert listing(list_files=files, read_header=slow_header) == {"rec": ("a.safetensors",)}
+    assert reads == ["a.safetensors"]
 
 
 # ---- receipts -------------------------------------------------------------------------------------------------------

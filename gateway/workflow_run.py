@@ -671,7 +671,8 @@ class WorkflowRunCore:
                 if identity is None:
                     raise adapter_choices.ChoicesUnavailable("the engine behind this workflow is not known")
                 contract_now = (await adapter_choices.current(plain(entry.contract), binding_key,
-                                                              service_id=identity.service_id, origin=identity.origin))[1]
+                                                              service_id=identity.service_id, origin=identity.origin,
+                                                              wanted=adapter_choices.wanted_names(req.inputs)))[1]
             except adapter_choices.ChoicesUnavailable:
                 return RunRefused(503, ADAPTER_CHOICES_UNAVAILABLE, "the engine could not list its adapter files; try again shortly",
                                   retry_after_s=RETRY_AFTER_S)

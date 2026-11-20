@@ -11,6 +11,9 @@ that maps through a ``chain``, and optionally a ``text_encoder`` input). A calle
 Where choices come from is the one function ``installed`` (the operator's files). Another source, such as a member's
 uploads, joins by adding its files to the ``entries`` it builds: nothing else here reads where a file came from.
 
+Known limit: the engine lists names only, so a header is cached by (service, folder, name) and not by size or mtime; a
+file replaced under the same name keeps its old header for ``HEADER_AGE_S``.
+
 The module names no engine, model, node class or workflow: the loader class and its input come from the binding's chain
 data, the header keys from the architecture table, and the reads are passed in (``list_files``, ``read_header``).
 """
@@ -33,6 +36,8 @@ ENCODER_INPUT = "text_encoder"
 SETTING_KEY = "adapter_marks"
 MAX_AGE_S = 300.0          # a list read from the engine is used this long
 HEADER_AGE_S = 6 * 3600.0  # a header read is used this long; a file's header does not change while it stays listed
+STALE_LIST_S = 10.0        # a requested name missing from a list older than this makes one re-read before it is refused
+FAILED_READ_BACKOFF_S = 30.0  # after a failed list read the engine is not asked again for this long
 HEADER_READS_AT_ONCE = 8
 TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_architectures.yml"
 
@@ -41,10 +46,6 @@ TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_archite
 # store; unset, no file is marked.
 MARKS: Callable[[], Any] = lambda: None
 
-
-# Whether a listing may read the engine's files. The gateway sets this at startup, as it does the choice store: a
-# process that never started serving (a test, a tool) lists no files and never reaches an engine from a listing.
-LISTING_READS_ENGINE = False
 
 
 class ChoicesUnavailable(RuntimeError):
@@ -137,11 +138,13 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
 
 _LISTS: dict[tuple[str, str, str, str], tuple[float, list[str]]] = {}
 _HEADERS: dict[tuple[str, str, str], tuple[float, Mapping[str, Any] | None]] = {}
+_FAILED: dict[tuple[str, str, str, str], float] = {}   # when a list read last failed, by the same key as _LISTS
 
 
 def reset() -> None:
     _LISTS.clear()
     _HEADERS.clear()
+    _FAILED.clear()
 
 
 def default_list_files(origin: str, node_type: str, input_name: str) -> list[str]:
@@ -162,21 +165,36 @@ async def installed(
     list_files: Callable[[str, str, str], list[str]] | None = None,
     read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
     table: Mapping[str, Mapping[str, Sequence[str]]] | None = None, now: float | None = None,
+    wanted: Sequence[str] = (),
 ) -> AdapterChoices:
     """The choices for one binding from the operator's installed files. Reads the engine only when its list is older than
-    ``MAX_AGE_S``; a file header is read once. When the engine cannot answer, the last good list stays in use; with none
-    held, ``ChoicesUnavailable``. A header that cannot be read keeps its file out of the list, never in it."""
+    ``MAX_AGE_S``, or older than ``STALE_LIST_S`` when a ``wanted`` name is not in it (a file added since); a file header is
+    read once. When the engine cannot answer, the last good list stays in use and the engine is left alone for
+    ``FAILED_READ_BACKOFF_S``; with no list held, ``ChoicesUnavailable``. A header that cannot be read keeps its file out
+    of the list, never in it."""
     now = time.time() if now is None else now
     list_files, read_header = list_files or default_list_files, read_header or default_read_header
     key = (service_id, decl.node_type, decl.listing_input, decl.folder)
     held = _LISTS.get(key)
-    if held is None or now - held[0] >= MAX_AGE_S:
+    age = None if held is None else now - held[0]
+    due = held is None or age >= MAX_AGE_S or (age >= STALE_LIST_S and any(name not in held[1] for name in wanted))
+    failed_at = _FAILED.get(key)
+    if due and failed_at is not None and now - failed_at < FAILED_READ_BACKOFF_S:
+        if held is None:
+            raise ChoicesUnavailable("the engine could not list its adapter files")
+    elif due:
+        def read_list() -> list[str]:
+            files = list_files(origin, decl.node_type, decl.listing_input)
+            _LISTS[key] = (now, files)   # kept even when the caller stopped waiting
+            return files
         try:
-            files = await asyncio.to_thread(list_files, origin, decl.node_type, decl.listing_input)
-            _LISTS[key] = held = (now, files)
+            await asyncio.to_thread(read_list)
+            _FAILED.pop(key, None)
         except Exception as exc:  # noqa: BLE001 - any failed read keeps the last good list
+            _FAILED[key] = now
             if held is None:
                 raise ChoicesUnavailable("the engine could not list its adapter files") from exc
+        held = _LISTS.get(key, held)
     files = held[1]
     headers = await _headers(service_id, origin, decl.folder, files, read_header, now)
     table = architecture_table() if table is None else table
@@ -196,37 +214,52 @@ async def _headers(service_id: str, origin: str, folder: str, files: Sequence[st
             unknown.append(name)
     gate = asyncio.Semaphore(HEADER_READS_AT_ONCE)
 
+    def fetch(name: str) -> Mapping[str, Any] | None:
+        header = read_header(origin, folder, name)
+        _HEADERS[(service_id, folder, name)] = (now, header)   # kept even when the caller stopped waiting
+        return header
+
     async def read(name: str) -> None:
         async with gate:
             try:
-                header = await asyncio.to_thread(read_header, origin, folder, name)
+                found[name] = await asyncio.to_thread(fetch, name)
             except Exception:  # noqa: BLE001 - not offered this time, and not remembered as having no header
                 return
-        _HEADERS[(service_id, folder, name)] = (now, header)
-        found[name] = header
 
     await asyncio.gather(*(read(name) for name in unknown))
     return found
 
 
-async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: str, origin: str
-                  ) -> tuple[Declaration, dict[str, Any]] | None:
+def wanted_names(supplied: Mapping[str, Any]) -> list[str]:
+    """The file names a request picks, for ``installed``'s check that its list is not stale."""
+    items = supplied.get(LORAS_INPUT)
+    return [item["name"] for item in items if isinstance(item, Mapping) and isinstance(item.get("name"), str)] \
+        if isinstance(items, list) else []
+
+
+async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: str, origin: str,
+                  wanted: Sequence[str] = ()) -> tuple[Declaration, dict[str, Any]] | None:
     """The contract as a request sees it now: the declaration the binding makes and the contract with the choices put in.
     None when the binding takes no adapters. Raises ``ChoicesUnavailable`` when the engine cannot list its files."""
     decl = declaration(contract, binding_key)
     if decl is None:
         return None
-    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS())
+    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS(), wanted=wanted)
     return decl, overlay(contract, decl, choices)
 
 
 LISTING_WAIT_S = 5.0     # a listing waits this long for the engine, then shows no files for the workflows not yet read
 
 
-async def offered(records: Sequence[Any], binding_key: str, *, service_id: str, origin: str) -> dict[str, tuple[str, ...]]:
+async def offered(
+    records: Sequence[Any], binding_key: str, *, service_id: str, origin: str,
+    list_files: Callable[[str, str, str], list[str]] | None = None,
+    read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
+) -> dict[str, tuple[str, ...]]:
     """The adapter files each record offers now, by record id, for a listing. A record that takes no adapters is left
-    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again)."""
-    if not LISTING_READS_ENGINE:
+    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again; reads
+    that finish after the wait are kept). The caller passes the readers: with no ``list_files`` nothing is read."""
+    if list_files is None:
         return {}
     async def one(record: Any) -> tuple[str, tuple[str, ...]] | None:
         decl = declaration(record.contract, binding_key)
@@ -234,7 +267,8 @@ async def offered(records: Sequence[Any], binding_key: str, *, service_id: str, 
             return None
         try:
             choices = await asyncio.wait_for(
-                installed(decl, service_id=service_id, origin=origin, marks=MARKS()), LISTING_WAIT_S)
+                installed(decl, service_id=service_id, origin=origin, marks=MARKS(), list_files=list_files, read_header=read_header),
+                LISTING_WAIT_S)
         except (ChoicesUnavailable, asyncio.TimeoutError):
             return None
         return record.id, choices.loras
