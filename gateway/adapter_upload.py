@@ -5,7 +5,7 @@ the file's length. It never loads a tensor, never unpickles, and never uses the 
 upload is named by the hash of its content, and so is its copy in the engine's folder.
 
 The module names no engine, model or node class. Which base a file is for comes from ``registry/adapter_architectures.yml``,
-the table the operator's own files are judged by. Where the engine's loras folder is comes from the engine directory the
+the table, and the header test, that the operator's own files are judged by (``adapter_choices``). Where the engine's loras folder is comes from the engine directory the
 registry names (``host_memory_admission.engine_models_dir``) and the folder the workflow binding declares.
 """
 
@@ -21,11 +21,10 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, BinaryIO
 
-import yaml
+from gateway.adapter_choices import architecture_table, compatible
 
 SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enabled": bool, "max_bytes": int}
 SUBFOLDER = "azizam-uploads"         # the gateway's own folder inside the engine's adapter folder
@@ -35,7 +34,6 @@ MAX_BYTES_CEILING = 8 * (1 << 30)    # the owner may raise the cap to this, and 
 MAX_HEADER_BYTES = 8 << 20           # a header over this is refused before it is read
 IDLE_S = 24 * 3600.0                 # a copy no request used for this long is removed
 CACHE_MAX_BYTES = 16 * (1 << 30)     # all copies together stay under this; the least recently used go first
-TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_architectures.yml"
 
 _METADATA = "__metadata__"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -135,18 +133,11 @@ def read_header(stream: BinaryIO, size: int, *, max_header_bytes: int = MAX_HEAD
     return Header(metadata, len(spans))
 
 
-@lru_cache(maxsize=1)
-def architecture_table() -> Mapping[str, Mapping[str, tuple[str, ...]]]:
-    raw = yaml.safe_load(TABLE_PATH.read_text(encoding="utf-8")) or {}
-    return {arch: {key: tuple(values) for key, values in keys.items()} for arch, keys in raw.items()}
-
-
 def architectures(metadata: Mapping[str, str], table: Mapping[str, Mapping[str, Sequence[str]]]) -> tuple[str, ...]:
-    """The architectures the table lists for a file: those with a header key that holds one of the architecture's values.
-    Empty when the file names no base the table knows."""
-    return tuple(sorted(
-        arch for arch, keys in table.items()
-        if any(isinstance(metadata.get(key), str) and metadata[key] in values for key, values in keys.items())))
+    """The architectures the table lists for a file, by the test the operator's own files meet (``compatible``): a header
+    key that holds one of the architecture's values. Empty when the file names no base the table knows."""
+    probe = "upload"
+    return tuple(sorted(arch for arch in table if compatible([probe], {probe: metadata}, arch, table, ())))
 
 
 # ------------------------------------------------------------------------------------------------ the owner's setting
@@ -367,7 +358,7 @@ def digest_of(name: str) -> str | None:
     return match.group(1) if match else None
 
 
-class UnknownAdapter(Exception):
+class UnknownAdapter(LookupError):
     """A name that is not one of this person's offered uploads: unknown, someone else's, deleted, or no longer readable.
     The caller refuses it exactly as it refuses any name that is not in the pick-list, so names cannot be probed."""
 
@@ -427,6 +418,14 @@ class Library:
             return []
         offers = (self._offer(person_id, asset_id) for asset_id in self._asset_ids() if digest_of(asset_id) is not None)
         return [offer for offer in offers if offer is not None]
+
+    def offered(self, person_id: str, *, folder: str, architecture: str) -> list[str]:
+        """The names the person may choose for a workflow of ``architecture`` (the pick-list's join)."""
+        return join([], self.offers(person_id, folder=folder), architecture)
+
+    def is_copy(self, name: str) -> bool:
+        """Whether an engine file name is in the gateway's own subfolder, whichever separator the engine lists it with."""
+        return isinstance(name, str) and name.replace("\\", "/").lower().startswith(SUBFOLDER + "/")
 
     def resolve(self, person_id: str, name: str, *, folder: str) -> Offer | None:
         if digest_of(name) is None or not self._on(folder):

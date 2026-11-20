@@ -16496,6 +16496,7 @@ ADAPTER_LIBRARY = adapter_upload.Library(
     lora_root=_adapter_lora_root,
     note_copy=_note_adapter_copy,
 )
+adapter_choices.UPLOADS = ADAPTER_LIBRARY     # a person's own uploads join the pick-lists built for that person
 
 
 # Removes a Library item (the member's Delete, and a canceled mesh job's model); it keeps one that has several owners.
@@ -18960,7 +18961,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     published_records = list(SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records())
     graph_service = _graph_service(_GRAPH_CAPABILITY)
     adapter_files = await adapter_choices.offered(
-        published_records, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host) \
+        published_records, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
+        person_id=session.subject) \
         if graph_service.service_id else {}
 
     def build_catalog() -> dict[str, Any]:
@@ -23444,17 +23446,27 @@ async def _apply_workflow_extensions_to_image_request(
         return dict(backend_request), None
 
     # A request that names adapters is checked against the files the engine offers now; one that does not reads nothing.
-    adapter_view: tuple[adapter_choices.Declaration, dict[str, Any]] | None = None
-    if adapter_choices.names_adapters(extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)):
+    adapter_view: adapter_choices.Current | None = None
+    supplied_adapters = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
+    if adapter_choices.names_adapters(supplied_adapters):
         graph_service = _graph_service(_GRAPH_CAPABILITY)
         try:
             adapter_view = await adapter_choices.current(
-                manifest, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host)
+                manifest, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
+                person_id=_auth_person_id(auth_context), supplied=supplied_adapters)
+        except adapter_choices.UploadUnavailable:
+            return None, openai_error_response(
+                "an uploaded adapter could not be made ready for the engine; try again shortly",
+                status_code=503, error_type="api_error", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}",
+                code=workflow_run.ADAPTER_UPLOAD_UNAVAILABLE)
         except adapter_choices.ChoicesUnavailable:
             return None, openai_error_response(
                 "the engine could not list its adapter files; try again shortly",
                 status_code=503, error_type="api_error", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}",
                 code=workflow_run.ADAPTER_CHOICES_UNAVAILABLE)
+        if adapter_view is not None:       # an upload is named as the engine knows its copy
+            extension_body = {**extension_body, "extensions": {
+                **extension_body["extensions"], WORKFLOW_EXTENSION_NAMESPACE: dict(adapter_view.supplied)}}
     try:
         result = bind_workflow_extensions(
             extension_body,
@@ -27761,6 +27773,9 @@ class _WorkflowRunPort:
     def maker(self, caller: AuthContext) -> str:
         identity = caller.identity
         return _auth_person_id(caller) or (getattr(identity, "name", None) or "")
+
+    def person_id(self, caller: AuthContext) -> str | None:
+        return _auth_person_id(caller)
 
     def is_owner(self, caller: AuthContext) -> bool:
         person_id = _auth_person_id(caller)

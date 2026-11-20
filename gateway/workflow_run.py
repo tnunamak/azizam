@@ -67,6 +67,7 @@ RECEIPT_OUTCOMES = {
 RUN_RECEIPT_ID_KEY = "run_receipt_id"        # the request id of the receipt a run filed for itself (``run_receipt_path``)
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
 ADAPTER_CHOICES_UNAVAILABLE = "adapter_choices_unavailable"
+ADAPTER_UPLOAD_UNAVAILABLE = "adapter_upload_unavailable"
 REQUEST_FACTS_KEY = "request_facts"          # where the request facts sit in the job's metadata: written once with the row
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
@@ -220,6 +221,9 @@ class RunPort(Protocol):
     # who is asking
     def owner_scope(self, caller: CallerContext) -> str: ...
     def maker(self, caller: CallerContext) -> str: ...
+    def person_id(self, caller: CallerContext) -> str | None:
+        """The person the caller acts for, or None when it is not tied to one (their own uploads are offered to a person)."""
+        ...
     def is_owner(self, caller: CallerContext) -> bool: ...
     def reader(self, caller: CallerContext) -> Reader: ...
     def audience(self, caller: CallerContext) -> str: ...
@@ -670,11 +674,18 @@ class WorkflowRunCore:
             try:
                 if identity is None:
                     raise adapter_choices.ChoicesUnavailable("the engine behind this workflow is not known")
-                contract_now = (await adapter_choices.current(plain(entry.contract), binding_key,
-                                                              service_id=identity.service_id, origin=identity.origin))[1]
+                view = await adapter_choices.current(plain(entry.contract), binding_key,
+                                                     service_id=identity.service_id, origin=identity.origin,
+                                                     person_id=port.person_id(caller), supplied=req.inputs)
+            except adapter_choices.UploadUnavailable:
+                return RunRefused(503, ADAPTER_UPLOAD_UNAVAILABLE,
+                                  "an uploaded adapter could not be made ready for the engine; try again shortly",
+                                  retry_after_s=RETRY_AFTER_S)
             except adapter_choices.ChoicesUnavailable:
                 return RunRefused(503, ADAPTER_CHOICES_UNAVAILABLE, "the engine could not list its adapter files; try again shortly",
                                   retry_after_s=RETRY_AFTER_S)
+            contract_now = view.contract
+            req = dataclasses.replace(req, inputs=view.supplied)    # an upload is named as the engine knows its copy
         errors = self._validate(entry, req, profile, choices=choices, contract=contract_now)
         if errors:
             return RunRefused(422, INVALID_INPUTS, "the run request is not valid", problems=tuple(errors))
