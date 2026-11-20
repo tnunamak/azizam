@@ -73,13 +73,27 @@ def test_guide_workflow_example_uses_only_krea_manifest_inputs():
                 assert value in spec["enum"], f"{name}={value!r} is not a manifest enum value"
 
 
-def test_guide_does_not_copy_model_specific_sampler_names():
-    text = _guide()
+CODE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+
+
+def _copied_choice_names(text):
+    """Sampler and scheduler values the guide shows as code. Prose is skipped: values such as normal and simple are also
+    plain English words."""
+    code = "\n".join(CODE.findall(text))
     inputs = _krea_inputs()
-    # Very short option values can match unrelated prose or abbreviations by chance.
-    names = sorted({name for control in ("sampler", "scheduler") for name in inputs[control]["enum"]
-                    if len(name) >= 4 and re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE)})
+    return sorted({name for control in ("sampler", "scheduler") for name in inputs[control]["enum"]
+                   if re.search(rf"\b{re.escape(name)}\b", code)})
+
+
+def test_guide_does_not_copy_model_specific_sampler_names():
+    names = _copied_choice_names(_guide())
     assert not names, f"hard-coded sampler or scheduler names: {names}"
+
+
+def test_copied_choice_names_reads_code_and_skips_prose():
+    assert _copied_choice_names('Set `"sampler": "lms"` here.') == ["lms"]
+    assert _copied_choice_names('```json\n{"scheduler": "karras"}\n```') == ["karras"]
+    assert _copied_choice_names("Keep the normal, simple default.") == []
 
 
 def test_guide_relative_links_resolve_to_repository_files():
