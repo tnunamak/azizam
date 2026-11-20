@@ -335,6 +335,29 @@ async def _owner_view(listing):
         return await proxy._mcp_availability(SimpleNamespace(), [GRAPH_WORKFLOW, listing.plain])
 
 
+def test_refresh_restores_workflow_availability_without_reset(listing):
+    source = engine_inventory.Source("http://engine.invalid/nodes")
+    inventories = iter((live_shaped(with_node=False), live_shaped()))
+    reads = []
+
+    def fetch(requested_source):
+        reads.append(requested_source)
+        return next(inventories)
+
+    assert engine_inventory.refresh_all({listing.engine: source}, fetch=fetch) == {listing.engine: None}
+    public = listing.run()["graph-model"]
+    assert public["state"] == "unavailable"
+    assert public["reason"] == "required_file_missing"
+    owner = asyncio.run(_owner_view(listing))[GRAPH_WORKFLOW]
+    assert owner["available"] is False
+    assert owner["reason_code"] == "required_file_missing"
+
+    assert engine_inventory.refresh_all({listing.engine: source}, fetch=fetch) == {listing.engine: None}
+    assert reads == [source, source]
+    assert listing.run()["graph-model"] == {"state": "available"}
+    assert asyncio.run(_owner_view(listing))[GRAPH_WORKFLOW]["available"] is True
+
+
 def test_a_stale_list_and_an_unreadable_list_leave_the_listing_as_it_was(listing):
     import time
     baseline = listing.run()
