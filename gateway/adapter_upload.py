@@ -442,6 +442,12 @@ class Library:
         """The names the person may choose for a workflow of ``architecture`` (the pick-list's join)."""
         return join([], self.offers(person_id, folder=folder), architecture)
 
+    def labels(self, person_id: str, *, folder: str, architecture: str) -> dict[str, str]:
+        """The label the person gave each upload that ``offered`` lists; an upload given no label is left out."""
+        offers = {offer.name: offer for offer in self.offers(person_id, folder=folder)}
+        return {name: offers[name].label for name in self.offered(person_id, folder=folder, architecture=architecture)
+                if offers.get(name) is not None and offers[name].label}
+
     def is_copy(self, name: str) -> bool:
         """Whether an engine file name is in the gateway's own subfolder, whichever separator the engine lists it with."""
         return isinstance(name, str) and name.replace("\\", "/").lower().startswith(SUBFOLDER + "/")

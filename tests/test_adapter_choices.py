@@ -355,7 +355,8 @@ def test_header_reads_that_finish_after_the_listing_wait_are_kept_so_the_next_li
     assert listing(list_files=files, read_header=slow_header) == {}
     time.sleep(0.5)   # the abandoned read finishes in its thread and writes the cache
     assert reads == ["a.safetensors"]
-    assert listing(list_files=files, read_header=slow_header) == {"rec": ("a.safetensors",)}
+    shown = listing(list_files=files, read_header=slow_header)
+    assert shown["rec"]["loras"]["items"]["properties"]["name"]["enum"] == ["a.safetensors"]
     assert reads == ["a.safetensors"]
 
 
