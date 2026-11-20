@@ -22,6 +22,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 ADDED_PATHS: dict[str, str] = {
     "/admin/api/engines/process-preview": "owner-only dry run of the command a definition's process_template makes from slot values; stores and runs nothing; "
                                           "tests/test_engine_process_template.py covers it",
+    "/admin/api/operator/adapter-uploads": "owner-only switch and size cap for member adapter uploads (read and write, audited, step-up on write); "
+                                           "tests/test_adapter_upload_setting.py covers it",
+    "/me/api/adapters": "a signed-in member uploads one safetensors adapter into their own Library; refused unless the owner allows it; "
+                        "tests/test_adapter_upload_route.py covers it",
     "/admin/api/operator/engine-folders": "owner-only list of folders engines may be started from (read and write, audited, step-up on write); "
                                           "tests/test_engine_process_template.py covers it",
     "/admin/api/engines/{service_id}/lifecycle": "the owner starts, stops or restarts one engine over its lifecycle driver; owner only, audited; "

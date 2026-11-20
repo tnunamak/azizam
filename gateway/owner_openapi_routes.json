@@ -300,6 +300,16 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "owner_only": true
   },
+  "GET /admin/api/operator/adapter-uploads": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
+  },
+  "PUT /admin/api/operator/adapter-uploads": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
   "GET /admin/api/operator/engine-folders": {
     "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner role required",

@@ -356,9 +356,11 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.create_litellm_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/litellm/keys/delete` | owner-bearer | denied | `gateway.admin_api.delete_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.get_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/adapter-uploads` | owner-bearer | denied | `gateway.admin_api.get_adapter_uploads`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/engine-folders` | owner-bearer | denied | `gateway.admin_api.get_engine_folders`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `PUT /admin/api/operator/engine-folders` | owner-bearer | denied | `gateway.admin_api.update_engine_folders`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `PUT /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.update_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/operator/adapter-uploads` | owner-bearer | denied | `gateway.admin_api.update_adapter_uploads`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/operator/media-job-admission` | owner-bearer | denied | `gateway.admin_api.update_media_job_admission_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/overrides` | owner-bearer | denied | `gateway.admin_api.list_operator_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/operator/service-availability` | owner-bearer | denied | `gateway.admin_api.update_service_availability_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -479,6 +481,7 @@ Selected successful workflows are exercised separately.
 | `POST /logout` | session-only | denied | `proxy.admin_logout`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/access-request` | session-only | denied | `proxy.user_portal_request_access`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/activity` | session-view | no owner authority | `proxy.user_portal_activity`; Optional browser session; returns empty unauthenticated activity without cookie | hidden |
+| `POST /me/api/adapters` | session-only | denied | `gateway.me_adapters.upload_adapter`; Browser session; mutations require CSRF/action header; refused unless the owner allows member adapter uploads; safetensors files only, up to the owner's size cap | hidden |
 | `POST /me/api/apps` | session-only | denied | `proxy.user_portal_create_app`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_delete_app`; Browser session; mutations require CSRF/action header | hidden |
 | `PATCH /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_rename_app`; Browser session; mutations require CSRF/action header | hidden |
