@@ -108,16 +108,16 @@ makes for that model carries the same word in `error.reason` (next to `error.cod
 name that is also a refusal code, such as `backend_unavailable`, has that meaning in both places. Read the reason, not
 the message. A name the key may not use is not listed, and nothing here says that it exists.
 
-| Code | State | Meaning | `retry_after_s` |
+| Code | State | Client action | `retry_after_s` |
 |---|---|---|---|
-| `backend_unavailable` | `unavailable` | The engine behind the model is stopped, failed, unreachable or not set up. | no |
-| `engine_transitioning` | `unknown` | The engine is starting or loading and does not take requests yet. Try again soon. | no |
-| `model_not_deployed` | `unavailable` | No engine behind the name is deployed. | no |
-| `current_model_unavailable` | `unavailable` | The name follows the loaded model, and no backend has one loaded. | no |
-| `service_disabled` | `unavailable` | The owner turned off the service that runs the model. | no |
-| `service_maintenance` | `unavailable` | The owner took the service out of use for now (maintenance or draining). | yes: the owner's delay, 10 when none |
-| `health_unknown` | `unknown` | The gateway has no recent health reading for the service. The model may work. | no |
-| `required_file_missing` | `unavailable` | A model file or custom node that the workflow declares is not on its engine. `missing` names each one. | no |
+| `backend_unavailable` | `unavailable` | Use another model or retry once the engine is reachable. | no |
+| `engine_transitioning` | `unknown` | Wait for the engine to finish starting or loading before retrying. | no |
+| `model_not_deployed` | `unavailable` | Choose a deployed model or ask the owner to deploy this one. | no |
+| `current_model_unavailable` | `unavailable` | Choose an explicitly named model or wait for a backend to load one. | no |
+| `service_disabled` | `unavailable` | Choose another model or ask the owner to enable this service. | no |
+| `service_maintenance` | `unavailable` | Wait for `retry_after_s` before retrying or choose another model. | yes: the owner's delay, 10 when none |
+| `health_unknown` | `unknown` | Treat readiness as unconfirmed and handle a possible refusal if you try the model. | no |
+| `required_file_missing` | `unavailable` | Ask the owner to install the model files or custom nodes named in `missing` before retrying. | no |
 
 `required_file_missing` is judged from the engine's own node list, which the gateway reads in the background every
 few minutes, never while it answers the list. Each workflow says which node classes and model files it needs; a file
