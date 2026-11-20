@@ -4048,7 +4048,7 @@
       "sha256": "5efacf1bcbe59fdcb0063260d6433cd0304edf34b599eb4ce6399cd7595f8828"
     },
     "image.generate.flux2-klein": {
-      "bytes": 5468,
+      "bytes": 7919,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4084,6 +4084,14 @@
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
                 },
                 "seed": {
                   "field": "seed",
@@ -4153,6 +4161,14 @@
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
                 },
                 "seed": {
                   "field": "seed",
@@ -4234,13 +4250,82 @@
                 "description": "Describe what you want to make.",
                 "type": "string"
               },
+              "sampler": {
+                "default": "euler",
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "enum": [
+                  "euler",
+                  "euler_cfg_pp",
+                  "euler_ancestral",
+                  "euler_ancestral_cfg_pp",
+                  "heun",
+                  "heunpp2",
+                  "exp_heun_2_x0",
+                  "exp_heun_2_x0_sde",
+                  "dpm_2",
+                  "dpm_2_ancestral",
+                  "lms",
+                  "dpm_fast",
+                  "dpm_adaptive",
+                  "dpmpp_2s_ancestral",
+                  "dpmpp_2s_ancestral_cfg_pp",
+                  "dpmpp_sde",
+                  "dpmpp_sde_gpu",
+                  "dpmpp_2m",
+                  "dpmpp_2m_cfg_pp",
+                  "dpmpp_2m_sde",
+                  "dpmpp_2m_sde_gpu",
+                  "dpmpp_2m_sde_heun",
+                  "dpmpp_2m_sde_heun_gpu",
+                  "dpmpp_3m_sde",
+                  "dpmpp_3m_sde_gpu",
+                  "ddpm",
+                  "lcm",
+                  "ipndm",
+                  "ipndm_v",
+                  "deis",
+                  "cfgpp_ud10_ab",
+                  "res_multistep",
+                  "res_multistep_cfg_pp",
+                  "res_multistep_ancestral",
+                  "res_multistep_ancestral_cfg_pp",
+                  "gradient_estimation",
+                  "gradient_estimation_cfg_pp",
+                  "er_sde",
+                  "seeds_2",
+                  "seeds_3",
+                  "sa_solver",
+                  "sa_solver_pece",
+                  "ddim",
+                  "uni_pc",
+                  "uni_pc_bh2"
+                ],
+                "type": "string"
+              },
+              "scheduler": {
+                "default": "simple",
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "enum": [
+                  "simple",
+                  "sgm_uniform",
+                  "karras",
+                  "exponential",
+                  "ddim_uniform",
+                  "beta",
+                  "normal",
+                  "linear_quadratic",
+                  "kl_optimal"
+                ],
+                "type": "string"
+              },
               "seed": {
                 "description": "Reuse this number and the same settings for a similar result.",
                 "minimum": 0,
                 "type": "integer"
               },
               "steps": {
-                "description": "More steps take longer.",
+                "default": 4,
+                "description": "More steps add detail but take longer. 4 works well for this model.",
                 "maximum": 100,
                 "minimum": 1,
                 "type": "integer"
@@ -4264,10 +4349,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
         "run_path": null
       },
-      "sha256": "e1e5e518d6f19684bb3368648e011acb40f2bb76f9d0d25809eb55a5dbd7d70e"
+      "sha256": "6806a84030659e569f38a97722481ec6a80eed8d7b410ff8348f86cdb8f78c2f"
     },
     "image.generate.flux2-klein-snofs": {
-      "bytes": 6063,
+      "bytes": 8514,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4307,6 +4392,14 @@
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
                 },
                 "seed": {
                   "field": "seed",
@@ -4380,6 +4473,14 @@
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
                 },
                 "seed": {
                   "field": "seed",
@@ -4468,13 +4569,82 @@
                 "description": "Describe what you want to make.",
                 "type": "string"
               },
+              "sampler": {
+                "default": "euler",
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "enum": [
+                  "euler",
+                  "euler_cfg_pp",
+                  "euler_ancestral",
+                  "euler_ancestral_cfg_pp",
+                  "heun",
+                  "heunpp2",
+                  "exp_heun_2_x0",
+                  "exp_heun_2_x0_sde",
+                  "dpm_2",
+                  "dpm_2_ancestral",
+                  "lms",
+                  "dpm_fast",
+                  "dpm_adaptive",
+                  "dpmpp_2s_ancestral",
+                  "dpmpp_2s_ancestral_cfg_pp",
+                  "dpmpp_sde",
+                  "dpmpp_sde_gpu",
+                  "dpmpp_2m",
+                  "dpmpp_2m_cfg_pp",
+                  "dpmpp_2m_sde",
+                  "dpmpp_2m_sde_gpu",
+                  "dpmpp_2m_sde_heun",
+                  "dpmpp_2m_sde_heun_gpu",
+                  "dpmpp_3m_sde",
+                  "dpmpp_3m_sde_gpu",
+                  "ddpm",
+                  "lcm",
+                  "ipndm",
+                  "ipndm_v",
+                  "deis",
+                  "cfgpp_ud10_ab",
+                  "res_multistep",
+                  "res_multistep_cfg_pp",
+                  "res_multistep_ancestral",
+                  "res_multistep_ancestral_cfg_pp",
+                  "gradient_estimation",
+                  "gradient_estimation_cfg_pp",
+                  "er_sde",
+                  "seeds_2",
+                  "seeds_3",
+                  "sa_solver",
+                  "sa_solver_pece",
+                  "ddim",
+                  "uni_pc",
+                  "uni_pc_bh2"
+                ],
+                "type": "string"
+              },
+              "scheduler": {
+                "default": "simple",
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "enum": [
+                  "simple",
+                  "sgm_uniform",
+                  "karras",
+                  "exponential",
+                  "ddim_uniform",
+                  "beta",
+                  "normal",
+                  "linear_quadratic",
+                  "kl_optimal"
+                ],
+                "type": "string"
+              },
               "seed": {
                 "description": "Reuse this number and the same settings for a similar result.",
                 "minimum": 0,
                 "type": "integer"
               },
               "steps": {
-                "description": "More steps take longer.",
+                "default": 4,
+                "description": "More steps add detail but take longer. 4 works well for this model.",
                 "maximum": 100,
                 "minimum": 1,
                 "type": "integer"
@@ -4498,7 +4668,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
         "run_path": null
       },
-      "sha256": "5d0cb37008a6591ecb79e2a0faa9f9fd8df324177f0592f2ed8dfafaaeec24d0"
+      "sha256": "8aaf74f3bb94ad3ae448fee34fb7c31b1e65e943d3c58d7e583e8f91fd66ac92"
     },
     "image.generate.krea2-turbo": {
       "bytes": 7650,

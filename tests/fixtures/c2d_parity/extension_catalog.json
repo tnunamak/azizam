@@ -814,6 +814,29 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
                         "sampler",
                         "scheduler",
                         "seed",
@@ -1281,6 +1304,29 @@
                     {
                       "controls": [
                         "batch_size",
+                        "guidance",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
                         "sampler",
                         "scheduler",
                         "seed",
@@ -1744,6 +1790,29 @@
                         "steps"
                       ],
                       "id": "image.generate.anima-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
                     },
                     {
                       "controls": [

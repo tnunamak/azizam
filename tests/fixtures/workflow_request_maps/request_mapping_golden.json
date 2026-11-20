@@ -1529,6 +1529,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "guidance",
       {
         "field": "guidance",
@@ -1588,6 +1602,20 @@
       }
     ],
     [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
       "guidance",
       {
         "field": "guidance",
@@ -1643,6 +1671,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
@@ -1709,6 +1751,20 @@
       "steps",
       {
         "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
         "in": "extension"
       }
     ],
