@@ -218,3 +218,36 @@ def test_the_speech_refusal_and_the_list_give_the_same_reason(dispatch_env, monk
     assert listed["state"] == "unavailable"
     assert listed["reason"] == error["reason"]
     assert listed.get("retry_after_s") == retry
+
+
+def _admission(monkeypatch, *, override, cfg=None, backends=None):
+    monkeypatch.setattr(proxy, "_effective_media_job_admission_cfg", lambda: cfg or {})
+    monkeypatch.setattr(proxy, "_operator_service_availability_overrides", lambda: {"selected": override} if override else {})
+    monkeypatch.setitem(proxy.config, "backends", backends or {})
+    return proxy._dispatch_admission_response("chat.generate", resource_class="chat", service_id="selected", service_available=True)
+
+
+@pytest.mark.parametrize("override,backends,reason", [
+    ({"state": "disabled"}, {}, "service_disabled"),
+    ({"state": "maintenance", "retry_after_seconds": 7}, {}, "service_maintenance"),
+    ({"state": "draining"}, {}, "service_maintenance"),
+    ({}, {"selected": {"enabled": False}}, "service_disabled"),
+])
+def test_an_admission_refusal_about_the_service_names_the_listing_reason(monkeypatch, override, backends, reason):
+    refusal = _admission(monkeypatch, override=override, backends=backends, cfg={"disabled_resource_classes": []} if not override else None)
+    assert refusal is not None and refusal.status_code == 503
+    error = json.loads(refusal.body)["error"]
+    assert error["code"] == "resource_admission_denied"
+    assert error["reason"] == reason
+
+
+def test_an_admission_refusal_that_is_not_about_the_service_names_no_reason(monkeypatch):
+    refusal = _admission(monkeypatch, override=None, cfg={"disabled_resource_classes": ["chat"]})
+    assert refusal is not None
+    assert "reason" not in json.loads(refusal.body)["error"]
+
+
+def test_a_decision_engine_that_is_not_deployed_is_refused_with_the_listing_code():
+    from gateway.decision_routing import DecisionRuntime
+    result = DecisionRuntime._unavailable_result(SimpleNamespace(fallback_declared=False, fallbacks=[], backend="b"))  # type: ignore[arg-type]
+    assert result.body["error"]["reason"] == "model_not_deployed"
