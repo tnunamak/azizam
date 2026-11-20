@@ -88,4 +88,39 @@ describe("workflowAvailabilityView", () => {
       fix: owner ? { href: "/engines?service=worker%20one", action: "Open Engines" } : null,
     });
   });
+
+  it.each([
+    { missing: [{ kind: "model", name: "sample.bin" }, { kind: "node", name: "SampleNode" }] as const,
+      reason: "Gateway fallback.", text: "A file it needs is missing on its engine: sample.bin, SampleNode. Install it in Engines; the list refreshes within 5 minutes." },
+    { missing: [], reason: "Gateway fallback.", text: "Gateway fallback." },
+    { missing: undefined, reason: undefined, text: "A file it needs is missing on its engine. Install it in Engines." },
+  ])("gives an owner missing-file setup help: $text", ({ missing, reason, text }) => {
+    expect(workflowAvailabilityView({
+      available: false, reason_code: "required_file_missing", engine: "worker one",
+      missing: missing ? [...missing] : undefined, reason,
+    }, { owner: true, engineBinding: "other worker" })).toEqual({
+      readiness: "setup", runnable: false, pickerNote: "Unavailable", text,
+      fix: { href: "/engines?service=worker%20one", action: "Open Engines" },
+    });
+  });
+
+  it("gives a member only generic missing-file setup help", () => {
+    expect(workflowAvailabilityView({
+      available: false, status: "busy", reason_code: "required_file_missing",
+      reason: "A file is missing: sample.bin.",
+      missing: [{ kind: "model", name: "sample.bin" }],
+    }, { owner: false })).toEqual({
+      readiness: "setup", runnable: false, pickerNote: "Unavailable",
+      text: MEMBER_SETUP_NOTE, fix: null,
+    });
+  });
+
+  it("still shows a down engine as down", () => {
+    const reason = "Engine is unavailable.";
+    expect(workflowAvailabilityView({
+      available: false, reason_code: "backend_unavailable", reason,
+    }, { owner: false })).toEqual({
+      readiness: "down", runnable: false, pickerNote: reason, text: reason, fix: null,
+    });
+  });
 });
