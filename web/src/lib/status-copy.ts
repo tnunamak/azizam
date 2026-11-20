@@ -15,6 +15,13 @@ export type AvailabilityReasonCode =
   | "not_available"
   | "no_capabilities"
   | "policy_denied"
+  | "backend_unavailable"
+  | "engine_transitioning"
+  | "model_not_deployed"
+  | "current_model_unavailable"
+  | "service_disabled"
+  | "service_maintenance"
+  | "health_unknown"
   | string;
 
 const stateReason: Record<string, string> = {
@@ -31,6 +38,13 @@ const stateReason: Record<string, string> = {
   unavailable_unconfigured: "Unavailable. Ask the owner to finish setup.",
   not_available: "Unavailable.",
   policy_denied: "Unavailable under this access plan.",
+  backend_unavailable: "This model's service is unavailable. Ask the owner to check it.",
+  engine_transitioning: "This model is starting. Try again shortly.",
+  model_not_deployed: "This model is not installed. Ask the owner to make it available.",
+  current_model_unavailable: "No model is loaded. Ask the owner to load one.",
+  service_disabled: "This model's service is turned off. Ask the owner to enable it.",
+  service_maintenance: "This model is down for maintenance. Ask the owner when it will return.",
+  health_unknown: "This model's status could not be checked. Try again shortly.",
 };
 
 export function availabilityReason(
