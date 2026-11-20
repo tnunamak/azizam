@@ -1,0 +1,306 @@
+"""Adapter pick-lists: the files a caller may choose for a workflow, as data the gateway computes.
+
+A workflow binding says it takes adapters (``adapter_architecture`` and ``adapter_lora_folder`` beside a ``loras`` input
+that maps through a ``chain``, and optionally a ``text_encoder`` input). A caller never types a file name. The choices are
+
+- ``loras``: the files the engine lists for the chain's loader input, kept when the file's own header names the
+  workflow's architecture (``registry/adapter_architectures.yml``) or the owner marked the file for that architecture;
+- ``text_encoders``: the encoders the workflow's manifest lists (its ``text_encoder`` enum). The job runs against that
+  same contract, so an encoder the manifest does not list cannot run; a new encoder is a manifest edit.
+
+Where choices come from is the one function ``installed`` (the operator's files). Another source, such as a member's
+uploads, joins by adding its files to the ``entries`` it builds: nothing else here reads where a file came from.
+
+Known limit: the engine lists names only, so a header is cached by (service, folder, name) and not by size or mtime; a
+file replaced under the same name keeps its old header for ``HEADER_AGE_S``.
+
+The module names no engine, model, node class or workflow: the loader class and its input come from the binding's chain
+data, the header keys from the architecture table, and the reads are passed in (``list_files``, ``read_header``).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+LORAS_INPUT = "loras"
+ENCODER_INPUT = "text_encoder"
+SETTING_KEY = "adapter_marks"
+MAX_AGE_S = 300.0          # a list read from the engine is used this long
+HEADER_AGE_S = 6 * 3600.0  # a header read is used this long; a file's header does not change while it stays listed
+STALE_LIST_S = 10.0        # a requested name missing from a list older than this makes one re-read before it is refused
+FAILED_READ_BACKOFF_S = 30.0  # after a failed list read the engine is not asked again for this long
+HEADER_READS_AT_ONCE = 8
+TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_architectures.yml"
+
+
+# The owner's marks (``SETTING_KEY``). The gateway sets this at startup to read the stored setting, as it sets the choice
+# store; unset, no file is marked.
+MARKS: Callable[[], Any] = lambda: None
+
+
+
+class ChoicesUnavailable(RuntimeError):
+    """The engine could not list its files and no earlier list is held, so no choice can be offered."""
+
+
+@dataclass(frozen=True)
+class AdapterChoices:
+    loras: tuple[str, ...]
+    text_encoders: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Declaration:
+    architecture: str
+    folder: str
+    node_type: str          # the class the chain adds: the engine lists its files under this class
+    listing_input: str      # the input of that class that takes a file name
+    encoder_input: str | None
+    default_encoders: tuple[str, ...]
+
+
+@lru_cache(maxsize=1)
+def architecture_table() -> Mapping[str, Mapping[str, tuple[str, ...]]]:
+    raw = yaml.safe_load(TABLE_PATH.read_text(encoding="utf-8")) or {}
+    return {arch: {key: tuple(values) for key, values in keys.items()} for arch, keys in raw.items()}
+
+
+def declaration(contract: Mapping[str, Any], binding_key: str) -> Declaration | None:
+    """What a binding declares about adapters, or None when it takes none: a binding needs an architecture, a folder and a
+    ``loras`` input that maps through a chain whose fields place a ``name``."""
+    binding = (contract.get("bindings") or {}).get(binding_key)
+    if not isinstance(binding, Mapping):
+        return None
+    architecture, folder = binding.get("adapter_architecture"), binding.get("adapter_lora_folder")
+    mappings = (binding.get("map") or {}).get(LORAS_INPUT)
+    chains = [m["chain"] for m in mappings if isinstance(m, Mapping) and isinstance(m.get("chain"), Mapping)] \
+        if isinstance(mappings, list) else []
+    if not (isinstance(architecture, str) and isinstance(folder, str) and chains):
+        return None
+    chain = chains[0]
+    listing_input = (chain.get("fields") or {}).get("name")
+    if not (isinstance(listing_input, str) and isinstance(chain.get("node_type"), str)):
+        return None
+    encoder = (contract.get("inputs") or {}).get(ENCODER_INPUT)
+    has_encoder = isinstance(encoder, Mapping) and ENCODER_INPUT in (binding.get("map") or {})
+    defaults = tuple(encoder.get("enum") or ()) if has_encoder else ()
+    return Declaration(architecture, folder, chain["node_type"], listing_input, ENCODER_INPUT if has_encoder else None, defaults)
+
+
+def marked(setting: Any, architecture: str, kind: str) -> list[str]:
+    """The files the owner marked for an architecture, by kind (``loras``). A setting that is not shaped as expected
+    marks nothing."""
+    marks = setting.get("marks") if isinstance(setting, Mapping) else None
+    entry = marks.get(architecture) if isinstance(marks, Mapping) else None
+    names = entry.get(kind) if isinstance(entry, Mapping) else None
+    return [name for name in names if isinstance(name, str)] if isinstance(names, list) else []
+
+
+def _plain(value: str) -> str:
+    """A header value as compared: case folded, with every character that is not a letter or digit dropped, so "Krea-2"
+    and " KREA2 " name the same base as "krea2"."""
+    return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+
+def compatible(installed: Sequence[str], headers: Mapping[str, Any], architecture: str,
+               table: Mapping[str, Mapping[str, Sequence[str]]], marked: Sequence[str]) -> list[str]:
+    """The installed files that suit ``architecture``, in installed order: the owner's marks, and files whose header holds
+    a value the table lists for it. A file with no readable header is offered only if marked."""
+    wanted = {key: {_plain(value) for value in values} for key, values in table.get(architecture, {}).items()}
+    chosen = set(marked)
+
+    def names_it(header: Any) -> bool:
+        return isinstance(header, Mapping) and any(
+            isinstance(header.get(key), str) and _plain(header[key]) in values for key, values in wanted.items())
+
+    return [name for name in installed if name in chosen or names_it(headers.get(name))]
+
+
+def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoices) -> dict[str, Any]:
+    """A copy of the contract whose adapter inputs list their current choices. With no compatible file the list takes no
+    items. The stored contract is never changed: choices are read live, so they belong to a request or a listing."""
+    shown = copy.deepcopy(dict(contract))
+    inputs = shown["inputs"]
+    loras = inputs[LORAS_INPUT]
+    if choices.loras:
+        loras["items"]["properties"]["name"]["enum"] = list(choices.loras)
+    else:
+        loras["max_items"] = 0
+    if decl.encoder_input is not None:
+        inputs[decl.encoder_input]["enum"] = list(choices.text_encoders)
+    return shown
+
+
+# ------------------------------------------------------------------------------------------------ the operator's files
+
+_LISTS: dict[tuple[str, str, str, str], tuple[float, list[str]]] = {}
+_HEADERS: dict[tuple[str, str, str], tuple[float, Mapping[str, Any] | None]] = {}
+_FAILED: dict[tuple[str, str, str, str], float] = {}   # when a list read last failed, by the same key as _LISTS
+
+
+def reset() -> None:
+    _LISTS.clear()
+    _HEADERS.clear()
+    _FAILED.clear()
+
+
+def default_list_files(origin: str, node_type: str, input_name: str) -> list[str]:
+    from gateway.engine_protocol.choice_store import choices_from_node_info
+    from gateway.engine_protocol.node_info import fetch_fresh
+
+    return choices_from_node_info(fetch_fresh(origin, node_type), input_name)
+
+
+def default_read_header(origin: str, folder: str, name: str) -> Mapping[str, Any] | None:
+    from gateway.engine_protocol.node_info import fetch_header
+
+    return fetch_header(origin, folder, name)
+
+
+async def installed(
+    decl: Declaration, *, service_id: str, origin: str, marks: Any = None,
+    list_files: Callable[[str, str, str], list[str]] | None = None,
+    read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
+    table: Mapping[str, Mapping[str, Sequence[str]]] | None = None, now: float | None = None,
+    wanted: Sequence[str] = (),
+) -> AdapterChoices:
+    """The choices for one binding from the operator's installed files. Reads the engine only when its list is older than
+    ``MAX_AGE_S``, or older than ``STALE_LIST_S`` when a ``wanted`` name is not in it (a file added since); a file header is
+    read once. When the engine cannot answer, the last good list stays in use and the engine is left alone for
+    ``FAILED_READ_BACKOFF_S``; with no list held, ``ChoicesUnavailable``. A header that cannot be read keeps its file out
+    of the list, never in it."""
+    now = time.time() if now is None else now
+    list_files, read_header = list_files or default_list_files, read_header or default_read_header
+    key = (service_id, decl.node_type, decl.listing_input, decl.folder)
+    held = _LISTS.get(key)
+    age = None if held is None else now - held[0]
+    due = held is None or age >= MAX_AGE_S or (age >= STALE_LIST_S and any(name not in held[1] for name in wanted))
+    failed_at = _FAILED.get(key)
+    if due and failed_at is not None and now - failed_at < FAILED_READ_BACKOFF_S:
+        if held is None:
+            raise ChoicesUnavailable("the engine could not list its adapter files")
+    elif due:
+        def read_list() -> list[str]:
+            files = list_files(origin, decl.node_type, decl.listing_input)
+            _LISTS[key] = (now, files)   # kept even when the caller stopped waiting
+            return files
+        try:
+            await asyncio.to_thread(read_list)
+            _FAILED.pop(key, None)
+        except Exception as exc:  # noqa: BLE001 - any failed read keeps the last good list
+            _FAILED[key] = now
+            if held is None:
+                raise ChoicesUnavailable("the engine could not list its adapter files") from exc
+        held = _LISTS.get(key, held)
+    files = held[1]
+    headers = await _headers(service_id, origin, decl.folder, files, read_header, now)
+    table = architecture_table() if table is None else table
+    loras = compatible(files, headers, decl.architecture, table, marked(marks, decl.architecture, "loras"))
+    return AdapterChoices(tuple(loras), decl.default_encoders)
+
+
+async def _headers(service_id: str, origin: str, folder: str, files: Sequence[str],
+                   read_header: Callable[[str, str, str], Mapping[str, Any] | None], now: float) -> dict[str, Any]:
+    found: dict[str, Any] = {}
+    unknown = []
+    for name in files:
+        held = _HEADERS.get((service_id, folder, name))
+        if held is not None and now - held[0] < HEADER_AGE_S:
+            found[name] = held[1]
+        else:
+            unknown.append(name)
+    gate = asyncio.Semaphore(HEADER_READS_AT_ONCE)
+
+    def fetch(name: str) -> Mapping[str, Any] | None:
+        header = read_header(origin, folder, name)
+        _HEADERS[(service_id, folder, name)] = (now, header)   # kept even when the caller stopped waiting
+        return header
+
+    async def read(name: str) -> None:
+        async with gate:
+            try:
+                found[name] = await asyncio.to_thread(fetch, name)
+            except Exception:  # noqa: BLE001 - not offered this time, and not remembered as having no header
+                return
+
+    await asyncio.gather(*(read(name) for name in unknown))
+    return found
+
+
+def wanted_names(supplied: Mapping[str, Any]) -> list[str]:
+    """The file names a request picks, for ``installed``'s check that its list is not stale."""
+    items = supplied.get(LORAS_INPUT)
+    return [item["name"] for item in items if isinstance(item, Mapping) and isinstance(item.get("name"), str)] \
+        if isinstance(items, list) else []
+
+
+async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: str, origin: str,
+                  wanted: Sequence[str] = ()) -> tuple[Declaration, dict[str, Any]] | None:
+    """The contract as a request sees it now: the declaration the binding makes and the contract with the choices put in.
+    None when the binding takes no adapters. Raises ``ChoicesUnavailable`` when the engine cannot list its files."""
+    decl = declaration(contract, binding_key)
+    if decl is None:
+        return None
+    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS(), wanted=wanted)
+    return decl, overlay(contract, decl, choices)
+
+
+LISTING_WAIT_S = 5.0     # a listing waits this long for the engine, then shows no files for the workflows not yet read
+
+
+async def offered(
+    records: Sequence[Any], binding_key: str, *, service_id: str, origin: str,
+    list_files: Callable[[str, str, str], list[str]] | None = None,
+    read_header: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """The adapter files each record offers now, by record id, for a listing. A record that takes no adapters is left
+    out; so is one whose files could not be read in time (the listing then shows none, and the next one tries again; reads
+    that finish after the wait are kept). The caller passes the readers: with no ``list_files`` nothing is read."""
+    if list_files is None:
+        return {}
+    async def one(record: Any) -> tuple[str, tuple[str, ...]] | None:
+        decl = declaration(record.contract, binding_key)
+        if decl is None:
+            return None
+        try:
+            choices = await asyncio.wait_for(
+                installed(decl, service_id=service_id, origin=origin, marks=MARKS(), list_files=list_files, read_header=read_header),
+                LISTING_WAIT_S)
+        except (ChoicesUnavailable, asyncio.TimeoutError):
+            return None
+        return record.id, choices.loras
+
+    return dict(found for found in await asyncio.gather(*(one(record) for record in records)) if found)
+
+
+def names_adapters(supplied: Mapping[str, Any]) -> bool:
+    """Whether a request supplies an adapter input. A request that does not needs no list of files."""
+    return LORAS_INPUT in supplied or ENCODER_INPUT in supplied
+
+
+# ------------------------------------------------------------------------------------------------------------ receipts
+
+
+def receipt_facts(decl: Declaration | None, supplied: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What a run used, for its receipt: each adapter by file name and weight, and the encoder. None when none was chosen."""
+    if decl is None:
+        return None
+    declared = ((contract.get("inputs") or {}).get(LORAS_INPUT, {}).get("items") or {}).get("properties") or {}
+    weight_default = (declared.get("weight") or {}).get("default")
+    items = supplied.get(LORAS_INPUT)
+    facts: dict[str, Any] = {}
+    if isinstance(items, list) and items:
+        facts["loras"] = [{"name": item["name"], "weight": item.get("weight", weight_default)} for item in items]
+    encoder = supplied.get(ENCODER_INPUT) if decl.encoder_input else None
+    if isinstance(encoder, str):
+        facts["text_encoder"] = encoder
+    return facts or None

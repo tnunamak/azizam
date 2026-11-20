@@ -1981,8 +1981,12 @@ class DeclaredResponseKindExampleTests(unittest.TestCase):
                 old_routes = namespace["_execution"](record, openapi_row["typical_seconds"])
                 old_route = (old_routes.get(old_routes["recommended"])
                              or old_routes.get("sync") or old_routes.get("async"))
+                # The one deliberate difference from the base: an optional list or object input with no default is
+                # left out of an example (the base wrote the placeholder text "value" for it, which no such input accepts).
+                old_rows = [row for row in catalog_module._input_rows(record, old_routes)
+                            if row["required"] or "default" in row or row["type"] not in ("array", "object")]
                 old = namespace["_example_request"](
-                    record, catalog_module._input_rows(record, old_routes), old_route,
+                    record, old_rows, old_route,
                     "https://gateway.test",
                 )
                 old_wire = {**(old_route or {}), **((old_route or {}).get("submit") or {})}

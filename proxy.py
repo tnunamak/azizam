@@ -393,7 +393,8 @@ from gateway.local_capabilities import (
     build_local_capabilities,
 )
 from gateway.service_usage import relied_on_service_ids
-from gateway.extensions import ExtensionError, multipart_extensions
+from gateway import adapter_choices
+from gateway.extensions import ExtensionError, extract_extension_namespace, multipart_extensions
 from gateway.image_extensions import (
     STANDARD_IMAGE_EDIT_FIELDS,
     STANDARD_IMAGE_GENERATE_FIELDS,
@@ -18906,10 +18907,15 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
 
     activity, jobs, service_records = await asyncio.to_thread(read_activity_and_jobs)
     evidence = await _capabilities_availability_evidence(capabilities, service_records)
+    # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
+    published_records = list(SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records())
+    graph_service = _graph_service(_GRAPH_CAPABILITY)
+    adapter_files = await adapter_choices.offered(
+        published_records, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
+        list_files=adapter_choices.default_list_files, read_header=adapter_choices.default_read_header) \
+        if graph_service.service_id else {}
 
     def build_catalog() -> dict[str, Any]:
-        # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
-        published_records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
         projected = project_capabilities(
             capabilities, service_records=service_records,
             evidence=evidence,
@@ -18922,6 +18928,7 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             recent_receipts=activity.get("receipts") or (),
             recent_jobs=jobs,
             base_url=_public_base_url(request),
+            adapter_files=adapter_files,
         )
 
     return await asyncio.to_thread(build_catalog)
@@ -23389,10 +23396,27 @@ async def _apply_workflow_extensions_to_image_request(
             )
         return dict(backend_request), None
 
+    # A request that names adapters is checked against the files the engine offers now; one that does not reads nothing.
+    adapter_view: tuple[adapter_choices.Declaration, dict[str, Any]] | None = None
+    try:
+        named = extract_extension_namespace(extension_body, WORKFLOW_EXTENSION_NAMESPACE)
+    except ExtensionError as e:
+        return None, _image_extension_error_response(receipt, str(e))
+    if adapter_choices.names_adapters(named):
+        graph_service = _graph_service(_GRAPH_CAPABILITY)
+        try:
+            adapter_view = await adapter_choices.current(
+                manifest, DERIVED._GRAPH_BINDING, service_id=graph_service.service_id, origin=graph_service.host,
+                wanted=adapter_choices.wanted_names(named))
+        except adapter_choices.ChoicesUnavailable:
+            return None, openai_error_response(
+                "the engine could not list its adapter files; try again shortly",
+                status_code=503, error_type="api_error", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}",
+                code=workflow_run.ADAPTER_CHOICES_UNAVAILABLE)
     try:
         result = bind_workflow_extensions(
             extension_body,
-            manifest,
+            adapter_view[1] if adapter_view is not None else manifest,
             DERIVED._GRAPH_BINDING,
             backend_request,
             supported_names=_workflow_extension_supported_names(manifest, DERIVED._GRAPH_BINDING),
@@ -23400,6 +23424,10 @@ async def _apply_workflow_extensions_to_image_request(
         )
         if receipt is not None:
             record_image_extension_binding(receipt, result)
+            facts = adapter_choices.receipt_facts(
+                adapter_view[0] if adapter_view is not None else None, result.validation.accepted, manifest)
+            if facts:
+                receipt.metadata["adapters"] = facts
     except ManifestError:
         return None, _image_workflow_configuration_error(manifest, "image workflow")
     except (ExtensionError, ValueError) as e:
@@ -23414,6 +23442,7 @@ async def _apply_workflow_extensions_to_image_request(
             receipt,
             reason,
             param=f"extensions.{result.namespace}.{name}",
+            status_code=422 if adapter_view is not None and name in (adapter_choices.LORAS_INPUT, adapter_choices.ENCODER_INPUT) else 400,
         )
     return result.request or dict(backend_request), None
 
@@ -27956,6 +27985,8 @@ class _WorkflowRunPort:
             return None
         owner = _row_receipt_owner(caller, new_request_id(), str(path), row, declared_at=row.routes[0].canonical)
         owner.receipt.job_id = str(job["job_id"])
+        if (job.get("metadata") or {}).get("adapters"):
+            owner.receipt.metadata["adapters"] = job["metadata"]["adapters"]
         pin = _pinned_of_job(str(job["job_id"]))
         if pin is not None:
             envelope = pin.envelope
@@ -27973,6 +28004,18 @@ class _WorkflowRunPort:
 
 
 _WORKFLOW_RUN_PORT = _WorkflowRunPort()
+
+
+def _adapter_marks() -> Mapping[str, Any] | None:
+    """The owner's adapter marks, read when a request names an adapter. A store that cannot be read marks nothing."""
+    try:
+        setting = admin_store.get_operator_setting(adapter_choices.SETTING_KEY, path=ADMIN_STORE.path)
+    except Exception:  # noqa: BLE001 - marks only widen the list; without them the header filter still holds
+        return None
+    return setting["value"] if setting else None
+
+
+adapter_choices.MARKS = _adapter_marks
 
 
 class _AdaptiveBatching:
