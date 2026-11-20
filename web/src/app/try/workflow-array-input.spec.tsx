@@ -242,3 +242,28 @@ it("ignores a label key that is not a choice and falls back for an empty label",
   expect(labels).not.toContain("Ignored");
   expect(labels).toContain("b.safetensors");
 });
+
+it("shows a member-uploaded LoRA label and keeps its ID through request parsing", () => {
+  const input: WorkflowInput = {
+    name: "loras", label: "Style adapters", type: "array",
+    items: { type: "object", properties: {
+      name: {
+        type: "string", label: "Name", enum: ["style-a.safetensors", "ast_0123"],
+        choice_labels: { ast_0123: "My watercolour" },
+      },
+      strength: { type: "number", default: 1 },
+    } },
+  };
+  const { render, onChange } = view(input);
+  render();
+  click("Add Style adapters");
+  render();
+  expect(controls.options.map(({ label }) => label)).toContain("style-a.safetensors");
+  expect(controls.options.map(({ label }) => label)).not.toContain("ast_0123");
+  const choice = controls.options.find(({ label }) => label === "My watercolour");
+  expect(choice?.value).toBe("ast_0123");
+  controls.choices.get("Name, row 1")?.change?.(choice!.value);
+  const emitted = onChange.mock.lastCall![0];
+  expect(JSON.parse(emitted).loras).toEqual([{ name: "ast_0123", strength: 1 }]);
+  expect(parseWorkflowInputs(emitted, [input]).loras).toEqual([{ name: "ast_0123", strength: 1 }]);
+});
