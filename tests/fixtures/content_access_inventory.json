@@ -1122,6 +1122,13 @@
       "note": "Legacy client event append uses job ownership; v3 lists no separate append action."
     },
     {
+      "handler": "gateway.problem_reports.create_runtime_problem_reports_router.<locals>.file_report",
+      "method": "POST",
+      "path": "/gateway/v1/problem-reports",
+      "access": "own-account",
+      "note": "Same core and caller as the MCP report_problem tool; the report names the App, not any content."
+    },
+    {
       "handler": "gateway.api.create_gateway_router.<locals>.cancel_media_job",
       "method": "POST",
       "path": "/gateway/v1/media/jobs/{job_id}/cancel",
@@ -2390,6 +2397,20 @@
       "method": "GET",
       "path": "/v1/assets/{asset_id}/thumbnail",
       "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.assets_create",
+      "method": "POST",
+      "path": "/openai/v1/assets",
+      "access": "own-account",
+      "note": "Stores one image under the caller's own owner key; it reads no one else's content."
+    },
+    {
+      "handler": "proxy.assets_create",
+      "method": "POST",
+      "path": "/v1/assets",
+      "access": "own-account",
+      "note": "Stores one image under the caller's own owner key; it reads no one else's content."
     },
     {
       "handler": "proxy.assets_delete",
@@ -3773,13 +3794,13 @@
     "succeeded": "content:job:read"
   },
   "mcp_dispatch": {
-    "<module>": "35db42972b1a83322fd410f5fae468c39ca6ae6834ddee6b0d9ac1bdb165ba04",
+    "<module>": "c0fd9b18e248b8e868e703eff99b59a903e7696a2add1145ebf3d9a66a002b19",
     "ImagePreview": "8f44951015df28c66372989c4069505718b02231b49826bf7a57cd16b7e67350",
     "McpDeps": "26890be97f0f653c2c7bf15dac272f2579db571a7d912dc69f6f09434c3469d3",
     "McpJobProfile": "f472c2045b00112bb38d5489834312870b93f7bedfc064ca5361de0b5241e0f8",
     "McpRegistry": "11408d732b0e6dfc48065755bd363e67ea95a1236a6c83f0c2e53f3ea68148fb",
     "McpTarget": "42afb40adfc28ae672f14ffe3925163e2d23e686e00e32b0ff16202b9e649cb4",
-    "Tools": "216ccebda3c70be5a03a09d6823a838f4f3aa52f448814004587b461cac1ded7",
+    "Tools": "8720f5d1e3d7c2de1e4e5e2dfed22dbe266f04ef664a3a10f1605f9cd6c428a3",
     "__init__": "0a016fe90dfe9a244de7100c3cfb558d5f48d8ecc692a80bca3d35ed2eff2479",
     "_asset": "bdeb44dadbbd2f2bb8186cf7a2112a938431337c60f64edb4569e44c46e49f7e",
     "_assets_from_response": "cf283156a090b1a96432eb757ba933193baa4661e69a480b818b7bf5b35ada20",
@@ -3823,7 +3844,7 @@
     "base": "0d79c831f9739e2fffcef5e991fe1c26c61d0f9f70a6f446f46cadb7358bca8e",
     "bearer_challenge": "39a19c7740529da1df86cb38aad57a7e54ed8b3220ab24d7134c2f626a44e63c",
     "call_tool": "5c3048ce5d80bcf07bc53fef838a3a295c400f523d6d9fef5da7361ee4dee152",
-    "capabilities": "1a2fdc76aa83ef1d0ccaf8a7fd254461169a731353a51545776ac89c680eaf8e",
+    "capabilities": "04201b808ef432fbc9e295d2499213142e79d9d7dcc4cbbaef1f07f5844c2787",
     "compile_mcp_registry": "afdc6227f343927ed13c155c995d55da5aa84a9bbfb3877a86bb37819f626f14",
     "dispatch": "53ccec55be40dacbb05313d7625f8cf06d11ed24f923ac934792f0cbdf3821d9",
     "handle_message": "b5971f988c4af35fbdd3656d49bd1c8277642bb0deff73e454124949390ef5a4",
@@ -3836,7 +3857,7 @@
     "rank": "0b045bdafd1ab65458de7bd9f45a79a1c2fa18bd5cd8a8eeedb53a30d8d46f55",
     "register_mcp_routes": "23da16a0a1fe022c5b5a26fbedb7632bbdda4a5e628c25ca55b75dbb0682a019",
     "rename": "2f7b61af84cd091b444556c024ab01e678e568de109e6d232ae85dc7a3dd7cdc",
-    "resolve": "4ffb840a2d081e782084aecd87508d162c3682acbedcaa0076a61e6f06d5ed00",
+    "resolve": "5f418b4c0ab7723b76e73d1c297931a4acda13f3eee99c74b417696e97989194",
     "rpc_error": "a23c4b9c67defee55675b673cded5661de031a6216b4231e661eef8f2c62e7a2",
     "run": "d681e4451837a52055af765f7512b59a46f2612854d9a3d32193fcfd4dce2e94",
     "tool_result": "e1efa86a533c6754836ea6f5cf96ada46537d05b4e1fa96a599b7689573c38d9"

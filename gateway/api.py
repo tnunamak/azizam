@@ -52,6 +52,7 @@ from gateway import media_jobs as _media_jobs
 from gateway import result_bundle as _result_bundle
 from gateway import receipts as _receipts
 from gateway.capabilities import Capability, summarize_capabilities
+from gateway.problem_report_tool import HOW_TO_REPORT
 from gateway.discovery import VALID_AUDIENCES
 from gateway.registry_snapshot import Provider as SnapshotProvider, snapshot_of
 from gateway.workflow_projections import SnapshotRegistry
@@ -546,7 +547,7 @@ def create_gateway_router(
                 snapshot = snapshot_of(request, provider)
                 capabilities = [cap for cap in capabilities if not closed_reason(
                     snapshot.get(cap.resolved_workflow or cap.workflow))]
-            catalog = summarize_capabilities(capabilities, audience=audience)
+            catalog = {**summarize_capabilities(capabilities, audience=audience), "report_problem": HOW_TO_REPORT}
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)

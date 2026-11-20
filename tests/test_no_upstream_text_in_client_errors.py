@@ -186,6 +186,7 @@ ERROR_TEXT_FIELDS = {"message", "code", "type", "param", "detail", "reason", "ms
 ALLOWED_READS: dict[str, str] = {
     "gateway/config_cli.py::call": "the operator's own command line reads the error of the gateway's own config API (built by config_api._error from fixed sentences and the text of local store or config-layer errors, never an engine's words) to print it to the owner who holds the key; it never reaches an API caller, and the command line must stay standard-library only",
     "gateway/client_errors.py::rewrite_stream_errors": "the helper itself: it reads the fields it replaces",
+    "gateway/availability_reasons.py::name_reason": "writes the gateway's own reason word into the gateway's own admission refusal; it reads no engine text",
     "gateway/workflow_owner_api.py::_clean": "it reads back the message of the gateway's own egress.safe_error_response, built from a gateway sentence a moment before, to send it cleaned the same way",
     "proxy.py::_refused_from_response": "the response is the gateway's own admission refusal (_media_job_admission_response), built by the gateway from fixed sentences; no engine is asked",
     "gateway/decisions_api.py::_systemone_body_for_client": "the local decision service is dialed with no credential (decision_routing posts no headers but a deadline), so it has none to echo",

@@ -804,6 +804,8 @@
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -812,6 +814,8 @@
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -821,6 +825,8 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -836,13 +842,18 @@
                     {
                       "controls": [
                         "batch_size",
-                        "seed"
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
                       ],
                       "id": "image.generate.moss-image-fast"
                     },
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -878,6 +889,8 @@
                   "workflows": [
                     {
                       "controls": [
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -892,6 +905,8 @@
                         "cfg",
                         "negative_prompt",
                         "reference_resolution",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -903,6 +918,8 @@
                         "negative_prompt",
                         "reference_image_2",
                         "reference_resolution",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -916,6 +933,8 @@
                         "mask_feather",
                         "negative_prompt",
                         "prompt_mode",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1252,6 +1271,8 @@
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1260,6 +1281,8 @@
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1269,6 +1292,8 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1284,13 +1309,18 @@
                     {
                       "controls": [
                         "batch_size",
-                        "seed"
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
                       ],
                       "id": "image.generate.moss-image-fast"
                     },
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1326,6 +1356,8 @@
                   "workflows": [
                     {
                       "controls": [
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1340,6 +1372,8 @@
                         "cfg",
                         "negative_prompt",
                         "reference_resolution",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1351,6 +1385,8 @@
                         "negative_prompt",
                         "reference_image_2",
                         "reference_resolution",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1364,6 +1400,8 @@
                         "mask_feather",
                         "negative_prompt",
                         "prompt_mode",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1700,6 +1738,8 @@
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1708,6 +1748,8 @@
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1717,6 +1759,8 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1732,13 +1776,18 @@
                     {
                       "controls": [
                         "batch_size",
-                        "seed"
+                        "sampler",
+                        "scheduler",
+                        "seed",
+                        "steps"
                       ],
                       "id": "image.generate.moss-image-fast"
                     },
                     {
                       "controls": [
                         "batch_size",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1774,6 +1823,8 @@
                   "workflows": [
                     {
                       "controls": [
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1788,6 +1839,8 @@
                         "cfg",
                         "negative_prompt",
                         "reference_resolution",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1799,6 +1852,8 @@
                         "negative_prompt",
                         "reference_image_2",
                         "reference_resolution",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],
@@ -1812,6 +1867,8 @@
                         "mask_feather",
                         "negative_prompt",
                         "prompt_mode",
+                        "sampler",
+                        "scheduler",
                         "seed",
                         "steps"
                       ],

@@ -25,6 +25,8 @@ GET /v1/assets/{asset_id}/content 400                          # coverage gap: {
 GET /openai/v1/assets/{asset_id}/content 400                   # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
 GET /gateway/v1/assets/{asset_id} 400                          # coverage gap: {"error": {"message": "Invalid asset id", "type": "invalid_request_erro
 GET /gateway/v1/assets/{asset_id}/content 400                  # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
+POST /v1/assets 400                                            # coverage gap: {"error": {"code": "missing_file", "message": "Send the image as one multipart/form-data file part named 'file'."}} (an upload of the caller's own image; owner-scoped, not model-facing)
+POST /openai/v1/assets 400                                     # coverage gap: {"error": {"code": "missing_file", "message": "Send the image as one multipart/form-data file part named 'file'."}} (an upload of the caller's own image; owner-scoped, not model-facing)
 POST /v1/messages/count_tokens 400                             # coverage gap: {"error": {"message": "'messages' must be a non-empty list", "type": "i
 POST /anthropic/v1/messages/count_tokens 400                   # coverage gap: {"error": {"message": "'messages' must be a non-empty list", "type": "i
 POST /api/embeddings 400                                       # coverage gap: {"error": "'prompt' must be a string"}
@@ -64,6 +66,8 @@ GET /v1/assets/{asset_id}/content 400                          # not exercised: 
 GET /openai/v1/assets/{asset_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
 GET /gateway/v1/assets/{asset_id} 400                          # not exercised: {"error": {"message": "Invalid asset id", "type": "invalid_request_err
 GET /gateway/v1/assets/{asset_id}/content 400                  # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+POST /v1/assets 400                                            # not exercised: an empty request answers 400 missing_file before any model is considered (stores the caller's own image, not category-governed)
+POST /openai/v1/assets 400                                     # not exercised: an empty request answers 400 missing_file before any model is considered (stores the caller's own image, not category-governed)
 POST /gateway/v1/workflows/{workflow_id}/run 404               # not exercised: was: HTTP status in DENIED
 GET /v1/status 403                                             # not exercised: was: HTTP status in DENIED
 POST /v1/messages/count_tokens 400                             # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
@@ -145,6 +149,8 @@ GET /v1/assets/{asset_id}/content 400                          # not exercised: 
 GET /openai/v1/assets/{asset_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
 GET /gateway/v1/assets/{asset_id} 400                          # not exercised: {"error": {"message": "Invalid asset id", "type": "invalid_request_err
 GET /gateway/v1/assets/{asset_id}/content 400                  # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+POST /v1/assets 400                                            # not exercised: an empty request answers 400 missing_file before any model is considered (stores the caller's own image, not category-governed)
+POST /openai/v1/assets 400                                     # not exercised: an empty request answers 400 missing_file before any model is considered (stores the caller's own image, not category-governed)
 POST /gateway/v1/workflows/{workflow_id}/run 404               # not exercised: was: HTTP status in DENIED
 POST /v1/videos 404                                            # not exercised: was: HTTP status in DENIED
 POST /openai/v1/videos 404                                     # not exercised: was: HTTP status in DENIED

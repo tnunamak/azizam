@@ -140,7 +140,7 @@ from gateway.engine_protocol.errors import BudgetExceeded as ProtocolBudgetExcee
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
     SERVICE_DISABLED, SERVICE_NOT_ADMITTING, SERVICE_REASONS, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
-from gateway import media_input_assets, media_input_leases, media_inputs
+from gateway import chat_asset_refs, media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
 from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, node_graph_runner, row_routes, workflow_adapters
@@ -267,7 +267,8 @@ from gateway.admin_runtime import (
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway import availability
-from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
+from gateway import availability_reasons
+from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities, unknown_state
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -3777,7 +3778,7 @@ def model_compatibility_error(error: "str | Exception") -> Response:
     if details:
         body["details"] = details
     return Response(
-        content=json.dumps({"error": body}),
+        content=json.dumps({"error": availability_reasons.stamp(body)}),
         status_code=status_code,
         media_type="application/json",
     )
@@ -3799,7 +3800,7 @@ def openai_error_response(
         "code": code,
     }
     return Response(
-        content=json.dumps({"error": error}),
+        content=json.dumps({"error": availability_reasons.stamp(error)}),
         status_code=status_code,
         media_type="application/json",
     )
@@ -3955,11 +3956,11 @@ def _litellm_activation_failure_response(
         )
     return Response(
         content=json.dumps({
-            "error": {
+            "error": availability_reasons.stamp({
                 "message": message,
                 "type": "service_unavailable",
                 "code": "backend_unavailable",
-            }
+            })
         }),
         status_code=503,
         media_type="application/json",
@@ -5061,12 +5062,12 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     if await ensure_target(service_id, None):
         return None
     return Response(
-        content=json.dumps({"error": {
+        content=json.dumps({"error": availability_reasons.stamp({
             "message": f"{label} could not be started.",
             "type": "service_unavailable",
             "code": "backend_unavailable",
             "service": service_id,
-        }}),
+        })}),
         status_code=503,
         media_type="application/json",
         headers={"Retry-After": "5"},
@@ -6080,10 +6081,14 @@ async def _stt_terminal_response(
     return response
 
 
-def _stt_audio_not_splittable_response(error: stt_chunking.SttAudioNotSplittable) -> Response:
-    """Turn an unverified or uncut upload into a plain gateway refusal."""
+def _stt_audio_not_splittable_response(
+    error: stt_chunking.SttAudioNotSplittable, execution: stt_chunking.SttExecutionConfig,
+) -> Response:
+    """Turn an unverified or uncut upload into a plain gateway refusal whose advice follows the record's declarations."""
+    split = stt_declared_options.capability_limits(execution)["split_response_formats"]
     return client_errors.stt_audio_cannot_be_split(
-        error.reason, error.limit_seconds, duration_seconds=error.duration_seconds, blocked_by=error.blocked_by)
+        error.reason, error.limit_seconds, duration_seconds=error.duration_seconds, blocked_by=error.blocked_by,
+        split_formats=split)
 
 
 def _stt_error(message: str, *, status_code: int, code: str) -> Response:
@@ -6448,7 +6453,7 @@ async def proxy_stt_request(
             return model_compatibility_error(error)
         except stt_chunking.SttAudioNotSplittable as error:
             owner.report(status="failed", reason="failed")
-            return _stt_audio_not_splittable_response(error)
+            return _stt_audio_not_splittable_response(error, execution)
         except stt_chunking.SttInvalidAudio:
             owner.report(status="failed", reason="failed")
             return openai_error_response(
@@ -6481,8 +6486,12 @@ async def proxy_stt_request(
         except stt_chunking.SttCleanupFailure:
             owner.report(status="failed", reason="failed")
             return _stt_error("STT request cleanup failed.", status_code=502, code="stt_cleanup_failed")
-        except Exception:
+        except Exception as error:
             owner.report(status="failed", reason="failed")
+            # The class and the innermost place only: the exception's text may quote a path or a key.
+            frame = traceback.extract_tb(error.__traceback__)[-1] if error.__traceback__ else None
+            where = f"{Path(frame.filename).name}:{frame.lineno}" if frame else "unknown place"
+            print(f"[stt] unexpected {type(error).__name__} at {where}; answered 502 stt_proxy_error", flush=True)
             return _stt_error("STT proxy request failed.", status_code=502, code="stt_proxy_error")
         if not cleanup_deferred:
             succeeded = stt_chunking.upstream_response_succeeded(response.status_code)
@@ -8829,8 +8838,23 @@ def _default_image_response_format(requested_model: Any) -> str:
     return "b64_json"
 
 
-# The public `n` range (1..10) also bounds the images one request may return.
-MAX_IMAGES_PER_REQUEST = 10
+# The public `n` range (1..10) also bounds the images one request may return: n x batch_size over it is refused.
+MAX_IMAGES_PER_REQUEST = workflow_run.MAX_FILES_PER_REQUEST
+
+
+def _image_count_over_limit_refusal(n: int, per_prompt: int) -> Response:
+    """The 400 for a request that asks for more pictures than one request makes (never a quiet short answer)."""
+    return _image_input_refusal(
+        f"n x batch_size is {n * per_prompt} (n={n}, batch_size={per_prompt}), more than the "
+        f"{MAX_IMAGES_PER_REQUEST} images one request makes. Ask for fewer, or send several requests.",
+        param="batch_size", code="invalid_request")
+
+
+def _image_count_short_response(requested: int, produced: int) -> Response:
+    """The 502 for a run that made fewer pictures than were asked for: nothing is returned, so no short set passes as whole."""
+    return openai_error_response(
+        f"Asked for {requested} images, but the image engine made {produced}. Nothing was returned.",
+        status_code=502, error_type="api_error", code="result_count_short")
 
 
 def _requested_batch_size(workflow: Mapping[str, Any], meta: Mapping[str, Any]) -> int:
@@ -9003,11 +9027,7 @@ async def _generate_images_with_adaptive_batching(
     per_prompt = _requested_batch_size(base_workflow, meta)
     images_total = n_requested * per_prompt
     if images_total > MAX_IMAGES_PER_REQUEST:
-        images_total = MAX_IMAGES_PER_REQUEST
-        warnings.append(
-            f"n={n_requested} x batch_size={per_prompt} exceeds the "
-            f"{MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}"
-        )
+        return _image_count_over_limit_refusal(n_requested, per_prompt)
 
     images_collected: list[bytes] = []
     # The contract's output the images came from; the job's bundle names its result by it.
@@ -9222,7 +9242,6 @@ async def _generate_images_with_adaptive_batching(
                 client, probe=probe, free_before=free_before, batch_target=batch_target,
                 workflow_name=workflow_name, width=width, height=height)
 
-    images_collected = images_collected[:images_total]
     if not images_collected:
         return Response(
             content=json.dumps({"error": {"message": "No images generated", "type": "api_error"}}),
@@ -9231,10 +9250,8 @@ async def _generate_images_with_adaptive_batching(
         )
 
     if len(images_collected) < images_total:
-        batch_note = f" x batch_size={per_prompt}" if per_prompt > 1 else ""
-        warnings.append(
-            f"requested n={n_requested}{batch_note} but produced {len(images_collected)} after {rounds_run} round(s)"
-        )
+        return _image_count_short_response(images_total, len(images_collected))
+    images_collected = images_collected[:images_total]
 
     if image_transform is not None:
         try:
@@ -16813,6 +16830,14 @@ async def _mcp_problem_report(request: Request, auth: Any, args: Mapping[str, An
         raise CallError(str(exc), code=exc.code) from None
 
 
+async def _rest_problem_report(request: Request, args: Mapping[str, Any]) -> dict[str, Any]:
+    """``POST /gateway/v1/problem-reports``: the same core and the same caller as the MCP tool."""
+    return await PROBLEM_REPORTS.submit(_mcp_problem_caller(request.scope.get("auth_context")), args)
+
+
+app.include_router(problem_reports.create_runtime_problem_reports_router(submit=_rest_problem_report))
+
+
 def _mount_mcp(app: FastAPI) -> None:
     if MCP_OAUTH_ENABLED:
         MCP_OAUTH.register(app)
@@ -17303,10 +17328,10 @@ async def _identity_ensure_face_service() -> Response | None:
     if await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT):
         return None
     return Response(
-        content=json.dumps({"error": {
+        content=json.dumps({"error": availability_reasons.stamp({
             "message": "The face service could not be started.", "type": "service_unavailable",
             "code": "backend_unavailable", "service": "faces",
-        }}),
+        })}),
         status_code=503, media_type="application/json", headers={"Retry-After": "5"},
     )
 
@@ -19509,13 +19534,14 @@ def _service_availability_response(
 
     label = service_label or service_id
     message = str(override.get("reason") or "").strip() or f"{label} is {state}."
-    retry_after = _optional_int_config(override, "retry_after_seconds") or 10
+    retry_after = availability_reasons.override_retry_after_s(override)
     return Response(
         content=json.dumps({
             "error": {
                 "message": message,
                 "type": "service_unavailable",
                 "code": "backend_unavailable",
+                "reason": availability_reasons.override_reason(override),
                 "service": service_id,
                 "state": state,
             }
@@ -25214,6 +25240,11 @@ def _dispatch_admission_response(
     advised = resource_admission_http.admission_http_response(
         decision, wait_deadline=evidence["wait_deadline"], protocol=protocol,
     )
+    # A refusal that is only about the service says why, with the word the model list uses.
+    if "service_unavailable" in decision.reason_codes:
+        registry_off = service_id is not None and ((config.get("backends") or {}).get(service_id) or {}).get("enabled", True) is False
+        availability_reasons.name_reason(
+            advised.body, availability_reasons.override_reason(override) or ("service_disabled" if registry_off else None))
     return _gateway_refusal(Response(content=json.dumps(advised.body), status_code=advised.status_code,
                                      media_type="application/json", headers=dict(advised.headers)), "capacity")
 
@@ -27205,6 +27236,63 @@ ASSETS_DELETE_OPENAPI = {"responses": {"200": {"description": "The asset is dele
     "404": {"description": "asset_not_found: no such asset, or it is not owned by this App's accountable person."}}}
 
 
+ASSETS_CREATE_OPENAPI = {
+    "requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
+        "type": "object", "required": ["file"],
+        "properties": {"file": {"type": "string", "format": "binary",
+                                "description": "One image. Its type is read from its bytes. The size limit is the media input limit "
+                                               "(AZIZAM_MEDIA_FETCH_MAX_BYTES), not the JSON body limit."}}}}}},
+    "responses": {
+        "200": {"description": "The image is stored. Send its id as chat image_url.url instead of the image.",
+                "content": {"application/json": {"schema": {
+                    "type": "object", "required": ["id", "object", "media_type", "size_bytes"],
+                    "properties": {"id": {"type": "string"}, "object": {"type": "string", "enum": ["gateway.asset"]},
+                                   "media_type": {"type": "string"}, "size_bytes": {"type": "integer"}}}}}},
+        "400": {"description": "No file, an empty file, or a file that is not an image."},
+        "413": {"description": "file_too_large: the image is over the media input limit."}}}
+
+
+async def assets_create(request: Request):
+    """Store one image for the caller and return its id, so a large picture need not ride in a JSON body."""
+    auth_context = await asyncio.to_thread(authenticate_request, request, "/v1/assets")
+    if isinstance(auth_context, Response):
+        return auth_context
+    try:
+        form = await request.form()
+    except Exception:  # noqa: BLE001 - a body that is not multipart is the caller's mistake
+        return openai_error_response("Send the image as one multipart/form-data file part named 'file'.",
+                                     status_code=400, param="file", code="missing_file")
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        return openai_error_response("Send the image as one multipart/form-data file part named 'file'.",
+                                     status_code=400, param="file", code="missing_file")
+    limit = media_fetch.max_bytes()
+    if (getattr(upload, "size", None) or 0) > limit:
+        return openai_error_response(f"The image is larger than the {limit}-byte media input limit.",
+                                     status_code=413, param="file", code="file_too_large")
+    data = await upload.read()
+    return await asyncio.to_thread(_store_uploaded_image, data, auth_context)
+
+
+def _store_uploaded_image(data: bytes, auth_context: AuthContext) -> Response:
+    if not data:
+        return openai_error_response("The image is empty.", status_code=400, param="file", code="invalid_image")
+    if len(data) > media_fetch.max_bytes():
+        return openai_error_response(f"The image is larger than the {media_fetch.max_bytes()}-byte media input limit.",
+                                     status_code=413, param="file", code="file_too_large")
+    measured = media_inputs.measure(data)
+    if not measured.media_type.startswith("image/"):
+        return openai_error_response("The file is not an image this gateway can read.",
+                                     status_code=400, param="file", code="invalid_image_format")
+    try:
+        # An uploaded input is not a creation: it has no maker and keeps no prompt.
+        asset_id = store_asset_bytes(data, kind="img", suffix=measured.suffix, owner_key_hash=_asset_owner_key(auth_context),
+                                     maker_person_id=None, keep_prompt=False)
+    except media_metadata.MediaMetadataError:
+        return openai_error_response("The image could not be read.", status_code=400, param="file", code="invalid_image")
+    return JSONResponse({"id": asset_id, "object": "gateway.asset", "media_type": measured.media_type, "size_bytes": len(data)})
+
+
 async def assets_delete(asset_id: str, request: Request):
     """Delete an asset this App (or its accountable person) made; the same work as the browser Delete."""
     auth_context = await asyncio.to_thread(authenticate_request, request, "/v1/assets/{asset_id}")
@@ -27912,9 +28000,10 @@ class _AdaptiveBatching:
         n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 1 else 1
         total = n * per_prompt
         warnings: list[str] = []
-        if total > MAX_IMAGES_PER_REQUEST:
-            total = MAX_IMAGES_PER_REQUEST
-            warnings.append(f"n={n} x batch_size={per_prompt} exceeds the {MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}")
+        if total > MAX_IMAGES_PER_REQUEST:      # the run core refuses this at admission; a run that got here still never clamps
+            raise node_graph_runner.RunFailed(
+                "invalid_request", "invalid_input",
+                f"n x batch_size is {total}, more than the {MAX_IMAGES_PER_REQUEST} images one request makes.", upstream_status=400)
         name = str(contract.get("id") or "")
         state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
                             free_before=await graph_free_vram_bytes(session.client, _GRAPH_CAPABILITY),
@@ -30755,8 +30844,12 @@ def _model_entry_availability(
     projected: dict[str, Any] | None = None,
     engines_by_op: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     internal_route_targets: Mapping[str, list[str]] | None = None,
-) -> dict[str, str] | None:
+    overrides: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """The `azizam_availability` value for one model entry, or None when no service can be mapped to it.
+
+    A value other than `available` carries a `reason` code (`gateway.availability_reasons`) and, when known,
+    `retry_after_s`. `overrides` are the operator's per-service availability settings.
 
     A name maps through a workflow it is (the services the workflow needs, all at once), through the services
     that serve it by name, or through the names an alias resolves to. An engine-operation alias maps to the services
@@ -30769,17 +30862,18 @@ def _model_entry_availability(
     engines_by_op = engines_by_op or {}
     internal_route_targets = internal_route_targets or {}
 
-    def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, str] | None:
+    def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, Any] | None:
         if not service_ids:
             return None
         if not snapshot_fresh:
-            return {"state": "unknown"}
+            return unknown_state()
         return model_availability(service_ids, service_records=service_records, evidence=evidence,
-                                  require_all=require_all, services=services, projected=projected)
+                                  require_all=require_all, services=services, projected=projected,
+                                  overrides=overrides)
 
     registry_services = service_records.get("services") if isinstance(service_records.get("services"), Mapping) else {}
 
-    def by_backend(backend: str | None, requirements: Mapping[str, Any]) -> dict[str, str] | None:
+    def by_backend(backend: str | None, requirements: Mapping[str, Any]) -> dict[str, Any] | None:
         # One way to run the workflow: its engine, when that is a registry service (the gateway composing it itself is
         # none), and every service it requires, all at once. A known-down part decides, even when another requirement
         # cannot be resolved.
@@ -30797,12 +30891,12 @@ def _model_entry_availability(
         if down is not None:
             return down
         if unresolved:
-            return {"state": "unknown"}
+            return unknown_state()
         if not judged:
             return None
-        return {"state": "available"} if all(state["state"] == "available" for state in judged) else {"state": "unknown"}
+        return next((state for state in judged if state["state"] != "available"), {"state": "available"})
 
-    def by_workflow(workflow_id: str) -> dict[str, str] | None:
+    def by_workflow(workflow_id: str) -> dict[str, Any] | None:
         record = workflows.get(workflow_id)
         if record is None:
             return None
@@ -30818,53 +30912,49 @@ def _model_entry_availability(
         if all(state is None for state in states):
             return None
         # A backend nothing can be judged for counts as unknown beside the others.
-        states = [state or {"state": "unknown"} for state in states]
+        return settle([state or unknown_state() for state in states])
+
+    def settle(states: list[dict[str, Any]]) -> dict[str, Any]:
+        """One value for alternatives: any available one serves; all unavailable says why the first is; else unknown."""
         if any(state["state"] == "available" for state in states):
             return {"state": "available"}
         if all(state["state"] == "unavailable" for state in states):
             return states[0]
-        return {"state": "unknown"}
+        return next(state for state in states if state["state"] == "unknown")
 
-    def by_name_or_workflow(name: str) -> dict[str, str] | None:
+    def by_name_or_workflow(name: str) -> dict[str, Any] | None:
         workflow_id = workflow_ids_by_model.get(name)
         if workflow_id:
             return by_workflow(workflow_id)
         routed = internal_route_targets.get(normalize_model_id(name))
         if routed is not None:
             # The route resolves its target at request time. With none to resolve to, a request is refused.
-            return judge(routed) or {"state": "unavailable", "reason": "No service can answer this name now."}
+            return judge(routed) or {"state": "unavailable", "reason": "current_model_unavailable"}
         return judge(by_name.get(normalize_model_id(name), []))
 
-    def any_of(states: list[dict[str, str]]) -> dict[str, str]:
-        if any(state["state"] == "available" for state in states):
-            return {"state": "available"}
-        if all(state["state"] == "unavailable" for state in states):
-            return states[0]
-        return {"state": "unknown"}
-
-    def engine_state(rows: list[Mapping[str, Any]]) -> dict[str, str] | None:
+    def engine_state(rows: list[Mapping[str, Any]]) -> dict[str, Any] | None:
         # Known engines, none deployed: a request gets model_not_deployed whatever their services' health says. No
         # known engine at all is no information, as before.
         if not rows:
             return None
         deployed = [row for row in rows if row.get("deployed")]
         if not deployed:
-            return {"state": "unavailable", "reason": "No engine behind this name is deployed."}
+            return {"state": "unavailable", "reason": "model_not_deployed"}
         return judge(list(dict.fromkeys(str(row["service"]) for row in deployed if row.get("service"))))
 
-    def by_engine_candidates(operation: str, engine_ids: list[Any]) -> dict[str, str] | None:
+    def by_engine_candidates(operation: str, engine_ids: list[Any]) -> dict[str, Any] | None:
         known = engines_by_op.get(operation, {})
         return engine_state([known[engine_id] for engine_id in engine_ids
                              if isinstance(engine_id, str) and engine_id in known])
 
-    def by_engine_name(name: str) -> dict[str, str] | None:
+    def by_engine_name(name: str) -> dict[str, Any] | None:
         # Only an entry of an engine operation. Inside each operation the name resolves as a request routes: an engine
         # id selects that engine alone; the model an engine serves is searched only when no engine id matched. The
         # operations then combine: one that can serve the name is enough.
         wanted = normalize_model_id(name)
         if not wanted:
             return None
-        states: list[dict[str, str]] = []
+        states: list[dict[str, Any]] = []
         for operation in _engine_operations_of_entry(entry):
             known = engines_by_op.get(operation) or {}
             rows = [row for engine_id, row in known.items() if normalize_model_id(engine_id) == wanted]
@@ -30873,7 +30963,7 @@ def _model_entry_availability(
             state = engine_state(rows) if rows else None
             if state is not None:
                 states.append(state)
-        return any_of(states) if states else None
+        return settle(states) if states else None
 
     workflow_id = entry.get("azizam_workflow_id")
     if isinstance(workflow_id, str) and workflow_id:
@@ -30884,7 +30974,7 @@ def _model_entry_availability(
     if resolves_to or candidates:
         # Per operation: an engine operation is judged by its engine candidates; any other target by the services
         # that serve its name. A target that maps to no service is one more unknown alternative, not a missing one.
-        judged: list[dict[str, str] | None] = []
+        judged: list[dict[str, Any] | None] = []
         for operation in dict.fromkeys([*resolves_to, *candidates]):
             target = resolves_to.get(operation)
             engine_ids = candidates.get(operation)
@@ -30896,7 +30986,7 @@ def _model_entry_availability(
             judged.append(state)
         if all(state is None for state in judged):
             return None
-        return any_of([state or {"state": "unknown"} for state in judged])
+        return settle([state or unknown_state() for state in judged])
     return by_name_or_workflow(model_id) or by_engine_name(model_id)
 
 
@@ -30947,6 +31037,11 @@ def _annotate_model_availability(
     # The names the gateway's own `current` route answers resolve at request time, to the backends it tries.
     candidates = _llm_backend_candidates()
     internal_route_targets = {normalize_model_id(name): candidates for name in USE_LOADED_MODEL_ALIASES}
+    try:
+        overrides = _operator_service_availability_overrides()
+    except Exception:  # noqa: BLE001
+        # A list that cannot read the operator's settings still lists; the refusal says what they are.
+        overrides = {}
     kept: list[Any] = []
     for item in data:
         if isinstance(item, dict):
@@ -30954,7 +31049,7 @@ def _annotate_model_availability(
                 item, by_name=by_name, workflows=workflows, workflow_ids_by_model=workflow_ids_by_model,
                 service_records=service_records, evidence=evidence, snapshot_fresh=snapshot_fresh,
                 services=services, projected=projected, engines_by_op=engines_by_op,
-                internal_route_targets=internal_route_targets,
+                internal_route_targets=internal_route_targets, overrides=overrides,
             )
             if state is None:
                 item.pop("azizam_availability", None)
@@ -34573,11 +34668,11 @@ async def _forward_litellm_proxy_request(
             owner.report(status="failed", reason="connect_error")
             return Response(
                 content=json.dumps({
-                    "error": {
+                    "error": availability_reasons.stamp({
                         "message": "LiteLLM execution backend is unavailable.",
                         "type": "service_unavailable",
                         "code": "backend_unavailable",
-                    }
+                    })
                 }),
                 status_code=503,
                 media_type="application/json",
@@ -34690,11 +34785,11 @@ async def _forward_litellm_proxy_request(
             owner.report(status="failed", reason="connect_error")
             return Response(
                 content=json.dumps({
-                    "error": {
+                    "error": availability_reasons.stamp({
                         "message": "LiteLLM execution backend is unavailable.",
                         "type": "service_unavailable",
                         "code": "backend_unavailable",
-                    }
+                    })
                 }),
                 status_code=503,
                 media_type="application/json",
@@ -35251,6 +35346,16 @@ async def _handle_openai_litellm_request_once(
     )
     if admission is not None:
         return admission
+
+    if request_path == "/v1/chat/completions" and isinstance(parsed_body.get("messages"), list):
+        # A picture named by a stored asset id becomes the data URI an engine accepts, after the asset owner check.
+        messages, reference_error = await asyncio.to_thread(
+            chat_asset_refs.resolve, parsed_body["messages"],
+            lambda asset_id: _mcp_read_asset(request, auth_context, asset_id))
+        if reference_error is not None:
+            return openai_error_response(
+                reference_error.message, status_code=400, param=reference_error.param, code=reference_error.code)
+        parsed_body = {**parsed_body, "messages": messages}
 
     if (
         request_path in {"/v1/chat/completions", "/v1/completions"}
@@ -36654,6 +36759,7 @@ FRONTEND_TRANSLATORS.register("identity", {
                                  response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.SIGNED_URL),
+    "assets.create": SelfAuthOp(assets_create, frozenset({"POST"}), openapi_extra=ASSETS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
     "assets.delete": SelfAuthOp(assets_delete, frozenset({"DELETE"}), openapi_extra={**ASSETS_DELETE_OPENAPI}, auth=operation_security.APP_KEY),
     "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,

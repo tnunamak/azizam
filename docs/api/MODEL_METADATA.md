@@ -31,7 +31,7 @@ The new fields are additive; OpenAI clients ignore unknown keys (checked against
 | `context_window` | int | total tokens | Already emitted before this contract; unchanged. Omitted if unknown. |
 | `max_tokens` | int | max output tokens per request | Only when an operator declares it. Never guessed. |
 | `tags` | string[] | subset of <!-- model-metadata:tags:start --> `tool-use`, `reasoning`, `vision`, `file-input` <!-- model-metadata:tags:end --> | `language` entries only, and only declared or derivable facts. Omitted when empty. |
-| `azizam_availability` | object | `{"state": "available" \| "unavailable" \| "unknown", "reason"?: string}` | Every entry the gateway can map to the service or services that serve it. `reason` only when `unavailable`. |
+| `azizam_availability` | object | `{"state": "available" \| "unavailable" \| "unknown", "reason"?: string, "retry_after_s"?: integer}` | Every entry the gateway can map to the service or services that serve it. `reason` (a code, see [Reason codes](#reason-codes)) is present whenever the state is not `available`. `retry_after_s` only when the gateway knows a delay. |
 
 Semantics:
 
@@ -95,9 +95,34 @@ as `unknown`. Each list request keeps the snapshot refreshing, so after a quiet 
 - Several services: `available` if any is available (ready, busy, degraded, or startable on demand),
   `unavailable` only if all are unavailable, otherwise `unknown`. A workflow that needs several services is
   `unavailable` if any is, even when another requirement cannot be resolved; it is `available` only when all are.
+- A state other than `available` carries a `reason` code, so a program does not read prose. The same code is in
+  `error.reason` of a refusal the gateway makes for that model.
 - `GET /v1/models?available=true` leaves out entries whose state is `unavailable`. `unknown` and unmapped
   entries stay (fail open). Any other value, or no parameter, changes nothing. Per-caller profile filtering runs
   first. Routing is unchanged: a left-out name still works if called.
+
+### Reason codes
+
+The set is closed: these seven words are all a caller sees in `azizam_availability.reason`, and a refusal the gateway
+makes for that model carries the same word in `error.reason` (next to `error.code`, which keeps its own value). A
+name that is also a refusal code, such as `backend_unavailable`, has that meaning in both places. Read the reason, not
+the message. A name the key may not use is not listed, and nothing here says that it exists.
+
+| Code | State | Meaning | `retry_after_s` |
+|---|---|---|---|
+| `backend_unavailable` | `unavailable` | The engine behind the model is stopped, failed, unreachable or not set up. | no |
+| `engine_transitioning` | `unknown` | The engine is starting or loading and does not take requests yet. Try again soon. | no |
+| `model_not_deployed` | `unavailable` | No engine behind the name is deployed. | no |
+| `current_model_unavailable` | `unavailable` | The name follows the loaded model, and no backend has one loaded. | no |
+| `service_disabled` | `unavailable` | The owner turned off the service that runs the model. | no |
+| `service_maintenance` | `unavailable` | The owner took the service out of use for now (maintenance or draining). | yes: the owner's delay, 10 when none |
+| `health_unknown` | `unknown` | The gateway has no recent health reading for the service. The model may work. | no |
+
+Not in the list, because the gateway does not know them when it answers the list: a missing weight file or custom
+node (the owner's engine check finds these, a request does not check them first), and shared capacity (a request
+meets admission when it runs; a busy engine still lists as `available`). A workflow the owner turned off is not
+listed at all, as before; a request to it is refused with `workflow_disabled`. A request refused by the key's access
+plan gets `not_in_access_plan` or `no_access` as before.
 
 ## How values are derived
 
