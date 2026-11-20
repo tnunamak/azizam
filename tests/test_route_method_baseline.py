@@ -16,6 +16,9 @@ baseline's paths and its own. Only these differences are allowed:
 * DELETE /v1/assets/{asset_id} (and its /openai alias) is new (an App key deletes an asset it made;
   tests/test_app_asset_delete.py covers it). DELETE is the one route, HEAD is its 405, every other method
   falls to the catch-all or to that 405;
+* POST /v1/assets (and its /openai alias) is new (an App key uploads one image to reference it by id in a chat
+  request; tests/test_chat_image_asset_refs.py covers it). POST is the one route, HEAD is its 405, every other
+  method falls to the catch-all or to that 405;
 * the MCP authorization server's paths are new (/.well-known/oauth-authorization-server,
   /oauth/..., /me/api/mcp/...): each answers with its own route or that route's
   405; in r18 they fell to the catch-all;
@@ -136,6 +139,7 @@ LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
 PLAN_REACH_PATH, PLAN_REACH_SIBLING = "/admin/api/categories/plan-reach", "/admin/api/categories/preview-as"
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 ASSET_DELETE_PATHS = ("/v1/assets/sample", "/openai/v1/assets/sample")
+ASSET_UPLOAD_PATHS = ("/v1/assets", "/openai/v1/assets")
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
 REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
 CONFIRM_FOLDER_PATH = "/me/api/media/confirm-folder"
@@ -258,6 +262,8 @@ def _deliberate(key: str) -> str | None:
         return "thumbnail"
     if path in ASSET_DELETE_PATHS:
         return "asset_delete"
+    if path in ASSET_UPLOAD_PATHS:
+        return "asset_upload"
     if path in (REMOVE_MISSING_PATH, CONFIRM_FOLDER_PATH):
         return "media_folder"
     if path.startswith(MCP_OAUTH_PREFIXES):
@@ -417,6 +423,12 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
                     _method_of(key)) or (_method_of(key) not in ("DELETE", "HEAD") and (
                     route_matrix.is_catch_all(outcome) or outcome == f"405 allow=DELETE via {template} assets_delete")):
                 continue
+        if kind == "asset_upload" and key not in old:
+            template = key.split(" ", 1)[1]
+            if outcome == {"POST": f"{template} assets_create", "HEAD": f"405 allow=POST via {template} assets_create"}.get(
+                    _method_of(key)) or (_method_of(key) not in ("POST", "HEAD") and (
+                    route_matrix.is_catch_all(outcome) or outcome == f"405 allow=POST via {template} assets_create")):
+                continue
         if kind == "mcp_oauth" and (key not in old or route_matrix.is_catch_all(old[key])) and (
                 not route_matrix.is_catch_all(outcome) or key not in old):
             continue
@@ -490,6 +502,10 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if kind == "asset_delete" and key not in old and new.get(key) is not None:
             # A keyless DELETE is refused (401); the other methods answer as an unmatched path or the 405 beside DELETE.
+            assert not new[key].startswith("none: 2"), key
+            continue
+        if kind == "asset_upload" and key not in old and new.get(key) is not None:
+            # A keyless request is refused; the other methods answer as an unmatched path or the 405 beside POST.
             assert not new[key].startswith("none: 2"), key
             continue
         unexpected[key] = (old.get(key), new.get(key))
