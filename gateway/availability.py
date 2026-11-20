@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from gateway import receipt_store, service_registry
+from gateway import availability_reasons, receipt_store, service_registry
 from gateway.capabilities import Capability, resolve_capability_targets
 from gateway.discovery import WorkflowRecord
 from gateway.workflow_view import requirements_of
@@ -237,16 +237,19 @@ def model_availability(
     require_all: bool = False,
     services: Mapping[str, Mapping[str, Any]] | None = None,
     projected: dict[str, AvailabilityProjection] | None = None,
-) -> dict[str, str] | None:
+    overrides: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """The model-list availability of a name served by ``service_ids``, or ``None`` when no service is known.
 
     ``available`` when any service can serve it (ready, busy, degraded or startable on demand), ``unavailable`` only
-    when every service is known to be down or turned off, else ``unknown``. Only ``unavailable`` carries a reason.
+    when every service is known to be down or turned off, else ``unknown``. A state other than ``available`` carries
+    a ``reason`` (a code of ``gateway.availability_reasons``) and, when the gateway knows it, ``retry_after_s``.
     With ``require_all`` (a name that needs every service at once) the rule flips: ``unavailable`` when any service is
     down, ``available`` only when all are.
 
     A caller that judges many names in one request passes ``services`` (``services_mapping`` of the records) and a
-    ``projected`` dict, both built once for that request, so each service is projected once.
+    ``projected`` dict, both built once for that request, so each service is projected once. ``overrides`` are the
+    operator's per-service availability settings (disabled, maintenance, draining).
     """
 
     if services is None:
@@ -257,7 +260,7 @@ def model_availability(
     for service_id in dict.fromkeys(service_ids):
         if service_id not in projected:
             projected[service_id] = project_service(service_id, service_records=service_records,
-                                                    evidence=evidence, services=services)
+                                                    evidence=evidence, services=services, overrides=overrides)
         projections.append(projected[service_id])
     if not projections:
         return None
@@ -268,13 +271,43 @@ def model_availability(
     if require_all:
         down = next((item for item in projections if item.status == "unavailable"), None)
         if down is not None:
-            return {"state": "unavailable", "reason": down.reason}
-        return {"state": "available" if all(serves(item) for item in projections) else "unknown"}
+            return not_usable("unavailable", down)
+        if all(serves(item) for item in projections):
+            return {"state": "available"}
+        return not_usable("unknown", next(item for item in projections if not serves(item)))
     if any(serves(item) for item in projections):
         return {"state": "available"}
     if all(item.status == "unavailable" for item in projections):
-        return {"state": "unavailable", "reason": projections[0].reason}
-    return {"state": "unknown"}
+        return not_usable("unavailable", projections[0])
+    # Not every service is down: an engine that is starting says so; anything else is a missing reading.
+    starting = next((item for item in projections if item.status == "starting"), None)
+    return not_usable("unknown", starting or projections[0])
+
+
+def unknown_state() -> dict[str, Any]:
+    """The state of a name nothing is known about yet (no fresh reading)."""
+    return {"state": "unknown", "reason": "health_unknown"}
+
+
+def not_usable(state: str, item: AvailabilityProjection) -> dict[str, Any]:
+    """The listing value for a name whose limiting service is ``item``: the state, the reason code, a known delay."""
+    reason, retry_after_s = reason_of(item)
+    return {"state": state, "reason": reason, **({"retry_after_s": retry_after_s} if retry_after_s else {})}
+
+
+def reason_of(item: AvailabilityProjection) -> tuple[str, int | None]:
+    """The reason code (``gateway.availability_reasons``) and delay in seconds, if known, for a service that cannot serve."""
+    kind = item.evidence.get("kind")
+    if item.status == "unavailable":
+        if kind == "disabled":
+            return "service_disabled", None
+        if kind == "maintenance":
+            delay = item.evidence.get("retry_after_s")
+            return "service_maintenance", delay if isinstance(delay, int) and delay > 0 else None
+        return "backend_unavailable", None
+    if item.status == "starting":
+        return "engine_transitioning", None
+    return "health_unknown", None
 
 
 def services_mapping(service_records: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
@@ -321,6 +354,7 @@ def project_service(
     evidence: Mapping[str, Mapping[str, Any]] | None = None,
     fallback_capability: Capability | None = None,
     services: Mapping[str, Mapping[str, Any]] | None = None,
+    overrides: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> AvailabilityProjection:
     if services is None:
         services = _services_mapping(service_records or {})
@@ -333,6 +367,10 @@ def project_service(
     # A live probe that reads its own route records can say the service is turned off or not set up.
     enabled = enabled and picked.get("enabled") is not False
     configured = configured and picked.get("configured") is not False
+    # The operator's own setting: out of use for good (the same as turned off) or for now.
+    override = (overrides or {}).get(service_id)
+    override_reason = availability_reasons.override_reason(override)
+    enabled = enabled and override_reason != "service_disabled"
 
     if not enabled:
         return AvailabilityProjection(
@@ -343,6 +381,12 @@ def project_service(
         return AvailabilityProjection(
             service_id, enabled, False, False, "unavailable", "The service is not configured.", True,
             {"source": "registry", "kind": "unconfigured"},
+        )
+    if override_reason == "service_maintenance":
+        return AvailabilityProjection(
+            service_id, enabled, configured, False, "unavailable", "The service is out of use for now.", True,
+            {"source": "operator", "kind": "maintenance",
+             "retry_after_s": availability_reasons.override_retry_after_s(override)},
         )
     if picked and not (idle_startable and _evidence_unknown(picked)):
         projected = _from_evidence(service_id, enabled, configured, idle_startable, picked)
