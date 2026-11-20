@@ -4776,7 +4776,7 @@
     },
     "/admin/api/access/check": {
       "post": {
-        "description": "Needs the owner's or an admin's sign-in.\n\nCheck access (design §3.1): the decision an App's request would get.\n\n``{\"app\": app_id, \"request\": {...}}`` evaluates the App's two plans as\nthe runtime does; ``{\"plan\": plan_id, \"request\": {...}}`` evaluates one\nplan on both sides (an App that is \"Same as its person\").\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nCheck access (design \u00a73.1): the decision an App's request would get.\n\n``{\"app\": app_id, \"request\": {...}}`` evaluates the App's two plans as\nthe runtime does; ``{\"plan\": plan_id, \"request\": {...}}`` evaluates one\nplan on both sides (an App that is \"Same as its person\").\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_access_check",
         "parameters": [],
         "requestBody": {
@@ -5549,7 +5549,7 @@
     },
     "/admin/api/apps/{app_id}/enable": {
       "post": {
-        "description": "Needs the owner's or an admin's sign-in.\n\nRe-enable a disabled App.\n\nDELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo\n— the smallest honest fix that lets the optimistic-disable flow offer a\ntoast with an \"Undo\" action. Idempotent: enabling an already-active app\nis a no-op that returns 200 and the current record.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nRe-enable a disabled App.\n\nDELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo\n\u2014 the smallest honest fix that lets the optimistic-disable flow offer a\ntoast with an \"Undo\" action. Idempotent: enabling an already-active app\nis a no-op that returns 200 and the current record.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_apps_app_id_enable",
         "parameters": [
           {
@@ -6185,7 +6185,7 @@
     },
     "/admin/api/audit": {
       "get": {
-        "description": "Needs the owner's or an admin's sign-in.\n\nList audit events with optional server-side filters and keyset cursor pagination.\n\nQuery params:\n  limit        — page size (default 50, max 200 per page); pagination\n                 via ``next_cursor`` makes the full log reachable beyond\n                 a single page.\n  actor_id     — exact match on actor_id (e.g. ``usr_…`` or ``cli``).\n  action_prefix — matches events whose action starts with this prefix\n                  (e.g. ``service.`` or ``app.``).\n  before       — keyset cursor returned as ``next_cursor`` from a prior\n                 response, encoded as ``\"<created_at>:<id>\"``; fetches\n                 the next page older than that position.\n\nResponse:\n  { \"records\": [...], \"next_cursor\": \"<created_at>:<id>\" | null }\n  ``next_cursor`` is null exactly when no more rows match the current\n  filter — ``\"End of audit log\"`` territory for the UI.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nList audit events with optional server-side filters and keyset cursor pagination.\n\nQuery params:\n  limit        \u2014 page size (default 50, max 200 per page); pagination\n                 via ``next_cursor`` makes the full log reachable beyond\n                 a single page.\n  actor_id     \u2014 exact match on actor_id (e.g. ``usr_\u2026`` or ``cli``).\n  action_prefix \u2014 matches events whose action starts with this prefix\n                  (e.g. ``service.`` or ``app.``).\n  before       \u2014 keyset cursor returned as ``next_cursor`` from a prior\n                 response, encoded as ``\"<created_at>:<id>\"``; fetches\n                 the next page older than that position.\n\nResponse:\n  { \"records\": [...], \"next_cursor\": \"<created_at>:<id>\" | null }\n  ``next_cursor`` is null exactly when no more rows match the current\n  filter \u2014 ``\"End of audit log\"`` territory for the UI.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_audit",
         "parameters": [],
         "responses": {
@@ -7619,7 +7619,7 @@
     },
     "/admin/api/config/export": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nExport the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle — everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nOwner only. It holds the public configuration and, for each secret, a configured entry; it never holds a\nsecret value (decision D26), so it cannot restore a secret.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nExport the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle \u2014 everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nOwner only. It holds the public configuration and, for each secret, a configured entry; it never holds a\nsecret value (decision D26), so it cannot restore a secret.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_config_export",
         "parameters": [],
         "responses": {
@@ -8215,7 +8215,7 @@
     },
     "/admin/api/credentials/{credential_id}": {
       "delete": {
-        "description": "Needs the owner's or an admin's sign-in.\n\nDELETE alias for POST …/revoke — idiomatic REST revocation.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nDELETE alias for POST \u2026/revoke \u2014 idiomatic REST revocation.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_credentials_credential_id",
         "parameters": [
           {

@@ -1782,16 +1782,6 @@
       ]
     },
     {
-      "after": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
-      "before": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.",
-      "before_present": true,
-      "path": [
-        "inputs",
-        "mask_feather",
-        "description"
-      ]
-    },
-    {
       "after": [
         {
           "node": "11",
