@@ -241,12 +241,17 @@ def test_a_client_that_hangs_up_mid_upload_leaves_nothing(world: World) -> None:
 
 def test_the_asset_upload_route_closes_its_spilled_part_when_the_request_ends(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
     samples: list[list[str]] = []
+    kept: list[Request] = []  # the request, and so its parsed form, outlives the route
+
+    def authenticate(request: Request, path: str) -> object:
+        kept.append(request)
+        return object()
 
     def store(data: bytes, auth_context: object) -> JSONResponse:
         samples.append(world.held_files_holding())
         return JSONResponse({"size_bytes": len(data)})
 
-    monkeypatch.setattr(proxy, "authenticate_request", lambda request, path: object())
+    monkeypatch.setattr(proxy, "authenticate_request", authenticate)
     monkeypatch.setattr(proxy, "_store_uploaded_image", store)
     app = FastAPI()
     app.add_api_route("/v1/assets", proxy.assets_create, methods=["POST"])
@@ -260,6 +265,7 @@ def test_the_asset_upload_route_closes_its_spilled_part_when_the_request_ends(wo
     assert asyncio.run(post()).status_code == 200
     (during,) = samples
     assert during, "positive control: the spilled part is held open while the route runs"
+    assert kept, "the request outlives the route"
     world.assert_nothing_left()
 
 
