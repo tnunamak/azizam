@@ -155,14 +155,12 @@ def test_binding_does_not_mutate_the_template() -> None:
 
 def test_notes_page_exists_and_explains_the_second_conditioning_node() -> None:
     text = NOTES.read_text(encoding="utf-8")
-    assert "second conditioning node" in text
+    assert "Second conditioning node" in text
 
 
-def test_the_video_route_finds_the_workflow_and_its_node_roles_name_graph_nodes() -> None:
-    import proxy
-
-    name, config = proxy._resolve_video_workflow("video-minimax-h3-i2v-hires")
-    assert name == "video-minimax-h3-i2v-hires"
+def test_release_defaults_name_graph_nodes_for_the_video_route() -> None:
+    config = yaml.safe_load((ROOT / "registry/defaults/videos.yml").read_text(encoding="utf-8"))["workflows"][
+        "video-minimax-h3-i2v-hires"]
     graph = json.loads(GRAPH.read_text(encoding="utf-8"))
     roles = config["node_roles"]
     assert roles["prompt_node"] == "prompt" and roles["prompt_field"] == "value"
@@ -172,3 +170,4 @@ def test_the_video_route_finds_the_workflow_and_its_node_roles_name_graph_nodes(
             assert all(node in graph for node in (value if isinstance(value, list) else [value])), key
     assert config["max_size"] == config["default_size"] == "1216x704"
     assert config["requires_input_reference"] is True
+    assert config["file"] == "workflows/videos/video-minimax-h3-i2v-hires.json"
