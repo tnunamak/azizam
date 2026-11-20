@@ -321,3 +321,82 @@ def test_the_upload_sweep_visits_every_folder_a_workflow_declares_for_adapters()
     """After a restart no upload may name a folder, so the sweep learns the folders from the workflows."""
     assert "loras" in proxy._declared_adapter_folders()
     assert proxy._declared_adapter_folders() <= proxy.ADAPTER_LIBRARY.folders()
+
+
+# ------------------------------------------------------------------------------------------- a member's own upload, end to end
+
+
+def test_a_members_upload_goes_from_upload_to_choices_to_run_to_restart_sweep(world, engine_files, tmp_path, monkeypatch):
+    """One Store, one process: the upload is checked and labelled, offered (with its label) to its owner only, named by
+    asset id in a run whose graph carries the engine copy, held while the engine works, and after a restart the sweep
+    removes the unheld orphan and keeps the held copy."""
+    import hashlib
+    import io
+
+    from gateway import adapter_upload
+    from tests.test_adapter_upload import TABLE, Store, safetensors
+
+    monkeypatch.setitem(TABLE, "krea2", {"ss_base_model_version": ("krea2",)})
+    krea = safetensors({"a": [2]}, metadata={"ss_base_model_version": "krea2"})
+    orphan_bytes = safetensors({"o": [7]}, metadata={"ss_base_model_version": "krea2"})
+    store = Store(tmp_path)
+    monkeypatch.setattr(adapter_choices, "UPLOADS", store.library)
+    caller = {"person": "robin"}
+    monkeypatch.setattr(proxy, "_auth_person_id", lambda _auth: caller["person"])
+
+    # 1. the file is checked on its header, then stored under the member's own name and label
+    checked = adapter_upload.validate_stream(io.BytesIO(krea), len(krea), adapter_upload.Policy(True))
+    assert checked.digest == hashlib.sha256(krea).hexdigest()
+    mine = store.add("robin", krea, "my-style.safetensors")
+    orphan = store.add("robin", orphan_bytes, "scratch.safetensors")
+    assert store.sidecars[mine]["adapter"] == {"label": "my-style.safetensors", "content_sha256": checked.digest}
+
+    # 2. the choices show the upload's id with its label to its owner, and show another member neither
+    record = SimpleNamespace(id=WORKFLOW, contract=manifest_of(WORKFLOW))
+
+    async def listing(person):
+        got = await adapter_choices.offered([record], "comfyui", service_id="comfyui", origin="http://engine.invalid",
+                                            list_files=adapter_choices.default_list_files,
+                                            read_header=adapter_choices.default_read_header, person_id=person)
+        return got[WORKFLOW]["loras"]["items"]["properties"]["name"]
+
+    robins = asyncio.run(listing("robin"))
+    assert mine in robins["enum"] and robins["choice_labels"][mine] == "my-style.safetensors"
+    assert "example_style_v1.safetensors" in robins["enum"]            # the operator's file stays on the list
+    sams = asyncio.run(listing("sam"))
+    assert mine not in sams["enum"] and "choice_labels" not in sams
+    assert mine not in json.dumps(sams) and "my-style.safetensors" not in json.dumps(sams)
+
+    # 3. a run names the asset id; the engine's graph names the copy, which is held while the engine works
+    seen = {}
+
+    class WatchingEngine(FakeGraphEngine):
+        def __call__(self, request):
+            if request.url.path == "/prompt":
+                seen["held_in_run"] = store.library.held_digests()
+            return super().__call__(request)
+
+    engine = serve_engine(world, WatchingEngine(manifest_of(WORKFLOW), png_bytes((9, 9, 9)), "image/png", "out.png"))
+    response = run(WORKFLOW, {"prompt": "a red fox", "loras": [{"name": mine, "weight": 0.5}]})
+    assert response.status_code == 200 and response.json()["status"] == "succeeded", response.text
+    added = [n for n in engine.prompts[0]["prompt"].values() if n["class_type"] == "LoraLoaderModelOnly"]
+    [copy_name] = [n["inputs"]["lora_name"] for n in added]
+    assert copy_name != mine and mine not in json.dumps(engine.prompts[0])
+    assert store.library.is_copy(copy_name) and (store.engine / copy_name).exists()
+    assert seen["held_in_run"] == {checked.digest}
+    assert store.library.held_digests() == set()                       # the run ended, so its hold ended
+    caller["person"] = "sam"                                           # another member cannot name robin's upload
+    assert run(WORKFLOW, {"prompt": "x", "loras": [{"name": mine}]}).status_code == 422
+    caller["person"] = "robin"
+
+    # the orphan's copy is made as a run would make it; then both uploads are deleted, the gateway restarts, and the
+    # run that still holds the first copy resumes (a recovered run holds its copies again)
+    orphan_copy = store.library.engine_names("robin", [orphan], folder="loras")[orphan]
+    assert (store.engine / orphan_copy).exists()
+    del store.sidecars[mine], store.sidecars[orphan]
+
+    # 4. the restarted Library learns the folder from the workflows, not from any upload
+    restarted = store.new_library(declared_folders=lambda: iter(proxy._declared_adapter_folders()))
+    restarted.hold_copies("resumed-run", [copy_name])
+    assert restarted.sweep_all() == [hashlib.sha256(orphan_bytes).hexdigest()]
+    assert (store.engine / copy_name).exists() and not (store.engine / orphan_copy).exists()
