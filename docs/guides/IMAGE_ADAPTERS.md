@@ -2,8 +2,8 @@
 
 ## Callers: choose from the workflow listing
 
-1. Open the image workflow listing on your gateway, for example at
-   `https://ai.example.com`. Select the model you want and check its input
+1. [List image workflows with your member key](IMAGE_OPTIONS.md#list-images-and-send-a-request).
+   Select the model you want and check its input
    choices. A workflow that supports style adapters (LoRAs) lists the installed
    adapter names it offers for that model; do not guess a name or send a
    local path. If the workflow offers an encoder choice, use its listed names.
