@@ -30,6 +30,8 @@ from tests.test_domain_literal_ratchet import vocabulary
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLED = sorted((ROOT / "manifests" / "workflows").glob("*.yml"))
 # The 38 bundled files as they were in schema 1, frozen for the converter tests.
+# A workflow written after the move to schema 2 has no schema 1 form: it is named here and has no frozen copy.
+BORN_SCHEMA_2 = {"video-minimax-h3-i2v-hires"}
 V1_FIXTURES = sorted((ROOT / "tests" / "fixtures" / "workflows_v1").glob("*.yml"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import workflow_contract as command  # noqa: E402
@@ -493,7 +495,7 @@ def test_value_problems_is_the_one_value_check():
 
 
 def test_the_corpus_is_what_was_counted():
-    assert len(BUNDLED) == 38
+    assert len(BUNDLED) == 39
 
 
 @pytest.mark.parametrize("path", BUNDLED, ids=lambda p: p.stem)
@@ -510,7 +512,7 @@ def test_every_frozen_schema_one_workflow_converts_with_zero_errors(path):
 def test_the_bundled_files_are_schema_two_and_the_frozen_copies_are_schema_one():
     assert {yaml.safe_load(path.read_text(encoding="utf-8"))["schema_version"] for path in BUNDLED} == {2}
     assert {yaml.safe_load(path.read_text(encoding="utf-8"))["schema_version"] for path in V1_FIXTURES} == {1}
-    assert [p.name for p in V1_FIXTURES] == [p.name for p in BUNDLED]
+    assert [p.name for p in V1_FIXTURES] == [p.name for p in BUNDLED if p.stem not in BORN_SCHEMA_2]
 
 
 def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but_for_the_named_edits():
@@ -857,7 +859,7 @@ def test_the_contract_names_no_model_engine_service_workflow_or_modality(path):
 def test_the_command_checks_the_bundled_directory(capsys):
     assert command.main(["check", str(ROOT / "manifests" / "workflows")]) == 0
     out = capsys.readouterr().out
-    assert out.count("0 errors") == 38 and "converted from schema 1" not in out
+    assert out.count("0 errors") == 39 and "converted from schema 1" not in out
 
 
 def test_the_command_reports_every_error_with_path_and_code(tmp_path, capsys):
