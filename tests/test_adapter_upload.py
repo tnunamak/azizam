@@ -713,6 +713,24 @@ def test_a_sweep_removes_a_scratch_file_a_crash_left_and_keeps_a_fresh_one(tmp_p
     assert not old.exists() and fresh.exists()
 
 
+
+def test_only_plain_accepted_folder_names_are_enumerated_once(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    asset = store.add("robin", ALPHA)
+    store.sidecars[asset]["adapter"]["copies"] = ["loras", "other-adapters"]
+    restarted = store.new_library(declared_folders=lambda: iter(("loras", "new_adapters")))
+    visited = []
+
+    def record_folder(folder):
+        visited.append(folder)
+        return None
+
+    monkeypatch.setattr(restarted, "_lora_root", record_folder)
+    assert restarted.folders() == {"loras", "new_adapters", "other-adapters"}
+    assert restarted.sweep_all() == []
+    assert visited == ["loras", "new_adapters", "other-adapters"]
+
+
 def test_the_periodic_sweep_visits_every_folder_the_library_copied_to(tmp_path):
     store = Store(tmp_path)
     kept, gone = store.add("robin", ALPHA), store.add("robin", BETA)
