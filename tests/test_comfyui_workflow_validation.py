@@ -203,5 +203,43 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
             self.assertIsNone(proxy._load_video_workflow_file(workflow_cfg))
 
 
+    def _video_cfg(self, tmp: str, graph: dict, **roles) -> dict:
+        path = Path(tmp) / "video.json"
+        path.write_text(json.dumps(graph), encoding="utf-8")
+        return {"file": str(path), "node_roles": roles}
+
+    def test_the_video_loader_refuses_a_prompt_role_whose_node_lacks_the_prompt_field(self) -> None:
+        # A graph edited under a running gateway kept node 9 but moved the prompt to a string node: writing
+        # `prompt` into node 9 would be ignored by the engine and the video made from the placeholder text.
+        graph = {"9": self.node(value="placeholder"), "8": self.node(width=64)}
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(proxy._load_video_workflow_file(
+                self._video_cfg(tmp, graph, prompt_node="9", prompt_field="prompt", size_node="8")))
+            self.assertIsNone(proxy._load_video_workflow_file(
+                self._video_cfg(tmp, graph, prompt_node="9", size_node="8")))  # the default field is `text`
+            loaded = proxy._load_video_workflow_file(
+                self._video_cfg(tmp, graph, prompt_node="9", prompt_field="value", size_node="8"))
+            self.assertIsNotNone(loaded)
+
+    def test_the_video_loader_refuses_a_negative_prompt_role_whose_node_has_no_text(self) -> None:
+        graph = {"9": self.node(text="a"), "7": self.node(prompt="b")}
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(proxy._load_video_workflow_file(
+                self._video_cfg(tmp, graph, prompt_node="9", negative_prompt_node="7")))
+            self.assertIsNotNone(proxy._load_video_workflow_file(
+                self._video_cfg(tmp, {"9": self.node(text="a"), "7": self.node(text="b")},
+                                prompt_node="9", negative_prompt_node="7")))
+
+    def test_a_manifest_mapping_to_an_input_the_node_lacks_is_refused_not_added(self) -> None:
+        from gateway.manifests import ManifestError, bind_backend_request
+        manifest = {"id": "video.generate.demo", "inputs": {"prompt": {"type": "string"}},
+                    "bindings": {"comfyui": {"map": {"prompt": [{"node": "9", "input": "prompt"}]}}}}
+        with self.assertRaises(ManifestError) as raised:
+            bind_backend_request(manifest, "comfyui", {"9": self.node(value="placeholder")}, {"prompt": "a lighthouse"})
+        self.assertEqual(raised.exception.code, "target_missing")
+        bound = bind_backend_request(manifest, "comfyui", {"9": self.node(prompt="placeholder")}, {"prompt": "a lighthouse"})
+        self.assertEqual(bound.request["9"]["inputs"]["prompt"], "a lighthouse")
+
+
 if __name__ == "__main__":
     unittest.main()
