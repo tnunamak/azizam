@@ -16,12 +16,26 @@ ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "guides" / "CHAT_IMAGES.md"
 
 
-EXPECTED_REMEDIES = {
+CHAT_REMEDIES = {
     "invalid_image_url": "Copy the entire `id` from the upload reply, with no spaces or extra punctuation.",
     "asset_missing": "Check the ID and use a key allowed to read the asset, or upload the image again under the key you will use for chat.",
     "invalid_image_format": "Export it as a supported image, such as PNG, then upload the new file and use its new ID.",
-    "file_too_large": "Resize or compress the image, then retry the upload.",
 }
+
+UPLOAD_REMEDIES = {
+    "missing_file": "Send the image in the multipart `file` field.",
+    "invalid_image": "Choose a non-empty image file you can open, then upload it again.",
+    "invalid_image_format": "Save the image in a supported format, such as PNG, then upload it again.",
+    "file_too_large": "Make the image smaller, then upload it again.",
+}
+
+
+def error_rows(guide, heading):
+    section = re.search(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", guide, re.M | re.S)
+    assert section, f"Missing error section: {heading}"
+    rows = re.findall(r"^\|\s*\x60([^\x60]+)\x60\s*\|\s*([^|]+)\|\s*$", section[1], re.M)
+    assert len(rows) == len(dict(rows)), f"Duplicate error codes in: {heading}"
+    return section[1], dict(rows)
 
 
 def assert_chat_example(guide):
@@ -82,10 +96,6 @@ def test_chat_images_guide_matches_gateway_contract():
     assert "POST /v1/assets" in guide
     assert_chat_example(guide)
 
-    rows = dict(re.findall(r"^\|\s*\x60([^\x60]+)\x60\s*\|\s*([^|]+)\|\s*$", guide, re.M))
-    for code, remedy in EXPECTED_REMEDIES.items():
-        assert remedy in rows.get(code, ""), f"Missing or misplaced remedy for {code}"
-
     tree = ast.parse(inspect.getsource(chat_asset_refs))
     codes = set()
     for call in ast.walk(tree):
@@ -95,8 +105,16 @@ def test_chat_images_guide_matches_gateway_contract():
             )
             codes.add(call.args[0].value)
     assert codes, "No RefError codes found in the gateway module"
-    missing = sorted(codes - EXPECTED_REMEDIES.keys())
-    assert not missing, f"Undocumented chat image refusal codes: {missing}"
+    _, upload = error_rows(guide, "If the upload is refused")
+    chat_text, chat = error_rows(guide, "If the chat request is refused")
+    assert set(upload) == UPLOAD_REMEDIES.keys()
+    assert "file_too_large" not in chat, "Upload size errors do not come from chat"
+    assert set(chat) == codes
+    assert codes == CHAT_REMEDIES.keys(), f"Chat refusal remedies need review: {codes}"
+    for rows, remedies in ((upload, UPLOAD_REMEDIES), (chat, CHAT_REMEDIES)):
+        for code, remedy in remedies.items():
+            assert remedy in rows[code], f"Missing or misplaced remedy for {code}"
+    assert "A refused image reference stops the whole chat request." in chat_text
 
     assert re.search(
         r"an unknown id.{0,100}an id the caller may not read.{0,100}the same refusal",

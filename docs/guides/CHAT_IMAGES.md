@@ -23,7 +23,20 @@ Chat requests have a JSON body size cap. Inline base64 uses that budget. Upload 
 }
 ```
 
-## If the request is refused
+## If the upload is refused
+
+Look at `error.code` in the reply from **POST /v1/assets**.
+
+| Code | What to change |
+| --- | --- |
+| `missing_file` | No file was sent. Send the image in the multipart `file` field. |
+| `invalid_image` | The file is empty or unreadable. Choose a non-empty image file you can open, then upload it again. |
+| `invalid_image_format` | This image format is not supported. Save the image in a supported format, such as PNG, then upload it again. |
+| `file_too_large` | The image is over the upload size limit (HTTP 413). Make the image smaller, then upload it again. |
+
+## If the chat request is refused
+
+A refused image reference stops the whole chat request.
 
 For a chat error, look at `error.code` and `error.param`. The parameter identifies the image part to fix.
 
@@ -31,10 +44,7 @@ For a chat error, look at `error.code` and `error.param`. The parameter identifi
 | --- | --- |
 | `invalid_image_url` | The reference looks like an asset ID (it has no `:` and no `/`) but is not a valid one. Real URLs and data URIs pass through unchanged. Copy the entire `id` from the upload reply, with no spaces or extra punctuation. |
 | `asset_missing` | The asset is not available to your API key. Check the ID and use a key allowed to read the asset, or upload the image again under the key you will use for chat. |
-| `invalid_image_format` | Returned both when the upload is not recognized as an image and when a stored asset is not an image at chat time. Export it as a supported image, such as PNG, then upload the new file and use its new ID. |
-| `file_too_large` | The upload exceeds its own size limit. Resize or compress the image, then retry the upload. |
-
-If the upload refuses a missing or empty file, send a non-empty image in the multipart `file` field before retrying the chat.
+| `invalid_image_format` | The stored file is not an image. Export it as a supported image, such as PNG, then upload the new file and use its new ID. |
 
 ## Who can use an asset ID?
 
