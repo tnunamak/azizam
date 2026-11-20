@@ -1628,6 +1628,293 @@
    "typical_seconds": 4,
    "version": "0.1.0"
   },
+  "image.generate.flux2-klein": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "batch_size": [
+       {
+        "input": "batch_size",
+        "node": "27"
+       }
+      ],
+      "guidance": [
+       {
+        "input": "guidance",
+        "node": "35"
+       }
+      ],
+      "height": [
+       {
+        "input": "height",
+        "node": "27"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "31"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "31"
+       }
+      ],
+      "width": [
+       {
+        "input": "width",
+        "node": "27"
+       }
+      ]
+     },
+     "selectors": {
+      "image": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "9",
+       "take": "all"
+      }
+     },
+     "workflow": "workflows/images/flux2-klein.json"
+    }
+   },
+   "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+   "display_name": "FLUX.2 Klein 9B",
+   "id": "image.generate.flux2-klein",
+   "inputs": {
+    "batch_size": {
+     "help": "How many pictures to make at once.",
+     "label": "number of pictures",
+     "maximum": 8,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "guidance": {
+     "label": "prompt guidance",
+     "maximum": 20,
+     "minimum": 0,
+     "type": "number"
+    },
+    "height": {
+     "help": "Picture height in pixels.",
+     "label": "height",
+     "maximum": 2048,
+     "minimum": 64,
+     "type": "integer"
+    },
+    "prompt": {
+     "help": "Describe what you want to make.",
+     "label": "description",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Reuse this number and the same settings for a similar result.",
+     "label": "variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "help": "More steps take longer.",
+     "label": "steps",
+     "maximum": 100,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "width": {
+     "help": "Picture width in pixels.",
+     "label": "width",
+     "maximum": 2048,
+     "minimum": 64,
+     "type": "integer"
+    }
+   },
+   "intent": "image.generate",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "image": {
+     "media_type": "image/png"
+    }
+   },
+   "prompt_hint": "Describe the picture you want",
+   "purpose": "Detailed images from a prompt",
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 20,
+   "version": "0.1.0"
+  },
+  "image.generate.flux2-klein-snofs": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "batch_size": [
+       {
+        "input": "batch_size",
+        "node": "27"
+       }
+      ],
+      "guidance": [
+       {
+        "input": "guidance",
+        "node": "35"
+       }
+      ],
+      "height": [
+       {
+        "input": "height",
+        "node": "27"
+       }
+      ],
+      "lora_strength": [
+       {
+        "input": "strength_model",
+        "node": "11"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "31"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "31"
+       }
+      ],
+      "width": [
+       {
+        "input": "width",
+        "node": "27"
+       }
+      ]
+     },
+     "selectors": {
+      "image": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "9",
+       "take": "all"
+      }
+     },
+     "workflow": "workflows/images/flux2-klein-snofs.json"
+    }
+   },
+   "description": "Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.",
+   "display_name": "FLUX.2 Klein 9B + SNOFS (uncensored)",
+   "id": "image.generate.flux2-klein-snofs",
+   "inputs": {
+    "batch_size": {
+     "help": "How many pictures to make at once.",
+     "label": "number of pictures",
+     "maximum": 8,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "guidance": {
+     "label": "prompt guidance",
+     "maximum": 20,
+     "minimum": 0,
+     "type": "number"
+    },
+    "height": {
+     "help": "Picture height in pixels.",
+     "label": "height",
+     "maximum": 2048,
+     "minimum": 64,
+     "type": "integer"
+    },
+    "lora_strength": {
+     "default": 1.0,
+     "help": "How strongly the added style applies. 1.0 is the usual setting.",
+     "label": "style strength",
+     "maximum": 1.5,
+     "minimum": 0,
+     "type": "number"
+    },
+    "prompt": {
+     "help": "Describe what you want to make.",
+     "label": "description",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Reuse this number and the same settings for a similar result.",
+     "label": "variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "help": "More steps take longer.",
+     "label": "steps",
+     "maximum": 100,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "width": {
+     "help": "Picture width in pixels.",
+     "label": "width",
+     "maximum": 2048,
+     "minimum": 64,
+     "type": "integer"
+    }
+   },
+   "intent": "image.generate",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "image": {
+     "media_type": "image/png"
+    }
+   },
+   "prompt_hint": "Describe the picture you want",
+   "purpose": "Uncensored detailed images from a prompt",
+   "requires": {
+    "custom_nodes": [
+     "RMBG"
+    ],
+    "models": [
+     {
+      "path": "unet/flux-2-klein-9b-Q8_0.gguf",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen_3_8b_fp8mixed.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "loras/klein_snofs_v1_4.safetensors",
+      "role": "lora"
+     },
+     {
+      "path": "vae/flux2-vae.safetensors",
+      "role": "vae"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 20,
+   "version": "0.1.0"
+  },
   "image.generate.krea2-turbo": {
    "bindings": {
     "comfyui": {

@@ -33,6 +33,10 @@ graph_roles:
   workflows/images/fibo-2-edit-turbo.json:
     reference_order: [source_image]
     background: {output: image, processor: "11", slot: 0}
+  workflows/images/flux2-klein.json:
+    background: {output: image, processor: "90", slot: 0}
+  workflows/images/flux2-klein-snofs.json:
+    background: {output: image, processor: "90", slot: 0}
   workflows/images/krea2-turbo.json:
     background: {output: image, processor: "10", slot: 0}
   workflows/images/krea2-turbo-snofs.json:

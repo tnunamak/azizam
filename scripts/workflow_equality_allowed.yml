@@ -33,6 +33,8 @@ allowed:
       - image.edit.qwen-image-2.1-inpaint
       - image.edit.seedvr2-upscale
       - image.generate.anima-turbo
+      - image.generate.flux2-klein
+      - image.generate.flux2-klein-snofs
       - image.generate.krea2-turbo
       - image.generate.krea2-turbo-snofs
       - image.generate.moss-image
