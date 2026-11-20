@@ -27,12 +27,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from gateway.adapter_choices import architecture_table, compatible
+from gateway.adapter_choices import MEMBER_UPLOAD_SUBFOLDER, architecture_table, compatible, is_member_upload_copy
 
 _LOG = logging.getLogger(__name__)
 
 SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enabled": bool, "max_bytes": int, "max_total_bytes": int}
-SUBFOLDER = "azizam-uploads"         # the gateway's own folder inside the engine's adapter folder
+SUBFOLDER = MEMBER_UPLOAD_SUBFOLDER         # the gateway's own folder inside the engine's adapter folder
 SUFFIX = ".safetensors"
 DEFAULT_MAX_BYTES = 2 * (1 << 30)    # a file over this is refused
 MAX_BYTES_CEILING = 8 * (1 << 30)    # the owner may raise the cap to this, and the request body limit follows it
@@ -597,7 +597,7 @@ class Library:
 
     def is_copy(self, name: str) -> bool:
         """Whether an engine file name is in the gateway's own subfolder, whichever separator the engine lists it with."""
-        return isinstance(name, str) and name.replace("\\", "/").lower().startswith(SUBFOLDER + "/")
+        return is_member_upload_copy(name)
 
     def resolve(self, person_id: str, name: str, *, folder: str) -> Offer | None:
         if digest_of(name) is None or not self._on(folder):

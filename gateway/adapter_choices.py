@@ -35,6 +35,7 @@ from typing import Any, NamedTuple, Protocol
 
 import yaml
 
+MEMBER_UPLOAD_SUBFOLDER = "azizam-uploads"
 LORAS_INPUT = "loras"
 ENCODER_INPUT = "text_encoder"
 SETTING_KEY = "adapter_marks"
@@ -265,6 +266,10 @@ def default_read_header(origin: str, folder: str, name: str) -> Mapping[str, Any
     return fetch_header(origin, folder, name)
 
 
+def is_member_upload_copy(name: object) -> bool:
+    return isinstance(name, str) and name.replace("\\", "/").lower().startswith(MEMBER_UPLOAD_SUBFOLDER + "/")
+
+
 async def installed(
     decl: Declaration, *, service_id: str, origin: str, marks: Any = None,
     list_files: Callable[[str, str, str], list[str]] | None = None,
@@ -319,7 +324,10 @@ async def installed(
                 raise ChoicesUnavailable("the engine could not list its adapter files") from exc
     # The gateway's own copies of uploads sit in the engine's folder, so the engine lists them. They are one person's
     # files: they are never offered as the operator's, whatever their header says.
-    files = [name for name in held[1] if uploads is None or not uploads.is_copy(name)]
+    files = [
+        name for name in held[1]
+        if not is_member_upload_copy(name) and (uploads is None or not uploads.is_copy(name))
+    ]
     headers = await _headers(service_id, origin, decl.folder, files, read_header, now)
     table = architecture_table() if table is None else table
     loras = compatible(files, headers, decl.architecture, table, marked(marks, decl.architecture, "loras"))
