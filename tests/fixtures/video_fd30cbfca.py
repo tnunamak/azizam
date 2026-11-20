@@ -953,3 +953,51 @@ def _policy_denied_response(decision: PolicyDecision) -> Response:
         status_code=403,
         media_type="application/json",
     ), "authorization")
+
+
+# Frozen from main c52835c90: train 100 added the text-role field check to the live loader.
+def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
+    """Load the JSON for a configured video workflow.
+
+    Attaches the UI-format twin under `__ui_workflow__` so the submit site can
+    embed it via `extra_data.extra_pnginfo.workflow` for mp4 PNGInfo metadata.
+    """
+    file_path = workflow_cfg.get("file")
+    if not file_path:
+        return None
+    p = Path(file_path)
+    if not p.is_absolute():
+        # Resolve relative paths against the proxy's directory.
+        p = Path(__file__).parent / p
+    if not p.exists():
+        return None
+    with open(p) as f:
+        workflow = json.load(f)
+    errors = validate_workflow_graph(workflow)
+    if errors:
+        print(
+            f"[proxy] invalid video {_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label} workflow {p}: {'; '.join(errors)}",
+            flush=True,
+        )
+        return None
+    # A role that names no node of the file is a template problem, found here and not when a request fills the graph.
+    roles = workflow_cfg.get("node_roles") or {}
+    dangling = sorted(
+        str(key) for key, value in roles.items()
+        if key.endswith(("_node", "_nodes"))
+        and any(str(node) not in workflow for node in (value if isinstance(value, list) else [value]))
+        and not (workflow_cfg.get("subject_select") and key in ("point_detect_node", "fit_canvas_node"))
+    )
+    if not roles or dangling:
+        print(f"[proxy] invalid video workflow {p}: node roles {dangling or 'missing'}", flush=True)
+        return None
+    if workflow_cfg.get("subject_select"):
+        try:
+            video_subject.check_roles(roles, workflow)
+        except video_subject.SubjectRoleError as exc:
+            print(f"[proxy] invalid video workflow {p}: {exc}", flush=True)
+            return None
+    ui = _load_ui_workflow(p)
+    if ui is not None:
+        workflow["__ui_workflow__"] = ui
+    return workflow
