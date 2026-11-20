@@ -98,12 +98,13 @@ def refuse(options: DeclaredOptions, fields: Sequence[tuple[str, str]], *, model
 
 
 def verbose_json_missing_segments(fields: Sequence[tuple[str, str]], payload: Any) -> bool:
-    """True when ``verbose_json`` was asked for and the engine's JSON object has no ``segments`` key.
+    """True when ``verbose_json`` was asked for and the engine's reply is not a JSON object with a ``segments`` list.
 
-    An empty ``segments`` list is an answer (silence has no segments); a missing key is a different response shape.
+    An empty ``segments`` list is an answer (silence has no segments); a missing key, a ``segments`` value that is not
+    a list, or a reply that is not an object is a different response shape.
     """
     asked = any(name == "response_format" and value.strip().lower() == "verbose_json" for name, value in fields)
-    return asked and isinstance(payload, Mapping) and "segments" not in payload
+    return asked and not (isinstance(payload, Mapping) and isinstance(payload.get("segments"), list))
 
 
 def format_not_returned_message(model: str) -> str:

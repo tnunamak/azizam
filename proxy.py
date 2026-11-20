@@ -5970,13 +5970,13 @@ async def _dispatch_selected_stt_route(
 
 
 def _stt_reply_lacks_verbose_segments(fields: Sequence[tuple[str, str]], raw: bytes | bytearray | None) -> bool:
-    """True when ``verbose_json`` was asked for and the engine answered a JSON object with no ``segments``."""
+    """True when ``verbose_json`` was asked for and the engine's 200 body is not a JSON object with a segment list."""
     if not any(name == "response_format" for name, _ in fields):
         return False
     try:
         payload = json.loads(raw or b"")
     except (ValueError, TypeError):
-        return False
+        payload = None  # plain text is not verbose_json either
     return stt_declared_options.verbose_json_missing_segments(fields, payload)
 
 

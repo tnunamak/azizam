@@ -148,9 +148,12 @@ class VerboseJsonBackstopTests(SttCase):
         self.assertNotIn("timing", response.text)
 
     def test_a_reply_that_is_not_an_object_with_a_segment_list_is_the_same_error(self) -> None:
-        for payload in ([], "hello", None, {"text": "hello", "segments": None}, {"text": "hello", "segments": "hello"}):
-            with self.subTest(payload=payload):
-                self.use_upstream(lambda _request, payload=payload: httpx.Response(200, json=payload))
+        replies = [httpx.Response(200, json=payload) for payload in
+                   ([], "hello", None, {"text": "hello", "segments": None}, {"text": "hello", "segments": "hello"})]
+        replies.append(httpx.Response(200, text="hello", headers={"content-type": "text/plain"}))
+        for reply in replies:
+            with self.subTest(payload=reply.content):
+                self.use_upstream(lambda _request, reply=reply: reply)
                 response = self._post([("model", "stt-fast"), ("response_format", "verbose_json")])
                 self.assertEqual(response.status_code, 502, response.text)
                 self.assertEqual(response.json()["error"]["code"], "stt_response_format_not_returned")
