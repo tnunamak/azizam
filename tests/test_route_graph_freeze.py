@@ -330,7 +330,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # /gateway/v1/problem-reports, POST /v1/assets and POST /openai/v1/assets (see
         # ADDED_PATHS): only those paths are new and only those workflow input schemas changed (tests/fixtures/
         # headless_openapi.json shows the same changes and nothing else). Before them the digest was ed6835d2d53b1985153826c22a9e09f7c812363cd4b01c6d829ef5cd798cb891.
-        assert route_graph.openapi_digest(proxy.app) == "f8dffd6bfecf107f9378595e4cfb8a8cd680a7e69bbcae1d065d5e43e5498a03"
+        # Re-captured 2026-11-20 (train 102): the adapter pick-list adds the loras and text_encoder inputs to the krea2-turbo,
+        # krea2-turbo-snofs and qwen edit workflows (and the two FLUX.2 Klein ones), and the member adapter uploads add GET
+        # and PUT /admin/api/operator/adapter-uploads (see ADDED_PATHS); nothing else moved (tests/fixtures/
+        # headless_openapi.json shows the same changes). Before them the digest was f8dffd6bfecf107f9378595e4cfb8a8cd680a7e69bbcae1d065d5e43e5498a03.
+        assert route_graph.openapi_digest(proxy.app) == "aae2168ad7963745447607c84067d24da46e475e51ac1c2e11464a81a311ab2b"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
