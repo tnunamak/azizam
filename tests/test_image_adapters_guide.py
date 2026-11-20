@@ -69,6 +69,12 @@ class OperatorImageAdapterGuideTest(unittest.TestCase):
         self.assertRegex(section, r"(?is)\brestart the gateway\b.*?\brefresh the workflow listing\b")
 
 
+    def test_operator_section_explains_adapter_refresh_and_same_name_replacement(self):
+        text = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        self.assertIn("within about five minutes", text)
+        self.assertIn("the list may stay as it was", text)
+        self.assertRegex(text, r"replaced under the same name[^.]*up to six hours")
+
 class MemberImageAdapterGuideTest(unittest.TestCase):
     def section(self):
         guide = GUIDE.read_text(encoding="utf-8")
