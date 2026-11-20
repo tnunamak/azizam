@@ -25217,11 +25217,10 @@ def _dispatch_admission_response(
         decision, wait_deadline=evidence["wait_deadline"], protocol=protocol,
     )
     # A refusal that is only about the service says why, with the word the model list uses.
-    if "service_unavailable" in decision.reason_codes and isinstance(advised.body.get("error"), dict):
+    if "service_unavailable" in decision.reason_codes:
         registry_off = service_id is not None and ((config.get("backends") or {}).get(service_id) or {}).get("enabled", True) is False
-        reason = availability_reasons.override_reason(override) or ("service_disabled" if registry_off else None)
-        if reason:
-            advised.body["error"]["reason"] = reason
+        availability_reasons.name_reason(
+            advised.body, availability_reasons.override_reason(override) or ("service_disabled" if registry_off else None))
     return _gateway_refusal(Response(content=json.dumps(advised.body), status_code=advised.status_code,
                                      media_type="application/json", headers=dict(advised.headers)), "capacity")
 

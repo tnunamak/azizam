@@ -43,6 +43,14 @@ def stamp(error: dict[str, Any]) -> dict[str, Any]:
     return error
 
 
+def name_reason(body: dict[str, Any], reason: str | None) -> None:
+    """Put ``reason`` in the ``error`` object of a refusal body, when there is a reason and the body has such an object
+    (an Ollama-shaped refusal carries its error as text and stays as it is)."""
+    error = body.get("error")
+    if reason is not None and isinstance(error, dict):
+        error["reason"] = reason
+
+
 def override_reason(override: Mapping[str, Any] | None) -> str | None:
     """The reason code for an operator override of a service, or ``None`` when it leaves the service in use."""
     state = str((override or {}).get("state") or "").strip().lower()
