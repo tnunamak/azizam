@@ -96,6 +96,13 @@ def test_copied_choice_names_reads_code_and_skips_prose():
     assert _copied_choice_names("Keep the normal, simple default.") == []
 
 
+def test_guide_links_klein_and_explains_inputs_without_defaults():
+    text = _guide()
+    assert "../../manifests/workflows/flux2-klein.yml" in INLINE_LINK.findall(text)
+    sentences = re.split(r"[.!?](?:\s|$)", text.lower())
+    assert any("no default" in sentence and "built-in" in sentence for sentence in sentences)
+
+
 def test_guide_relative_links_resolve_to_repository_files():
     missing = []
     for href in INLINE_LINK.findall(_guide()):
