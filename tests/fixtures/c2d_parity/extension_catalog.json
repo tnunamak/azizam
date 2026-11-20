@@ -812,8 +812,10 @@
                     {
                       "controls": [
                         "batch_size",
+                        "loras",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo"
                     },
@@ -821,8 +823,10 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "loras",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo-snofs"
                     },
@@ -890,10 +894,12 @@
                     {
                       "controls": [
                         "cfg",
+                        "loras",
                         "negative_prompt",
                         "reference_resolution",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.edit.qwen-image-2.1-edit"
                     },
@@ -1260,8 +1266,10 @@
                     {
                       "controls": [
                         "batch_size",
+                        "loras",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo"
                     },
@@ -1269,8 +1277,10 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "loras",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo-snofs"
                     },
@@ -1338,10 +1348,12 @@
                     {
                       "controls": [
                         "cfg",
+                        "loras",
                         "negative_prompt",
                         "reference_resolution",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.edit.qwen-image-2.1-edit"
                     },
@@ -1708,8 +1720,10 @@
                     {
                       "controls": [
                         "batch_size",
+                        "loras",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo"
                     },
@@ -1717,8 +1731,10 @@
                       "controls": [
                         "batch_size",
                         "lora_strength",
+                        "loras",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.generate.krea2-turbo-snofs"
                     },
@@ -1786,10 +1802,12 @@
                     {
                       "controls": [
                         "cfg",
+                        "loras",
                         "negative_prompt",
                         "reference_resolution",
                         "seed",
-                        "steps"
+                        "steps",
+                        "text_encoder"
                       ],
                       "id": "image.edit.qwen-image-2.1-edit"
                     },
