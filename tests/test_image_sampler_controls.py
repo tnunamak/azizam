@@ -71,7 +71,7 @@ def controls(graph, manifest_id=None):
 
 def test_the_cases_cover_the_image_workflows():
     assert len(image_cases()) >= 12
-    assert len(sampler_cases()) == len(image_cases()) - len(LEFT_OUT & {case.values[0]["id"] for case in image_cases()})
+    assert len(sampler_cases()) == len(image_cases()) - len(set(LEFT_OUT) & {case.values[0]["id"] for case in image_cases()})
 
 
 @pytest.mark.parametrize("manifest,binding,graph", image_cases())
