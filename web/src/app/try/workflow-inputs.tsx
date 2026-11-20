@@ -31,6 +31,7 @@ type WorkflowItemProperty = {
   label?: string;
   help?: string;
   enum?: unknown[];
+  choice_labels?: Record<string, string>;
   minimum?: number;
   maximum?: number;
   default?: unknown;
