@@ -52,6 +52,11 @@ log = logging.getLogger(__name__)
 MARKS: Callable[[], Any] = lambda: None
 
 
+async def _marks() -> Any:
+    """The owner's marks, read off the event loop: the stored setting is a database read."""
+    return await asyncio.to_thread(MARKS)
+
+
 
 class ChoicesUnavailable(RuntimeError):
     """The engine could not list its files and no earlier list is held, so no choice can be offered."""
@@ -354,7 +359,7 @@ async def current(contract: Mapping[str, Any], binding_key: str, *, service_id: 
     if decl is None:
         return None
     supplied = {} if supplied is None else supplied
-    choices = await installed(decl, service_id=service_id, origin=origin, marks=MARKS(), person_id=person_id,
+    choices = await installed(decl, service_id=service_id, origin=origin, marks=await _marks(), person_id=person_id,
                               wanted=wanted_names(supplied))
     hold = f"adapters-{uuid.uuid4().hex}"
     copies, choices = await _copies(decl, person_id, supplied, choices, hold=hold, hold_ttl_s=hold_ttl_s)
@@ -413,13 +418,15 @@ async def offered(
     person only."""
     if list_files is None:
         return {}
+    marks = await _marks()      # one read for the listing, not one per workflow
+
     async def one(record: Any) -> tuple[str, dict[str, Any]] | None:
         decl = declaration(record.contract, binding_key)
         if decl is None:
             return None
         try:
             choices = await asyncio.wait_for(
-                installed(decl, service_id=service_id, origin=origin, marks=MARKS(), list_files=list_files,
+                installed(decl, service_id=service_id, origin=origin, marks=marks, list_files=list_files,
                           read_header=read_header, person_id=person_id),
                 LISTING_WAIT_S)
         except (ChoicesUnavailable, asyncio.TimeoutError):
