@@ -216,7 +216,10 @@ function baseAvailabilityView(
       text: MEMBER_SETUP_NOTE,
       fix: null,
     };
-  if (!reason && !(code === "required_file_missing" && availability.missing?.some(({ name }) => name)))
+  const namedFile = code === "required_file_missing" && availability.missing?.some(({ name }) => name);
+  // Without prose or named files, no code, a plan refusal or a missing file has no page we can honestly point to.
+  const unguessable = !code || code === "required_file_missing" || code === "policy_denied";
+  if (!reason && !namedFile && unguessable)
     return {
       readiness: "setup",
       runnable: false,

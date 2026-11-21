@@ -6,9 +6,9 @@ describe("status copy", () => {
     expect(availabilityReason("idle", "ready_on_request")).toBe(
       "Ready to start when you make a request.",
     );
-    expect(availabilityReason("unknown", "unknown")).toBeUndefined();
+    expect(availabilityReason("unknown", "unknown")).toBe("Status could not be checked. Ask the owner to check the service.");
     expect(availabilityReason("degraded", "degraded")).toBe(
-      "Degraded. Requests may fail.",
+      "Degraded. Requests may fail. Try again, and ask the owner if it continues.",
     );
   });
 

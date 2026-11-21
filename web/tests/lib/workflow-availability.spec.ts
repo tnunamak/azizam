@@ -54,8 +54,8 @@ describe("workflowAvailabilityView: one mapping for Workflows and Try", () => {
     expect(view).toEqual({
       readiness: "down",
       runnable: false,
-      pickerNote: "ComfyUI is down.",
-      text: "ComfyUI is down.",
+      pickerNote: "Unavailable",
+      text: "Unavailable. Ask the owner to check this capability.",
       fix: null,
     });
   });
@@ -75,7 +75,7 @@ describe("workflowAvailabilityView: one mapping for Workflows and Try", () => {
       { owner: false },
     );
     expect(view.readiness).toBe("down");
-    expect(view.text).toBe("Face service has not been checked yet.");
+    expect(view.text).toBe("Unavailable. Ask the owner to check this capability.");
   });
 
   it("keeps the generic setup copy for workflows without a gateway reason", () => {

@@ -792,7 +792,7 @@ describe("composed workflow availability on Try", () => {
 
   it.each([owner, member])("a down engine is named to the $role and Run stays off", async (viewer) => {
     await openWorkflow("image.generate.sdxl-seamless-tile", viewer);
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Seamless Tile · ComfyUI is down.");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Seamless Tile · Unavailable");
     expect(runButton()).toBeDisabled();
     // Enter in a field still submits the form; a workflow that cannot run sends nothing.
     setValue(screen.getByRole("textbox", { name: /^prompt Required$/i }), "A teal fish.");
@@ -801,7 +801,9 @@ describe("composed workflow availability on Try", () => {
     });
     expect(posts()).toHaveLength(0);
     const note = within(screen.getByTestId("workflow-availability-note"));
-    expect(screen.getByTestId("workflow-availability-note")).toHaveTextContent("ComfyUI is down.");
+    expect(screen.getByTestId("workflow-availability-note")).toHaveTextContent(
+      viewer.role === "owner" ? "ComfyUI is down." : "Unavailable. Ask the owner to check this capability.",
+    );
     if (viewer.role === "owner")
       expect(note.getByRole("link", { name: "Open Engines" })).toHaveAttribute("href", "/engines?service=comfyui");
     else expect(note.queryByRole("link")).toBeNull();
