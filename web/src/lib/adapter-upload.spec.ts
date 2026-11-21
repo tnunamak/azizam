@@ -65,6 +65,26 @@ describe("uploadAdapter", () => {
       .toEqual({ ok: false, code, message });
   });
 
+  it.each([
+    ["missing id", { id: undefined }],
+    ["non-string id", { id: 1 }],
+    ["missing size", { size_bytes: undefined }],
+    ["non-number size", { size_bytes: "3" }],
+    ["missing offered", { offered: undefined }],
+    ["non-boolean offered", { offered: "yes" }],
+    ["missing architectures", { architectures: undefined }],
+    ["non-array architectures", { architectures: "example" }],
+    ["non-string architecture", { architectures: ["example", 1] }],
+  ])("rejects an otherwise successful reply with %s", async (_label, fields) => {
+    expect(await uploadAdapter(picked(), async () => json({ ...offered, ...fields })))
+      .toEqual(unreadable);
+  });
+
+  it.each(["", " \t\n"])("uses fallback copy for a blank refusal message %j", async message => {
+    expect(await uploadAdapter(picked(), async () => json({ error: { code: "refused", message } }, 400)))
+      .toEqual({ ok: false, code: "refused", message: "The upload did not go through. Try again." });
+  });
+
   it("rejects primitive and array roots, even if a nonstandard JSON decoder attaches an id", async () => {
     expect(await uploadAdapter(picked(), async () => json("not an object"))).toEqual(unreadable);
     for (const root of [Object.assign([], { id: offered.id }), Object.assign(() => {}, { id: offered.id })]) {

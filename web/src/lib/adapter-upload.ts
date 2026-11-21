@@ -52,13 +52,20 @@ export async function uploadAdapter(
     return unreadableReply();
   }
   if (!isRecord(reply)) return unreadableReply();
-  if (response.ok && typeof reply.id === "string") {
+  if (response.ok) {
+    if (
+      typeof reply.id !== "string" ||
+      typeof reply.size_bytes !== "number" ||
+      typeof reply.offered !== "boolean" ||
+      !Array.isArray(reply.architectures) ||
+      !reply.architectures.every(architecture => typeof architecture === "string")
+    ) return unreadableReply();
     return { ok: true, adapter: reply as AdapterUploaded };
   }
   if (isRecord(reply.error)) {
     const { code, message } = reply.error;
     if (typeof code === "string" && typeof message === "string") {
-      return { ok: false, code, message };
+      return { ok: false, code, message: message.trim() ? message : "The upload did not go through. Try again." };
     }
   }
   return unreadableReply();
