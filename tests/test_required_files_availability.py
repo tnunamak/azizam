@@ -209,6 +209,30 @@ def test_a_workflow_that_can_run_on_two_engines_is_lacking_only_when_both_lack()
     assert row({"a": lacks})["available"] is True       # the other engine has no list: not judged
 
 
+def test_workflow_uses_the_complete_healthy_alternative_in_either_order():
+    two = SimpleNamespace(id="wf", supported_backends=["a", "b"], manifest={}, contract={"bindings": {
+        "a": {"requires": {"custom_nodes": ["NodeA"]}},
+        "b": {"requires": {"custom_nodes": ["NodeB"]}},
+    }})
+    services = {"services": {sid: {"enabled": True, "config": {}} for sid in ("a", "b")}}
+    health = {sid: {"status": "ok", "available": True, "observed_at_s": at, "last_success_at_s": at}
+              for sid, at in (("a", 900), ("b", 901))}
+    lacks = kept(node_list(("KSampler",)))
+
+    def row(a, b, evidence=health):
+        return availability.workflow_availability(two, service_records=services, evidence=evidence,
+                                                  inventories={"a": a, "b": b})
+
+    assert row(lacks, kept(node_list(("NodeB",)))) == {"available": True, "reason": None, "last_healthy_at": 901}
+    assert row(kept(node_list(("NodeA",))), lacks) == {"available": True, "reason": None, "last_healthy_at": 900}
+    both = row(lacks, lacks)
+    assert both["reason_code"] == "required_file_missing"
+    assert both["missing"] == [{"kind": "custom_node", "name": "NodeA"}]
+    b_down = {**health, "b": {"status": "down", "available": False, "observed_at_s": 901}}
+    assert row(lacks, kept(node_list(("NodeB",))), b_down)["reason_code"] == "required_file_missing"
+
+
+
 # ------------------------------------------------------------------------------- the model list
 
 
