@@ -204,6 +204,12 @@ def workflow_availability(
     """
     services = _services_mapping(service_records)
     groups = _dependency_groups(record, records or {}, set())
+    direct = not isinstance(requirements_of(record.contract), Mapping) or not any(groups)
+    bindings = _binding_file_gaps(record, inventories)
+    if direct and bindings:
+        bound = [service_id for service_id, _ in bindings if service_id in services]
+        if bound:
+            groups = [bound]
     if not any(groups):
         # Bindings commonly declare the files and nodes they need but no services; the engines they run on still decide.
         own = [backend for backend in dict.fromkeys(record.supported_backends) if backend in services]
@@ -212,20 +218,32 @@ def workflow_availability(
         return {"available": True, "reason": "Not measured yet", "last_healthy_at": None}
     priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3, "unknown": 4, "idle": 5, "ready": 6}
     rank = lambda item: priority.get(item.status, 4)
+    projected: dict[str, AvailabilityProjection] = {}
+
+    def service_view(service_id: str) -> AvailabilityProjection:
+        if service_id not in projected:
+            projected[service_id] = project_service(service_id, service_records=service_records,
+                                                     evidence=evidence, services=services)
+        return projected[service_id]
+
     # Each group is a set of interchangeable engines: the best one serves it. The worst served group limits the workflow.
-    best = [max((project_service(service, service_records=service_records, evidence=evidence, services=services)
-                 for service in group), key=rank) for group in groups if group]
+    best = [max((service_view(service_id) for service_id in group), key=rank) for group in groups if group]
     pick = min(best, key=rank)
+    serving_bindings = [(service_view(service_id), missing) for service_id, missing in bindings
+                        if service_id in services and service_view(service_id).status in MODEL_LIST_SERVING_STATUSES]
+    complete = [engine for engine, missing in serving_bindings if not missing]
+    if direct and complete:
+        pick = max(complete, key=rank)
     down = pick.status == "unavailable"
     reason = None if pick.status in {"ready", "idle", "busy"} else (
         _dependency_reason(pick, services.get(pick.service_id) or {}) if down else pick.reason)
     row = {"available": not down, "reason": reason, "last_healthy_at": last_healthy_at(pick.service_id, evidence)}
-    if pick.status in MODEL_LIST_SERVING_STATUSES:
-        lacking = _lacking_files(record, inventories)
-        if lacking:
-            names = ", ".join(item["name"] for item in lacking)
-            row.update({"available": False, "reason": f"A model file or node it needs is missing on its engine: {names}.",
-                        "reason_code": "required_file_missing", "missing": lacking})
+    if pick.status in MODEL_LIST_SERVING_STATUSES and serving_bindings and not complete:
+        # Preserve configured binding order after ruling out all healthy alternatives.
+        lacking = serving_bindings[0][1]
+        names = ", ".join(item["name"] for item in lacking)
+        row.update({"available": False, "reason": f"A model file or node it needs is missing on its engine: {names}.",
+                    "reason_code": "required_file_missing", "missing": lacking})
     return row
 
 
@@ -249,6 +267,19 @@ def missing_files_state(missing: list[dict[str, str]]) -> dict[str, Any]:
     """The listing value for a name whose engine lacks a file or node it needs: ``unavailable``, with the closed reason
     code and, beside it, what is missing."""
     return {"state": "unavailable", "reason": "required_file_missing", "missing": missing}
+
+
+def _binding_file_gaps(record: WorkflowRecord, inventories: Mapping[str, Any] | None) -> list[tuple[str, list[dict[str, str]]]]:
+    bindings = record.contract.get("bindings")
+    if not isinstance(bindings, Mapping):
+        return []
+    out = []
+    for key, spec in bindings.items():
+        service = str(spec.get("service") or key) if isinstance(spec, Mapping) else str(key)
+        missing = required_files_missing(spec.get("requires") if isinstance(spec, Mapping) else None,
+                                         (inventories or {}).get(service))
+        out.append((service, missing))
+    return out
 
 
 def _lacking_files(record: WorkflowRecord, inventories: Mapping[str, Any] | None) -> list[dict[str, str]]:
