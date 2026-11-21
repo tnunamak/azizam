@@ -165,3 +165,31 @@ def test_model_requirement_hash_rejects_mismatch_and_missing_then_accepts_casefo
     assert validate_workflow_requirements(manifest, {"models": [
         {"role": "checkpoint", "path": "/models/model.safetensors", "sha256": "ABC123"},
     ]}).ok
+
+
+
+def test_name_only_inventory_trims_node_and_model_names_before_matching():
+    from gateway.workflow_requirements import judge_by_names
+
+    requires = {"custom_nodes": ["VAELoader"], "models": [{"role": "vae", "path": "vae.safetensors"}]}
+    for nodes, names in [
+        (["VAELoader"], ["vae.safetensors"]),
+        ([" VAELoader ", "  "], [" models/vae.safetensors ", "\t"]),
+    ]:
+        assert judge_by_names(requires, nodes, names).ok
+
+    missing = judge_by_names(requires, ["OtherLoader "], [" other.safetensors "])
+    assert [(issue.kind, issue.name) for issue in missing.missing] == [
+        ("custom_node", "VAELoader"), ("model", "vae:vae.safetensors"),
+    ]
+
+
+def test_role_aware_inventory_trims_observed_role_path_and_name():
+    manifest = {"requires": {"custom_nodes": ["VAELoader"], "models": [{"role": "vae", "path": "vae.safetensors"}]}}
+    for artifact in [
+        {"role": " vae ", "path": " models/vae.safetensors "},
+        {"role": " vae ", "name": " vae.safetensors "},
+    ]:
+        assert validate_workflow_requirements(manifest, {
+            "node_classes": [" VAELoader "], "models": [artifact],
+        }).ok
