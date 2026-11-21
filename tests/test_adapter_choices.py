@@ -525,3 +525,20 @@ def test_adapter_overlay_disambiguates_upload_display_labels():
     assert name["choice_labels"][unique] == labels[unique]
     assert all(name["choice_labels"][key].startswith(labels[key]) for key in choices.uploads)
     assert "choice_labels" not in original["inputs"]["loras"]["items"]["properties"]["name"]
+
+
+def test_adapter_overlay_groups_trimmed_nfc_labels_without_casefolding():
+    labels = {
+        "upload-a1": "Café", "upload-a2": "Cafe\u0301",
+        "upload-b1": "style", "upload-b2": "style ",
+        "upload-c1": "  Distinct  ", "upload-c2": "distinct",
+    }
+    keys = tuple(labels)
+    original = contract()
+    shown = ac.overlay(original, ac.declaration(original, "graph"),
+                       ac.AdapterChoices(loras=keys, text_encoders=(), uploads=keys, labels=labels))
+    projected = shown["inputs"]["loras"]["items"]["properties"]["name"]["choice_labels"]
+    for key in keys[:4]:
+        assert projected[key].startswith(labels[key] + " (…")
+    assert len(set(projected.values())) == len(keys)
+    assert {key: projected[key] for key in keys[4:]} == {key: labels[key] for key in keys[4:]}
