@@ -3,6 +3,7 @@
 Files are invented. No engine is called: the header and list readers are fakes.
 """
 import asyncio
+import unicodedata
 from threading import Event
 
 import pytest
@@ -561,3 +562,20 @@ def test_adapter_overlay_groups_trimmed_nfc_labels_without_casefolding():
         assert projected[key].startswith(labels[key] + " (…")
     assert len(set(projected.values())) == len(keys)
     assert {key: projected[key] for key in keys[4:]} == {key: labels[key] for key in keys[4:]}
+
+
+def test_adapter_overlay_normalizes_occupied_suffixes_without_rewriting_labels():
+    first, second = "upload-first-3f2a", "upload-second-3f2a"
+    labels = {first: "Cafe\u0301", second: "Café"}
+    original = contract()
+    decl = ac.declaration(original, "graph")
+    choices = ac.AdapterChoices(loras=(first, second), text_encoders=(), uploads=(first, second), labels=labels)
+    shown = ac.overlay(original, decl, choices)
+    projected = shown["inputs"]["loras"]["items"]["properties"]["name"]["choice_labels"]
+    normalized = {unicodedata.normalize("NFC", label.strip()) for label in projected.values()}
+    assert len(normalized) == 2
+
+    single = ac.AdapterChoices(loras=(first,), text_encoders=(), uploads=(first,), labels={first: labels[first]})
+    shown = ac.overlay(original, decl, single)
+    projected = shown["inputs"]["loras"]["items"]["properties"]["name"]["choice_labels"]
+    assert projected == {first: labels[first]}
