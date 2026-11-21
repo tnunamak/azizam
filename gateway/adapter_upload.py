@@ -741,5 +741,8 @@ class Library:
         """``sweep`` for every folder in ``folders``: the periodic task's one call."""
         removed: list[str] = []
         for folder in sorted(self.folders()):
-            removed.extend(self.sweep(folder=folder))
+            try:
+                removed.extend(self.sweep(folder=folder))
+            except Exception as exc:
+                _LOG.warning("Could not sweep adapter folder %r (%s)", folder, type(exc).__name__)
         return removed
