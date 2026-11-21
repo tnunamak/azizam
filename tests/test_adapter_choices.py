@@ -217,6 +217,25 @@ def test_member_copy_classifier_normalizes_engine_folder_spellings():
     assert not ac.is_member_upload_copy("azizam-uploads-other/style.safetensors")
 
 
+def test_installed_never_offers_member_copies_without_an_upload_service(monkeypatch):
+    monkeypatch.setattr(ac, "UPLOADS", None)
+    ordinary = "operator/style.safetensors"
+    member_copy = "azizam-uploads/style.safetensors"
+    encoder = "declared_encoder.safetensors"
+    compatible_header = {"ss_base_model_version": "base_a"}
+    listing, header, _ = make_fetchers(
+        [ordinary, member_copy, encoder],
+        {ordinary: compatible_header, member_copy: compatible_header, encoder: {"format": "encoder"}},
+    )
+    decl = ac.declaration(contract(encoder_enum=(encoder,)), "graph")
+    choices = asyncio.run(ac.installed(
+        decl, service_id="svc", origin="http://engine", list_files=listing,
+        read_header=header, table=TABLE, now=1000.0, uploads=None,
+    ))
+    assert choices.loras == (ordinary,)
+    assert choices.text_encoders == (encoder,)
+
+
 def test_the_installed_list_is_filtered_by_header_and_a_header_that_cannot_be_read_is_not_offered():
     headers = {"a.safetensors": {"ss_base_model_version": "base_a"}, "b.safetensors": {"ss_base_model_version": "base_b"},
                "c.safetensors": OSError("404")}
