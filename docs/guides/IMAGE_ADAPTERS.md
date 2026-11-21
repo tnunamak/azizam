@@ -2,8 +2,8 @@
 
 ## Callers: choose from the workflow listing
 
-1. Open the image workflow listing on your gateway, for example at
-   `https://ai.example.com`. Select the model you want and check its input
+1. [List image workflows with your member key](IMAGE_OPTIONS.md#list-images-and-send-a-request).
+   Select the model you want and check its input
    choices. A workflow that supports style adapters (LoRAs) lists the installed
    adapter names it offers for that model; do not guess a name or send a
    local path. If the workflow offers an encoder choice, use its listed names.
@@ -39,10 +39,15 @@ chosen adapter names and their effective weights, and the encoder if selected.
    all match the `ss_base_model_version` header field. Files without a usable
    matching header are hidden by default. An explicit owner mark for the
    architecture is the exception.
-3. To recognize a new base model, add a row to the registry using the actual
-   header field and value emitted by its trainer. Refresh the workflow listing
-   after the engine and gateway have picked up the change. Encoder choices
-   come from the workflow manifest, not the adapter folder.
+3. To recognize a new base model, add a row to the registry using the
+   header field and value from its trainer, then restart the gateway so it
+   reads the registry again. Refresh the workflow listing after the restart.
+   A new adapter in the engine’s folder usually appears within about five
+   minutes. If the engine cannot be reached, the list may stay as it was.
+   For a file replaced under the same name, the gateway may keep using the
+   old file information for up to six hours. Use a new filename to see the
+   replacement sooner.
+   Encoder choices come from the workflow manifest, not the adapter folder.
 
 ## Your own adapters
 
@@ -58,7 +63,7 @@ machine, not on remote workflows.
 2. Upload your style file in the Library or send it to `POST /me/api/adapters`.
    Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
    and `.bin` are refused.
-   A file with an unreadable header is also refused.
+   If the gateway cannot read the file's built-in information, it refuses the upload.
 3. The gateway reads the file header to find its base model. Your adapter is
    offered only on workflows that use that base model. If the header names no
    known base model, the file is still stored, but the upload reply says it

@@ -93,7 +93,10 @@ def create_me_adapters_router(
                     adapter_upload.admit_total(policy, used=used_bytes(session.subject, excluding=would_be), size=checked.size)
                 except adapter_upload.Refused as exc:
                     return _error(exc.code, exc.status, exc.message)
-                asset_id = store(stream, checked, session.subject, label)
+                try:
+                    asset_id = store(stream, checked, session.subject, label)
+                except OSError:
+                    return _error("adapter_store_failed", 507, "The adapter could not be stored. Try again, and ask the owner if it continues.")
             body: dict[str, Any] = {
                 "id": asset_id, "object": "gateway.asset", "kind": "adapter", "media_type": "adapter/safetensors",
                 "size_bytes": checked.size, "architectures": list(found), "offered": bool(found),

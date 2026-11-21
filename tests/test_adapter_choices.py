@@ -209,6 +209,14 @@ def test_krea2_offers_krea2_spellings_from_the_shipped_table_and_still_hides_sdx
     assert ac.compatible(list(values), headers, "krea2", ac.architecture_table(), []) == ["a", "b", "c"]
 
 
+def test_member_copy_classifier_normalizes_engine_folder_spellings():
+    assert ac.is_member_upload_copy("azizam-uploads/style.safetensors")
+    assert ac.is_member_upload_copy("azizam-uploads\\style.safetensors")
+    assert ac.is_member_upload_copy("AZIZAM-UPLOADS/style.safetensors")
+    assert not ac.is_member_upload_copy("operator/style.safetensors")
+    assert not ac.is_member_upload_copy("azizam-uploads-other/style.safetensors")
+
+
 def test_the_installed_list_is_filtered_by_header_and_a_header_that_cannot_be_read_is_not_offered():
     headers = {"a.safetensors": {"ss_base_model_version": "base_a"}, "b.safetensors": {"ss_base_model_version": "base_b"},
                "c.safetensors": OSError("404")}
@@ -500,3 +508,37 @@ def test_the_receipt_has_no_adapter_facts_when_none_were_chosen():
     decl = ac.declaration(contract(), "graph")
     assert ac.receipt_facts(decl, {"prompt": "x"}, contract()) is None
     assert ac.receipt_facts(None, {"loras": [{"name": "a.safetensors"}]}, contract()) is None
+
+def test_adapter_overlay_disambiguates_upload_display_labels():
+    operator = "style-a.safetensors"
+    first, second, third, unique = ("upload-first-3f2a", "upload-second-3f2a", "upload-third-8b3c", "upload-unique-1111")
+    loras = (operator, first, second, third, unique)
+    labels = {first: "watercolour", second: "watercolour", third: operator, unique: "watercolour (…3f2a)"}
+    choices = ac.AdapterChoices(loras=loras, text_encoders=(), uploads=loras[1:], labels=labels)
+    original = contract()
+    shown = ac.overlay(original, ac.declaration(original, "graph"), choices)
+    name = shown["inputs"]["loras"]["items"]["properties"]["name"]
+    assert name["enum"] == list(loras)
+    presented = [name["choice_labels"].get(key, key) for key in loras]
+    assert len(set(presented)) == len(loras)
+    assert presented[0] == operator
+    assert name["choice_labels"][unique] == labels[unique]
+    assert all(name["choice_labels"][key].startswith(labels[key]) for key in choices.uploads)
+    assert "choice_labels" not in original["inputs"]["loras"]["items"]["properties"]["name"]
+
+
+def test_adapter_overlay_groups_trimmed_nfc_labels_without_casefolding():
+    labels = {
+        "upload-a1": "Café", "upload-a2": "Cafe\u0301",
+        "upload-b1": "style", "upload-b2": "style ",
+        "upload-c1": "  Distinct  ", "upload-c2": "distinct",
+    }
+    keys = tuple(labels)
+    original = contract()
+    shown = ac.overlay(original, ac.declaration(original, "graph"),
+                       ac.AdapterChoices(loras=keys, text_encoders=(), uploads=keys, labels=labels))
+    projected = shown["inputs"]["loras"]["items"]["properties"]["name"]["choice_labels"]
+    for key in keys[:4]:
+        assert projected[key].startswith(labels[key] + " (…")
+    assert len(set(projected.values())) == len(keys)
+    assert {key: projected[key] for key in keys[4:]} == {key: labels[key] for key in keys[4:]}

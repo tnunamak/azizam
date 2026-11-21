@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
+import posixpath
+from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -15,6 +17,8 @@ class RequirementIssue:
     kind: str
     name: str
     reason: str
+    # A required hash is never confirmed by a list of names, so this requirement is "not confirmed", not "missing".
+    needs_hash: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,10 +76,39 @@ def validate_workflow_requirements(
                     kind="model",
                     name=_model_requirement_name(requirement),
                     reason=_model_missing_reason(requirement),
+                    needs_hash="sha256" in requirement,
                 )
             )
 
     return WorkflowRequirementsResult(missing=missing)
+
+
+def judge_by_names(
+    requires: Mapping[str, Any], node_classes: Iterable[str], model_names: Iterable[str],
+) -> WorkflowRequirementsResult:
+    """Judge a ``requires`` block against what an engine's node list offers: node classes, and the model file names its
+    combo inputs offer (``engine_check.node_list_inventory``). The one judge of both the owner's engine check and the
+    availability projections.
+
+    A combo name is a path inside a model folder and the node list does not say which folder, so a name stands for the
+    file in any role the block asks of it: the file name is what is compared, never the folder. A model file with a
+    required hash is never confirmed (``RequirementIssue.needs_hash``). Raises ``ValueError`` for a block that cannot
+    be read.
+    """
+    classes = sorted({clean for name in node_classes if isinstance(name, str) and (clean := name.strip())})
+    names = list(dict.fromkeys(clean for name in model_names if isinstance(name, str) and (clean := name.strip())))
+    models = list(requires.get("models") or ())
+    roles = {entry["role"] for entry in models if isinstance(entry, Mapping) and isinstance(entry.get("role"), str)}
+    # Only a name that can satisfy a requirement is worth an artifact (a pattern may match any name, so it keeps all).
+    paths = [str(entry["path"]).strip() for entry in models if isinstance(entry, Mapping) and isinstance(entry.get("path"), str)]
+    if len(paths) == len(models):
+        full, base = set(paths), {_safe_path_name(path) for path in paths}
+        names = [name for name in names if name in full or posixpath.basename(name) in base]
+    inventory = {"node_classes": classes,
+                 "models": [{"role": role, "path": name, "name": posixpath.basename(name)}
+                            for role in sorted(roles) for name in names]}
+    return validate_workflow_requirements(
+        {"requires": {"custom_nodes": list(requires.get("custom_nodes") or ()), "models": models}}, inventory)
 
 
 def _requirements(manifest: dict[str, Any], errors: ErrorCollector) -> dict[str, Any]:
@@ -199,7 +232,9 @@ def _observed_model_artifacts(inventory: dict[str, Any]) -> list[dict[str, str]]
     artifacts: list[dict[str, str]] = []
     for item in raw_models:
         if isinstance(item, str):
-            artifacts.append({"path": item, "name": _safe_path_name(item)})
+            path = item.strip()
+            if path:
+                artifacts.append({"path": path, "name": _safe_path_name(path)})
             continue
         if not isinstance(item, dict):
             continue

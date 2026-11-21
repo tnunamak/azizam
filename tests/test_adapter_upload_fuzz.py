@@ -46,3 +46,45 @@ def test_decoder_capacity_error_is_reported_as_refused() -> None:
             adapter_upload.read_header(stream, len(data), max_header_bytes=length)
     assert caught.value.code == "adapter_header_invalid"
     assert stream.read_bytes == 8 + length
+
+
+@pytest.mark.parametrize(
+    ("folder", "accepted"),
+    [
+        ("lora", True),
+        ("LoraV2", True),
+        ("adapter-pack", True),
+        ("adapter_pack", True),
+        ("a" * 64, True),
+        ("a" * 65, False),
+        ("", False),
+    ],
+)
+def test_lora_root_accepts_plain_directories_within_the_folder_name_limit(tmp_path, folder, accepted):
+    if accepted:
+        expected = tmp_path / folder
+        expected.mkdir()
+        assert adapter_upload.lora_root(tmp_path, folder) == expected
+    else:
+        assert adapter_upload.lora_root(tmp_path, folder) is None
+        assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "folder",
+    ["..", ".", "a/b", "a\\b", "a" * 300, "a\x00b", "a.", "a ", "a\n", "\u00e9", "e\u0301", "../outside"],
+)
+def test_lora_root_refuses_hostile_folder_names_before_building_a_path(tmp_path, folder):
+    models = tmp_path / "models"
+    models.mkdir()
+    assert adapter_upload.lora_root(models, folder) is None
+    assert list(models.iterdir()) == []
+
+
+def test_lora_root_refuses_a_symlink_that_points_outside_the_models_folder(tmp_path):
+    models = tmp_path / "models"
+    models.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (models / "lora").symlink_to(outside, target_is_directory=True)
+    assert adapter_upload.lora_root(models, "lora") is None

@@ -31,7 +31,7 @@ The new fields are additive; OpenAI clients ignore unknown keys (checked against
 | `context_window` | int | total tokens | Already emitted before this contract; unchanged. Omitted if unknown. |
 | `max_tokens` | int | max output tokens per request | Only when an operator declares it. Never guessed. |
 | `tags` | string[] | subset of <!-- model-metadata:tags:start --> `tool-use`, `reasoning`, `vision`, `file-input` <!-- model-metadata:tags:end --> | `language` entries only, and only declared or derivable facts. Omitted when empty. |
-| `azizam_availability` | object | `{"state": "available" \| "unavailable" \| "unknown", "reason"?: string, "retry_after_s"?: integer}` | Every entry the gateway can map to the service or services that serve it. `reason` (a code, see [Reason codes](#reason-codes)) is present whenever the state is not `available`. `retry_after_s` only when the gateway knows a delay. |
+| `azizam_availability` | object | `{"state": "available" \| "unavailable" \| "unknown", "reason"?: string, "retry_after_s"?: integer, "missing"?: [{"kind": string, "name": string}]}` | Every entry the gateway can map to the service or services that serve it. `reason` (a code, see [Reason codes](#reason-codes)) is present whenever the state is not `available`. `retry_after_s` only when the gateway knows a delay. `missing` only with the reason `required_file_missing`: the model files and nodes the engine does not list. |
 
 Semantics:
 
@@ -103,23 +103,41 @@ as `unknown`. Each list request keeps the snapshot refreshing, so after a quiet 
 
 ### Reason codes
 
-The set is closed: these seven words are all a caller sees in `azizam_availability.reason`, and a refusal the gateway
+The set is closed: these eight words are all a caller sees in `azizam_availability.reason`, and a refusal the gateway
 makes for that model carries the same word in `error.reason` (next to `error.code`, which keeps its own value). A
 name that is also a refusal code, such as `backend_unavailable`, has that meaning in both places. Read the reason, not
 the message. A name the key may not use is not listed, and nothing here says that it exists.
 
-| Code | State | Meaning | `retry_after_s` |
-|---|---|---|---|
-| `backend_unavailable` | `unavailable` | The engine behind the model is stopped, failed, unreachable or not set up. | no |
-| `engine_transitioning` | `unknown` | The engine is starting or loading and does not take requests yet. Try again soon. | no |
-| `model_not_deployed` | `unavailable` | No engine behind the name is deployed. | no |
-| `current_model_unavailable` | `unavailable` | The name follows the loaded model, and no backend has one loaded. | no |
-| `service_disabled` | `unavailable` | The owner turned off the service that runs the model. | no |
-| `service_maintenance` | `unavailable` | The owner took the service out of use for now (maintenance or draining). | yes: the owner's delay, 10 when none |
-| `health_unknown` | `unknown` | The gateway has no recent health reading for the service. The model may work. | no |
+When no alternative can serve and at least one is not known to be unavailable, the model state is `unknown`.
+A starting alternative takes precedence and gives `engine_transitioning`. Otherwise, the listing takes the
+reason and any `retry_after_s` from the first alternative in configured order, so the reason can depend on
+order. For example, with one service in maintenance and one with no health reading, maintenance first gives
+`service_maintenance` with its retry delay; reversing them gives `health_unknown`.
+This rule is for alternatives, not workflows that require every named service.
 
-Not in the list, because the gateway does not know them when it answers the list: a missing weight file or custom
-node (the owner's engine check finds these, a request does not check them first), and shared capacity (a request
+The separate workflow availability row carries a `reason_code` alongside its human-readable `reason`, for
+example `required_file_missing`. In `/v1/models`, the machine-readable code is `azizam_availability.reason`;
+`reason_code` is not a member of `/v1/models` availability.
+
+| Code | State | Client action | `retry_after_s` |
+|---|---|---|---|
+| `backend_unavailable` | `unavailable`, `unknown` | Use another model or retry once the engine is reachable. | no |
+| `engine_transitioning` | `unknown` | Wait for the engine to finish starting or loading before retrying. | no |
+| `model_not_deployed` | `unavailable` | Choose a deployed model or ask the owner to deploy this one. | no |
+| `current_model_unavailable` | `unavailable` | Choose an explicitly named model or wait for a backend to load one. | no |
+| `service_disabled` | `unavailable`, `unknown` | Choose another model or ask the owner to enable this service. | no |
+| `service_maintenance` | `unavailable`, `unknown` | Wait for `retry_after_s` before retrying or choose another model. | yes: the owner's delay, 10 when none |
+| `health_unknown` | `unknown` | Treat readiness as unconfirmed and handle a possible refusal if you try the model. | no |
+| `required_file_missing` | `unavailable` | Ask the owner to install the model files or custom nodes named in `missing` before retrying. | no |
+
+`required_file_missing` is judged from the engine's own node list, which the gateway reads in the background every
+few minutes, never while it answers the list. Each workflow says which node classes and model files it needs; a file
+counts as present when the node list offers a file of that name, in any folder. The reason is given only when a recent
+reading positively lacks a name. With no reading yet, a reading older than fifteen minutes, or a list that cannot be
+read, the state is what it was without this check. An engine that is down keeps its own reason. A list of names cannot
+check a hash, so a file the workflow pins by hash counts as present when a file of that name is listed.
+
+Not in the list, because the gateway does not know them when it answers the list: shared capacity (a request
 meets admission when it runs; a busy engine still lists as `available`). A workflow the owner turned off is not
 listed at all, as before; a request to it is refused with `workflow_disabled`. A request refused by the key's access
 plan gets `not_in_access_plan` or `no_access` as before.

@@ -53,6 +53,28 @@ class ImageAdapterGuideTest(unittest.TestCase):
             self.assertTrue(destination.is_file(), f"Broken relative link: {target}")
 
 
+def test_caller_guide_links_to_authenticated_image_request():
+    text = GUIDE.read_text(encoding="utf-8")
+    callers = text.split("## Operators:", 1)[0]
+    assert "IMAGE_OPTIONS.md#list-images-and-send-a-request" in callers
+
+
+class OperatorImageAdapterGuideTest(unittest.TestCase):
+    def test_operator_section_says_restart_after_registry_row(self):
+        text = GUIDE.read_text(encoding="utf-8")
+        _, heading, tail = text.partition("\n## Operators: make an adapter available\n")
+        self.assertTrue(heading, "The guide must include operator instructions")
+        section = " ".join(tail.split("\n## ", 1)[0].split())
+        self.assertRegex(section, r"(?i)\brow (?:to|in) the registry[^.!?]*\brestart the gateway\b")
+        self.assertRegex(section, r"(?is)\brestart the gateway\b.*?\brefresh the workflow listing\b")
+
+
+    def test_operator_section_explains_adapter_refresh_and_same_name_replacement(self):
+        text = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        self.assertIn("within about five minutes", text)
+        self.assertIn("the list may stay as it was", text)
+        self.assertRegex(text, r"replaced under the same name[^.]*up to six hours")
+
 class MemberImageAdapterGuideTest(unittest.TestCase):
     def section(self):
         guide = GUIDE.read_text(encoding="utf-8")
@@ -89,8 +111,8 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
         self.assertRegex(section, r"(?i)workflow.s listing[^.]*label")
         self.assertRegex(section, r'(?i)my style[^.]*`ast_[^\x60]+`[^.]*loras[^.]*"name"\s*:\s*"ast_')
 
-    def test_member_section_explains_unreadable_header_refusal(self):
-        self.assertRegex(self.section(), r"(?i)\b(?:unreadable|damaged) header[^.]*\brefused\b")
+    def test_member_section_explains_unreadable_file_refusal(self):
+        self.assertIn("If the gateway cannot read the file's built-in information, it refuses the upload.", " ".join(self.section().split()))
 
     def test_member_section_explains_unlabelled_upload_listing(self):
         self.assertRegex(self.section(), r"(?i)an upload without a label[^.]*is listed by its ID\b")

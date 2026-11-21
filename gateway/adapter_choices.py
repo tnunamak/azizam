@@ -26,6 +26,7 @@ import copy
 import logging
 import threading
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -35,6 +36,7 @@ from typing import Any, NamedTuple, Protocol
 
 import yaml
 
+MEMBER_UPLOAD_SUBFOLDER = "azizam-uploads"
 LORAS_INPUT = "loras"
 ENCODER_INPUT = "text_encoder"
 SETTING_KEY = "adapter_marks"
@@ -199,6 +201,27 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
         name["enum"] = list(choices.loras)
         named = {key: label for key, label in choices.labels.items() if key in choices.loras}
         if named:
+            label_key = lambda label: unicodedata.normalize("NFC", label.strip())
+            operator_names = {label_key(key) for key in set(choices.loras) - named.keys()}
+            counts: dict[str, int] = {}
+            for label in named.values():
+                normalized = label_key(label)
+                counts[normalized] = counts.get(normalized, 0) + 1
+            occupied = operator_names | counts.keys()
+            for key, label in named.items():
+                if counts[label_key(label)] == 1 and label_key(label) not in operator_names:
+                    continue
+                for width in range(min(4, len(key)), len(key) + 1):
+                    candidate = f"{label} (…{key[-width:]})"
+                    if label_key(candidate) not in occupied:
+                        break
+                else:
+                    # Even a member-typed label that matches a whole suffixed ID stays unique.
+                    number = 2
+                    while label_key(candidate := f"{label} (…{key}, {number})") in occupied:
+                        number += 1
+                occupied.add(candidate)
+                named[key] = candidate
             name["choice_labels"] = named
     else:
         loras["max_items"] = 0
@@ -265,6 +288,10 @@ def default_read_header(origin: str, folder: str, name: str) -> Mapping[str, Any
     return fetch_header(origin, folder, name)
 
 
+def is_member_upload_copy(name: object) -> bool:
+    return isinstance(name, str) and name.replace("\\", "/").lower().startswith(MEMBER_UPLOAD_SUBFOLDER + "/")
+
+
 async def installed(
     decl: Declaration, *, service_id: str, origin: str, marks: Any = None,
     list_files: Callable[[str, str, str], list[str]] | None = None,
@@ -319,7 +346,10 @@ async def installed(
                 raise ChoicesUnavailable("the engine could not list its adapter files") from exc
     # The gateway's own copies of uploads sit in the engine's folder, so the engine lists them. They are one person's
     # files: they are never offered as the operator's, whatever their header says.
-    files = [name for name in held[1] if uploads is None or not uploads.is_copy(name)]
+    files = [
+        name for name in held[1]
+        if not is_member_upload_copy(name) and (uploads is None or not uploads.is_copy(name))
+    ]
     headers = await _headers(service_id, origin, decl.folder, files, read_header, now)
     table = architecture_table() if table is None else table
     loras = compatible(files, headers, decl.architecture, table, marked(marks, decl.architecture, "loras"))

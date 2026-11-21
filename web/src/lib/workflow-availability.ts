@@ -15,6 +15,7 @@ export interface WorkflowAvailability {
    * engines, naming the engine it waits on ("ComfyUI is down.").
    */
   reason?: string;
+  missing?: { kind: "model" | "node"; name: string }[];
   /** The engine that limits a composed workflow; used for the owner's link. */
   engine?: string;
   evidence?: { kind?: string; source?: string };
@@ -52,6 +53,8 @@ export interface WorkflowAvailabilityView {
 
 export const READY_TO_START = "Ready to start";
 
+const OWNER_SETUP_NOTE = "Unavailable. Check its setup.";
+
 export const MEMBER_SETUP_NOTE =
   "Not available right now. The person who manages Azizam can set it up.";
 
@@ -83,6 +86,11 @@ function ownerSetupHelp(
   const { status, reason_code: code } = availability;
   const engines = { href: enginesHref(engineBinding), action: "Open Engines" };
   const statusPage = { href: "/status", action: "Open Status" };
+  if (code === "required_file_missing")
+    return {
+      text: availability.reason?.trim() || "A file it needs is missing on its engine. Install it in Engines.",
+      fix: engines,
+    };
   if (code === "unavailable_disabled")
     return { text: "Turned off. Turn it on in Engines.", fix: engines };
   if (code === "unavailable_unconfigured" || status === "not_configured")
@@ -94,8 +102,8 @@ function ownerSetupHelp(
     };
   if (code === "policy_denied")
     return {
-      text: "An access plan blocks it. Review plans in People.",
-      fix: { href: "/people?tab=plans", action: "Open access plans" },
+      text: "An access plan blocks it. Check its setup in Engines.",
+      fix: engines,
     };
   if (status === "unknown" || code === "unknown")
     return {
@@ -112,6 +120,32 @@ export function workflowAvailabilityView(
     engineBinding,
   }: { owner: boolean; engineBinding?: string | null },
 ): WorkflowAvailabilityView {
+  const view = baseAvailabilityView(availability, owner, engineBinding);
+  if (!owner || availability?.available !== false) return view;
+
+  const missing = availability.missing?.filter(({ name }) => name.trim()) ?? [];
+  if (!missing.length) return view;
+  const nodes = missing.filter(({ kind }) => kind === "node").length;
+  const files = missing.length - nodes;
+  const counts = [
+    nodes ? `${nodes} ${nodes === 1 ? "node" : "nodes"}` : "",
+    files ? `${files} ${files === 1 ? "file" : "files"}` : "",
+  ].filter(Boolean).join(" and ");
+  const missingText = `${counts} ${missing.length === 1 ? "is" : "are"} missing: ${missing.map(({ name }) => name).join(", ")}.`;
+  return {
+    ...view,
+    text: availability.reason_code === "required_file_missing" || !view.text
+      ? missingText
+      : `${view.text} ${missingText}`,
+    fix: { href: enginesHref(availability.engine ?? engineBinding), action: "Open Engines" },
+  };
+}
+
+function baseAvailabilityView(
+  availability: WorkflowAvailability | null | undefined,
+  owner: boolean,
+  engineBinding: string | null | undefined,
+): WorkflowAvailabilityView {
   const status = String(availability?.status ?? "").toLowerCase();
   const reason = availability?.reason?.trim() || null;
   if (status === "idle" && availability?.available !== false)
@@ -119,7 +153,7 @@ export function workflowAvailabilityView(
       readiness: "ready_to_start",
       runnable: true,
       pickerNote: READY_TO_START,
-      text: reason ?? availabilityReason("idle") ?? null,
+      text: (owner ? reason : null) ?? availabilityReason("idle") ?? null,
       fix: null,
     };
   if (availability?.available !== false)
@@ -130,28 +164,43 @@ export function workflowAvailabilityView(
       text: null,
       fix: null,
     };
-  if (status in WAIT_NOTE)
+  const code = availability.reason_code;
+  if (code === "engine_transitioning")
+    return {
+      readiness: "wait",
+      runnable: false,
+      pickerNote: "Starting",
+      text: "Try again shortly.",
+      fix: null,
+    };
+  if (
+    status in WAIT_NOTE && code !== "required_file_missing" &&
+    code !== "policy_denied" && code !== "backend_unavailable"
+  )
     return {
       readiness: "wait",
       runnable: false,
       pickerNote: WAIT_WORD[status],
-      text: reason ?? WAIT_NOTE[status],
+      text: (owner ? reason : null) ?? WAIT_NOTE[status],
       fix: null,
     };
   // A setup code decides the state; the gateway's prose only explains it.
-  const code = availability?.reason_code;
   const needsSetup =
+    code === "required_file_missing" ||
+    code === "policy_denied" ||
     code === "unavailable_disabled" ||
     code === "unavailable_unconfigured" ||
     code === "not_available" ||
     status === "not_configured" ||
     status === "not_available";
-  if (reason && !needsSetup)
+  if (code === "backend_unavailable" || (reason && !needsSetup))
     return {
       readiness: "down",
       runnable: false,
-      pickerNote: reason,
-      text: reason,
+      pickerNote: owner && reason ? reason : "Unavailable",
+      text: owner
+        ? reason ?? "Unavailable. Check its engine."
+        : "Unavailable. Ask the owner to check this capability.",
       fix: owner
         ? {
             href: enginesHref(availability?.engine ?? engineBinding),
@@ -167,12 +216,23 @@ export function workflowAvailabilityView(
       text: MEMBER_SETUP_NOTE,
       fix: null,
     };
-  const help = ownerSetupHelp(availability ?? {}, availability?.engine ?? engineBinding);
+  const namedFile = code === "required_file_missing" && availability.missing?.some(({ name }) => name);
+  // Without prose or named files, no code, a plan refusal or a missing file has no page we can honestly point to.
+  const unguessable = !code || code === "required_file_missing" || code === "policy_denied";
+  if (!reason && !namedFile && unguessable)
+    return {
+      readiness: "setup",
+      runnable: false,
+      pickerNote: "Unavailable",
+      text: OWNER_SETUP_NOTE,
+      fix: null,
+    };
+  const help = ownerSetupHelp(availability, availability.engine ?? engineBinding);
   return {
     readiness: "setup",
     runnable: false,
     pickerNote: "Unavailable",
-    text: reason ?? help.text,
+    text: code === "required_file_missing" || code === "policy_denied" ? help.text : reason ?? help.text,
     fix: help.fix,
   };
 }

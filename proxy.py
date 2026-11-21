@@ -17,7 +17,7 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway.service_priority import service_priority
-from gateway import engine_egress, engine_record_defaults, status_words
+from gateway import engine_egress, engine_inventory, engine_record_defaults, status_words
 from gateway.image_size import SIZE_REFUSAL, read_size
 
 _GRAPH_WORDS = status_words.words("images")
@@ -270,7 +270,7 @@ from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway import availability
 from gateway import availability_reasons
-from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities, unknown_state
+from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, missing_files_state, model_availability, project_capabilities, required_files_missing, unknown_state
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -14631,6 +14631,10 @@ async def _serve(app: FastAPI):
 
     prompt_memory_stop = asyncio.Event()
     prompt_memory_task = asyncio.create_task(_prompt_memory_maintenance_loop(prompt_memory_stop))
+    # The engines' node lists, read here and never on a listing request: a workflow whose engine lacks a declared file
+    # or node lists as not available (docs/api/MODEL_METADATA.md, "Reason codes").
+    engine_inventory_stop = asyncio.Event()
+    engine_inventory_task = asyncio.create_task(engine_inventory.run_loop(engine_inventory_stop, _engine_inventory_sources))
     adapter_sweep_stop = asyncio.Event()
     adapter_sweep_task = asyncio.create_task(_adapter_sweep_loop(adapter_sweep_stop))
     metadata_migration_task = asyncio.create_task(prompt_metadata_migration.background_migration(
@@ -14650,8 +14654,11 @@ async def _serve(app: FastAPI):
     prompt_memory_task.cancel()
     adapter_sweep_stop.set()
     adapter_sweep_task.cancel()
+    engine_inventory_stop.set()
+    engine_inventory_task.cancel()
     metadata_migration_task.cancel()
-    await asyncio.gather(prompt_memory_task, adapter_sweep_task, metadata_migration_task, return_exceptions=True)
+    await asyncio.gather(prompt_memory_task, adapter_sweep_task, engine_inventory_task, metadata_migration_task,
+                         return_exceptions=True)
     state.shutdown_requested = True
     if watchdog is not None:
         watchdog.stop()
@@ -15537,6 +15544,21 @@ def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, An
         services["faces"] = {"enabled": True, "name": str(face_config.get("name") or "Face service"),
                              "config": dict(face_config)}
     return {**registry, "services": services}
+
+
+def _engine_inventory_sources() -> dict[str, engine_inventory.Source]:
+    """Where each graph engine's node list is read: the services the graph families select, at the addresses their records
+    name (a remote engine as well as a local one), for each protocol whose engine definition has a node-list probe."""
+    engines = []
+    for capability, service in DERIVED.GRAPH_SERVICES.items():
+        if not (service.service_id and service.enabled and service.host):
+            continue
+        try:
+            protocol_id = reviewed_adapters.protocol_for_backend(service.record, capability).id
+        except ProtocolError:
+            continue
+        engines.append((service.service_id, protocol_id, service.host))
+    return engine_inventory.sources_for(engines)
 
 
 def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[str]:
@@ -16499,15 +16521,22 @@ def _store_adapter_upload(stream: BinaryIO, checked: adapter_upload.Validated, p
     asset_id = f"ast_{digest}"
     target = IMAGE_CACHE_DIR / f"{digest}{adapter_upload.SUFFIX}"
     private_io.ensure_private_dir(IMAGE_CACHE_DIR)
-    if not target.exists():
+    created = not target.exists()
+    if created:
         private_io.atomic_copy_stream(stream, target)
-    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
-        metadata = _read_asset_metadata(asset_id)
-        marker = dict(metadata.get("adapter") or {})
-        marker["label"] = marker.get("label") or label
-        marker["content_sha256"] = checked.digest
-        _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": [person_id],
-                                         "adapter": marker, "updated_at": int(time.time())})
+    try:
+        with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+            metadata = _read_asset_metadata(asset_id)
+            marker = dict(metadata.get("adapter") or {})
+            marker["label"] = marker.get("label") or label
+            marker["content_sha256"] = checked.digest
+            _write_asset_metadata(asset_id, {**metadata, "asset_id": asset_id, "maker_person_ids": [person_id],
+                                             "adapter": marker, "updated_at": int(time.time())})
+    except BaseException:
+        # A file this call wrote must not stay without its sidecar: nothing would list it and a retry would skip the copy.
+        if created:
+            target.unlink(missing_ok=True)
+        raise
     return asset_id
 
 
@@ -16764,8 +16793,10 @@ async def _mcp_availability(request: Request, workflow_ids: list[str]) -> dict[s
     service_records = await asyncio.to_thread(lambda: _workflow_availability_services(ADMIN_STORE.get_service_registry()))
     evidence = await _capabilities_availability_evidence(capabilities, service_records)
     records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+    inventories = engine_inventory.fresh_all()
     return {workflow_id: availability.workflow_availability(
-        records[workflow_id], service_records=service_records, evidence=evidence, records=records)
+        records[workflow_id], service_records=service_records, evidence=evidence, records=records,
+        inventories=inventories)
         for workflow_id in workflow_ids if workflow_id in records}
 
 
@@ -31013,11 +31044,15 @@ def _model_entry_availability(
     engines_by_op: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     internal_route_targets: Mapping[str, list[str]] | None = None,
     overrides: Mapping[str, Mapping[str, Any]] | None = None,
+    inventories: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """The `azizam_availability` value for one model entry, or None when no service can be mapped to it.
 
     A value other than `available` carries a `reason` code (`gateway.availability_reasons`) and, when known,
-    `retry_after_s`. `overrides` are the operator's per-service availability settings.
+    `retry_after_s`. `overrides` are the operator's per-service availability settings. `inventories` are the engines'
+    fresh node lists by service id (`gateway.engine_inventory.fresh_all`): a workflow that an otherwise available engine
+    lacks a declared model file or node for reads `required_file_missing`, with `missing` beside it; an engine with no
+    fresh list is not judged.
 
     A name maps through a workflow it is (the services the workflow needs, all at once), through the services
     that serve it by name, or through the names an alias resolves to. An engine-operation alias maps to the services
@@ -31062,7 +31097,12 @@ def _model_entry_availability(
             return unknown_state()
         if not judged:
             return None
-        return next((state for state in judged if state["state"] != "available"), {"state": "available"})
+        state = next((state for state in judged if state["state"] != "available"), {"state": "available"})
+        if state["state"] == "available" and engine is not None and inventories:
+            missing = required_files_missing(requirements, inventories.get(str(backend)))
+            if missing:
+                return missing_files_state(missing)
+        return state
 
     def by_workflow(workflow_id: str) -> dict[str, Any] | None:
         record = workflows.get(workflow_id)
@@ -31210,6 +31250,8 @@ def _annotate_model_availability(
     except Exception:  # noqa: BLE001
         # A list that cannot read the operator's settings still lists; the refusal says what they are.
         overrides = {}
+    # The kept node lists: memory only, never an engine read (the loop of `_engine_inventory_sources` fills them).
+    inventories = engine_inventory.fresh_all()
     kept: list[Any] = []
     for item in data:
         if isinstance(item, dict):
@@ -31217,7 +31259,7 @@ def _annotate_model_availability(
                 item, by_name=by_name, workflows=workflows, workflow_ids_by_model=workflow_ids_by_model,
                 service_records=service_records, evidence=evidence, snapshot_fresh=snapshot_fresh,
                 services=services, projected=projected, engines_by_op=engines_by_op,
-                internal_route_targets=internal_route_targets, overrides=overrides,
+                internal_route_targets=internal_route_targets, overrides=overrides, inventories=inventories,
             )
             if state is None:
                 item.pop("azizam_availability", None)

@@ -198,3 +198,94 @@ def test_bytes_that_are_not_an_image_are_refused():
     _, error = _resolve(messages, lambda _id: b"RIFF....WAVEfmt ")
     assert error is not None and error.code == "invalid_image_format"
     assert error.param == "messages[0].content[0].image_url.url"
+
+def test_asset_id_shape_at_and_around_the_boundary():
+    """Non-string URLs pass through; only exact lowercase asset IDs are resolved."""
+    asset_id = "img_" + "a" * 64
+    seen = []
+    data = _png(8)
+
+    def read(key):
+        seen.append(key)
+        return data
+
+    non_string = [{"content": [{"type": "image_url", "image_url": {"url": 7}}]}]
+    assert _resolve(non_string, read) == (non_string, None)
+    messages = [{"content": [_ref(asset_id)]}]
+    resolved, error = _resolve(messages, read)
+    assert error is None
+    assert resolved[0]["content"][0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert seen == [asset_id]
+    for invalid in (asset_id + "a", "img_A" + "a" * 63):
+        messages = [{"content": [_ref(invalid)]}]
+        resolved, error = _resolve(messages, read)
+        assert resolved == messages
+        assert error is not None
+        assert (error.code, error.param) == ("invalid_image_url", "messages[0].content[0].image_url.url")
+    assert seen == [asset_id]
+
+
+def test_duplicate_refs_cache_only_within_one_resolve():
+    """Two parts with the same stored ID use one read per resolve."""
+    asset_id = "img_" + "d" * 64
+    data = _png(8)
+    seen = []
+
+    def read(key):
+        seen.append(key)
+        return data
+
+    messages = [{"content": [_ref(asset_id), _ref(asset_id)]}]
+    for call_count in (1, 2):
+        resolved, error = _resolve(messages, read)
+        assert error is None
+        first, second = resolved[0]["content"]
+        assert first["image_url"] == second["image_url"]
+        assert first["image_url"]["url"].startswith("data:image/png;base64,")
+        assert seen == [asset_id] * call_count
+
+
+def test_later_string_ref_names_its_message_and_shape_on_refusal():
+    """A string-form reference in a later message ends the param at image_url."""
+    missing = "img_" + "e" * 64
+    messages = [{"content": "earlier"}, {"content": [
+        {"type": "text", "text": "later"}, {"type": "image_url", "image_url": missing},
+    ]}]
+    resolved, error = _resolve(messages, lambda _id: None)
+    assert resolved == messages
+    assert error is not None
+    assert (error.code, error.param) == ("asset_missing", "messages[1].content[1].image_url")
+
+
+def test_a_later_refusal_discards_a_successful_image_replacement():
+    """A successful earlier image part does not leak into the refused result."""
+    given = "img_" + "a" * 64
+    missing = "img_" + "b" * 64
+    data = _png(8)
+    seen = []
+
+    def read(key):
+        seen.append(key)
+        return data if key == given else None
+
+    messages = [{"content": [_ref(given), _ref(missing)]}]
+    resolved, error = _resolve(messages, read)
+    assert error is not None
+    assert (error.code, error.param) == ("asset_missing", "messages[0].content[1].image_url.url")
+    assert seen == [given, missing]
+    assert resolved == messages == [{"content": [_ref(given), _ref(missing)]}]
+
+
+@pytest.mark.parametrize(("format_name", "media_type"), [("JPEG", "image/jpeg"), ("WEBP", "image/webp")])
+def test_stored_image_ref_preserves_non_png_media_type_and_bytes(format_name, media_type):
+    """Stored JPEG and WebP data URIs preserve the detected type and exact bytes."""
+    from PIL import Image
+
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), color=(20, 40, 60)).save(output, format=format_name)
+    data = output.getvalue()
+    asset_id = "img_" + "f" * 64
+    resolved, error = _resolve([{"content": [_ref(asset_id)]}], lambda _id: data)
+    assert error is None
+    uri = resolved[0]["content"][0]["image_url"]["url"]
+    assert uri == "data:" + media_type + ";base64," + base64.b64encode(data).decode("ascii")

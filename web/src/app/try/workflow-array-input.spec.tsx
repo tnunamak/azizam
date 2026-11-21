@@ -127,10 +127,11 @@ it("adds a defaulted row, names every control, edits the JSON, and removes the f
   render();
   click("Add Styles");
   render();
-  expect(controls.choices.get("Name, row 1")?.value).toBe("");
+  expect(controls.choices.get("Name, row 1")?.value).toBe("unset");
   const weight = controls.numbers.get("Weight, row 1");
   expect(weight).toMatchObject({ value: "1", min: -4, max: 4 });
-  controls.choices.get("Name, row 1")?.change?.("b.safetensors");
+  const b = controls.options.find((option) => option.label === "b.safetensors");
+  controls.choices.get("Name, row 1")?.change?.(b!.value);
   render();
   const change = controls.numbers.get("Weight, row 1")?.onChange;
   change?.({ currentTarget: { value: "0.5" } } as Parameters<NonNullable<typeof change>>[0]);
@@ -225,7 +226,7 @@ it("sends the value, never the label, when a readable name is chosen", () => {
   click("Add Styles");
   render();
   const mine = controls.options.find((option) => option.label === "My watercolour");
-  expect(mine?.value).toBe("ast_1");
+  expect(mine?.value).toMatch(/^choice-\d+$/);
   controls.choices.get("Name, row 1")?.change?.(mine!.value);
   render();
   expect(JSON.parse(onChange.mock.lastCall![0])).toEqual({
@@ -241,4 +242,29 @@ it("ignores a label key that is not a choice and falls back for an empty label",
   const labels = controls.options.map((option) => option.label);
   expect(labels).not.toContain("Ignored");
   expect(labels).toContain("b.safetensors");
+});
+
+it("shows a member-uploaded LoRA label and keeps its ID through request parsing", () => {
+  const input: WorkflowInput = {
+    name: "loras", label: "Style adapters", type: "array",
+    items: { type: "object", properties: {
+      name: {
+        type: "string", label: "Name", enum: ["style-a.safetensors", "ast_0123"],
+        choice_labels: { ast_0123: "My watercolour" },
+      },
+      strength: { type: "number", default: 1 },
+    } },
+  };
+  const { render, onChange } = view(input);
+  render();
+  click("Add Style adapters");
+  render();
+  expect(controls.options.map(({ label }) => label)).toContain("style-a.safetensors");
+  expect(controls.options.map(({ label }) => label)).not.toContain("ast_0123");
+  const choice = controls.options.find(({ label }) => label === "My watercolour");
+  expect(choice?.value).toMatch(/^choice-\d+$/);
+  controls.choices.get("Name, row 1")?.change?.(choice!.value);
+  const emitted = onChange.mock.lastCall![0];
+  expect(JSON.parse(emitted).loras).toEqual([{ name: "ast_0123", strength: 1 }]);
+  expect(parseWorkflowInputs(emitted, [input]).loras).toEqual([{ name: "ast_0123", strength: 1 }]);
 });

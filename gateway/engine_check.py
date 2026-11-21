@@ -23,7 +23,6 @@ import io
 import ipaddress
 import json
 import math
-import posixpath
 import re
 import secrets
 import socket
@@ -1142,10 +1141,10 @@ def workflow_offerings(manifests: Iterable[Mapping[str, Any]], binding: str, nod
     workflow asks of it: the file name is what is compared. A model file with a required hash is never confirmed.
     ``{"nodes": count, "offered": [{"id", "name"}], "unavailable": [{"id", "name", "missing": [{"kind", "name", "reason"}]}]}``
     """
-    from gateway.workflow_requirements import validate_workflow_requirements
+    from gateway.workflow_requirements import judge_by_names
 
-    classes = sorted({name for name in node_classes if isinstance(name, str) and name})
-    names = list(dict.fromkeys(name for name in model_names if isinstance(name, str) and name))
+    classes = sorted({clean for name in node_classes if isinstance(name, str) and (clean := name.strip())})
+    names = list(dict.fromkeys(clean for name in model_names if isinstance(name, str) and (clean := name.strip())))
     offered: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     for manifest in manifests:
@@ -1154,13 +1153,8 @@ def workflow_offerings(manifests: Iterable[Mapping[str, Any]], binding: str, nod
             continue
         row = {"id": str(manifest.get("id") or ""), "name": str(manifest.get("display_name") or manifest.get("id") or "")}
         requires = block.get("requires") if isinstance(block.get("requires"), Mapping) else {}
-        models = list(requires.get("models") or ())
-        roles = {entry["role"] for entry in models if isinstance(entry, Mapping) and isinstance(entry.get("role"), str)}
-        inventory = {"node_classes": classes,
-                     "models": [{"role": role, "path": name, "name": posixpath.basename(name)} for role in sorted(roles) for name in names]}
         try:
-            verdict = validate_workflow_requirements(
-                {"requires": {"custom_nodes": list(requires.get("custom_nodes") or ()), "models": models}}, inventory)
+            verdict = judge_by_names(requires, classes, names)
         except ValueError:
             unavailable.append({**row, "missing": [{"kind": "requirements", "name": "",
                                                     "reason": "the workflow's requirements cannot be read"}]})
@@ -1175,7 +1169,7 @@ def workflow_offerings(manifests: Iterable[Mapping[str, Any]], binding: str, nod
 
 def _missing_reason(issue: Any) -> str:
     """A missing model file says which file the engine does not list; a node keeps the requirement check's words."""
-    if issue.kind == "model" and "hash" not in issue.reason:
+    if issue.kind == "model" and not issue.needs_hash:
         return f"the engine's node list offers no model file {issue.name.partition(':')[2]}"
     return issue.reason
 

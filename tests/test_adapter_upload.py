@@ -713,6 +713,60 @@ def test_a_sweep_removes_a_scratch_file_a_crash_left_and_keeps_a_fresh_one(tmp_p
     assert not old.exists() and fresh.exists()
 
 
+
+def test_only_plain_accepted_folder_names_are_enumerated_once(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    asset = store.add("robin", ALPHA)
+    store.sidecars[asset]["adapter"]["copies"] = ["loras", "other-adapters", "not a folder label"]
+    restarted = store.new_library(declared_folders=lambda: iter(("loras", "new_adapters")))
+    visited = []
+
+    def record_folder(folder):
+        visited.append(folder)
+        return None
+
+    monkeypatch.setattr(restarted, "_lora_root", record_folder)
+    assert restarted.folders() == {"loras", "new_adapters", "other-adapters"}
+    assert restarted.sweep_all() == []
+    assert visited == ["loras", "new_adapters", "other-adapters"]
+
+
+def test_declared_adapter_folders_are_visited_when_a_sidecar_has_no_copies(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    asset = store.add("robin", ALPHA)
+    store.sidecars[asset]["adapter"]["copies"] = []
+    restarted = store.new_library(declared_folders=lambda: ["loras", "extra"])
+    visited = []
+
+    def sweep(*, folder):
+        visited.append(folder)
+        return []
+
+    monkeypatch.setattr(restarted, "sweep", sweep)
+    assert restarted.sweep_all() == []
+    assert visited == ["extra", "loras"]
+
+
+def test_a_failed_folder_does_not_stop_sweeping_later_folders(tmp_path, monkeypatch, caplog):
+    store = Store(tmp_path)
+    restarted = store.new_library(declared_folders=lambda: ["third", "first", "second"])
+    visited = []
+
+    def sweep(*, folder):
+        visited.append(folder)
+        if folder == "first":
+            raise PermissionError("fixture folder is unavailable")
+        return [folder + "-digest"]
+
+    monkeypatch.setattr(restarted, "sweep", sweep)
+    assert restarted.sweep_all() == ["second-digest", "third-digest"]
+    assert visited == ["first", "second", "third"]
+    assert any(
+        record.levelname == "WARNING" and "first" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_the_periodic_sweep_visits_every_folder_the_library_copied_to(tmp_path):
     store = Store(tmp_path)
     kept, gone = store.add("robin", ALPHA), store.add("robin", BETA)

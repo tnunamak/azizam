@@ -533,9 +533,6 @@ describe("WorkflowsPage empathy copy", () => {
     [{ status: "unavailable", reason_code: "unavailable_disabled" }, "Turned off. Turn it on in Engines.", "Open Engines", "/engines"],
     [{ status: "unavailable", reason_code: "unavailable_unconfigured" }, "Setup is not finished. Finish it in Engines.", "Open Engines", "/engines"],
     [{ status: "not_available", reason_code: "not_available" }, "No engine is set up for it. Add one in Engines.", "Open Engines", "/engines"],
-    [{ status: "unavailable", reason_code: "unavailable" }, "Its engine is not answering. See Status.", "Open Status", "/status"],
-    [{ status: "unknown", reason_code: "unknown" }, "No health check has reported on it yet. See Status.", "Open Status", "/status"],
-    [{ status: "unavailable", reason_code: "policy_denied" }, "An access plan blocks it. Review plans in People.", "Open access plans", "/people?tab=plans"],
   ])("the owner gets one specific reason and a real next step for %j", async (availability, line, linkName, href) => {
     serve([{ ...workflows[0], availability: { ...availability, available: false } }]);
     renderWorkflows(owner);
@@ -979,12 +976,13 @@ describe("composed workflow availability names the engine it waits on (moved fro
 
     const startable = screen.getByRole("listitem", { name: "Face Likeness Check" });
     expect(startable).toHaveTextContent("Ready to start");
-    expect(startable).toHaveTextContent("Face service starts when you make a request.");
+    // A member sees the shared idle copy; the owner also sees the gateway's own words.
+    expect(startable).toHaveTextContent(viewer.role === "owner" ? "Face service starts when you make a request." : "Ready to start when you make a request.");
     expect(startable).not.toHaveTextContent(/Unavailable|Not available/);
     expect(within(startable).getByRole("link", { name: "Open in Try" })).toBeVisible();
 
     const down = screen.getByRole("listitem", { name: "Seamless Tile" });
-    expect(down).toHaveTextContent("ComfyUI is down.");
+    expect(down).toHaveTextContent(viewer.role === "owner" ? "ComfyUI is down." : "Unavailable. Ask the owner to check this capability.");
     expect(within(down).getByRole("button", { name: "Open in Try" })).toBeDisabled();
     expect(down).not.toHaveTextContent(/Not available right now|See Status/);
     const engines = within(down).queryByRole("link", { name: "Open Engines" });

@@ -243,6 +243,40 @@ def test_the_same_file_uploaded_again_after_a_delete_is_offered_again(world):
     assert [offer.name for offer in offers(world, "robin")] == [asset_id]
 
 
+def test_repeated_upload_keeps_one_asset_file_and_one_offer(world):
+    world.turn_on()
+    first = upload(world, ALPHA)
+    repeated = upload(world, ALPHA)
+    assert (first.status_code, repeated.status_code) == (200, 200)
+    asset_id = first.json()["id"]
+    assert repeated.json()["id"] == asset_id
+    digest = adapter_upload.asset_digest(world.people["robin"]["id"], hashlib.sha256(ALPHA).hexdigest())
+    assert stored_files(world) == sorted([f"{digest}.meta.json", f"{digest}.safetensors"])
+    assert [offer.name for offer in offers(world, "robin")] == [asset_id]
+
+
+@pytest.mark.parametrize("failing", ["file-write", "sidecar-write"])
+def test_a_store_write_failure_is_a_refusal_that_leaves_nothing_and_a_retry_works(world, monkeypatch, failing):
+    from gateway import private_io
+
+    world.turn_on()
+
+    def broken(*_args, **_kwargs):
+        raise OSError("disk full")
+    with monkeypatch.context() as patch:
+        if failing == "file-write":
+            patch.setattr(private_io, "atomic_copy_stream", broken)
+        else:
+            patch.setattr(proxy, "_write_asset_metadata", broken)
+        refused = upload(world, ALPHA)
+    assert refused.status_code == 507
+    assert error_code(refused) == "adapter_store_failed"
+    assert stored_files(world) == []
+    retry = upload(world, ALPHA)
+    assert retry.status_code == 200, retry.text
+    assert [offer.name for offer in offers(world, "robin")] == [retry.json()["id"]]
+
+
 def test_two_people_with_the_same_file_each_have_their_own_asset_and_one_cannot_hide_the_others(world):
     world.turn_on()
     robins = upload(world, ALPHA).json()["id"]

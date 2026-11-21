@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "guides" / "IMAGE_OPTIONS.md"
 SAMPLER_TEST = Path(__file__).with_name("test_image_sampler_controls.py")
 KREA_MANIFEST = ROOT / "manifests" / "workflows" / "krea2-turbo.yml"
-JSON_FENCE = re.compile(r"^\s*```json\s*\n(.*?)^\s*```\s*$", re.MULTILINE | re.DOTALL)
+REQUEST_BODY = re.compile(r"<<'JSON'\s*\n(.*?)^JSON$", re.MULTILINE | re.DOTALL)
 INLINE_LINK = re.compile(r"\[[^\]\n]+\]\(<?([^\s)>]+)>?(?:\s+\"[^\"]*\")?\)")
 
 
@@ -39,6 +39,7 @@ def test_guide_names_workflows_without_sampler_controls():
     text = _guide()
     missing = sorted(workflow for workflow in _left_out() if workflow not in text)
     assert not missing, f"missing workflows without sampler controls: {missing}"
+    assert "This workflow chooses its own steps and does not offer sampler settings." in text
 
 
 def _krea_inputs():
@@ -46,8 +47,8 @@ def _krea_inputs():
 
 
 def test_guide_workflow_example_uses_only_krea_manifest_inputs():
-    blocks = JSON_FENCE.findall(_guide())
-    assert blocks, "missing JSON image request example"
+    blocks = REQUEST_BODY.findall(_guide())
+    assert blocks, "missing inline JSON curl request body"
     options = []
     for block in blocks:
         body = json.loads(block)
@@ -56,7 +57,9 @@ def test_guide_workflow_example_uses_only_krea_manifest_inputs():
         workflow = body["extensions"].get("com.azizam.workflow")
         if isinstance(workflow, dict) and "steps" in workflow:
             options.append(workflow)
-    assert options, "missing extensions.com.azizam.workflow example containing steps"
+    assert any("loras" in workflow for workflow in options), (
+        "missing a single extensions.com.azizam.workflow request body with both steps and loras"
+    )
     inputs = _krea_inputs()
     for workflow in options:
         unknown = sorted(workflow.keys() - inputs.keys())
@@ -100,7 +103,13 @@ def test_guide_links_klein_and_explains_inputs_without_defaults():
     text = _guide()
     assert "../../manifests/workflows/flux2-klein.yml" in INLINE_LINK.findall(text)
     sentences = re.split(r"[.!?](?:\s|$)", text.lower())
-    assert any("no default" in sentence and "built-in" in sentence for sentence in sentences)
+    assert any("no default" in sentence and "optional" in sentence for sentence in sentences)
+
+
+def test_guide_distinguishes_optional_defaults_from_required_values():
+    sentences = re.split(r"[.!?](?:\s|$)", _guide().lower())
+    assert any("leave out an optional input to use the built-in value; always send a value for required inputs" in sentence
+               for sentence in sentences)
 
 
 def test_guide_relative_links_resolve_to_repository_files():

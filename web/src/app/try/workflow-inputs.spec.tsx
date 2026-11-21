@@ -25,6 +25,107 @@ vi.mock("@/components/ui/textarea", async (importOriginal) => {
   };
 });
 
+const select = vi.hoisted(() => ({
+  change: undefined as ((id: string) => void) | undefined,
+  selected: undefined as string | undefined,
+  options: [] as { label: string; id: string }[],
+}));
+
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ children, onValueChange, value }: ComponentProps<"div"> & {
+    onValueChange: (id: string) => void; value: string;
+  }) => {
+    select.change = onValueChange;
+    select.selected = value;
+    return children;
+  },
+  SelectTrigger: ({ children }: ComponentProps<"div">) => children,
+  SelectContent: ({ children }: ComponentProps<"div">) => children,
+  SelectValue: () => null,
+  SelectItem: ({ children, value }: ComponentProps<"div"> & { value: string }) => {
+    select.options.push({ label: String(children), id: value });
+    return children;
+  },
+}));
+
+function renderSelect(input: WorkflowInput, body: object) {
+  select.options.length = 0;
+  select.change = undefined;
+  select.selected = undefined;
+  const onChange = vi.fn();
+  renderToStaticMarkup(createElement(WorkflowInputs, {
+    inputs: [input], json: JSON.stringify(body), onChange,
+  }));
+  return {
+    options: [...select.options],
+    selected: select.selected,
+    choose(id: string) {
+      if (!select.change) throw new Error("The select control was not rendered.");
+      select.change(id);
+      expect(onChange).toHaveBeenCalledOnce();
+      return JSON.parse(onChange.mock.calls[0][0]);
+    },
+  };
+}
+
+function selectChoice(input: WorkflowInput, value: unknown, label: string) {
+  const control = renderSelect(input, { choice: value });
+  const id = control.options.find(option => option.label === label)?.id;
+  if (!id) throw new Error("The select choice was not rendered.");
+  return control.choose(id);
+}
+
+it("round-trips both reserved-looking enum values and clears only with Not set", () => {
+  const input: WorkflowInput = { name: "choice", type: "string", enum: ["unset", "__unset__"] };
+  for (const declared of ["unset", "__unset__"]) {
+    const initial = renderSelect(input, {});
+    const unset = initial.options.find(option => option.label === "Not set")!;
+    const choice = initial.options.find(option => option.label === declared)!;
+    expect(choice.id).not.toBe(unset.id);
+    expect(initial.selected).toBe(unset.id);
+    const body = initial.choose(choice.id);
+    expect(body).toEqual({ choice: declared });
+    const chosen = renderSelect(input, body);
+    expect(chosen.selected).toBe(choice.id);
+    const cleared = chosen.choose(unset.id);
+    expect(cleared).toEqual({});
+    expect(renderSelect(input, cleared).selected).toBe(unset.id);
+  }
+});
+
+it("shows distinct duplicate display labels without changing their wire values", () => {
+  const input: WorkflowInput = {
+    name: "choice", type: "string", enum: ["first", "second"],
+    choice_labels: { first: "Same label", second: "Same label" },
+  };
+  for (const [index, value] of ["first", "second"].entries()) {
+    const control = renderSelect(input, {});
+    const options = control.options.filter(option => option.label.startsWith("Same label"));
+    expect(options.map(option => option.label)).toEqual(["Same label (first)", "Same label (second)"]);
+    expect(options[0].id).not.toBe(options[1].id);
+    const body = control.choose(options[index].id);
+    expect(body).toEqual({ choice: value });
+    expect(renderSelect(input, body).selected).toBe(options[index].id);
+  }
+});
+
+it("annotates only collisions, leaving a third unique label alone", () => {
+  const input: WorkflowInput = {
+    name: "choice", type: "string", enum: ["first", "second", "third"],
+    choice_labels: { first: "Same label", second: "Same label", third: "Unique label" },
+  };
+  const control = renderSelect(input, {});
+  expect(control.options.map(option => option.label)).toEqual([
+    "Not set", "Same label (first)", "Same label (second)", "Unique label",
+  ]);
+  expect(control.choose(control.options[3].id)).toEqual({ choice: "third" });
+});
+
+it("sends a numeric select choice without converting it to text", () => {
+  const input: WorkflowInput = { name: "choice", type: "number", enum: [1, 2] };
+  expect(selectChoice(input, 1, "2")).toEqual({ choice: 2 });
+});
+
 function renderPrompt(value = "") {
   const html = renderToStaticMarkup(
     createElement(WorkflowInputs, {
