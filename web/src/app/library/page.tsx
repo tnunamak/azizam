@@ -50,6 +50,8 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
+import { AdapterUploadControl } from "@/app/try/adapter-upload-control";
+import { sendAdapterUpload } from "@/lib/adapter-upload-send";
 import { toast } from "@/lib/toast";
 
 import { cn } from "@/lib/cn";
@@ -2866,6 +2868,14 @@ export default function LibraryPage() {
                 : `${goneAssets.length} unavailable`}
           </button>
         ) : null}
+        <div className="ml-3">
+          <AdapterUploadControl
+            send={sendAdapterUpload}
+            onUploaded={() => {
+              void queryClient.invalidateQueries({ queryKey: ["library"] });
+            }}
+          />
+        </div>
       </header>
       <p role="status" aria-live="polite" aria-atomic="true" className="text-meta">
         {deleteAnnouncement}
