@@ -95,8 +95,8 @@ def judge_by_names(
     required hash is never confirmed (``RequirementIssue.needs_hash``). Raises ``ValueError`` for a block that cannot
     be read.
     """
-    classes = sorted({name for name in node_classes if isinstance(name, str) and name})
-    names = list(dict.fromkeys(name for name in model_names if isinstance(name, str) and name))
+    classes = sorted({clean for name in node_classes if isinstance(name, str) and (clean := name.strip())})
+    names = list(dict.fromkeys(clean for name in model_names if isinstance(name, str) and (clean := name.strip())))
     models = list(requires.get("models") or ())
     roles = {entry["role"] for entry in models if isinstance(entry, Mapping) and isinstance(entry.get("role"), str)}
     # Only a name that can satisfy a requirement is worth an artifact (a pattern may match any name, so it keeps all).
@@ -232,7 +232,9 @@ def _observed_model_artifacts(inventory: dict[str, Any]) -> list[dict[str, str]]
     artifacts: list[dict[str, str]] = []
     for item in raw_models:
         if isinstance(item, str):
-            artifacts.append({"path": item, "name": _safe_path_name(item)})
+            path = item.strip()
+            if path:
+                artifacts.append({"path": path, "name": _safe_path_name(path)})
             continue
         if not isinstance(item, dict):
             continue
