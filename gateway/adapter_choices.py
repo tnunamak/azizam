@@ -220,7 +220,7 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
                     number = 2
                     while label_key(candidate := f"{label} (…{key}, {number})") in occupied:
                         number += 1
-                occupied.add(candidate)
+                occupied.add(label_key(candidate))
                 named[key] = candidate
             name["choice_labels"] = named
     else:
