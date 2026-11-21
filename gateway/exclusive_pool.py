@@ -413,6 +413,14 @@ class _PoolShadow:
         logger.warning("arbitration shadow ledger error (%s); the lease continues without it: %s", kind, error)
 
 
+async def _released(release_idle: Callable[[], Awaitable[bool]]) -> bool:
+    try:
+        return bool(await release_idle())
+    except Exception:  # noqa: BLE001 - a failed release is "nothing released"; the refusal stands
+        logger.warning("idle release failed", exc_info=True)
+        return False
+
+
 class ExclusivePoolLeaseManager:
     """One per gateway process. Per-pool locks; different pools never wait on each other.
 
@@ -441,20 +449,31 @@ class ExclusivePoolLeaseManager:
         observe: Callable[[], Awaitable[Any]],
         observed_at: Callable[[], float] | None = None,
         wait: bool = True,
+        release_idle: Callable[[], Awaitable[bool]] | None = None,
     ) -> AsyncGenerator[ResourceClaim]:
         """Hold the pool's one lease. With ``wait`` false, a pool whose lease is held (a run that is still going,
-        even one whose caller left) is refused at once with ``PoolCapacityError(DELAYED)`` instead of queued."""
+        even one whose caller left) is refused at once with ``PoolCapacityError(DELAYED)`` instead of queued.
+
+        ``release_idle`` is asked once, and only when the lease is free but the observed memory cannot hold the claim:
+        memory that an idle process keeps resident does not free itself, so a refusal with a retry hint would repeat
+        until someone released it. It returns True when it released something; the pool is then observed and judged
+        again, and the second answer stands. A release that raises counts as nothing released."""
         lock = self._locks.setdefault(spec.pool_id, asyncio.Lock())
         if not wait and lock.locked():
             raise PoolCapacityError(AdmissionStatus.DELAYED)
         async with lock:
             started = time.time()
-            document = await observe()
-            observation = observation_from_document(document, spec)
-            snapshot, claim = snapshot_and_claim(
-                spec, observation, observed_at=observed_at() if observed_at else None,
-            )
-            decision = evaluate_admission(AdmissionRequest(request_id, claim), snapshot)
+
+            async def judge() -> tuple[CapacitySnapshot, ResourceClaim, AdmissionDecision]:
+                observation = observation_from_document(await observe(), spec)
+                snapshot, claim = snapshot_and_claim(
+                    spec, observation, observed_at=observed_at() if observed_at else None,
+                )
+                return snapshot, claim, evaluate_admission(AdmissionRequest(request_id, claim), snapshot)
+
+            snapshot, claim, decision = await judge()
+            if decision.status is not AdmissionStatus.ACCEPTED and release_idle is not None and await _released(release_idle):
+                snapshot, claim, decision = await judge()
             # The shadow never changes the legacy decision. It only enqueues work, so it adds no await.
             op_key = self._shadow.admit(spec, request_id=request_id, decision=decision, snapshot=snapshot,
                                         claim=claim, observed_at=started)

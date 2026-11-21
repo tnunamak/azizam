@@ -85,6 +85,9 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
     def test_member_section_exists(self):
         self.assertTrue(self.section(), "The member section must explain how to use uploads")
 
+    def test_member_section_names_library_upload_button(self):
+        self.assertIn("Upload your own style adapter", self.section())
+
     def test_member_section_names_supported_and_refused_formats(self):
         section = self.section()
         self.assertRegex(section, r"(?i)only.*safetensors")
@@ -113,6 +116,13 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
 
     def test_member_section_explains_unreadable_file_refusal(self):
         self.assertIn("If the gateway cannot read the file's built-in information, it refuses the upload.", " ".join(self.section().split()))
+
+    def test_member_section_explains_upload_storage_failure(self):
+        self.assertIn(
+            "If storage fails, the gateway keeps no new adapter in your Library, and it’s safe to retry when you "
+            "see “The adapter could not be stored. Try again, and ask the owner if it continues.”",
+            self.section(),
+        )
 
     def test_member_section_explains_unlabelled_upload_listing(self):
         self.assertRegex(self.section(), r"(?i)an upload without a label[^.]*is listed by its ID\b")

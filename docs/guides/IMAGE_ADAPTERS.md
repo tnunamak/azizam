@@ -60,10 +60,15 @@ machine, not on remote workflows.
    per-person total. The default total is 10 GiB. If your upload would put you
    over the total, it is refused and the reply tells you how much you have used
    and what your total is. Storing the same file again does not count twice.
-2. Upload your style file in the Library or send it to `POST /me/api/adapters`.
+2. In the Library, choose **Upload your own style adapter** and pick a
+   `.safetensors` file, or send it to `POST /me/api/adapters`.
+   The Library tells you whether the adapter is ready to pick, was added but
+   isn't offered by any workflow yet, or was refused. If the gateway refuses
+   the upload, no new adapter is added.
    Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
    and `.bin` are refused.
    If the gateway cannot read the file's built-in information, it refuses the upload.
+   If storage fails, the gateway keeps no new adapter in your Library, and it’s safe to retry when you see “The adapter could not be stored. Try again, and ask the owner if it continues.”
 3. The gateway reads the file header to find its base model. Your adapter is
    offered only on workflows that use that base model. If the header names no
    known base model, the file is still stored, but the upload reply says it
