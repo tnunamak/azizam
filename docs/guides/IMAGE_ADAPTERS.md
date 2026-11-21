@@ -64,6 +64,7 @@ machine, not on remote workflows.
    Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
    and `.bin` are refused.
    If the gateway cannot read the file's built-in information, it refuses the upload.
+   If storage fails, the gateway keeps no new adapter in your Library, and it’s safe to retry when you see “The adapter could not be stored. Try again, and ask the owner if it continues.”
 3. The gateway reads the file header to find its base model. Your adapter is
    offered only on workflows that use that base model. If the header names no
    known base model, the file is still stored, but the upload reply says it
