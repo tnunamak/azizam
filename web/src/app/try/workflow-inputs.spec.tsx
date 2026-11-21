@@ -93,20 +93,32 @@ it("round-trips both reserved-looking enum values and clears only with Not set",
   }
 });
 
-it("keeps duplicate display labels tied to their separate wire values", () => {
+it("shows distinct duplicate display labels without changing their wire values", () => {
   const input: WorkflowInput = {
     name: "choice", type: "string", enum: ["first", "second"],
     choice_labels: { first: "Same label", second: "Same label" },
   };
   for (const [index, value] of ["first", "second"].entries()) {
     const control = renderSelect(input, {});
-    const options = control.options.filter(option => option.label === "Same label");
-    expect(options).toHaveLength(2);
+    const options = control.options.filter(option => option.label.startsWith("Same label"));
+    expect(options.map(option => option.label)).toEqual(["Same label (first)", "Same label (second)"]);
     expect(options[0].id).not.toBe(options[1].id);
     const body = control.choose(options[index].id);
     expect(body).toEqual({ choice: value });
     expect(renderSelect(input, body).selected).toBe(options[index].id);
   }
+});
+
+it("annotates only collisions, leaving a third unique label alone", () => {
+  const input: WorkflowInput = {
+    name: "choice", type: "string", enum: ["first", "second", "third"],
+    choice_labels: { first: "Same label", second: "Same label", third: "Unique label" },
+  };
+  const control = renderSelect(input, {});
+  expect(control.options.map(option => option.label)).toEqual([
+    "Not set", "Same label (first)", "Same label (second)", "Unique label",
+  ]);
+  expect(control.choose(control.options[3].id)).toEqual({ choice: "third" });
 });
 
 it("sends a numeric select choice without converting it to text", () => {
