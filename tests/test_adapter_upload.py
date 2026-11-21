@@ -717,7 +717,7 @@ def test_a_sweep_removes_a_scratch_file_a_crash_left_and_keeps_a_fresh_one(tmp_p
 def test_only_plain_accepted_folder_names_are_enumerated_once(tmp_path, monkeypatch):
     store = Store(tmp_path)
     asset = store.add("robin", ALPHA)
-    store.sidecars[asset]["adapter"]["copies"] = ["loras", "other-adapters"]
+    store.sidecars[asset]["adapter"]["copies"] = ["loras", "other-adapters", "not a folder label"]
     restarted = store.new_library(declared_folders=lambda: iter(("loras", "new_adapters")))
     visited = []
 

@@ -39,6 +39,7 @@ def test_guide_names_workflows_without_sampler_controls():
     text = _guide()
     missing = sorted(workflow for workflow in _left_out() if workflow not in text)
     assert not missing, f"missing workflows without sampler controls: {missing}"
+    assert "This workflow chooses its own steps and does not offer sampler settings." in text
 
 
 def _krea_inputs():

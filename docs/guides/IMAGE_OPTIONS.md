@@ -42,7 +42,7 @@ Use the model identifier shown by your gateway's workflow listing. If the model 
 
 ## Discover accepted values and defaults
 
-Find the workflow in the listing and read its inputs. Use one of the listed choices, and check the minimum and maximum for steps.
+Find the workflow in the workflow listing (`GET /gateway/v1/workflows`) and read its inputs. Use one of the listed choices, and check the minimum and maximum for steps.
 Leave out an optional input to use the built-in value; always send a value for required inputs. This still applies to an optional input with no default shown in the listing.
 Ranges and choices can differ by workflow for guidance, width, height, and text encoder too. Don't copy them from another model.
 
@@ -50,7 +50,7 @@ Ranges and choices can differ by workflow for guidance, width, height, and text 
 
 - `image.generate.moss-image`: its few-step adapter supplies the sampler and noise schedule.
 - `image.edit.seedvr2-upscale`: it is a one-step upscaler, not a generation sampler.
-- `image.edit.image-identity`: it is a composed gateway route without a graph input map; the route code sets its own steps.
+- `image.edit.image-identity`: This workflow chooses its own steps and does not offer sampler settings.
 
 ## Request more than one image
 
