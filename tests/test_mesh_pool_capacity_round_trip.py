@@ -47,3 +47,21 @@ def test_a_registry_put_keeps_the_pool_capacity_exactly(gateway) -> None:
 
 def test_an_absent_capacity_block_is_not_enabled_rather_than_malformed() -> None:
     assert exclusive_pool.parse_resource_capacity("trellis", None) is None
+
+
+def test_the_mesh_host_releases_idle_graph_models_through_the_engine_free_call(monkeypatch) -> None:
+    """The pool lease's release hook is the gateway's own idle-free call for the graph engine, nothing newer."""
+    import asyncio
+
+    import proxy
+
+    seen: list[str] = []
+
+    async def free(client, capability):
+        seen.append(capability)
+        return True
+
+    monkeypatch.setattr(proxy, "_free_graph_models_if_idle", free)
+    assert proxy.MULTIPART_HOST.release_idle is proxy._release_idle_graph_models
+    assert asyncio.run(proxy._release_idle_graph_models()) is True
+    assert seen == [proxy._GRAPH_CAPABILITY]
