@@ -250,3 +250,84 @@ def test_observer_failure_releases_the_lock() -> None:
                 pass
 
     asyncio.run(scenario())
+
+
+# --- an idle holder is asked to release memory before the pool refuses ---
+
+def _short_then_free(total: int):
+    """An observer that reports too little free memory until ``freed`` is set, then all of it."""
+    state = {"freed": False, "reads": 0}
+
+    async def observe() -> dict:
+        state["reads"] += 1
+        free = total if state["freed"] else 6 * 1024 * MIB
+        return {"devices": [{"vram_free": free, "vram_total": total}]}
+
+    return state, observe
+
+
+def test_a_short_pool_is_judged_again_after_an_idle_release() -> None:
+    spec = spec_from(ENABLED)
+    state, observe = _short_then_free(24 * 1024 * MIB)
+    calls: list[int] = []
+
+    async def release() -> bool:
+        calls.append(1)
+        state["freed"] = True
+        return True
+
+    async def scenario() -> str:
+        async with ExclusivePoolLeaseManager().lease(spec, request_id="r", observe=observe, release_idle=release):
+            return "accepted"
+
+    assert asyncio.run(scenario()) == "accepted"
+    assert len(calls) == 1 and state["reads"] == 2
+
+
+@pytest.mark.parametrize("outcome", [False, "raises", "frees nothing"])
+def test_a_release_that_gives_nothing_back_leaves_the_refusal(outcome) -> None:
+    spec = spec_from(ENABLED)
+    state, observe = _short_then_free(24 * 1024 * MIB)
+    calls: list[int] = []
+
+    async def release() -> bool:
+        calls.append(1)
+        if outcome == "raises":
+            raise RuntimeError("engine unreachable")
+        return outcome == "frees nothing"  # True, yet the observer still reports the same free memory
+
+    async def scenario() -> str:
+        try:
+            async with ExclusivePoolLeaseManager().lease(spec, request_id="r", observe=observe, release_idle=release):
+                return "accepted"
+        except PoolCapacityError as error:
+            return error.status.value
+
+    assert asyncio.run(scenario()) == "delayed"
+    assert len(calls) == 1  # asked once, never in a loop
+
+
+def test_the_release_is_not_asked_when_the_pool_already_fits_or_another_run_holds_the_lease() -> None:
+    spec = spec_from(ENABLED)
+    total = 24 * 1024 * MIB
+    calls: list[int] = []
+
+    async def release() -> bool:
+        calls.append(1)
+        return True
+
+    async def roomy() -> dict:
+        return {"devices": [{"vram_free": total, "vram_total": total}]}
+
+    async def scenario() -> str:
+        manager = ExclusivePoolLeaseManager()
+        async with manager.lease(spec, request_id="a", observe=roomy, release_idle=release):
+            assert not calls  # it fits: nothing is released
+            try:
+                async with manager.lease(spec, request_id="b", observe=roomy, wait=False, release_idle=release):
+                    return "accepted"
+            except PoolCapacityError as error:
+                return error.status.value
+
+    assert asyncio.run(scenario()) == "delayed"
+    assert not calls  # a held lease is a running job: freeing an idle engine would not help it

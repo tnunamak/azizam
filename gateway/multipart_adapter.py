@@ -103,6 +103,9 @@ class MultipartHost:
     read_asset: Callable[[str, Any], bytes | None]
     jobs_path: Callable[[], Path]
     limits: Callable[[], result_bundle.ResultLimits]
+    # Asked once when the pool is free but its memory cannot hold the claim: release what idle engines keep resident.
+    # Returns True when something was released. Never called while another run holds the lease.
+    release_idle: Callable[[], Awaitable[bool]] | None = None
 
 
 def exclusive_pool_problem(services: Mapping[str, Mapping[str, Any]], service_id: str,
@@ -337,7 +340,8 @@ class MultipartRunner:
             return await read_observer(client, spec, observer_url)
 
         await resources.enter_async_context(
-            self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False))
+            self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe, wait=False,
+                                      release_idle=self._host.release_idle))
         prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout, resources.aclose)
         await declared_operation_job.run(prepared, str(ctx.pin.contract["intent"]),
                                          {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id, caller=ctx.caller)

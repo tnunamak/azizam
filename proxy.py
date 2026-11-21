@@ -17328,6 +17328,13 @@ MESH_DEPS = mesh_api.MeshApiDeps(
     services=lambda: (_live_service_registry() or {}).get("services") or {},
     client_factory=lambda: engine_egress.async_client(follow_redirects=False),
 )
+async def _release_idle_graph_models() -> bool:
+    """Free the graph engine's resident models when its queue is empty (the pool lease asks this once, when its memory is
+    short and no run holds the lease). The engine's next prompt reloads what it needs."""
+    async with MESH_DEPS.client_factory() as client:
+        return await _free_graph_models_if_idle(client, _GRAPH_CAPABILITY)
+
+
 # The multipart runner: the pool lease, the observer and the service call behind the binding the protocol description names.
 MULTIPART_HOST = multipart_adapter.MultipartHost(
     services=lambda: MESH_DEPS.services(),
@@ -17338,6 +17345,7 @@ MULTIPART_HOST = multipart_adapter.MultipartHost(
     read_asset=lambda asset_id, caller: _WORKFLOW_RUN_PORT.read_asset(asset_id, caller),
     jobs_path=lambda: media_jobs.DB_PATH,
     limits=lambda: result_bundle.limits_from_config(runtime().config),
+    release_idle=_release_idle_graph_models,
 )
 for _multipart_runner in multipart_adapter.runners(MULTIPART_HOST):
     workflow_adapters.register(_multipart_runner)
