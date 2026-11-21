@@ -85,6 +85,9 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
     def test_member_section_exists(self):
         self.assertTrue(self.section(), "The member section must explain how to use uploads")
 
+    def test_member_section_names_library_upload_button(self):
+        self.assertIn("Upload your own style adapter", self.section())
+
     def test_member_section_names_supported_and_refused_formats(self):
         section = self.section()
         self.assertRegex(section, r"(?i)only.*safetensors")
