@@ -42,7 +42,11 @@ chosen adapter names and their effective weights, and the encoder if selected.
 3. To recognize a new base model, add a row to the registry using the
    header field and value from its trainer, then restart the gateway so it
    reads the registry again. Refresh the workflow listing after the restart.
-   A newly copied adapter file can take up to five minutes to appear.
+   A new adapter in the engine’s folder usually appears within about five
+   minutes. If the engine cannot be reached, the list may stay as it was.
+   For a file replaced under the same name, the gateway may keep using the
+   old file information for up to six hours. Use a new filename to see the
+   replacement sooner.
    Encoder choices come from the workflow manifest, not the adapter folder.
 
 ## Your own adapters
