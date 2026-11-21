@@ -193,3 +193,26 @@ def test_role_aware_inventory_trims_observed_role_path_and_name():
         assert validate_workflow_requirements(manifest, {
             "node_classes": [" VAELoader "], "models": [artifact],
         }).ok
+
+
+def test_pattern_requirement_does_not_count_an_artifact_with_only_a_role():
+    manifest = {"requires": {"models": [{"role": "vae", "pattern": "*"}]}}
+    result = validate_workflow_requirements(manifest, {"models": [{"role": "vae"}]})
+    assert not result.ok
+    assert [(issue.kind, issue.name) for issue in result.missing] == [("model", "vae:*")]
+
+
+def test_pattern_requirement_still_accepts_a_named_artifact():
+    manifest = {"requires": {"models": [{"role": "vae", "pattern": "*"}]}}
+    assert validate_workflow_requirements(manifest, {
+        "models": [{"role": "vae", "name": "example.safetensors"}],
+    }).ok
+
+
+def test_path_requirement_does_not_count_an_artifact_with_only_a_role():
+    manifest = {"requires": {"models": [{"role": "vae", "path": "example.safetensors"}]}}
+    result = validate_workflow_requirements(manifest, {"models": [{"role": "vae"}]})
+    assert not result.ok
+    assert [(issue.kind, issue.name) for issue in result.missing] == [
+        ("model", "vae:example.safetensors"),
+    ]

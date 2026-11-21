@@ -268,6 +268,8 @@ def _model_requirement_satisfied(
 def _artifact_matches_location(requirement: dict[str, str], artifact: dict[str, str]) -> bool:
     observed_path = artifact.get("path", "")
     observed_name = artifact.get("name", "") or _safe_path_name(observed_path)
+    if not observed_path and not observed_name:
+        return False
     if "path" in requirement:
         expected_name = _safe_path_name(requirement["path"])
         return observed_path == requirement["path"] or observed_name == expected_name
