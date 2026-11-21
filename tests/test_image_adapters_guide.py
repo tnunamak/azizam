@@ -133,6 +133,12 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
     def test_member_section_explains_unreadable_file_refusal(self):
         self.assertIn("If the gateway cannot read the file's built-in information, it refuses the upload.", " ".join(self.section().split()))
 
+    def test_member_section_explains_missing_sign_in_refusal(self):
+        self.assertIn("You are not signed in: sign in, then try again.", " ".join(self.section().split()))
+
+    def test_member_section_explains_missing_file_refusal(self):
+        self.assertIn("No file came with the request: pick a .safetensors file and try again.", " ".join(self.section().split()))
+
     def test_member_section_explains_upload_storage_failure(self):
         self.assertIn(
             "If storage fails, the gateway keeps no new adapter in your Library, and it’s safe to retry when you "

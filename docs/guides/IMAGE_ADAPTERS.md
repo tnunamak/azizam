@@ -65,6 +65,8 @@ machine, not on remote workflows.
    The Library tells you whether the adapter is ready to pick, was added but
    isn't offered by any workflow yet, or was refused. If the gateway refuses
    the upload, no new adapter is added.
+   You are not signed in: sign in, then try again.
+   No file came with the request: pick a .safetensors file and try again.
    Only safetensors files are accepted. Pickle formats such as `.pt`, `.ckpt`,
    and `.bin` are refused.
    If the gateway cannot read the file's built-in information, it refuses the upload.
