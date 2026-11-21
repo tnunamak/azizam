@@ -673,6 +673,7 @@ function controlFor(
   if (isUnsupportedValue(value)) return unloadedControl(id, value);
   if (input.enum?.length) {
     const options = input.enum;
+    const displayNames = enumDisplayNames(input, options);
     const selected = options.indexOf(value);
     return (
       <Select
@@ -692,9 +693,9 @@ function controlFor(
         </SelectTrigger>
         <SelectContent>
           {!input.required && <SelectItem value={UNSET}>Not set</SelectItem>}
-          {options.map((option, index) => (
+          {options.map((_option, index) => (
             <SelectItem key={enumOptionId(index)} value={enumOptionId(index)}>
-              {choiceName(input, option) ?? String(option)}
+              {displayNames[index]}
             </SelectItem>
           ))}
         </SelectContent>
@@ -1259,6 +1260,13 @@ function choiceName(input: WorkflowInput, option: unknown): string | undefined {
   const labels = input.choice_labels, key = String(option);
   const name = labels && Object.hasOwn(labels, key) ? labels[key] : undefined;
   return typeof name === "string" && name ? name : undefined;
+}
+
+function enumDisplayNames(input: WorkflowInput, options: readonly unknown[]): string[] {
+  const names = options.map(option => choiceName(input, option) ?? String(option));
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return names.map((name, index) => (counts.get(name) ?? 0) > 1 ? `${name} (${String(options[index])})` : name);
 }
 
 // Select IDs live separately from manifest values, which retain their types.
