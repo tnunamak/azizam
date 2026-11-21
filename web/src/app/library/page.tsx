@@ -2832,7 +2832,7 @@ export default function LibraryPage() {
           fifth of the screen (D1.5); the search field opens below it. The
           heading keeps a ref so the viewer can return focus to it. */}
       {linkedJobId ? <JobResult jobId={linkedJobId} /> : null}
-      <header className="mb-(--space-title) flex min-h-8 items-center">
+      <header className="mb-(--space-title) flex min-h-8 flex-wrap items-center gap-y-2">
         <div>
           <h1 ref={headingRef} tabIndex={-1} className="text-title">
             Library
@@ -2868,14 +2868,16 @@ export default function LibraryPage() {
                 : `${goneAssets.length} unavailable`}
           </button>
         ) : null}
-        <div className="ml-3">
-          <AdapterUploadControl
-            send={sendAdapterUpload}
-            onUploaded={() => {
-              void queryClient.invalidateQueries({ queryKey: ["library"] });
-            }}
-          />
-        </div>
+        {viewer.authenticated === true ? (
+          <div className="ml-3">
+            <AdapterUploadControl
+              send={sendAdapterUpload}
+              onUploaded={() => {
+                void queryClient.invalidateQueries({ queryKey: ["library"] });
+              }}
+            />
+          </div>
+        ) : null}
       </header>
       <p role="status" aria-live="polite" aria-atomic="true" className="text-meta">
         {deleteAnnouncement}

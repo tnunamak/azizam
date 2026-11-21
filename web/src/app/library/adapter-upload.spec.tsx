@@ -8,7 +8,7 @@ import LibraryPage from "./page";
 
 const state = vi.hoisted(() => ({
   searchParams: new URLSearchParams(),
-  viewer: { role: "member", name: "Alex" },
+  viewer: { role: "member", name: "Alex", authenticated: true },
 }));
 
 vi.mock("./model-preview", () => ({ default: () => null }));
@@ -37,10 +37,20 @@ const adapter = {
 };
 const refusal = "Adapter uploads are off. The owner can turn them on.";
 
-function renderLibrary(role = "member", refuse = false) {
-  state.viewer = { role, name: "Alex" };
+function renderLibrary({ role = "member", refuse = false, authenticated = true, refreshed = false } = {}) {
+  state.viewer = { role, name: "Alex", authenticated };
   const upload = vi.fn<(init: RequestInit | undefined) => void>();
-  const list = vi.fn();
+  const empty = { assets: [], models: [], next_cursor: null };
+  const uploadedAsset = {
+    asset_id: adapter.id,
+    kind: "adapter",
+    prompt: "Uploaded fixture style",
+    media_type: adapter.media_type,
+    available: true,
+  };
+  const list = vi.fn()
+    .mockReturnValueOnce(empty)
+    .mockReturnValue(refreshed ? { ...empty, assets: [uploadedAsset] } : empty);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
     if (url.pathname === "/me/api/adapters") {
@@ -53,8 +63,7 @@ function renderLibrary(role = "member", refuse = false) {
       return Response.json({ media_folder: null, removal_plan: null });
     }
     if (url.pathname === "/me/api/media") {
-      list();
-      return Response.json({ assets: [], models: [], next_cursor: null });
+      return Response.json(list());
     }
     throw new Error("Unexpected request: " + url.pathname);
   });
@@ -90,12 +99,30 @@ afterEach(() => {
 
 describe("Library adapter upload", () => {
   test.each(["member", "owner"])("offers upload to the signed-in %s", async (role) => {
-    renderLibrary(role);
+    renderLibrary({ role });
     expect(await screen.findByRole("button", { name: "Upload your own style adapter" })).toBeInTheDocument();
   });
 
-  test("posts one multipart file and refreshes the Library after acceptance", async () => {
+  test("does not offer adapter upload to a signed-out viewer", async () => {
+    const view = renderLibrary({ role: "guest", authenticated: false });
+    await screen.findByRole("heading", { name: "Library" });
+    expect(screen.queryByRole("button", { name: "Upload your own style adapter" })).not.toBeInTheDocument();
+    expect(view.container.querySelector("[data-adapter-file-input]")).toBeNull();
+  });
+
+  test("clicking the visible upload button opens the hidden file picker", () => {
     const view = renderLibrary();
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
+    const input = view.container.querySelector("[data-adapter-file-input]");
+    expect(input).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Upload your own style adapter" }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0]).toBe(input);
+  });
+
+  test("posts one multipart file and shows the uploaded adapter after refetch", async () => {
+    const view = renderLibrary({ refreshed: true });
+    expect(screen.queryByRole("button", { name: /^Open Uploaded fixture style,/ })).not.toBeInTheDocument();
     await chooseAdapter(view);
     expect(await screen.findByText("Added to your Library and ready to pick.")).toBeInTheDocument();
     expect(view.upload).toHaveBeenCalledTimes(1);
@@ -104,11 +131,12 @@ describe("Library adapter upload", () => {
     expect(init?.body).toBeInstanceOf(FormData);
     expect(Array.from((init?.body as FormData).keys())).toEqual(["file"]);
     expect((init?.body as FormData).get("file")).toMatchObject({ name: "style.safetensors", size: 3 });
-    await waitFor(() => expect(view.list).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: /^Open Uploaded fixture style,/ })).toBeInTheDocument();
+    expect(view.list).toHaveBeenCalledTimes(2);
   });
 
   test("shows the gateway refusal without refreshing the Library", async () => {
-    const view = renderLibrary("member", true);
+    const view = renderLibrary({ refuse: true });
     await chooseAdapter(view);
     expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
     expect(view.upload).toHaveBeenCalledTimes(1);
