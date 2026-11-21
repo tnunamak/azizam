@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { describeAdapterUploaded, uploadAdapter, type AdapterUploaded } from "./adapter-upload";
-import { NETWORK_FAILURE_MESSAGE } from "./network-error";
+import { NETWORK_FAILURE_MESSAGE, NetworkUnavailableError } from "./network-error";
 
 const offered: AdapterUploaded = {
   id: "ast_example",
@@ -63,6 +63,42 @@ describe("uploadAdapter", () => {
   ])("preserves the gateway refusal for %i %s", async (status, code, message) => {
     expect(await uploadAdapter(picked(), async () => json({ error: { code, message } }, status)))
       .toEqual({ ok: false, code, message });
+  });
+
+  it("rejects primitive and array roots, even if a nonstandard JSON decoder attaches an id", async () => {
+    expect(await uploadAdapter(picked(), async () => json("not an object"))).toEqual(unreadable);
+    for (const root of [Object.assign([], { id: offered.id }), Object.assign(() => {}, { id: offered.id })]) {
+      const response = json(null);
+      response.json = async () => root;
+      expect(await uploadAdapter(picked(), async () => response)).toEqual(unreadable);
+    }
+  });
+
+  it("rejects a null JSON body or a null error", async () => {
+    expect(await uploadAdapter(picked(), async () => json(null))).toEqual(unreadable);
+    expect(await uploadAdapter(picked(), async () => json({ error: null }, 400))).toEqual(unreadable);
+  });
+
+  it("does not accept an adapter id when the HTTP reply is unsuccessful", async () => {
+    expect(await uploadAdapter(picked(), async () => json(offered, 400))).toEqual(unreadable);
+  });
+
+  it("does not pass through a non-string refusal code", async () => {
+    expect(await uploadAdapter(picked(), async () => json({ error: { code: 42, message: "Refused" } }, 400)))
+      .toEqual(unreadable);
+  });
+
+  it("rethrows a sender error that is not a network failure", async () => {
+    const interruption = new Error("Session ended");
+    await expect(uploadAdapter(picked(), async () => {
+      throw interruption;
+    })).rejects.toBe(interruption);
+  });
+
+  it("uses shared network copy for NetworkUnavailableError", async () => {
+    expect(await uploadAdapter(picked(), async () => {
+      throw new NetworkUnavailableError();
+    })).toEqual({ ok: false, code: "network", message: NETWORK_FAILURE_MESSAGE });
   });
 
   it("handles a non-JSON body", async () => {
