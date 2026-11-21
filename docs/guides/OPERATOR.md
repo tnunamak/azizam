@@ -284,6 +284,22 @@ Confirm that the gateway can reach the service base URL. In Docker, use a
 host address that the container can reach. Check the service health endpoint
 and model mapping.
 
+### When the graphics card is busy
+
+Photo to 3D uses a graphics card pool that runs one job at a time. If a job
+already holds the pool, the gateway refuses the new request. It never takes
+the pool away from a running job.
+
+If the pool is free but the job needs more free memory than is available,
+including the pool's safety reserve, the gateway asks the route once to
+release idle models. ComfyUI frees models only when its queue is empty. If
+the route freed memory, the gateway checks again.
+
+If memory is still short, another service may be holding it. For example, an
+audio server may keep its model loaded if idle unloading is off. In either
+case, the retry hint is 30 seconds. It is not an estimate of when the card
+will be free.
+
 ### A model is blocked
 
 Inspect the caller's access plan. It can restrict capabilities, locations,
