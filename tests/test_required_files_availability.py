@@ -280,7 +280,7 @@ def test_a_workflow_with_no_requirements_is_never_marked():
 
 
 @pytest.fixture
-def listing(monkeypatch):
+def listing(monkeypatch, tmp_path):
     """`proxy._annotate_model_availability` over the shipped workflows with a registry that names the engine, and no
     network: the kept node list is the only thing that says what the engine holds."""
     records = {r.id: r for r in proxy.GATEWAY_WORKFLOW_REGISTRY.records()}
@@ -288,6 +288,9 @@ def listing(monkeypatch):
     plain = _plain_workflow(records, engine)
     registry = {"services": {engine: {"enabled": True, "config": {}}}}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    # The listing reads the receipt store beside the status snapshot; another test's receipts for this engine must not
+    # turn a snapshot that says "down" into "serving".
+    monkeypatch.setattr(proxy.receipt_store, "DB_PATH", tmp_path / "no-receipts.db")
     monkeypatch.setattr(proxy, "_operator_service_availability_overrides", lambda: {})
     monkeypatch.setattr(proxy, "_model_service_ids_index", lambda _registry: {})
     monkeypatch.setattr(engine_inventory, "fetch_node_list", lambda _source: (_ for _ in ()).throw(AssertionError("fetch")))
