@@ -85,8 +85,24 @@ class MemberImageAdapterGuideTest(unittest.TestCase):
     def test_member_section_exists(self):
         self.assertTrue(self.section(), "The member section must explain how to use uploads")
 
+    def test_member_section_identifies_library_as_an_upload_location(self):
+        self.assertRegex(
+            self.section(),
+            r"In the Library, choose \*\*[^*]+\*\* and pick a `\.safetensors` file, "
+            r"or send it to `POST /me/api/adapters`\.",
+        )
+
     def test_member_section_names_library_upload_button(self):
-        self.assertIn("Upload your own style adapter", self.section())
+        control = (ROOT / "web/src/app/try/adapter-upload-control.tsx").read_text(encoding="utf-8")
+        labels = re.findall(r"<Button\b.*?\n[ \t]*>\s*([^<>{}]+?)\s*</Button>", control, re.DOTALL)
+        self.assertEqual(len(labels), 1, "The upload control must have one literal button label")
+        label = " ".join(labels[0].split())
+        self.assertTrue(label, "The upload button label must not be empty")
+        self.assertIn(f"**{label}**", self.section(), "The guide must name the current upload button")
+
+    def test_library_page_renders_adapter_upload_control(self):
+        page = (ROOT / "web/src/app/library/page.tsx").read_text(encoding="utf-8")
+        self.assertRegex(page, r"<AdapterUploadControl\b", "The Library must render the upload control")
 
     def test_member_section_names_supported_and_refused_formats(self):
         section = self.section()
