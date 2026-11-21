@@ -1143,8 +1143,8 @@ def workflow_offerings(manifests: Iterable[Mapping[str, Any]], binding: str, nod
     """
     from gateway.workflow_requirements import judge_by_names
 
-    classes = sorted({name for name in node_classes if isinstance(name, str) and name})
-    names = list(dict.fromkeys(name for name in model_names if isinstance(name, str) and name))
+    classes = sorted({clean for name in node_classes if isinstance(name, str) and (clean := name.strip())})
+    names = list(dict.fromkeys(clean for name in model_names if isinstance(name, str) and (clean := name.strip())))
     offered: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     for manifest in manifests:
