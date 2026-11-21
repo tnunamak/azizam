@@ -10,6 +10,16 @@ import yaml
 from status_endpoint import _probe
 
 
+class _Client:
+    """The one call the probe makes (an awaited get), answered by a function; no HTTP stack is faked."""
+
+    def __init__(self, respond):
+        self._respond = respond
+
+    async def get(self, url, **_kwargs):
+        return self._respond(httpx.Request("GET", url))
+
+
 def _litellm_record():
     path = Path(__file__).resolve().parents[1] / "registry" / "services.yml"
     return next(r for r in yaml.safe_load(path.read_text(encoding="utf-8"))["records"] if r["id"] == "litellm")
@@ -35,8 +45,7 @@ def test_status_health_uses_declared_body_rule_only_for_success(status_code, pay
             assert str(request.url) == url
             return httpx.Response(status_code, json=payload)
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-            return await _probe(client, "fixture", "Fixture", url, "required", None, service=record)
+        return await _probe(_Client(respond), "fixture", "Fixture", url, "required", None, service=record)
 
     row = asyncio.run(run())
     assert row["status"] == row["live_status"] == expected
