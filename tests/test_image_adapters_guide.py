@@ -53,6 +53,12 @@ class ImageAdapterGuideTest(unittest.TestCase):
             self.assertTrue(destination.is_file(), f"Broken relative link: {target}")
 
 
+def test_caller_guide_links_to_authenticated_image_request():
+    text = GUIDE.read_text(encoding="utf-8")
+    callers = text.split("## Operators:", 1)[0]
+    assert "IMAGE_OPTIONS.md#list-images-and-send-a-request" in callers
+
+
 class OperatorImageAdapterGuideTest(unittest.TestCase):
     def test_operator_section_says_restart_after_registry_row(self):
         text = GUIDE.read_text(encoding="utf-8")
