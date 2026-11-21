@@ -26,6 +26,7 @@ import copy
 import logging
 import threading
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -200,22 +201,24 @@ def overlay(contract: Mapping[str, Any], decl: Declaration, choices: AdapterChoi
         name["enum"] = list(choices.loras)
         named = {key: label for key, label in choices.labels.items() if key in choices.loras}
         if named:
-            operator_names = set(choices.loras) - named.keys()
+            label_key = lambda label: unicodedata.normalize("NFC", label.strip())
+            operator_names = {label_key(key) for key in set(choices.loras) - named.keys()}
             counts: dict[str, int] = {}
             for label in named.values():
-                counts[label] = counts.get(label, 0) + 1
-            occupied = operator_names | set(named.values())
+                normalized = label_key(label)
+                counts[normalized] = counts.get(normalized, 0) + 1
+            occupied = operator_names | counts.keys()
             for key, label in named.items():
-                if counts[label] == 1 and label not in operator_names:
+                if counts[label_key(label)] == 1 and label_key(label) not in operator_names:
                     continue
                 for width in range(min(4, len(key)), len(key) + 1):
                     candidate = f"{label} (…{key[-width:]})"
-                    if candidate not in occupied:
+                    if label_key(candidate) not in occupied:
                         break
                 else:
                     # Even a member-typed label that matches a whole suffixed ID stays unique.
                     number = 2
-                    while (candidate := f"{label} (…{key}, {number})") in occupied:
+                    while label_key(candidate := f"{label} (…{key}, {number})") in occupied:
                         number += 1
                 occupied.add(candidate)
                 named[key] = candidate
