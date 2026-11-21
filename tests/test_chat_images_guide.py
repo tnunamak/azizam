@@ -17,7 +17,7 @@ GUIDE = ROOT / "docs" / "guides" / "CHAT_IMAGES.md"
 
 
 CHAT_REMEDIES = {
-    "invalid_image_url": "Copy the entire `id` from the upload reply, with no spaces or extra punctuation.",
+    "invalid_image_url": "This value is not a valid stored image ID. Copy the entire ID from the upload reply.",
     "asset_missing": "Check the ID and use a key allowed to read the asset, or upload the image again under the key you will use for chat.",
     "invalid_image_format": "Export it as a supported image, such as PNG, then upload the new file and use its new ID.",
 }
@@ -115,6 +115,7 @@ def test_chat_images_guide_matches_gateway_contract():
         for code, remedy in remedies.items():
             assert remedy in rows[code], f"Missing or misplaced remedy for {code}"
     assert "A refused image reference stops the whole chat request." in chat_text
+    assert "For a chat error, look at `error.code` and `error.param`. The parameter identifies the image part to fix." in chat_text
 
     assert re.search(
         r"an unknown id.{0,100}an id the caller may not read.{0,100}the same refusal",

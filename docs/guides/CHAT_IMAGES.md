@@ -42,7 +42,7 @@ For a chat error, look at `error.code` and `error.param`. The parameter identifi
 
 | Code | What to change |
 | --- | --- |
-| `invalid_image_url` | The reference looks like an asset ID (it has no `:` and no `/`) but is not a valid one. Real URLs and data URIs pass through unchanged. Copy the entire `id` from the upload reply, with no spaces or extra punctuation. |
+| `invalid_image_url` | This value is not a valid stored image ID. Copy the entire ID from the upload reply. |
 | `asset_missing` | The asset is not available to your API key. Check the ID and use a key allowed to read the asset, or upload the image again under the key you will use for chat. |
 | `invalid_image_format` | The stored file is not an image. Export it as a supported image, such as PNG, then upload the new file and use its new ID. |
 
