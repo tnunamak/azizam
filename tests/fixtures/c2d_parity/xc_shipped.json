@@ -56,7 +56,7 @@
         },
         "identity": {
           "id": "audio.generate.ace-step-1.5-xl-turbo",
-          "manifest_hash": "8cfabe3cc957d6cf7b9b38dfaec01ee72d1e72af0e47400b4396002d1c117554",
+          "manifest_hash": "1736726e037a9f9664af19a184ce1a711c1ffba36836e59681969d2229f551e9",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -161,7 +161,7 @@
         },
         "identity": {
           "id": "video.edit.rife-interpolate",
-          "manifest_hash": "1d9693c525f6362b374b1f39c3936736bc6e46cb02bf0ddf3daa293221936577",
+          "manifest_hash": "ce26a8c6761adba97006408fba529db9da14b125f004c791bd4b70a2a165516f",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -217,7 +217,7 @@
         },
         "identity": {
           "id": "audio.generate.sa3-small-sfx",
-          "manifest_hash": "bba3278b79cbc67e8bc16ee1fc4664d3b19ae63253d21f9c5d1dad9da3389ca0",
+          "manifest_hash": "b7e1ec4e9dca1dc2479124fcc1d7c5ea2ee0b2400ed5ad1657cc735a608d02ee",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -276,7 +276,7 @@
         },
         "identity": {
           "id": "image.edit.seedvr2-upscale",
-          "manifest_hash": "0af18e88b95fb3ebfa49c49986281814e53699cbbb000e1754346db2c0c44ff3",
+          "manifest_hash": "691a2cda3298cdde4ee3f04c3dcd86488622a791d6060c24e735ee0acad9ebfe",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -337,7 +337,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-i2v",
-          "manifest_hash": "b0050e3efce675b3ff481cd7c10e5f2079d1732a096b50f955e7bb51b218ac7b",
+          "manifest_hash": "703fe8b5b5552587835da5784775b016914a696b557e45380ff6329fe1b33579",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -444,7 +444,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-keyframes-mid",
-          "manifest_hash": "ed46b201333e0dd5e00206f73556b0ab1f4a2351e5477cb0d67d20b36a1c4c14",
+          "manifest_hash": "2eaf6aceca96d40cbc6edfa499df3ef7e76b3fbff8a13cec763275132e7ce4dc",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -615,7 +615,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-keyframes",
-          "manifest_hash": "930043a4e033fa6d681f286e26dd51f756c2236dcb0e95b354048cce13e1a605",
+          "manifest_hash": "0dfa22008b7b258e064f28fb4d6087acfe87014e9b1556351b9f97e4da9dd3cf",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -749,7 +749,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-long",
-          "manifest_hash": "1411fa15f897aae1e881b325044836c1d5de7eb45e5e855db17717a1fad8e4c0",
+          "manifest_hash": "47bf121b1abd8d56795b3ff8831ef28267cab20135e4bd23adf535bc1444370d",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -811,7 +811,7 @@
         },
         "identity": {
           "id": "video.generate.ltx-2.5-t2v",
-          "manifest_hash": "d68cfe3beaf3b15aa7b7297efad3aa430ae174e2b251937d5d1fd1d4c52db082",
+          "manifest_hash": "e7c04f3265848d43caf0523d5545a039bad2d4640bc9a9effedb1da8c8f8b13f",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -901,7 +901,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-i2v",
-          "manifest_hash": "47ee639f0b7306b299c35956fde99ba979a308ede8ef8459ae7dc345fcc313a3",
+          "manifest_hash": "d64baf54a5f358c81d7119a64a84f8cddb54161664cd9c885f3115418e73ffc6",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -991,7 +991,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-keyframes-mid",
-          "manifest_hash": "609f2a0dc6417f13564107b8f485c93e3da3a1793662d4aef993d30d94df0bea",
+          "manifest_hash": "82daadd5de761f0bcd5b7ad0fa4fe3a5699333b4689a9b64ed95a60f0775e4c8",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1097,7 +1097,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-keyframes",
-          "manifest_hash": "9606375d58f7a17f5bd102110aba87e1ba82483640a40cc6a89663e3f1816f01",
+          "manifest_hash": "a936832be3572ffcf79bd05cd4fc417a2b638a35d2ecfb7be85c4375869d1bcd",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1188,7 +1188,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-long",
-          "manifest_hash": "504b5bed73cae687562db9a77c69dcc52fb424b7ee29c06b8e492dc33aedff10",
+          "manifest_hash": "5e4e97cbcce3662498542d574fa29303969822578ae4429cb457dd62a0e4a7c0",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1242,7 +1242,7 @@
         },
         "identity": {
           "id": "video.generate.minimax-h3-t2v",
-          "manifest_hash": "9a3f9ced516e772ac434997d8115d053c8c47797f63ba18419fac01988b8810f",
+          "manifest_hash": "545990d3abccdf194521f60c4c5185738e3a06d1c825a4fa607d22aeee101018",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1324,7 +1324,7 @@
         },
         "identity": {
           "id": "video.edit.video-mux",
-          "manifest_hash": "849f5e7db9b8a8ad454d3582e77661db891fa7cbca81d947dd0bee701c794eeb",
+          "manifest_hash": "e01742e8bfc5ba252fcb5f32fa92b89f95d6f02612338f328a4f35b0edb90c63",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -1377,7 +1377,7 @@
         },
         "identity": {
           "id": "audio.generate.yue2-song",
-          "manifest_hash": "fbae7fc68a17107111707551df591ad625be6ab6f4e890c0707167ee7fcdf1ed",
+          "manifest_hash": "857cdcfa4019376dcc42e5529e2f6b46234dea1fcb69a74de277b793dd9cacb1",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
