@@ -13,6 +13,7 @@ const capabilityMaps: Record<string, string[]> = {
   "app/people/people-api.ts": ["labels", "INVITEE_TASKS"],
   "app/try/page.tsx": ["CAPABILITY_TABS"],
   "app/usage/page.tsx": ["requestNouns"],
+  "lib/capability-words.ts": ["capabilityUiPresentation"],
   "lib/use-capability-views.ts": ["LABELS"],
 };
 
