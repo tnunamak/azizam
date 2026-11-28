@@ -144,16 +144,21 @@ def _saved_workflow(ctx: Ctx, revisions: int = 1) -> dict[str, Any]:
     return {}
 
 
+def _model_route_body(ctx: Ctx) -> dict[str, Any]:
+    """Route a seeded model to itself. The seed went into the store directly, so the held registry snapshot is one revision
+    behind: the reload brings it level, as a save through the gateway does."""
+    reloaded = ctx.owner.post("/admin/api/config/reload", headers=csrf_for(ctx.owner))
+    assert reloaded.status_code == 200, reloaded.text
+    return {"json": {"service_id": "engine-a", "model_id": "first",
+                     "targets": [{"service_id": "engine-a", "model_id": "first"}]}}
+
+
 BUILT: dict[tuple[str, str], list[Built]] = {
     ("PUT", "/admin/api/operator/service-registry"): [
         ("registry echo", True, lambda c: {"json": c.registry_echo()}),
         ("registry echo with a broken record", False, lambda c: {"json": _broken(c.registry_echo())}),
     ],
-    ("PUT", "/admin/api/operator/model-routes"): [
-        ("route a model to itself", True, lambda c: {"json": {
-            "service_id": "engine-a", "model_id": "first",
-            "targets": [{"service_id": "engine-a", "model_id": "first"}]}}),
-    ],
+    ("PUT", "/admin/api/operator/model-routes"): [("route a model to itself", True, lambda c: _model_route_body(c))],
     ("POST", "/admin/api/operator/services"): [
         ("engine create with a plain header", True,
          lambda c: {"json": {**_engine_body(c, disabled=True), "name": "Copy", "values": {
