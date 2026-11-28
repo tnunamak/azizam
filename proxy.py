@@ -1798,12 +1798,6 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
         _g[name] = updates[name]
     # Swapped in place, not assigned: a router and a bound method hold the registry from import (8.4).
     GATEWAY_WORKFLOW_REGISTRY.adopt(workflow_registry)
-    if "_identity_workflow_ids" in _g:
-        try:
-            _g["IDENTITY_MANIFEST_ID"], _g["IDENTITY_MODEL_ID"] = _identity_workflow_ids()
-        except ValueError:
-            _g["IDENTITY_MANIFEST_ID"] = _g["IDENTITY_MODEL_ID"] = None
-        _g["_identity_template_cache"] = None
     _g["_IMAGE_GRAPH_ROLES"] = image_roles
     GATEWAY_REGISTRY_PROVIDER.swap(next_registry_snapshot)
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
@@ -9695,7 +9689,7 @@ async def _identity_edit_alias(
     seed, ...) travel in ``extensions["com.azizam.workflow"]``. The response is
     the usual image payload plus ``likeness``, ``attempts`` and ``people``.
     """
-    closed = _closed_workflow_decision(IDENTITY_MANIFEST_ID)
+    closed = _closed_workflow_decision(_identity_ids()[0])
     if closed is not None:
         return _policy_denied_response(closed)
     options = ((form_dict.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
@@ -9909,7 +9903,7 @@ async def proxy_graph_image_edit_request(
     if receipt is not None:
         receipt.resolved_model = str(model) if model is not None else None
 
-    if str(model) == IDENTITY_MODEL_ID:
+    if str(model) == _identity_ids()[1]:
         return await _identity_edit_alias(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
@@ -17516,14 +17510,26 @@ def _identity_workflow_ids() -> tuple[str, str]:
     return record.id, record.manifest["bindings"]["gateway"]["model_id"]
 
 
-try:
-    IDENTITY_MANIFEST_ID, IDENTITY_MODEL_ID = _identity_workflow_ids()
-except ValueError as _identity_error:
-    # Only the identity route depends on this binding: it answers "identity workflow manifest is missing" and the
-    # rest of the gateway serves.
-    print(f"[proxy] Identity scene unavailable: {_identity_error}", file=sys.stderr, flush=True)
-    IDENTITY_MANIFEST_ID = IDENTITY_MODEL_ID = None
-_identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
+def _identity_record_or_none():
+    """The workflow bound to the identity route in the registry serving now, or None unless exactly one is.
+
+    Read per use, never at import: an owner workflow is added after boot, and a reload swaps the registry's records."""
+    try:
+        return _identity_workflow_record()
+    except ValueError:
+        # Only the identity route depends on this binding: it answers "identity workflow manifest is missing" and the
+        # rest of the gateway serves.
+        return None
+
+
+def _identity_ids() -> tuple[str | None, str | None]:
+    """The identity workflow's id and model id in the registry serving now; None for both unless exactly one binds the route."""
+    record = _identity_record_or_none()
+    return (None, None) if record is None else (record.id, record.manifest["bindings"]["gateway"]["model_id"])
+
+
+# The record the cached template was read from, the graph and its binding. A different record, as after a reload, misses.
+_identity_template_cache: tuple[Any, dict[str, Any], dict[str, Any]] | None = None
 
 
 def _identity_cfg() -> Mapping[str, Any]:
@@ -17577,27 +17583,29 @@ async def _identity_ensure_face_service() -> Response | None:
 def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
     """The identity ComfyUI graph and its node bindings, both read from the manifest."""
     global _identity_template_cache
-    if _identity_template_cache is None:
-        record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
+    record = _identity_record_or_none()
+    cached = _identity_template_cache
+    if cached is None or cached[0] is not record:
         binding = ((record.manifest.get("bindings") or {}).get("gateway") or {}) if record else {}
         ref = _graph_template_ref(binding)
         if ref is None:
             raise RuntimeError("identity workflow manifest is missing")
         graph = json.loads(_workflow_template_bytes(ref, record))
-        _identity_template_cache = (graph, dict(binding))
-    return _identity_template_cache
+        cached = _identity_template_cache = (record, graph, dict(binding))
+    return cached[1], cached[2]
 
 
 def _identity_job_envelope() -> job_envelope.JobEnvelope | None:
     """The identity scene's pins: its manifest's contract and the binding that names its graph."""
     try:
         graph_binding = _identity_template()[1]
-        manifest = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID).manifest
+        record = _identity_record_or_none()
+        manifest = record.manifest
     except Exception as exc:  # noqa: BLE001
         _MEDIA_JOB_LOG.warning("no envelope for the identity scene: %s: %s", type(exc).__name__, exc)
         return None
     return _graph_job_envelope(
-        _GRAPH_CAPABILITY, source_id=IDENTITY_MANIFEST_ID,
+        _GRAPH_CAPABILITY, source_id=record.id,
         contract={"inputs": manifest.get("inputs"), "outputs": manifest.get("outputs")},
         binding=graph_binding, artifact=graph_binding.get("workflow"),
     )
@@ -17626,7 +17634,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
-        identity_record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
+        identity_record = _identity_record_or_none()
         error, images = await _graph_run_round(
             client, graph, dict(headers), "identity scene", caller=auth_context,
             max_wait_s=int(_identity_cfg().get("max_wait_s", 3600)),
@@ -17666,11 +17674,12 @@ def _identity_note_delivery(auth_context: Any, form_fields: Mapping[str, Any]) -
 def _identity_store_image(request: Request, auth_context: AuthContext, content: bytes, response_format: str) -> dict[str, Any]:
     delivery = media_delivery.current() or _begin_media_delivery(auth_context)
     mode = delivery.mode
+    identity_workflow_id, identity_model_id = _identity_ids()
     record = provenance.build_provenance_record(
         receipt=delivery.receipt,
         kind=domain_rows.IMAGE,
-        workflow_id=IDENTITY_MANIFEST_ID,
-        resolved_model=IDENTITY_MODEL_ID,
+        workflow_id=identity_workflow_id,
+        resolved_model=identity_model_id,
         backend=_graph_service_id(_GRAPH_CAPABILITY),
         parameters=delivery.parameters or None,
     )
@@ -17719,7 +17728,7 @@ async def _identity_submit_job(
         return admission
     job = media_jobs.MediaJob(
         intent=_IDENTITY_JOB_INTENT,
-        workflow=IDENTITY_MANIFEST_ID,
+        workflow=_identity_ids()[0],
         backend=_graph_service_id(_GRAPH_CAPABILITY),
         request_id=f"identity-{uuid.uuid4().hex}",
         app_profile=plan_ref(auth_context.identity),
@@ -17763,7 +17772,7 @@ async def _run_identity_job(
     job_id: str, shim: Any, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
 ) -> None:
     async with _identity_job_semaphore:
-        reason = _closed_workflow_reason(IDENTITY_MANIFEST_ID)
+        reason = _closed_workflow_reason(_identity_ids()[0])
         if reason:
             _identity_job_failed(job_id, reason)
             return
@@ -17857,7 +17866,7 @@ def _identity_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _identity_admission(auth: AuthContext, path: str) -> Response | None:
-    closed = _closed_workflow_decision(IDENTITY_MANIFEST_ID)
+    closed = _closed_workflow_decision(_identity_ids()[0])
     if closed is not None:
         return _policy_denied_response(closed)
     denied = _enforce_runtime_route_policy(auth, path, policy={"protocol": "openai.images", "intent": domain_rows.IMAGE_EDIT, "backend": _graph_service_id(_GRAPH_CAPABILITY)})

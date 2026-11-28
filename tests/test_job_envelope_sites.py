@@ -237,8 +237,9 @@ def test_an_owner_identity_scene_pins_its_graph(tmp_path, monkeypatch):
     workflow_id = "image.edit.owner-identity"
     manifest = {"inputs": {"image": {"type": "asset"}}, "outputs": {"image": {"media_type": "image/png"}},
                 "bindings": {"gateway": {"workflow": str(artifact)}}}
-    monkeypatch.setattr(proxy, "IDENTITY_MANIFEST_ID", workflow_id)
-    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", {workflow_id: SimpleNamespace(manifest=manifest)})
+    manifest["bindings"]["gateway"].update(route="/gateway/v1/images/identity", model_id="owner-identity")
+    record = SimpleNamespace(id=workflow_id, manifest=manifest)
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", SimpleNamespace(records=lambda: [record]))
     monkeypatch.setattr(proxy, "_identity_template_cache", None)
     built = proxy._identity_job_envelope()
     assert built is not None

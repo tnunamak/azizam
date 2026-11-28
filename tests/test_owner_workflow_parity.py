@@ -149,9 +149,9 @@ def test_file_to_inline_keeps_public_catalog_and_outbound_prompt(tmp_path, fixtu
 
 def test_composed_owner_template_can_be_inline(monkeypatch):
     graph = {"1": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}}}
-    record = SimpleNamespace(manifest={"bindings": {"gateway": {"workflow": {"inline": graph}}}})
-    monkeypatch.setattr(proxy, "IDENTITY_MANIFEST_ID", "image.edit.owner-fixture")
-    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", {"image.edit.owner-fixture": record})
+    record = SimpleNamespace(id="image.edit.owner-fixture", manifest={"bindings": {"gateway": {
+        "workflow": {"inline": graph}, "route": "/gateway/v1/images/identity", "model_id": "owner-fixture"}}})
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", SimpleNamespace(records=lambda: [record]))
     monkeypatch.setattr(proxy, "_identity_template_cache", None)
     assert proxy._identity_template()[0] == graph
 
