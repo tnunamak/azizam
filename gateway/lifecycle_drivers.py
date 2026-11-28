@@ -1286,9 +1286,9 @@ class SystemdDriver:
         dc = self._driver_config(svc)
 
         # Read env key names from driver_config (pure data — no LLAMA_BEE_* in code).
-        activation_env_keys = dc.get("activation_env_keys") or {}
-        model_key = str(activation_env_keys.get("model") or "MODEL")
-        aux_key = str(activation_env_keys.get("aux") or "AUX")
+        env_keys = dc.get("activation_env_keys") or {}
+        model_key = str(env_keys.get("model") or "MODEL")
+        aux_key = str(env_keys.get("aux") or "AUX")
 
         constraints = dc.get("file_constraints")
         if constraints is None and dc.get("precheck"):

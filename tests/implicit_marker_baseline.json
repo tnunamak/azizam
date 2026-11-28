@@ -42,8 +42,7 @@
       "class_type": 3
     },
     "gateway/lifecycle_drivers.py": {
-      "activation_": 7,
-      "gguf": 2,
+      "activation_": 6,
       "mmproj": 1
     },
     "gateway/local_capabilities.py": {
@@ -69,13 +68,11 @@
     },
     "proxy.py": {
       "/view": 2,
-      "SaveImage": 1,
       "activation_": 44,
-      "chat_template_kwargs": 1,
-      "class_type": 3,
+      "class_type": 2,
       "mmproj": 5,
       "model_path": 7,
-      "nvidia-smi": 4,
+      "nvidia-smi": 2,
       "x-litellm": 7
     },
     "status_endpoint.py": {
