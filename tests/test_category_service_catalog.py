@@ -131,3 +131,22 @@ def test_catalog_includes_protocol_only_chat_and_decision_targets(monkeypatch):
     assert entries["protocol-chat"]["capabilities"] == ["chat.completions"]
     assert entries["choose"] == {"stem": "choose", "label": "choose", "kind": "model",
                                 "capabilities": ["decision.systemone"]}
+
+
+def test_presentation_is_published_once_in_catalog_envelope(tmp_path):
+    calls = []
+    rows = [{'stem': 'test', 'label': 'Test', 'kind': 'model', 'capabilities': ['custom.run']}]
+    presentation = {'category_choices': [{'id': 'custom.run', 'label': 'Custom activity'}]}
+    def load_presentation():
+        calls.append(True)
+        return presentation
+    app = FastAPI()
+    app.include_router(create_category_router(
+        auth=lambda request: AdminContext(subject='owner', roles=frozenset({'owner'})),
+        store_path=tmp_path / 'categories.db', service_catalog=lambda: rows,
+        capability_presentations=load_presentation))
+    with TestClient(app) as client:
+        body = client.get('/admin/api/categories/services').json()
+    assert body == {'services': rows, 'presets': [], 'capability_presentations': presentation}
+    assert calls == [True]
+    assert 'capability_presentations' not in body['services'][0]

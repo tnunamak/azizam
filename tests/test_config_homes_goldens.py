@@ -35,6 +35,7 @@ def _first_differences(expected: list, actual: list, limit: int = 3) -> list:
 # C10 acceptance 8: the effective config of an install whose sections were imported is what it was before C10, except
 # these top-level entries, each changed on purpose (docs/design/CONFIG_HOMES.md, "C10 as built"). The goldens are the
 # pre-C10 capture, not regenerated.
+# M8 adds only the declared identity profile to effective config; the C0 capture remains frozen.
 ENTRIES_CHANGED_ON_PURPOSE = {
     # models is its own section now (a mapping, was a list); a deployment's list was empty. workflow_execution is a
     # section: the deployment's block is the same, a first run gains the empty release section. routing was read by no
@@ -49,9 +50,9 @@ ENTRIES_CHANGED_ON_PURPOSE = {
     # page reads LiteLLM up from the first health probe"). The tracked and live-like inputs already list backends.
     # model_aliases: the deployment's OmniVoice speech engine declares custom_voice_transcript (train 59: whether an
     # engine takes a custom voice's reference transcript is data, not an engine name in code; set on live 2026-11-13).
-    "tracked": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends", "model_aliases"},
-    "live_like": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends", "model_aliases"},
-    "first_run": {"models", "workflow_execution", "videos", "images", "backends"},
+    "tracked": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends", "model_aliases", "identity"},
+    "live_like": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends", "model_aliases", "identity"},
+    "first_run": {"models", "workflow_execution", "videos", "images", "backends", "identity"},
 }
 
 
@@ -124,3 +125,12 @@ def test_first_run_has_no_aliases_or_roles_and_the_goldens_say_so():
     assert first_run["aliases"] and {(row["kind"], row.get("error")) for row in first_run["aliases"]} == {
         ("stable", "alias_not_configured")}
     assert first_run["models"]["roles"] == []
+
+
+@pytest.mark.parametrize("name", sorted(INPUT_FILES))
+def test_identity_release_change_is_only_the_declared_profile(name, tmp_path):
+    import yaml
+    release = yaml.safe_load((ROOT / "registry/defaults/identity.yml").read_text())
+    before = raw_config(name).get("identity") or {}
+    effective = effective_config(proxy, name, tmp_path / "admin.db")
+    assert effective["identity"] == {**release, **before}

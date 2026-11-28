@@ -228,7 +228,9 @@ def parse_people(raw: Any, photo_count: int) -> list[PersonSpec]:
 
 def build_scene_request(source: Any, photos: list[bytes], prompt: str, *, default_people: Any = None) -> SceneRequest:
     """Build a SceneRequest from form fields or extension options (same names in both)."""
+    profile = ids.load_profile()
     return SceneRequest(
+        profile=profile,
         photos=photos,
         prompt=prompt,
         people=parse_people(_json_field(source, "people"), len(photos)),
@@ -242,7 +244,7 @@ def build_scene_request(source: Any, photos: list[bytes], prompt: str, *, defaul
         stop_when_pass=_bool(source, "stop_when_pass", True),
         facing_each_other=_bool(source, "facing_each_other", False),
         pooling=_enum(source, "pooling", likeness.POOLINGS, "best"),
-        max_refs_per_person=_number(source, "max_refs_per_person", int, ids.DEFAULT_REFS_PER_PERSON, 1, ids.MAX_REFS_PER_PERSON),
+        max_refs_per_person=_number(source, "max_refs_per_person", int, profile["default_refs_per_person"], 1, profile["max_refs_per_person"]),
         refine=_enum(source, "refine", ("off", "auto", "all"), "auto"),
         refine_attempts=_number(source, "refine_attempts", int, 2, 1, 4),
         pose_policy=_enum(source, "pose_policy", ("likeness", "as_written"), "likeness"),
@@ -384,6 +386,16 @@ IDENTITY_OPENAPI: dict[str, Any] = {
 
 
 # --------------------------------------------------------------------- routes
+
+
+def identity_openapi(profile: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Advertise the same resolved profile that validates identity requests."""
+    import copy
+    schema = copy.deepcopy(IDENTITY_OPENAPI)
+    profile = profile if profile is not None else ids.load_profile()
+    field = schema["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"]["max_refs_per_person"]
+    field.update(default=profile["default_refs_per_person"], maximum=profile["max_refs_per_person"])
+    return schema
 
 
 def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
@@ -531,7 +543,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
 
     app.add_api_route(LIKENESS_PATH, likeness_route, methods=["POST"], openapi_extra=LIKENESS_OPENAPI,
                       summary="Score how well the faces in an image match reference faces", tags=["identity"])
-    app.add_api_route(IDENTITY_PATH, identity_route, methods=["POST"], openapi_extra=IDENTITY_OPENAPI,
+    app.add_api_route(IDENTITY_PATH, identity_route, methods=["POST"], openapi_extra=identity_openapi(),
                       summary="Put the people from reference photos into a new scene, with likeness scores", tags=["identity"])
     app.state.identity_run_scene = run_scene
     app.state.identity_execute = execute

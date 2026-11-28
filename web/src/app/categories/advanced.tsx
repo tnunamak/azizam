@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CategoriesEditor, distinct, modelName, type CatalogService } from "./editor";
+import { CategoriesEditor, catalogPresentation, distinct, modelName, type CatalogService } from "./editor";
 import { useQuery } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
 import { adminFetch, ApiError, api, fetchSession } from "@/lib/api";
@@ -201,7 +201,7 @@ function PreviewAs({ active, catalog, personName, appName }: { catalog: CatalogS
 /** Access rules for specific people and apps, with check, history and restore. */
 export function AdvancedRules() {
   const [editing, setEditing] = useState(false);
-  const { data: catalogData, isFetching: catalogIsFetching, isError: catalogIsError, refetch: catalogRefetch } = useQuery({ queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[] }>(root + "/services"), retry: false, refetchOnWindowFocus: false });
+  const { data: catalogData, isFetching: catalogIsFetching, isError: catalogIsError, refetch: catalogRefetch } = useQuery({ queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[]; capability_presentations?: CatalogService["capability_presentations"] }>(root + "/services").then(catalogPresentation), retry: false, refetchOnWindowFocus: false });
   const { data: ownerSession, isFetching: ownerSessionFetching, isError: ownerSessionError, refetch: ownerSessionRefetch } = useQuery({ queryKey: ["categories", "owner-session"], queryFn: () => fetchSession(), enabled: editing, retry: false, refetchOnWindowFocus: false });
   const { data: activeData, isError: activeIsError, isFetching: activeIsFetching, isPending: activeIsPending, refetch: activeRefetch } = useQuery({ queryKey: ["categories", "active"], queryFn: loadActive, retry: false, refetchOnWindowFocus: false });
   const { data: historyData, isError: historyIsError, isFetching: historyIsFetching, isPending: historyIsPending, refetch: historyRefetch } = useQuery({ queryKey: ["categories", "history"], queryFn: () => adminFetch<{ history: HistoryEntry[] }>(root + "/history"), retry: false, refetchOnWindowFocus: false });

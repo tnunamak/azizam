@@ -77,3 +77,96 @@ export const capabilityRequestNouns = {
   "rerank": "Rerank",
   "mesh": "3D model",
 } as const;
+
+export const capabilityUiPresentation = {
+  "tabs": {
+    "chat.completions": "chat",
+    "image.generate": "image",
+    "speech.synthesis": "speech",
+    "speech.transcription": "transcribe",
+    "audio.transcription": "transcribe",
+    "text.embeddings": "embed",
+    "decision.choice": "decide",
+    "decision.systemone": "decide",
+    "systemone": "decide",
+    "chat": "chat",
+    "image": "image",
+    "images": "image",
+    "speech": "speech",
+    "voice": "speech",
+    "tts": "speech",
+    "transcribe": "transcribe",
+    "transcription": "transcribe",
+    "stt": "transcribe",
+    "decide": "decide",
+    "decision": "decide",
+    "embed": "embed",
+    "embeddings": "embed",
+    "workflow": "workflow",
+    "mesh": "mesh"
+  },
+  "category_choices": [
+    {
+      "id": "chat.completions",
+      "label": "Chat"
+    },
+    {
+      "id": "image.generate",
+      "label": "Images"
+    },
+    {
+      "id": "image.edit",
+      "label": "Image editing"
+    },
+    {
+      "id": "video.generate",
+      "label": "Video"
+    },
+    {
+      "id": "speech.synthesis",
+      "label": "Voice"
+    },
+    {
+      "id": "speech.transcription",
+      "label": "Transcription"
+    },
+    {
+      "id": "music.generate",
+      "label": "Music"
+    },
+    {
+      "id": "sound.generate",
+      "label": "Sound effects"
+    },
+    {
+      "id": "embed",
+      "label": "Document search"
+    },
+    {
+      "id": "text.embeddings",
+      "label": "Document search",
+      "standalone": false
+    }
+  ],
+  "text_image_intents": [
+    "image.generate"
+  ],
+  "text_image_task": "text-to-image",
+  "query_tabs": {
+    "chat": "chat",
+    "image": "image",
+    "images": "image",
+    "speech": "speech",
+    "voice": "speech",
+    "tts": "speech",
+    "transcribe": "transcribe",
+    "transcription": "transcribe",
+    "stt": "transcribe",
+    "decide": "decide",
+    "decision": "decide",
+    "embed": "embed",
+    "embeddings": "embed",
+    "workflow": "workflow",
+    "mesh": "mesh"
+  }
+} as const;

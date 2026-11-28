@@ -1272,10 +1272,8 @@ class SystemdDriver:
         (mapping of ``{model: <ENV_VAR>, aux: <ENV_VAR>}``) so that LLAMA_BEE_*
         names are data, not code.
 
-        When ``driver_config.precheck`` is ``"gguf_path"``, validates that the
-        model path is an absolute, existing ``.gguf`` file.  Also validates the
-        aux path when aux is provided.  Returns None (with a printed message) if
-        validation fails — identical behaviour to the legacy ensure_target branch.
+        Declarative ``file_constraints`` guard activation before any restart.
+        Existing precheck selectors resolve through the release constraints table.
 
         A named profile is resolved only through
         ``driver_config.activation_profiles``. Unknown or malformed profiles
@@ -1292,21 +1290,27 @@ class SystemdDriver:
         model_key = str(activation_env_keys.get("model") or "MODEL")
         aux_key = str(activation_env_keys.get("aux") or "AUX")
 
-        # Optional GGUF-path precheck — gates swap when the file is missing.
-        precheck = str(dc.get("precheck") or "").strip()
-        if precheck == "gguf_path":
-            if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
-                _say(
-                    f"[proxy] ensure_target: model file not found at {model}",
-                    flush=True,
-                )
-                return None
-            if aux and not (os.path.isabs(aux) and os.path.exists(aux)):
-                _say(
-                    f"[proxy] ensure_target: aux file not found at {aux}",
-                    flush=True,
-                )
-                return None
+        constraints = dc.get("file_constraints")
+        if constraints is None and dc.get("precheck"):
+            import yaml
+            root = Path(__file__).resolve().parents[1] / "registry"
+            document = yaml.safe_load((root / "engine_record_defaults.yml").read_text())
+            constraints = document.get("activation_file_constraints", {}).get(str(dc["precheck"]).strip())
+        if constraints is not None:
+            from jsonschema import validate
+            root = Path(__file__).resolve().parents[1] / "registry"
+            schema = json.loads((root / "engine_record_defaults.schema.json").read_text())
+            validate(constraints, {"$ref": "#/$defs/file_constraints", "$defs": schema["$defs"]})
+            for role, value in (("model", model), ("aux", aux)):
+                if role == "aux" and not value:
+                    continue
+                rule = constraints.get(role, {})
+                valid = (not rule.get("absolute") or os.path.isabs(value))
+                valid = valid and (not rule.get("exists") or os.path.exists(value))
+                valid = valid and (not rule.get("suffixes") or any(value.endswith(suffix) for suffix in rule["suffixes"]))
+                if not valid:
+                    _say(f"[proxy] ensure_target: {role} file not found at {value}", flush=True)
+                    return None
 
         env = {model_key: model, aux_key: aux or ""}
         if profile is None:

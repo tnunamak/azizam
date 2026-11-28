@@ -66,7 +66,8 @@ def test_the_release_names_no_model_and_no_face_service():
     assert compat["defaults"] == {} and compat["aliases"] == {}
     assert "generated_aliases_file" not in compat
     identity = yaml.safe_load((DEFAULTS / "identity.yml").read_text(encoding="utf-8"))
-    assert identity == {}
+    assert set(identity) == {"profile"}
+    assert identity["profile"]["max_image_slots"] == 10
 
 
 def test_the_release_ships_no_secret_value():
@@ -130,13 +131,14 @@ def test_the_legacy_import_gives_each_section_its_startup_block(tmp_path):
     startup = raw_config("tracked")
     expected = {key: value for key, value in startup["model_compatibility"].items() if key != "generated_aliases_file"}
     assert effective["model_compatibility"] == expected
-    assert effective["identity"] == startup["identity"]
+    release = yaml.safe_load((DEFAULTS / "identity.yml").read_text(encoding="utf-8"))
+    assert effective["identity"] == {**release, **startup["identity"]}
 
 
 def test_a_first_run_has_the_release_values(tmp_path):
     effective = effective_config(proxy, "first_run", tmp_path / "admin.db")
     assert effective["model_compatibility"] == yaml.safe_load((DEFAULTS / "model_compatibility.yml").read_text(encoding="utf-8"))
-    assert effective["identity"] == {}
+    assert effective["identity"] == yaml.safe_load((DEFAULTS / "identity.yml").read_text(encoding="utf-8"))
 
 
 def test_the_import_runs_once_and_a_second_boot_keeps_the_owner_edit(tmp_path):

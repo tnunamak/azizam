@@ -160,7 +160,7 @@ def load_media_metadata_formats(
         document = safe_load_strict(source.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         fail("document", f"could not read format rows: {error}")
-    fields(document, {"schema_version", "formats"}, {"speech_formats"}, "document")
+    fields(document, {"schema_version", "formats"}, {"speech_formats", "asset_suffixes"}, "document")
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         fail("document", "schema_version must be 1")
     if not isinstance(document["formats"], list):

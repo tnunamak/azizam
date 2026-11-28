@@ -6408,6 +6408,98 @@
       }
     ],
     "envelope": {
+      "capability_presentations": {
+        "category_choices": [
+          {
+            "id": "chat.completions",
+            "label": "Chat"
+          },
+          {
+            "id": "image.generate",
+            "label": "Images"
+          },
+          {
+            "id": "image.edit",
+            "label": "Image editing"
+          },
+          {
+            "id": "video.generate",
+            "label": "Video"
+          },
+          {
+            "id": "speech.synthesis",
+            "label": "Voice"
+          },
+          {
+            "id": "speech.transcription",
+            "label": "Transcription"
+          },
+          {
+            "id": "music.generate",
+            "label": "Music"
+          },
+          {
+            "id": "sound.generate",
+            "label": "Sound effects"
+          },
+          {
+            "id": "embed",
+            "label": "Document search"
+          },
+          {
+            "id": "text.embeddings",
+            "label": "Document search",
+            "standalone": false
+          }
+        ],
+        "query_tabs": {
+          "chat": "chat",
+          "decide": "decide",
+          "decision": "decide",
+          "embed": "embed",
+          "embeddings": "embed",
+          "image": "image",
+          "images": "image",
+          "mesh": "mesh",
+          "speech": "speech",
+          "stt": "transcribe",
+          "transcribe": "transcribe",
+          "transcription": "transcribe",
+          "tts": "speech",
+          "voice": "speech",
+          "workflow": "workflow"
+        },
+        "tabs": {
+          "audio.transcription": "transcribe",
+          "chat": "chat",
+          "chat.completions": "chat",
+          "decide": "decide",
+          "decision": "decide",
+          "decision.choice": "decide",
+          "decision.systemone": "decide",
+          "embed": "embed",
+          "embeddings": "embed",
+          "image": "image",
+          "image.generate": "image",
+          "images": "image",
+          "mesh": "mesh",
+          "speech": "speech",
+          "speech.synthesis": "speech",
+          "speech.transcription": "transcribe",
+          "stt": "transcribe",
+          "systemone": "decide",
+          "text.embeddings": "embed",
+          "transcribe": "transcribe",
+          "transcription": "transcribe",
+          "tts": "speech",
+          "voice": "speech",
+          "workflow": "workflow"
+        },
+        "text_image_intents": [
+          "image.generate"
+        ],
+        "text_image_task": "text-to-image"
+      },
       "counts": {
         "aliases": 1,
         "capabilities": 8,

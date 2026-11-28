@@ -1181,10 +1181,30 @@ class TestFourEnginesStayData:
         assert missed == []
 
 
+def _lower_reviewed():
+    """Remove stale reviewed allowances after code-to-data moves; never add an allowance."""
+    text = _REVIEWED_PATH.read_text(encoding="utf-8")
+    parts = text.split("  - file: ")
+    kept = [parts[0]]
+    for part in parts[1:]:
+        row = yaml.safe_load("  - file: " + part)[0]
+        path = _REPO_ROOT / row["file"]
+        sites = _engine_knowledge_sites(_text(path), row["file"]) if path.exists() else []
+        count = sum(is_literal and value == row["literal"] for _, value, is_literal in sites)
+        if count == 0:
+            print(f"Retired reviewed allowance: {row['file']} {row['literal']!r}")
+            continue
+        if count < row["count"]:
+            raise ValueError("Partial allowance reduction needs explicit review")
+        kept.append("  - file: " + part)
+    _REVIEWED_PATH.write_text("".join(kept), encoding="utf-8")
+
+
 if __name__ == "__main__":
     import sys
 
     if sys.argv[1:] == ["--lower-baseline"]:
+        _lower_reviewed()
         _lower_baseline()
     else:
         raise SystemExit("usage: python tests/test_engine_knowledge_boundary.py --lower-baseline")

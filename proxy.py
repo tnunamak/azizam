@@ -493,7 +493,7 @@ from gateway.runtime_auth import (
 )
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
-from gateway import config_fold, config_rules, config_runtime, provider_execution, providers
+from gateway import capability_ids, config_fold, config_rules, config_runtime, provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
 from gateway.providers import provider_lookup
 
@@ -7156,7 +7156,7 @@ async def graph_vram_snapshot(
     client: httpx.AsyncClient,
     capability: str,
 ) -> tuple[Optional[int], Optional[int]]:
-    """Return (free, total) VRAM bytes on GPU0 from the system stats of the engine selected for family *capability*."""
+    """Return VRAM bytes for the selected service's declared inference device."""
     try:
         reply = await _graph(client, capability, probe=True).stats(timeout=HEALTH_CHECK_TIMEOUT)
         if reply.status != 200:
@@ -7165,9 +7165,13 @@ async def graph_vram_snapshot(
         devices = payload.get("devices") or []
         if not devices:
             return None, None
-        # GPU0 is the inference card per the project's NAS+RTX layout.
-        free = devices[0].get("vram_free")
-        total = devices[0].get("vram_total")
+        from gateway import gpu_observation
+        descriptor = gpu_observation.inference_device(_graph_service(capability).record)
+        device = gpu_observation.select_device(devices, descriptor["stats_selector"])
+        if device is None:
+            return None, None
+        free = device.get("vram_free")
+        total = device.get("vram_total")
         free_i = int(free) if isinstance(free, (int, float)) else None
         total_i = int(total) if isinstance(total, (int, float)) else None
         return free_i, total_i
@@ -7222,45 +7226,20 @@ _VRAM_PROBE_INTERVAL_MIN_S = 0.25
 # window. With 500 ms cadence we get ~4 samples in 2 s.
 _VRAM_BASELINE_WINDOW_S = 2.0
 
-# GPU0 is the inference card (per the project's NAS+RTX layout). nvidia-smi
-# exposes UUIDs in its ``--query-compute-apps`` output; we filter by GPU0's
-# UUID so that any GPU1 (LLM card) allocations from the same process are
-# correctly excluded.
-_gpu0_uuid_cache: Optional[str] = None
-_gpu0_uuid_lock = threading.Lock()
-
-
-def _resolve_gpu0_uuid() -> Optional[str]:
-    """Return the GPU0 UUID string from ``nvidia-smi``. Cached after first call."""
-    global _gpu0_uuid_cache
-    with _gpu0_uuid_lock:
-        if _gpu0_uuid_cache is not None:
-            return _gpu0_uuid_cache or None
-        try:
-            p = subprocess.run(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=index,uuid",
-                    "--format=csv,noheader",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=2.0,
-            )
-        except Exception as e:  # FileNotFoundError, TimeoutExpired, etc.
-            print(f"[proxy] _resolve_gpu0_uuid: nvidia-smi failed: {e}", flush=True)
-            _gpu0_uuid_cache = ""
-            return None
-        if p.returncode != 0:
-            _gpu0_uuid_cache = ""
-            return None
-        for line in p.stdout.strip().splitlines():
-            parts = [x.strip() for x in line.split(",", 1)]
-            if len(parts) == 2 and parts[0] == "0":
-                _gpu0_uuid_cache = parts[1]
-                return parts[1]
-        _gpu0_uuid_cache = ""
+def _resolve_gpu0_uuid(capability: str | None = None) -> Optional[str]:
+    """Compatibility name: resolve the configured inference device's host UUID."""
+    from gateway import gpu_observation
+    record = _graph_service(capability).record if capability else None
+    try:
+        return gpu_observation.inference_uuid(_run_inference_observer, record)
+    except Exception as exc:
+        print(f"[proxy] inference device UUID unavailable: {type(exc).__name__}", flush=True)
         return None
+
+
+def _run_inference_observer(argv):
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=2.0)
+    return result.returncode, result.stdout, result.stderr
 
 
 def _resolve_graph_pids() -> set[int]:
@@ -7458,7 +7437,7 @@ class _VramProbe:
         try:
             # Resolve identifiers once. Cheap; both calls are short subprocess
             # invocations gated by 2s timeouts.
-            self._gpu0_uuid = await asyncio.to_thread(_resolve_gpu0_uuid)
+            self._gpu0_uuid = await asyncio.to_thread(_resolve_gpu0_uuid, self._capability)
             self._graph_pids = await asyncio.to_thread(_resolve_graph_pids)
             if not self._graph_pids:
                 self.error = f"no {_graph_adapter(_GRAPH_CAPABILITY).label} PIDs resolved"
@@ -7791,23 +7770,6 @@ async def decide_image_background_removal(
     target_host = target.host
     model_id = target.model
 
-    headers = configured_downstream_headers(auth_context, service)
-    # enable_thinking=False suppresses thinking (engine-agnostic kwarg — the load-bearing mechanism).
-    # No /no_think prompt-string injection: verified non-functional; kwarg-only is the contract.
-    payload = {
-        "model": model_id,
-        "messages": [
-            {
-                "role": "system",
-                "content": workflow_prompts.render("image_background_removal_decider"),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0,
-        "max_tokens": 160,
-        "response_format": {"type": "json_object"},
-        "chat_template_kwargs": {_ENABLE_THINKING_KEY: False},
-    }
     lease = None
     if _transition_policy(service).enabled:
         # A transition-enabled domain is sent nothing unleased: one lease, from a gate-checked hold.
@@ -7817,6 +7779,26 @@ async def decide_image_background_removal(
         except TransitionUnavailable as refused:
             return _background_removal_fallback("llm_unavailable", f"residency domain not admitting ({refused.reason})")
     try:
+        headers = configured_downstream_headers(auth_context, service)
+        payload = {
+            "model": model_id,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": workflow_prompts.render("image_background_removal_decider"),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            **copy.deepcopy(_images_group("background_removal").get("decision_parameters") or {}),
+        }
+        resolved = _resolve_request_target(model_id, service_id=service)
+        specs = _per_backend_transform_specs(service)
+        if resolved is not None:
+            specs.extend(resolved.base_transform_specs)
+            specs.extend(resolved.alias_overlay_specs)
+        payload = _run_request_pipeline(
+            specs, payload, _TransformContext({"request_path": "/v1/chat/completions"}), _TRANSFORM_REGISTRY,
+        )
         _require_egress_lease(service)
         async with engine_egress.async_client(timeout=httpx.Timeout(_image_background_removal_timeout(), connect=5)) as client:
             resp = await client.post(f"{target_host}/v1/chat/completions", headers=headers, json=payload)
@@ -7837,33 +7819,10 @@ async def decide_image_background_removal(
 
 
 def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -> bool:
-    """Select the workflow-defined plain or transparent image path.
-
-    Background-removal graph structure lives in the committed workflow JSON.
-    The proxy only toggles the SaveImage input declared in `_meta`.
-    """
+    """Select the workflow's declared plain or transparent output link."""
+    from gateway.engine_protocol.node_graph import select_graph_link
     cfg = meta.get("background_removal")
-    if not isinstance(cfg, dict):
-        return False
-    save_node_id = str(cfg.get("save_node") or "")
-    selected_input = cfg.get("transparent_image" if enabled else "plain_image")
-
-    save = workflow.get(save_node_id)
-    if not isinstance(save, dict) or save.get("class_type") != "SaveImage":
-        return False
-    inputs = save.get("inputs")
-    if not isinstance(inputs, dict):
-        return False
-    if not (
-        isinstance(selected_input, list)
-        and len(selected_input) == 2
-        and isinstance(selected_input[0], str)
-        and isinstance(selected_input[1], int)
-        and selected_input[0] in workflow
-    ):
-        return False
-    inputs["images"] = list(selected_input)
-    return True
+    return select_graph_link(workflow, cfg, enabled) if isinstance(cfg, dict) else False
 
 
 def _image_signing_secret() -> bytes:
@@ -8939,10 +8898,13 @@ def _image_graph_roles(
     cut = owned.get("background")
     selector = (binding.get("selectors") or {}).get(cut["output"]) if cut else None
     save_node = str(selector.get("node")) if isinstance(selector, Mapping) and selector.get("node") is not None else ""
-    plain = ((graph.get(save_node) or {}).get("inputs") or {}).get("images") if save_node else None
+    from gateway.image_graph_roles import background_sink_input
+    sink_input = background_sink_input(graph, save_node, cut) if cut and save_node else None
+    plain = ((graph.get(save_node) or {}).get("inputs") or {}).get(sink_input) if sink_input else None
     if cut and isinstance(plain, list):
         roles["background_removal"] = {
             "save_node": save_node,
+            "save_input": sink_input,
             "plain_image": list(plain),
             "transparent_image": [str(cut["processor"]), cut["slot"]],
         }
@@ -18720,6 +18682,7 @@ def _category_service_catalog() -> list[dict[str, Any]]:
 app.include_router(create_category_router(
     auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db",
     service_catalog=_category_service_catalog,
+    capability_presentations=capability_ids.load_ui_presentation,
     presets=lambda: [preset.as_json() for preset in category_presets.load_presets()],
     admin_path=ADMIN_DB_PATH))
 from gateway import category_enforcement  # noqa: E402
@@ -35349,9 +35312,10 @@ async def _forward_litellm_proxy_request(
     live_registry = ADMIN_STORE.get_service_registry()
     remote_provider = provider_execution.provider_for_model(live_registry, model_name) if attempt_recorder is None else None
     if remote_provider is not None:
+        admission_intent, resource_class = INNER_HOP_ADMISSION[request_path.removeprefix("/v1")]
         admission = _dispatch_admission_response(
-            "text.embeddings" if request_path == "/v1/embeddings" else "chat.generate", auth_context=auth_context, service_id=remote_provider.id,
-            service_available=remote_provider.configured, resource_class="embeddings" if request_path == "/v1/embeddings" else "chat",
+            admission_intent, auth_context=auth_context, service_id=remote_provider.id,
+            service_available=remote_provider.configured, resource_class=resource_class,
         )
         if admission is not None:
             return admission
@@ -35360,6 +35324,7 @@ async def _forward_litellm_proxy_request(
         return await provider_execution.execute_paid_litellm(
             request, request_path=request_path, body=body_json,
             provider=remote_provider, identity=identity,
+            policy_facts=DERIVED._AZIZAM_POLICY.get(request_path),
             runtime=runtime_config, ledger_path=ADMIN_DB_PATH.parent / "provider_spend.db",
             admin_db_path=ADMIN_DB_PATH,
             paid_fallback=bool(getattr(request.state, "paid_provider_fallback", False)),
@@ -36378,7 +36343,7 @@ async def _forward_internal_litellm_local_upstream(
 ) -> Response | StreamingResponse:
     """Forward one ready, leased request to the engine. A stream takes the lease."""
     hop_path = f"/v1{endpoint}"
-    admission_intent, admission_class = INNER_HOP_ADMISSION.get(endpoint, ("chat.generate", "chat"))
+    admission_intent, admission_class = INNER_HOP_ADMISSION[endpoint]
     if lease is None and _transition_policy(backend).enabled:
         # A transition-enabled domain is never sent an unleased forward.
         return _transition_unavailable_response(
@@ -37822,11 +37787,20 @@ def _gateway_openapi() -> dict[str, Any]:
     # An operation an enabled engine declares is a submit intent too, so the engine records are an input of the document.
     declared_intents = declared_operation_job.intents(ADMIN_STORE.get_service_registry())
     image_limit = _max_images_per_request()
-    inputs = json.dumps([aliases, limits, registry_view.digest, declared_intents, image_limit], sort_keys=True, default=str)
+    identity_profile = identity_scene.load_profile(overrides=_identity_cfg().get("profile") or {})
+    identity_fields = identity_api.identity_openapi(identity_profile)["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"]
+    identity_refs = identity_fields["max_refs_per_person"]
+    inputs = json.dumps([aliases, limits, registry_view.digest, declared_intents, image_limit, identity_refs], sort_keys=True, default=str)
     if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
     app.openapi_schema = None
     schema = _fastapi_openapi()
+    identity_post = schema.get("paths", {}).get(identity_api.IDENTITY_PATH, {}).get("post")
+    if identity_post is not None:
+        refs = identity_post["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"]["max_refs_per_person"]
+        for key in ("default", "maximum"):
+            value = identity_refs[key]
+            refs[key] = float(value) if isinstance(refs.get(key), float) else value
     for path, operation in schema.get("paths", {}).items():
         if not path.startswith("/v1/images/"):
             continue

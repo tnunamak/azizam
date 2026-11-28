@@ -44,7 +44,7 @@ DRIVER_CONFIG = Obj("DriverConfig", {
     **{key: ANY_SCALAR for key in (
         "container", "compose_file", "compose_service", "scope", "unit", "dropin", "swap_strategy", "health_timeout_s",
         "admin_header", "admin_key_env", "api_key_env", "activation_model_key", "load_body_params", "precheck", "activation_requires_absolute_path", "load_timeout_s", "success_marker", "timeout_s", "cwd")},
-    **{key: JSON for key in ("activation_env_keys", "activation_profiles")},
+    **{key: JSON for key in ("activation_env_keys", "activation_profiles", "file_constraints")},
 }, extras=HIDDEN)
 
 LIFECYCLE = Obj("Lifecycle", {

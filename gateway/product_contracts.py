@@ -456,9 +456,24 @@ class CatalogCounts(TypedDict):
     capabilities: int
 
 
+class CapabilityChoice(TypedDict):
+    id: str
+    label: str
+    standalone: NotRequired[bool]
+
+
+class CapabilityPresentation(TypedDict):
+    tabs: dict[str, str]
+    category_choices: list[CapabilityChoice]
+    text_image_intents: list[str]
+    text_image_task: str
+    query_tabs: NotRequired[dict[str, str]]
+
+
 class ModelsCatalog(TypedDict):
     schema_version: Literal[1]
     object: Literal["models.catalog"]
     aliases: list[CatalogRow]
     models: list[CatalogRow]
     counts: CatalogCounts
+    capability_presentations: NotRequired[CapabilityPresentation]

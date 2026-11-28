@@ -218,7 +218,13 @@ def _check_and_freeze(schema_text: str, text: str) -> Catalog:
     seen_family_words = set()
     for index, row in enumerate(document["relations"]):
         kind = row["kind"]
-        if kind == "family" and "word" in row:
+        if kind == "dispatch":
+            key = (kind, row["word"])
+            if key in seen:
+                raise CatalogError(f"relations row {index}: rule unique_dispatch_word: {key}")
+            seen.add(key)
+            targets = ()  # Compatibility words are not operation identifiers.
+        elif kind == "family" and "word" in row:
             key = (row.get("context"), row["word"])
             if key in seen_family_words:
                 raise CatalogError(
@@ -291,20 +297,12 @@ def project_media_job_intents(catalog: Catalog) -> list[dict[str, Any]]:
     return rows
 
 
-# Preserve the historical admission intent alongside catalog operation spellings.
-LEGACY_CHAT_TASK = ("chat", "chat.generate")
-
-
 def project_dispatch_task_aliases(op: str, *, catalog: Catalog) -> set[str]:
-    """Preserve the four historical dispatch branches without widening other words."""
-    if op == LEGACY_CHAT_TASK[0]:
-        return set(LEGACY_CHAT_TASK)
-    if op not in {"images", "speech", "embeddings"}:
-        return {op}
-    target = project_models_legacy_spellings(catalog).get(op)
-    aliases = set() if op == "images" else {op}
-    if target is not None:
-        aliases.add(target)
-        if op in {"images", "speech"}:
-            aliases.add(catalog.operations[target]["family"])
-    return aliases
+    """Project only the explicitly declared dispatch compatibility set."""
+    rows = catalog.relations("dispatch")
+    if not rows:
+        raise CatalogError("catalog has no dispatch compatibility declarations")
+    for row in rows:
+        if row["word"] == op:
+            return set(row["aliases"])
+    return {op}

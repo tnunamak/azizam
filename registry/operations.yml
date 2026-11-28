@@ -1049,6 +1049,38 @@
       "word": "reranking",
       "operation": "text.rerank",
       "order": 23
+    },
+    {
+      "kind": "dispatch",
+      "word": "chat",
+      "aliases": [
+        "chat",
+        "chat.generate"
+      ]
+    },
+    {
+      "kind": "dispatch",
+      "word": "images",
+      "aliases": [
+        "image.generate",
+        "image"
+      ]
+    },
+    {
+      "kind": "dispatch",
+      "word": "speech",
+      "aliases": [
+        "speech",
+        "speech.synthesis"
+      ]
+    },
+    {
+      "kind": "dispatch",
+      "word": "embeddings",
+      "aliases": [
+        "embeddings",
+        "text.embeddings"
+      ]
     }
   ],
   "unexpressed": [

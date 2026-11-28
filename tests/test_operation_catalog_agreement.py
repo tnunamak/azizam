@@ -174,7 +174,7 @@ def test_unexpressed_and_source_classification():
     assert [row["key"] for row in rows] == list(UNEXPRESSED)
     assert all(row["source"] == SOURCE.name for row in rows)
     assert all(row["reason"].strip() and "\n" not in row["reason"] for row in rows)
-    assert set(source) == set(PROJECTED) | set(UNEXPRESSED)
+    assert set(source) == set(PROJECTED) | set(UNEXPRESSED) | {"dispatch_relations", "presentation"}
 
 
 def test_generator_reproduces_catalog_bytes(tmp_path):
@@ -853,8 +853,8 @@ def test_dispatch_task_aliases_agree_with_catalog(monkeypatch):
 def test_dispatch_task_aliases_follow_catalog_mutation(tmp_path, monkeypatch):
     document = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))
     row = next(row for row in document["relations"]
-               if row["kind"] == "spelling" and row["context"] == "legacy" and row["word"] == "speech")
-    row["operation"] = "text.embeddings"
+               if row["kind"] == "dispatch" and row["word"] == "speech")
+    row["aliases"] = ["speech", "text.embeddings", "embed"]
     path = tmp_path / "operations.yml"
     path.write_text(json.dumps(document), encoding="utf-8")
     for binding in (path, load(path)):

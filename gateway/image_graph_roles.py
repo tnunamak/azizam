@@ -77,7 +77,7 @@ def _targets(binding_map: Mapping[str, Any]) -> set[tuple[str, str]]:
 
 def _background(value: Any, graph: str, nodes: Mapping[str, Any] | None,
                 manifest: Mapping[str, Any], binding: Mapping[str, Any]) -> None:
-    value = _object(value, graph, "background", {"output", "processor", "slot"},
+    value = _object(value, graph, "background", {"input", "output", "processor", "slot"},
                     {"output", "processor", "slot"})
     output = value["output"]
     outputs, selectors = manifest.get("outputs", {}), binding.get("selectors", {})
@@ -95,7 +95,7 @@ def _background(value: Any, graph: str, nodes: Mapping[str, Any] | None,
         return
     sink = _node(nodes, selector.get("node"), graph, "background.output")
     processor = _node(nodes, value["processor"], graph, "background.processor")
-    plain = sink.get("inputs", {}).get("images")
+    plain = sink.get("inputs", {}).get(background_sink_input(nodes, str(selector.get("node")), value))
     if not isinstance(plain, list) or len(plain) != 2:
         _fail(graph, "background.output", "selector node must consume an image link")
     _node(nodes, plain[0], graph, "background.output")
@@ -242,3 +242,14 @@ def load(images_section: Mapping[str, Any], registry: WorkflowRegistry, binding_
             entry = _check_entry(graph, entry, record, binding_key, _record_graph(graph, record))
         kept[graph] = entry
     return _freeze(kept)
+
+
+def background_sink_input(nodes: Mapping[str, Any], sink_id: str, role: Mapping[str, Any]) -> str | None:
+    """A declared input wins; legacy roles identify the unique link shared with the processor."""
+    if isinstance(role.get("input"), str):
+        return role["input"]
+    sink = nodes.get(sink_id, {}).get("inputs", {})
+    processor = nodes.get(str(role.get("processor")), {}).get("inputs", {})
+    matches = [name for name, value in sink.items()
+               if isinstance(value, list) and len(value) == 2 and value in processor.values()]
+    return matches[0] if len(matches) == 1 else None

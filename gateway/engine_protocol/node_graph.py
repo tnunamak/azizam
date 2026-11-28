@@ -1202,3 +1202,25 @@ __all__ = [
     "execution_error_node_id", "history_state", "job_event_from",
     "queue_position", "queue_prompt_ids", "select_outputs", "view_params",
 ]
+
+
+def select_graph_link(workflow: dict, config: Mapping[str, Any], enabled: bool) -> bool:
+    """Select a declared graph link. Legacy bindings identify the sink input by its link value."""
+    node = workflow.get(str(config.get("save_node") or ""))
+    inputs = node.get("inputs") if isinstance(node, dict) else None
+    if not isinstance(inputs, dict):
+        return False
+    name = config.get("save_input")
+    if name is None:
+        candidates = [key for key, value in inputs.items()
+                      if value in (config.get("plain_image"), config.get("transparent_image"))]
+        if len(candidates) != 1:
+            return False
+        name = candidates[0]
+    selected = config.get("transparent_image" if enabled else "plain_image")
+    if (not isinstance(name, str) or name not in inputs or not isinstance(selected, list)
+            or len(selected) != 2 or not isinstance(selected[0], str)
+            or type(selected[1]) is not int or selected[0] not in workflow):
+        return False
+    inputs[name] = list(selected)
+    return True

@@ -2,4 +2,18 @@
 # override. The release ships no face service: it names a host, a port and a unit of one install. Until the owner
 # configures one, the likeness check and the identity scene answer "The face service is not configured." (503).
 # max_wait_s is not listed: the identity scene waits 3600 s for the image engine until an owner sets it.
-{}
+
+
+# Precedent: Diffusers IP-Adapter separates reference conditioning parameters from the pipeline algorithm.
+# https://huggingface.co/docs/diffusers/using-diffusers/ip_adapter
+# Capacity and crop thresholds here are local policy, not claimed Diffusers defaults.
+profile:
+  max_image_slots: 10
+  max_refs_per_person: 5
+  default_refs_per_person: 3
+  ref_match_min: 0.25
+  ref_match_min_infant: 0.15
+  head_long_side: 896
+  head_box_scale: 2.6
+  head_rise: 0.12
+  min_ref_face_px: 32

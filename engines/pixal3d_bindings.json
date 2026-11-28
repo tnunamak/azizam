@@ -1,0 +1,24 @@
+{
+  "precedent": "ComfyUI API-format prompts address node inputs by id; this manifest names semantic roles without guessing node classes.",
+  "image": {
+    "node": "122",
+    "input": "image"
+  },
+  "resolution": {
+    "node": "94",
+    "input": "target_resolution"
+  },
+  "output": {
+    "node": "322",
+    "input": "filename_prefix"
+  },
+  "resolutions": [
+    512,
+    1024,
+    1536
+  ],
+  "seed": {
+    "class_type": "KSampler",
+    "input": "seed"
+  }
+}

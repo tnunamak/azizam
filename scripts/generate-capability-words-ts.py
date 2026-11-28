@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from gateway.capability_ids import CAPABILITY_LABELS, load_capability_member_words, load_capability_screen_words
+from gateway.capability_ids import CAPABILITY_LABELS, load_capability_member_words, load_capability_screen_words, load_ui_presentation
 
 OUTPUT = ROOT / "web/src/lib/capability-words.ts"
 
@@ -29,6 +29,7 @@ def render():
         for capability, word in words.items():
             lines.append(f"  {json.dumps(capability)}: {json.dumps(word)},")
         lines.extend(["} as const;", ""])
+    lines.append("export const capabilityUiPresentation = " + json.dumps(load_ui_presentation(), indent=2) + " as const;\n")
     return "\n".join(lines)
 
 

@@ -123,7 +123,7 @@ def test_temporary_parity_with_each_graph_meta(corpus):
         background = meta["background_removal"]
         output, = [name for name, selector in binding["selectors"].items()
                    if selector["node"] == background["save_node"]]
-        expected = {"background": {"output": output, "processor": background["rmbg_node"],
+        expected = {"background": {"input": "images", "output": output, "processor": background["rmbg_node"],
                                    "slot": background["transparent_image"][1]}}
         assert background["transparent_image"][0] == background["rmbg_node"]
         if "batch_size_node" in meta and "batch_size" not in binding["map"]:

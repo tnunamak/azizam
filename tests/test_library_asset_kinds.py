@@ -341,7 +341,7 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     table = asset_types.load_kind_names()
     assert table == asset_types.KIND_NAMES
     assert {"image", "video", "audio", "model", "text", "file"} <= set(table)
-    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent", "items", "making"}
+    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent", "items", "making", "thumbnail", "thumbnail_frame"}
                for words in table.values())
 
 

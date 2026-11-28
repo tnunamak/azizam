@@ -38,15 +38,39 @@ from gateway.likeness import FaceRecord, Person
 
 MAX_ATTEMPTS = 8
 MAX_PEOPLE = 5
-MAX_IMAGE_SLOTS = 10      # Qwen-Image 2.1 takes up to 10 reference images; the template has 10 slots
-MAX_REFS_PER_PERSON = 5
-DEFAULT_REFS_PER_PERSON = 3
-REF_MATCH_MIN = 0.25          # a face in an extra photo must look this much like the anchor face to be used
-REF_MATCH_MIN_INFANT = 0.15   # ArcFace is weaker on infants, so accept a looser match there
-HEAD_LONG_SIDE = 896      # reference heads are scaled to this long side (never smaller)
-HEAD_BOX_SCALE = 2.6      # head crop side as a multiple of the detected face width
-HEAD_RISE = 0.12          # shift the crop up by this share of the face height to keep the hair
-MIN_REF_FACE_PX = 32      # a reference face narrower than this carries too little identity
+def load_profile(path=None, *, overrides=None) -> Mapping[str, Any]:
+    """Resolve and validate one identity profile before scene work begins."""
+    import json
+    from pathlib import Path
+    import yaml
+    from jsonschema import validate
+    from gateway.config_runtime import bound_snapshot
+    root = Path(__file__).resolve().parents[1] / "registry" / "defaults"
+    release = yaml.safe_load((root / "identity.yml").read_text())["profile"]
+    snapshot = bound_snapshot() if path is None else None
+    section = (snapshot.config.get("identity") or {}) if snapshot else {}
+    if path is not None:
+        section = yaml.safe_load(Path(path).read_text())
+    result = {**release, **(section.get("profile") or {}), **(overrides or {})}
+    schema = json.loads((root / "identity.schema.json").read_text())["properties"]["profile"]
+    validate(result, schema)
+    if result["default_refs_per_person"] > result["max_refs_per_person"]:
+        raise ValueError("default reference count exceeds profile capacity")
+    return result
+
+
+DEFAULT_PROFILE = load_profile()
+# Compatibility exports; operational reads use the request's resolved profile.
+MAX_IMAGE_SLOTS = DEFAULT_PROFILE["max_image_slots"]
+MAX_REFS_PER_PERSON = DEFAULT_PROFILE["max_refs_per_person"]
+DEFAULT_REFS_PER_PERSON = DEFAULT_PROFILE["default_refs_per_person"]
+REF_MATCH_MIN = DEFAULT_PROFILE["ref_match_min"]
+REF_MATCH_MIN_INFANT = DEFAULT_PROFILE["ref_match_min_infant"]
+HEAD_LONG_SIDE = DEFAULT_PROFILE["head_long_side"]
+HEAD_BOX_SCALE = DEFAULT_PROFILE["head_box_scale"]
+HEAD_RISE = DEFAULT_PROFILE["head_rise"]
+MIN_REF_FACE_PX = DEFAULT_PROFILE["min_ref_face_px"]
+
 
 
 class IdentityError(ValueError):
@@ -116,12 +140,18 @@ class SceneRequest:
     stop_when_pass: bool = True
     facing_each_other: bool = False   # require both heads turned toward each other (two people)
     pooling: str = "best"             # how several reference photos of one person are scored
-    max_refs_per_person: int = DEFAULT_REFS_PER_PERSON  # reference heads sent to the generator per person
+    max_refs_per_person: int | None = None  # reference heads sent to the generator per person
     refine: str = "auto"              # off | auto (people below the match threshold) | all
     refine_attempts: int = 2          # seeds tried per person in the refinement pass
     pose_policy: str = "likeness"     # likeness: steer away from profile; as_written: leave the prompt alone
     thresholds: Mapping[str, float] | None = None
     on_progress: ProgressFn | None = None
+    profile: Mapping[str, Any] = field(default_factory=load_profile)
+
+    def __post_init__(self):
+        self.profile = load_profile(overrides=self.profile)
+        if self.max_refs_per_person is None:
+            self.max_refs_per_person = self.profile["default_refs_per_person"]
 
 
 @dataclass
@@ -165,28 +195,30 @@ class SceneResult:
 
 
 def head_crop_box(
-    face_bbox: Sequence[float], image_size: tuple[int, int]
+    face_bbox: Sequence[float], image_size: tuple[int, int], *, profile: Mapping[str, Any] | None = None
 ) -> tuple[int, int, int, int]:
     """A roomy square box around the head (hair and some shoulder), inside the image."""
+    profile = profile or DEFAULT_PROFILE
     x1, y1, x2, y2 = face_bbox
     width, height = image_size
-    side = max(x2 - x1, y2 - y1) * HEAD_BOX_SCALE
+    side = max(x2 - x1, y2 - y1) * profile["head_box_scale"]
     side = min(side, float(min(width, height)))
     cx = (x1 + x2) / 2
-    cy = (y1 + y2) / 2 - (y2 - y1) * HEAD_RISE
+    cy = (y1 + y2) / 2 - (y2 - y1) * profile["head_rise"]
     left = min(max(cx - side / 2, 0.0), width - side)
     top = min(max(cy - side / 2, 0.0), height - side)
     return int(round(left)), int(round(top)), int(round(left + side)), int(round(top + side))
 
 
-def head_reference_png(photo: bytes, face_bbox: Sequence[float]) -> bytes:
+def head_reference_png(photo: bytes, face_bbox: Sequence[float], *, profile: Mapping[str, Any] | None = None) -> bytes:
     """Crop a roomy head from the ORIGINAL photo and scale it up to a usable size."""
+    profile = profile or DEFAULT_PROFILE
     with Image.open(io.BytesIO(photo)) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
-    crop = image.crop(head_crop_box(face_bbox, image.size))
+    crop = image.crop(head_crop_box(face_bbox, image.size, profile=profile))
     longest = max(crop.size)
-    if longest < HEAD_LONG_SIDE:
-        factor = HEAD_LONG_SIDE / longest
+    if longest < profile["head_long_side"]:
+        factor = profile["head_long_side"] / longest
         crop = crop.resize((round(crop.width * factor), round(crop.height * factor)), Image.LANCZOS)
     out = io.BytesIO()
     crop.save(out, format="PNG")
@@ -214,13 +246,14 @@ def reference_quality(face: FaceRecord) -> float:
 
 
 def best_match_face(
-    faces: Sequence[FaceRecord], anchors: Sequence[FaceRecord], minimum: float
+    faces: Sequence[FaceRecord], anchors: Sequence[FaceRecord], minimum: float, *, profile: Mapping[str, Any] | None = None
 ) -> tuple[FaceRecord | None, float]:
     """The face in a photo that looks most like any anchor face, and its similarity."""
+    profile = profile or DEFAULT_PROFILE
     best: FaceRecord | None = None
     best_sim = -1.0
     for face in faces:
-        if face.width < MIN_REF_FACE_PX:
+        if face.width < profile["min_ref_face_px"]:
             continue
         for anchor in anchors:
             shared = [m for m in face.embeddings if m in anchor.embeddings]
@@ -497,13 +530,15 @@ def assign_faces(
     photo: int,
     wanted: Sequence[tuple[PersonSpec, str]],
     faces: Sequence[FaceRecord],
+    *, profile: Mapping[str, Any] | None = None,
 ) -> list[tuple[FaceRecord, str]]:
     """One face per person, no face twice. Raises ``ambiguous_faces`` instead of guessing.
 
     Tries every one-to-one assignment (at most 5 people), scores it by the cues, and accepts the best
     only if it beats the second best by ``ASSIGN_MIN_MARGIN``. A lone person with a lone face needs no cue.
     """
-    usable = [f for f in faces if f.width >= MIN_REF_FACE_PX]
+    profile = profile or DEFAULT_PROFILE
+    usable = [f for f in faces if f.width >= profile["min_ref_face_px"]]
     if len(wanted) > len(usable):
         raise _ambiguous(photo, faces, f"{len(wanted)} people were named but photo {photo} has {len(usable)} usable face(s).")
     if len(wanted) == 1 and len(usable) == 1:
@@ -538,6 +573,7 @@ async def resolve_people(
     with_heads: bool = True,
     warnings: list[dict[str, str]] | None = None,
 ) -> list[ResolvedPerson]:
+    profile = req.profile
     if not req.photos:
         raise IdentityError("at least one reference photo is required", domain="identity_scene", logical_param="reference_photos")
     detected: dict[int, list[FaceRecord]] = {}
@@ -551,14 +587,14 @@ async def resolve_people(
 
     specs = list(req.people)
     if not specs and len(req.photos) == 1:  # auto: every usable face in the photo, left to right
-        faces = [f for f in await faces_of(0) if f.width >= MIN_REF_FACE_PX]
+        faces = [f for f in await faces_of(0) if f.width >= profile["min_ref_face_px"]]
         if not faces:
             raise IdentityError("no face was found in the reference photo", domain="identity_scene", logical_param="reference_photos", code="no_face")
         specs = [PersonSpec(label=f"person {i + 1}", image=0, box=tuple(f.bbox), auto=True) for i, f in enumerate(faces)]
     elif not specs:  # auto with several photos: the largest face of each photo is one person
         specs = []
         for i in range(len(req.photos)):
-            faces = [f for f in await faces_of(i) if f.width >= MIN_REF_FACE_PX]
+            faces = [f for f in await faces_of(i) if f.width >= profile["min_ref_face_px"]]
             if not faces:
                 raise IdentityError(f"no face was found in photo {i}", domain="identity_scene", logical_param="reference_photos", code="no_face")
             largest = max(faces, key=lambda f: f.width)
@@ -591,7 +627,7 @@ async def resolve_people(
         free = [f for f in faces if all(tuple(f.bbox) != tuple(b) for b in taken)]
         if not faces:
             raise IdentityError(f"no face was found in photo {photo}", param="people", code="no_face")
-        picked = assign_faces(photo, [(specs[n], labels[n]) for n in members], free)
+        picked = assign_faces(photo, [(specs[n], labels[n]) for n in members], free, profile=profile)
         for n, choice in zip(members, picked):
             anchors[n] = choice
     seen: dict[tuple[int, tuple[float, ...]], str] = {}
@@ -613,7 +649,7 @@ async def resolve_people(
         anchor_source = spec.sources()[0]
         found: list[tuple[FaceRecord, int]] = [(anchor_face, anchor_source.image)]
         scoring_only: set[int] = set() if anchor_source.generate else {0}
-        if anchor_face.width < MIN_REF_FACE_PX:
+        if anchor_face.width < profile["min_ref_face_px"]:
             raise IdentityError(
                 f"the face of {label} in photo {anchor_source.image} is only {anchor_face.width:.0f}px wide; "
                 "use a photo with a larger face",
@@ -632,8 +668,8 @@ async def resolve_people(
                 # An extra photo may hold several people: take the unclaimed face that looks like this person.
                 claimed = extra_claimed.setdefault(source.image, [])
                 free = [f for f in faces if tuple(f.bbox) not in claimed]
-                minimum = REF_MATCH_MIN_INFANT if likeness.Person(label, tuple(f for f, _ in found), spec.infant).is_infant() else REF_MATCH_MIN
-                chosen_face, similarity = best_match_face(free, [f for f, _ in found], minimum)
+                minimum = profile["ref_match_min_infant"] if likeness.Person(label, tuple(f for f, _ in found), spec.infant).is_infant() else profile["ref_match_min"]
+                chosen_face, similarity = best_match_face(free, [f for f, _ in found], minimum, profile=profile)
                 if chosen_face is None:
                     if warnings is not None:
                         warnings.append({
@@ -646,7 +682,7 @@ async def resolve_people(
                         })
                     continue
                 claimed.append(tuple(chosen_face.bbox))
-            if chosen_face.width < MIN_REF_FACE_PX:
+            if chosen_face.width < profile["min_ref_face_px"]:
                 continue
             found.append((chosen_face, source.image))
             if not source.generate:
@@ -654,14 +690,14 @@ async def resolve_people(
         # Best reference first: a larger, sharper face gives the generator more to copy.
         eligible = [fp for k, fp in enumerate(found) if k not in scoring_only] or list(found)
         ranked = sorted(eligible, key=lambda fp: reference_quality(fp[0]), reverse=True)
-        keep = ranked[: max(1, min(req.max_refs_per_person, MAX_REFS_PER_PERSON))]
+        keep = ranked[: max(1, min(req.max_refs_per_person, profile["max_refs_per_person"]))]
         primary = anchor_face   # the chosen face, reported as such; ranking only orders what is sent
         resolved.append(
             ResolvedPerson(
                 label=label,
                 spec=spec,
                 person=Person(label=label, faces=tuple(f for f, _ in found), infant=spec.infant),
-                heads=(await asyncio.to_thread(lambda: [head_reference_png(req.photos[i], f.bbox) for f, i in keep]))
+                heads=(await asyncio.to_thread(lambda: [head_reference_png(req.photos[i], f.bbox, profile=profile) for f, i in keep]))
                 if with_heads else [],
                 face_bbox=primary.bbox,
                 age=primary.age,
@@ -797,6 +833,7 @@ async def run_identity_scene(
     prompt_node: str,
     seed_node: str,
 ) -> SceneResult:
+    profile = req.profile
     started = time.monotonic()
     if not req.prompt.strip():
         raise IdentityError("prompt is required", param="prompt")
@@ -824,7 +861,7 @@ async def run_identity_scene(
         slot += 1
     for rp in people:
         for head in rp.heads:
-            if slot >= min(len(image_nodes), MAX_IMAGE_SLOTS):
+            if slot >= min(len(image_nodes), profile["max_image_slots"]):
                 raise IdentityError(
                     f"too many reference images ({slot + 1}+); lower max_refs_per_person or the number of people",
                     param="people",

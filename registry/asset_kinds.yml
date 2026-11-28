@@ -12,9 +12,10 @@
 # items:    optional lowercase plural noun that counts items in a sentence ("No videos generated"). Absent means the kind name plus "s".
 # making:   optional true or false: whether Home names this kind on a tile while a request that makes it is still running. Absent means false, and Home says "item".
 # prefix:   optional stored-asset id prefix; 1-8 lowercase ASCII letters, unique across kinds.
+# thumbnail: allows previews; thumbnail_frame: preview needs a decoded video frame.
 kinds:
-  image: {label: Image, plural: Images, untitled: Picture, input: picture, items: images, prefix: img, making: true}
-  video: {label: Video, plural: Video, untitled: Video, input: clip, items: videos, prefix: vid, making: true}
+  image: {label: Image, plural: Images, untitled: Picture, input: picture, items: images, prefix: img, making: true, thumbnail: true}
+  video: {label: Video, plural: Video, untitled: Video, input: clip, items: videos, prefix: vid, making: true, thumbnail: true, thumbnail_frame: true}
   audio: {label: Audio, plural: Audio, untitled: Audio, input: recording, items: audios, prefix: aud, making: true}
   model: {label: 3D model, plural: 3D models, untitled: 3D model, input: 3D model}
   text: {label: Text, plural: Text, untitled: Text file, input: text file, recent: false}

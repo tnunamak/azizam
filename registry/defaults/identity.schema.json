@@ -42,6 +42,53 @@
           "type": "object"
         }
       }
+    },
+    "profile": {
+      "description": "Diffusers IP-Adapter precedent: pipeline configuration carries reference capacity and conditioning/crop policy. Algorithms remain code.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_image_slots": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_refs_per_person": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "default_refs_per_person": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ref_match_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ref_match_min_infant": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "head_long_side": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head_box_scale": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMinimum": 0
+        },
+        "head_rise": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "min_ref_face_px": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     }
   }
 }

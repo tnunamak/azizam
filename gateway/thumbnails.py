@@ -20,6 +20,7 @@ from pathlib import Path
 from PIL import __version__ as PILLOW_VERSION, features
 
 from gateway import private_io
+from gateway.asset_types import KIND_NAMES, SUFFIX_MEDIA_TYPES, kind_for_media_type
 
 THUMB_QUALITY = 78
 THUMB_METHOD = 4
@@ -27,8 +28,9 @@ THUMB_RECIPE = f"q{THUMB_QUALITY}:m{THUMB_METHOD}:pillow={PILLOW_VERSION}:webp={
 THUMB_EDGE = 480
 THUMB_MODE = "thumb"  # signing mode of a thumbnail URL; no content URL can carry it
 THUMB_MEDIA_TYPE = "image/webp"
-_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-_VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv"}
+_IMAGE_SUFFIXES = {suffix for suffix, mime in SUFFIX_MEDIA_TYPES.items() if KIND_NAMES.get(kind_for_media_type(mime), {}).get("thumbnail")
+                   and not KIND_NAMES.get(kind_for_media_type(mime), {}).get("thumbnail_frame")}
+_VIDEO_SUFFIXES = {suffix for suffix, mime in SUFFIX_MEDIA_TYPES.items() if KIND_NAMES.get(kind_for_media_type(mime), {}).get("thumbnail_frame")}
 _MAX_SOURCE_BYTES = 64 * 1024 * 1024
 _MAX_SOURCE_PIXELS = 100_000_000  # Skip image previews above 100 MP, even for small source files.
 _SLOTS = threading.BoundedSemaphore(3)  # a screen of new tiles must not take every core

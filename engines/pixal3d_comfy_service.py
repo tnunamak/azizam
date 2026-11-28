@@ -33,10 +33,24 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 PROMPT_PATH = Path(__file__).with_name("pixal3d_prompt.json")
-LOAD_IMAGE_NODE = "122"    # LoadImage: the picture
-RESOLUTION_NODE = "94"     # Trellis2UpsampleStage: target_resolution
-OUTPUT_NODE = "322"        # Save3DAdvanced: the textured GLB
-RESOLUTIONS = (512, 1024, 1536)
+def load_bindings(path: Path | None = None) -> dict[str, Any]:
+    data = json.loads((path or Path(__file__).with_name("pixal3d_bindings.json")).read_text())
+    for role in ("image", "resolution", "output"):
+        if any(not isinstance(data.get(role, {}).get(k), str) or not data[role][k] for k in ("node", "input")):
+            raise ValueError(f"invalid binding: {role}")
+    if not data.get("resolutions") or any(type(v) is not int or v < 1 for v in data["resolutions"]):
+        raise ValueError("invalid resolutions")
+    if any(not isinstance(data.get("seed", {}).get(k), str) or not data["seed"][k] for k in ("class_type", "input")):
+        raise ValueError("invalid seed binding")
+    return data
+
+
+BINDINGS = load_bindings()
+# Compatibility exports for sidecar clients; all values come from the manifest.
+LOAD_IMAGE_NODE = BINDINGS["image"]["node"]
+RESOLUTION_NODE = BINDINGS["resolution"]["node"]
+OUTPUT_NODE = BINDINGS["output"]["node"]
+RESOLUTIONS = tuple(BINDINGS["resolutions"])
 SEED_MAX = 4294967295
 DEFAULT_MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
@@ -71,23 +85,24 @@ def load_prompt(path: Path = PROMPT_PATH) -> dict[str, Any]:
     return prompt
 
 
-def patch_prompt(prompt: dict[str, Any], *, image_name: str, seed: int | None, resolution: int | None, prefix: str) -> dict[str, Any]:
+def patch_prompt(prompt: dict[str, Any], *, image_name: str, seed: int | None, resolution: int | None, prefix: str, bindings: dict | None = None) -> dict[str, Any]:
     """A copy of the prompt for one request. A seed sets every sampler; a resolution sets the upsample stage."""
+    bindings = bindings or BINDINGS
     patched = copy.deepcopy(prompt)
-    patched[LOAD_IMAGE_NODE]["inputs"]["image"] = image_name
-    patched[OUTPUT_NODE]["inputs"]["filename_prefix"] = prefix
+    patched[bindings["image"]["node"]]["inputs"][bindings["image"]["input"]] = image_name
+    patched[bindings["output"]["node"]]["inputs"][bindings["output"]["input"]] = prefix
     if resolution is not None:
-        patched[RESOLUTION_NODE]["inputs"]["target_resolution"] = resolution
+        patched[bindings["resolution"]["node"]]["inputs"][bindings["resolution"]["input"]] = resolution
     if seed is not None:
         for node in patched.values():
-            if node.get("class_type") == "KSampler":
-                node["inputs"]["seed"] = seed
+            if node.get("class_type") == bindings["seed"]["class_type"]:
+                node["inputs"][bindings["seed"]["input"]] = seed
     return patched
 
 
-def find_glb(outputs: dict[str, Any]) -> dict[str, str] | None:
+def find_glb(outputs: dict[str, Any], *, bindings: dict | None = None) -> dict[str, str] | None:
     """The file entry (filename, subfolder, type) of the first .glb the output node lists, whatever key lists it."""
-    for value in (outputs.get(OUTPUT_NODE) or {}).values():
+    for value in (outputs.get((bindings or BINDINGS)["output"]["node"]) or {}).values():
         for item in value if isinstance(value, list) else []:
             if isinstance(item, dict) and str(item.get("filename", "")).lower().endswith(".glb"):
                 return {"filename": item["filename"], "subfolder": item.get("subfolder", ""), "type": item.get("type", "output")}
@@ -96,7 +111,8 @@ def find_glb(outputs: dict[str, Any]) -> dict[str, str] | None:
 
 class Pixal3DService:
     def __init__(self, base_url: str, prompt: dict[str, Any], client_factory: Callable[[], httpx.AsyncClient],
-                 poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0) -> None:
+                 poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0, bindings: dict | None = None) -> None:
+        self.bindings = bindings or BINDINGS
         self.base_url = base_url.rstrip("/")
         self.prompt = prompt
         self.client_factory = client_factory
@@ -126,7 +142,7 @@ class Pixal3DService:
         up = await client.post(f"{base}/upload/image", files={"image": (name, data, "image/png")}, data={"overwrite": "true"})
         stored = upstream_object(up, "image upload").get("name") or name
         prefix = f"pixal3d/{uuid.uuid4().hex}"
-        body = {"prompt": patch_prompt(self.prompt, image_name=stored, seed=seed, resolution=resolution, prefix=prefix)}
+        body = {"prompt": patch_prompt(self.prompt, image_name=stored, seed=seed, resolution=resolution, prefix=prefix, bindings=self.bindings)}
         sub = await client.post(f"{base}/prompt", json=body)
         prompt_id = upstream_object(sub, "prompt submit").get("prompt_id")
         if not isinstance(prompt_id, str) or not prompt_id:
@@ -142,7 +158,7 @@ class Pixal3DService:
             # Every other failed wait leaves the submitted prompt possibly running.
             await self._finish_cleanup(client, prompt_id)
             raise
-        ref = find_glb(entry.get("outputs") or {})
+        ref = find_glb(entry.get("outputs") or {}, bindings=self.bindings)
         if ref is None:
             raise Refusal(502, "ComfyUI finished without a GLB")
         got = await client.get(f"{base}/view", params=ref)
@@ -182,7 +198,7 @@ class Pixal3DService:
                 outputs = entry.get("outputs", {})
                 if not isinstance(status, dict) or not isinstance(outputs, dict):
                     raise Refusal(502, "History status and outputs must be objects")
-                if OUTPUT_NODE in outputs and not isinstance(outputs[OUTPUT_NODE], dict):
+                if self.bindings["output"]["node"] in outputs and not isinstance(outputs[self.bindings["output"]["node"]], dict):
                     raise Refusal(502, "History output node must be an object")
                 if status.get("status_str") == "error":
                     raise PromptEnded(502, "ComfyUI reported an error for the prompt")
@@ -220,11 +236,11 @@ class Pixal3DService:
 def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,
                client_factory: Callable[[], httpx.AsyncClient] | None = None,
                poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0,
-               max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES) -> FastAPI:
+               max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES, bindings: dict | None = None) -> FastAPI:
     if type(max_image_bytes) is not int or max_image_bytes < 1:
         raise ValueError("max_image_bytes must be a positive integer")
     service = Pixal3DService(base_url, prompt if prompt is not None else load_prompt(),
-                             client_factory or (lambda: httpx.AsyncClient(timeout=60.0)), poll_interval, timeout, cleanup_timeout)
+                             client_factory or (lambda: httpx.AsyncClient(timeout=60.0)), poll_interval, timeout, cleanup_timeout, bindings)
     app = FastAPI(title="Pixal3D ComfyUI service")
 
     @app.get("/health")
@@ -248,8 +264,8 @@ def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,
             data = buffered.getvalue()
         if not data:
             return JSONResponse({"error": "the image is empty"}, status_code=400)
-        if resolution is not None and resolution not in RESOLUTIONS:
-            return JSONResponse({"error": f"resolution must be one of {list(RESOLUTIONS)}"}, status_code=422)
+        if resolution is not None and resolution not in service.bindings["resolutions"]:
+            return JSONResponse({"error": f"resolution must be one of {service.bindings["resolutions"]}"}, status_code=422)
         if seed is not None and not 0 <= seed <= SEED_MAX:
             return JSONResponse({"error": f"seed must be 0 to {SEED_MAX}"}, status_code=422)
         try:

@@ -548,15 +548,18 @@ async def execute_paid_litellm(
     capture_retention_facts: Callable[[RouteReceipt], None] | None = None,
     attempt_recorder=None, route_record: Mapping[str, Any] | None = None,
     deployment_id: str | None = None, before_send=None, disconnect_watcher=None,
+    policy_facts: tuple[str, str] | None = None,
 ) -> Response:
     """``identity`` carries the request's two plans, its App and the App's
     accountable person; each of them is needed to admit and charge the call."""
     model = str(body.get("model") or "")
     access, app_id, app_name = identity.access, identity.app_id, identity.name
-    protocol, intent = (
-        ("openai.embeddings", "text.embeddings") if request_path == "/v1/embeddings"
-        else ("openai.chat", "text.completions" if request_path == "/v1/completions" else "chat.completions")
-    )
+    if policy_facts is None:
+        from gateway.route_registry import azizam_policy
+        policy_facts = azizam_policy().get(request_path)
+    if policy_facts is None:
+        raise providers.RemoteProviderNotAllowed("Route has no declared admission policy")
+    protocol, intent = policy_facts
     receipt = attempt_recorder.receipt if attempt_recorder is not None else RouteReceipt(
         protocol=protocol, intent=intent, path=request_path, backend=provider.id,
         app_profile="+".join(access.plan_ids) or None, app_id=app_id, api_key_name=app_name,

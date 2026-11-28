@@ -1,3 +1,7 @@
+# Precedent: Apache TypesConfig/mime.types stores extension-to-MIME associations as data.
+# https://httpd.apache.org/docs/2.4/mod/mod_mime.html#typesconfig
+# This table retains explicit row order for reverse lookup; Apache precedence is not copied.
+# asset_suffixes is a separate override table: container aliases need not be storage aliases.
 # Container aliases for the metadata helpers. Handler names select existing algorithms.
 # Rows with a muxer use their first suffix when processing any listed MIME type.
 # Rows without a muxer intentionally contribute no MIME processing suffix.
@@ -104,3 +108,27 @@ speech_formats:
     suffix: .pcm
     suffix_mime_types: []
     error_order: 6
+
+asset_suffixes:
+  .png: image/png
+  .jpg: image/jpeg
+  .jpeg: image/jpeg
+  .webp: image/webp
+  .gif: image/gif
+  .wav: audio/wav
+  .mp3: audio/mpeg
+  .flac: audio/flac
+  .ogg: audio/ogg
+  .m4a: audio/mp4
+  .aac: audio/aac
+  .mp4: video/mp4
+  .webm: video/webm
+  .mov: video/quicktime
+  .mkv: video/x-matroska
+  .glb: model/gltf-binary
+  .gltf: model/gltf+json
+  .obj: model/obj
+  .stl: model/stl
+  .ply: model/ply
+  .usdz: model/vnd.usdz+zip
+  .safetensors: adapter/safetensors

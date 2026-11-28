@@ -1,3 +1,6 @@
+# Precedent: Telegraf inputs.exec declares argv and output parsing as data.
+# https://docs.influxdata.com/telegraf/v1/input-plugins/exec/
+# Identity selectors add an explicit inference role; no response-order assumption when identities exist.
 argv:
   - nvidia-smi
   - --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw,power.limit,power.default_limit,power.max_limit,clocks.gr,clocks.mem,fan.speed,clocks_throttle_reasons.active,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max
@@ -54,3 +57,7 @@ runtime_display:
   device_label: device[0]
   python_label: Python
   runtime_label: PyTorch
+
+inference_device:
+  stats_selector: {field: index, value: 0, fallback_position: 0}
+  host_selector: {field: index, value: 0}

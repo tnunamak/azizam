@@ -43,6 +43,19 @@
           "description": "Seconds the automatic (auto) decision may take.",
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "decision_parameters": {
+          "description": "LiteLLM precedent: request defaults are data, then selected model/service transforms adapt control shape. model and messages remain owned by the caller.",
+          "type": "object",
+          "propertyNames": {
+            "not": {
+              "enum": [
+                "model",
+                "messages"
+              ]
+            }
+          },
+          "x-azizam-entry": "atomic"
         }
       }
     },
@@ -167,6 +180,10 @@
                   "description": "The transparent IMAGE output used by the shipped RMBG graphs.",
                   "type": "integer",
                   "const": 0
+                },
+                "input": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             },

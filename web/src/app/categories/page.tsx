@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/product/empty-state";
 import { Callout, StatusLine } from "@/components/product/status-ui";
 import { AdvancedRules, loadActive } from "./advanced";
 import { CategoryList } from "./category-list";
-import type { CatalogService } from "./editor";
+import { catalogPresentation, type CatalogService } from "./editor";
 import { plainCategories, type Preset } from "./simple";
 
 const root = "/admin/api/categories";
@@ -36,7 +36,7 @@ function OwnerCategories() {
   const [adding, setAdding] = useState(false);
   const [picking, setPicking] = useState(false);
   const { data: catalogData, isFetching: catalogLoading, isError: catalogError, refetch: catalogRefetch } = useQuery({
-    queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[]; presets?: Preset[] }>(root + "/services"),
+    queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[]; presets?: Preset[]; capability_presentations?: CatalogService["capability_presentations"] }>(root + "/services").then(catalogPresentation),
     retry: false, refetchOnWindowFocus: false,
   });
   const { data: active, isError: activeError, isPending: activePending, refetch: activeRefetch } = useQuery({

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { adminFetch, ApiError, type AdminFetchInit } from "@/lib/api";
-import { CategoriesEditor, categoryId, distinct, isPinned, prepareSnapshot, rebuildSnapshot, updateCurrentService, validateSnapshot, valueInUse, type Snapshot } from "./editor";
+import { CategoriesEditor, catalogPresentation, categoryId, distinct, isPinned, prepareSnapshot, rebuildSnapshot, updateCurrentService, validateSnapshot, valueInUse, type Snapshot } from "./editor";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/api")>();
@@ -705,4 +705,19 @@ it("keeps loading and failed people lists distinct from an empty list", () => {
 it("numbers repeated choice labels instead of showing IDs", () => {
   expect(distinct([{ id: "a", label: "Name unavailable" }, { id: "b", label: "Chat" }, { id: "c", label: "Name unavailable" }]).map((choice) => choice.label))
     .toEqual(["Name unavailable 1", "Chat", "Name unavailable 2"]);
+});
+
+it("uses a new catalog capability label without an editor table", async () => {
+  const { user } = mountCatalog(rules(), { catalog: [{ stem: "studio", label: "Studio", kind: "model", capabilities: ["custom.run"], capability_presentations: { category_choices: [{ id: "custom.run", label: "Custom activity" }] } }] });
+  const section = within(screen.getByRole("region", { name: "Person access plans" }));
+  await user.click(section.getByRole("combobox", { name: "Capability" }));
+  expect(await screen.findByRole("option", { name: "Custom activity" })).toBeVisible();
+});
+
+it("consumes shared catalog presentation without changing the wire rows", () => {
+  const presentation = { category_choices: [{ id: "custom.run", label: "Custom activity" }] };
+  const payload = { services: [{ stem: "test", label: "Test", kind: "model" as const, capabilities: ["custom.run"] }], capability_presentations: presentation };
+  const view = catalogPresentation(payload);
+  expect(view.services[0]).toMatchObject({ capability_presentations: presentation });
+  expect(payload.services[0]).not.toHaveProperty("capability_presentations");
 });

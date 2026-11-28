@@ -23,17 +23,6 @@ sites:
   category: doc_example
   reason: Schema description example of a public OpenAI-compatible model id.
 - file: gateway/lifecycle_drivers.py
-  literal: .gguf
-  count: 1
-  category: file_format
-  reason: Suffix of the model file a record's gguf_path precheck requires before a
-    swap.
-- file: gateway/lifecycle_drivers.py
-  literal: gguf_path
-  count: 1
-  category: protocol_field
-  reason: Value of a record's driver_config precheck field, stored in service records.
-- file: gateway/lifecycle_drivers.py
   literal: '# Managed by azizam. Do not edit by hand; set role `model:`/`mmproj:`
     in proxy_config.yml.
 

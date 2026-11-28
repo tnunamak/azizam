@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 import yaml
+import gateway
 
 from gateway.operation_catalog import Catalog, load as load_catalog, project_capability_words
 
@@ -89,7 +90,7 @@ def _load_capability_tables(path: Path, *, catalog: Catalog | Path | None = None
         raise invalid("<document>", "must be a mapping")
     for key in document:
         if key not in {"schema_version", "capabilities", "protocol_words", "route_intents",
-                       "type_capabilities", "audio_rule", "modality_words", "media_type_modalities"}:
+                       "type_capabilities", "audio_rule", "modality_words", "media_type_modalities", "dispatch_relations", "presentation"}:
             raise invalid_table("document", key, "is an unknown top-level key")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be the integer 1")
@@ -319,16 +320,28 @@ MODEL_KINDS = tuple(MODEL_KIND_LABELS)
 # by the capability that needs them. This is the one table: the hop routes by it, and the service registry refuses a
 # transition-enabled member that declares a capability with no row here (that member would be reached only by an
 # endpoint the hop answers with 404).
-INNER_HOP_ENDPOINTS: dict[str, tuple[str, ...]] = {
-    "chat": ("/chat/completions", "/completions"),
-    "embed": ("/embeddings",),
-}
-# The admission intent and resource class of each inner-hop endpoint, as the outer routes name them.
-INNER_HOP_ADMISSION: dict[str, tuple[str, str]] = {
-    "/chat/completions": ("chat.generate", "chat"),
-    "/completions": ("chat.generate", "chat"),
-    "/embeddings": ("text.embeddings", "embeddings"),
-}
+def load_inner_hop_routes(path: Path | None = None, *, records=None):
+    """Project endpoint and admission facts from the same frontend route rows."""
+    if records is None:
+        document = yaml.safe_load((path or Path(gateway.__file__).resolve().parent.parent / "registry" / "protocol_frontends.yml").read_text())
+        records = [route for row in document.get("records", []) for route in row.get("registered_routes", [])]
+    endpoints, admission = {}, {}
+    for route in records:
+        hop = route.get("inner_hop")
+        if hop is None:
+            continue
+        if not isinstance(hop, dict) or any(not isinstance(hop.get(key), str) or not hop[key]
+                for key in ("endpoint", "capability", "intent", "resource_class")):
+            raise ValueError("invalid inner_hop route facts")
+        endpoint = hop["endpoint"]
+        if endpoint in admission:
+            raise ValueError("duplicate inner_hop endpoint")
+        endpoints.setdefault(hop["capability"], []).append(endpoint)
+        admission[endpoint] = (hop["intent"], hop["resource_class"])
+    return {key: tuple(paths) for key, paths in endpoints.items()}, admission
+
+
+INNER_HOP_ENDPOINTS, INNER_HOP_ADMISSION = load_inner_hop_routes()
 
 
 def capability_of_word(word: str) -> str:
@@ -372,3 +385,22 @@ def offered_model_kinds(words: Iterable[str]) -> list[str]:
     """
     served = {PROTOCOL_CAPABILITIES.get(word) for word in words}
     return [kind for kind in MODEL_KINDS if kind in served]
+
+
+def load_ui_presentation(path: Path = CAPABILITY_WORDS_PATH) -> dict[str, Any]:
+    """Publish inert catalog presentation facts, using Backstage's annotation shape."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))["presentation"]
+    if (not isinstance(data, dict) or set(data) - {"query_tabs"} != {"tabs", "category_choices", "text_image_intents", "text_image_task"}
+            or not isinstance(data["tabs"], dict)
+            or any(not isinstance(k, str) or not isinstance(v, str) or not k or not v for k, v in data["tabs"].items())
+            or not isinstance(data["category_choices"], list)
+            or any(not isinstance(r, dict) or not isinstance(r.get("id"), str) or not isinstance(r.get("label"), str)
+                   for r in data["category_choices"])
+            or not isinstance(data["text_image_intents"], list)
+            or any(not isinstance(v, str) for v in data["text_image_intents"])
+            or not isinstance(data["text_image_task"], str)):
+        raise ValueError("invalid capability presentation")
+    if "query_tabs" in data and (not isinstance(data["query_tabs"], dict)
+            or any(not isinstance(k, str) or not isinstance(v, str) for k, v in data["query_tabs"].items())):
+        raise ValueError("invalid capability query tabs")
+    return data

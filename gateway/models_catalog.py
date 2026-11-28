@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
 from gateway.availability import project_service
-from gateway.capability_ids import CAPABILITY_ALIAS_HIDES_NAMES, MODEL_KINDS
+from gateway.capability_ids import CAPABILITY_ALIAS_HIDES_NAMES, MODEL_KINDS, load_ui_presentation
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, LISTED_METADATA_KEY, RECOMMENDED_ALIASES, capability_presentation, product_capability,
     declared_health_success, engine_label, model_locality, service_health_endpoint, starts_on_demand, CAPABILITY_ICON_KEYS, unclassified_capability_words)
@@ -375,6 +375,7 @@ def build_models_catalog(
     return {
         "schema_version": 1,
         "object": "models.catalog",
+        "capability_presentations": load_ui_presentation(),
         "aliases": aliases,
         "models": model_rows,
         "counts": {

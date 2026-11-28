@@ -289,6 +289,7 @@ def _pairs(pairs):
 def create_category_router(*, auth: AdminAuth, store_path: Path,
                            service_catalog: Callable[[], list[dict]] = lambda: [],
                            presets: Callable[[], list[dict]] = lambda: [],
+                           capability_presentations: Callable[[], dict] | None = None,
                            admin_path: Path | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/categories", tags=["Categories"])
     # Delayed initialization means unauthorized calls never access the store.
@@ -339,7 +340,10 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                 return _error(403, "owner_required", "Only the gateway owner can manage categories.")
             try:
                 if operation == "services":
-                    return {"services": service_catalog(), "presets": _presets_or_none(presets)}
+                    payload = {"services": service_catalog(), "presets": _presets_or_none(presets)}
+                    if capability_presentations is not None:
+                        payload["capability_presentations"] = capability_presentations()
+                    return payload
                 body = {}
                 if method == "POST":
                     body = json.loads(raw, object_pairs_hook=_pairs,

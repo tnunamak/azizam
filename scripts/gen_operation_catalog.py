@@ -303,7 +303,7 @@ def protocol_frontend_gaps(source: Path) -> list[dict[str, str]]:
 def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None, models_source: Path | None = None, frontends_source: Path | None = None) -> str:
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
     expected = {name for name, _ in PROJECTED} | {name for name, _ in UNEXPRESSED}
-    if not isinstance(document, dict) or set(document) != expected:
+    if not isinstance(document, dict) or set(document) - {"dispatch_relations", "presentation"} != expected:
         raise ValueError("Every source top-level key must be classified")
     relations = []
     for name, context in PROJECTED:
@@ -350,6 +350,7 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         catalog["relations"].extend(model_spellings)
     if frontends_source is not None:
         catalog["unexpressed"].extend(protocol_frontend_gaps(frontends_source))
+    catalog["relations"].extend(document.get("dispatch_relations", []))
     # JSON is a YAML subset, with stable key order and explicit string quoting.
     return json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
 

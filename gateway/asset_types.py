@@ -2,7 +2,7 @@
 
 An asset's kind is the top-level part of its IANA media type (``image``, ``video``, ``audio``, ``model``,
 ``text``...), or ``file`` when the type is unknown. Nothing here names an engine or an output format that
-only one engine makes: a new output type is one row in ``SUFFIX_MEDIA_TYPES``, or nothing at all when the
+only one engine makes: a new output type is one row in ``registry/media_metadata_formats.yml``, or nothing at all when the
 standard library already knows the suffix.
 """
 from __future__ import annotations
@@ -49,13 +49,13 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
     for kind, words in rows.items():
         if not isinstance(kind, str) or not kind or kind != kind.lower() or not isinstance(words, dict):
             raise ValueError(f"{path.name}: kind {kind!r} must be a lower-case name with a mapping of words")
-        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD, ITEMS_FIELD, MAKING_FIELD} or not all(
+        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD, ITEMS_FIELD, MAKING_FIELD, "thumbnail", "thumbnail_frame"} or not all(
             isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS
         ):
             raise ValueError(
                 f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix, {RECENT_FIELD}, {ITEMS_FIELD} and {MAKING_FIELD}"
             )
-        for flag in (RECENT_FIELD, MAKING_FIELD):
+        for flag in (RECENT_FIELD, MAKING_FIELD, "thumbnail", "thumbnail_frame"):
             if flag in words and not isinstance(words[flag], bool):
                 raise ValueError(f"{path.name}: kind {kind!r} {flag} must be true or false")
         table[kind] = {word: words[word].strip() for word in KIND_WORDS}
@@ -67,6 +67,9 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
             if not isinstance(words[ITEMS_FIELD], str) or not words[ITEMS_FIELD].strip() or words[ITEMS_FIELD] != words[ITEMS_FIELD].lower():
                 raise ValueError(f"{path.name}: kind {kind!r} {ITEMS_FIELD} must be a lower-case non-empty string")
             table[kind][ITEMS_FIELD] = words[ITEMS_FIELD].strip()
+        for flag in ("thumbnail", "thumbnail_frame"):
+            if flag in words:
+                table[kind][flag] = words[flag]
         if "prefix" in words:
             prefix = words["prefix"]
             if not isinstance(prefix, str) or re.fullmatch(r"[a-z]{1,8}", prefix) is None:
@@ -82,34 +85,20 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
 
 KIND_NAMES: dict[str, dict[str, Any]] = load_kind_names()
 
-# Suffix -> media type. These rows win over the standard library, which lacks some types and
-# disagrees on others (for example ``.m4a``).
-SUFFIX_MEDIA_TYPES: dict[str, str] = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-    ".wav": "audio/wav",
-    ".mp3": "audio/mpeg",
-    ".flac": "audio/flac",
-    ".ogg": "audio/ogg",
-    ".m4a": "audio/mp4",
-    ".aac": "audio/aac",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mov": "video/quicktime",
-    ".mkv": "video/x-matroska",
-    ".glb": "model/gltf-binary",
-    ".gltf": "model/gltf+json",
-    ".obj": "model/obj",
-    ".stl": "model/stl",
-    ".ply": "model/ply",
-    ".usdz": "model/vnd.usdz+zip",
-    # A person's own adapter file (gateway/adapter_upload.py). Its kind, ``adapter``, has no stored-id prefix: it is stored
-    # under the generic one, and the Library derives the kind from this row.
-    ".safetensors": "adapter/safetensors",
-}
+def load_suffix_media_types(path: Path | None = None) -> dict[str, str]:
+    """Load ordered suffix overrides; standard-library MIME discovery remains the fallback."""
+    path = path or KIND_NAMES_PATH.with_name("media_metadata_formats.yml")
+    rows = yaml.safe_load(path.read_text(encoding="utf-8")).get("asset_suffixes")
+    if not isinstance(rows, dict) or not rows:
+        raise ValueError("asset_suffixes must be a nonempty mapping")
+    for suffix, media_type in rows.items():
+        if (not isinstance(suffix, str) or re.fullmatch(r"\.[a-z0-9]+", suffix) is None
+                or not isinstance(media_type, str) or re.fullmatch(r"[^\s/]+/[^\s/]+", media_type) is None):
+            raise ValueError("asset_suffixes requires lowercase suffixes and media types")
+    return dict(rows)
+
+
+SUFFIX_MEDIA_TYPES: dict[str, str] = load_suffix_media_types()
 
 
 def media_type_for_suffix(suffix: str) -> str:

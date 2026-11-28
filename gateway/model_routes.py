@@ -516,6 +516,7 @@ async def dispatch_routes(*, snapshot, target, request, body, surface, identity,
                                         runtime=runtime, ledger_path=ledger_path, admin_db_path=admin_db_path,
                                         paid_fallback=escalation, requested_model=target.requested_model,
                                         attempt_recorder=recorder, route_record=record, deployment_id=edge.deployment_id,
+                                        policy_facts=(protocol, intent),
                                         before_send=recheck, disconnect_watcher=watcher))
                                 elif local_executor is not None:
                                     response = await race_disconnect(local_executor(edge, prepared_body, current, recorder, watcher))

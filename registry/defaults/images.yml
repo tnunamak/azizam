@@ -8,6 +8,14 @@ max_batch_size: 4
 background_removal:
   enabled: true
   decision_timeout: 45
+  # Precedent: LiteLLM model request defaults + declarative request transforms.
+  # https://docs.litellm.ai/docs/proxy/configs
+  # Model/service transforms run after these workflow-owned decision parameters.
+  decision_parameters:
+    temperature: 0
+    max_tokens: 160
+    response_format: {type: json_object}
+    chat_template_kwargs: {enable_thinking: false}
 variations:
   default_workflow: qwen-image-2.1-edit
   denoise: 0.75
@@ -24,14 +32,15 @@ media_jobs:
     max_outstanding_per_person: 3
     max_outstanding: 12
 
+# Precedent: ComfyUI API-format graph bindings identify a node id and input name.
 # Graph facts not represented by the manifests' input binding maps.
 # Input targets and output selector definitions stay in their existing manifests.
 graph_roles:
   workflows/images/krea2-turbo.json:
-    background: {output: image, processor: "10", slot: 0}
+    background: {input: images, output: image, processor: "10", slot: 0}
   workflows/images/qwen-image-2.1-edit.json:
     reference_order: [source_image]
-    background: {output: image, processor: "11", slot: 0}
+    background: {input: images, output: image, processor: "11", slot: 0}
   workflows/images/seedvr2-upscale.json:
     reference_order: [source_image]
-    background: {output: image, processor: "99", slot: 0}
+    background: {input: images, output: image, processor: "99", slot: 0}

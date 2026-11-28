@@ -150,7 +150,7 @@ def test_loaded_maps_equal_literal_base_tables_including_order(tmp_path):
 def test_shipped_file_has_only_extra_intents_and_no_duplicate_transcription():
     document = yaml.safe_load(DATA.read_text(encoding="utf-8"))
     assert list(document) == [
-        "schema_version", "modality_words", "media_type_modalities", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule",
+        "schema_version", "modality_words", "media_type_modalities", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule", "dispatch_relations", "presentation",
     ]
     assert document["schema_version"] == 1
     assert document["modality_words"] == ["text", "image", "audio", "video", "mesh"]

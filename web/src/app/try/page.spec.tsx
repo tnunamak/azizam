@@ -1237,3 +1237,19 @@ test("models discovery uses the Try App scope", async () => {
     url === "/me/api/models/catalog?for=try",
   )).toBe(true));
 });
+
+test.each(["text", "image"])("catalog data adds a picture intent and its %s input eligibility", async (input) => {
+  mocks.params = new URLSearchParams("capability=image");
+  fetchMock.mockImplementation(async (url: string) => response(url.includes("workflows") ? workflows : {
+    aliases: [], capability_presentations: { tabs: { "custom.paint": "image" }, category_choices: [], text_image_intents: ["custom.paint"], text_image_task: "custom-task" },
+    models: [{ id: "custom-model", title: "Custom painter", task: "custom-task", capabilities: [{ intent: "custom.paint", input_modalities: [input] }] }],
+  }));
+  render(<TryPage />);
+  if (input === "text") {
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    expect(screen.getAllByText("Custom painter")[0]).toBeVisible();
+  } else {
+    expect(await screen.findByText("No picture models are available. Ask the owner.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  }
+});

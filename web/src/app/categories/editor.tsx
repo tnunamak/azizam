@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { capabilityUiPresentation } from "@/lib/capability-words";
 import { adminFetch, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -9,7 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Callout, StatusLine } from "@/components/product/status-ui";
 import { AudienceSummary, type AudiencePreview } from "./audience-preview";
 
-export type CatalogService = { stem: string; label: string; kind: "workflow" | "model"; capabilities: string[] };
+export type CatalogService = { stem: string; label: string; kind: "workflow" | "model"; capabilities: string[]; capability_presentations?: { category_choices: CapabilityChoice[] } };
+/** Attach the envelope's shared presentation once to the local catalog view, without repeating it on the wire. */
+export function catalogPresentation<T extends { services: CatalogService[]; capability_presentations?: CatalogService["capability_presentations"] }>(payload: T): T {
+  if (!payload.capability_presentations) return payload;
+  return { ...payload, services: payload.services.map((service) => ({ ...service, capability_presentations: payload.capability_presentations })) };
+}
 export type Category = {
   id: string; label: string; kind?: string; values: string[]; applies_to: string[];
   /** One line saying what the category is for. */
@@ -34,12 +40,12 @@ const owns = (value: object, key: string) => Object.prototype.hasOwnProperty.cal
 const categoryFor = (categories: Snapshot["categories"], id: string) => owns(categories, id) ? categories[id] : undefined;
 const plain = (value: string) => value.replace(/[_-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
 export const categoryId = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-const capabilities = [
-  { id: "chat.completions", label: "Chat" }, { id: "image.generate", label: "Images" }, { id: "image.edit", label: "Image editing" },
-  { id: "video.generate", label: "Video" }, { id: "speech.synthesis", label: "Voice" },
-  { id: "speech.transcription", label: "Transcription" }, { id: "music.generate", label: "Music" },
-  { id: "sound.generate", label: "Sound effects" }, { id: "embed", label: "Document search" }, { id: "text.embeddings", label: "Document search" },
-];
+type CapabilityChoice = { id: string; label: string; standalone?: boolean };
+const capabilityChoices = (catalog: CatalogService[]): CapabilityChoice[] => {
+  if (!catalog.length) return [...capabilityUiPresentation.category_choices];
+  const rows = catalog.flatMap<CapabilityChoice>((entry) => entry.capability_presentations?.category_choices ?? [...capabilityUiPresentation.category_choices]);
+  return [...new Map(rows.map((row) => [row.id, row])).values()];
+};
 const emptySnapshot = (): Snapshot => ({ id: "owner-rules", categories: {}, people: {}, apps: {}, services: {}, completeness_gate: true, retained: {} });
 const allPlans = (snapshot: Snapshot) => [...Object.values(snapshot.people), ...Object.values(snapshot.apps)].flat();
 function servicesIn(snapshot: Snapshot) {
@@ -327,7 +333,7 @@ function PlanEditor({ plan, categories, services, catalog, onChange }: { plan: P
     {plan.mode === "legacy" && <div className="space-y-3"><p className="text-meta">This access plan uses legacy tags: {plan.legacy_tags.map(plain).join(", ") || "None"}.</p><Button type="button" variant="outline" onClick={() => onChange({ ...plan, mode: "v3", legacy_tags: [] })}>Use category rules for this access plan</Button></div>}
     {plan.grants.map((grant, index) => {
       const entry = catalogService(catalog, grant.service);
-      const choices = entry ? entry.capabilities.map((id) => ({ id, label: capabilities.find((item) => item.id === id)?.label ?? id })) : capabilities.filter((item) => item.id !== "text.embeddings");
+      const choices = entry ? entry.capabilities.map((id) => ({ id, label: capabilityChoices(catalog).find((item) => item.id === id)?.label ?? id })) : capabilityChoices(catalog).filter((item) => item.standalone !== false);
       return <div key={index} className="space-y-4">
       <Pick label="Capability" value={grant.capability} choices={choices} onChange={(capability) => onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, capability } : item) })} />
       <Pick label="Model or workflow" value={grant.service} choices={Object.keys(services).map((id) => ({ id, label: modelName(catalog, id) }))} onChange={(service) => {
@@ -413,7 +419,7 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
   }))));
   const edit = (next: Snapshot) => { setDraft(next); setCandidate(null); setErrors([]); setNotice(""); };
   const report = (message: string) => setErrors([message]);
-  const requestName = (request: Request) => (people.find((person) => person.id === request.person)?.label ?? "Person name unavailable") + " · " + (apps.find((app) => app.id === request.app)?.label ?? "App name unavailable") + " · " + (capabilities.find((item) => item.id === request.capability)?.label ?? request.capability) + " · " + modelName(catalog, request.service) + (request.output ? " · Saved output" : "") + (request.phase ? " · " + plain(request.phase) : "");
+  const requestName = (request: Request) => (people.find((person) => person.id === request.person)?.label ?? "Person name unavailable") + " · " + (apps.find((app) => app.id === request.app)?.label ?? "App name unavailable") + " · " + (capabilityChoices(catalog).find((item) => item.id === request.capability)?.label ?? request.capability) + " · " + modelName(catalog, request.service) + (request.output ? " · Saved output" : "") + (request.phase ? " · " + plain(request.phase) : "");
   const loadCurrent = async () => {
     try { return await adminFetch<Active>(root + "/active"); }
     catch (error) { if (error instanceof ApiError && error.code === "no_active_snapshot") return null; throw error; }

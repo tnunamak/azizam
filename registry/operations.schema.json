@@ -43,6 +43,9 @@
           },
           {
             "$ref": "#/$defs/family"
+          },
+          {
+            "$ref": "#/$defs/dispatch"
           }
         ]
       }
@@ -435,6 +438,31 @@
           "pattern": "^\\S+(?![\\s\\S])"
         }
       }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "word",
+        "aliases"
+      ],
+      "properties": {
+        "kind": {
+          "const": "dispatch"
+        },
+        "word": {
+          "$ref": "#/$defs/text"
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
     }
-  }
+  },
+  "description": "Precedent: Backstage catalog relations carry directed typed edges (https://backstage.io/docs/features/software-catalog/descriptor-format/#common-to-all-kinds-relations). Dispatch rows are explicit context-specific compatibility sets, never global equivalence."
 }

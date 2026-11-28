@@ -54,3 +54,11 @@ defaults:
     transforms: []
     role: required
     managed: false
+
+# Precedent: Ansible stat/assert guards lifecycle effects with declarative file facts.
+# https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/stat_module.html
+# Legacy selectors resolve here; records may supply file_constraints directly.
+activation_file_constraints:
+  gguf_path:
+    model: {absolute: true, exists: true, suffixes: [.gguf]}
+    aux: {absolute: true, exists: true}

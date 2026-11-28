@@ -397,10 +397,25 @@ export interface CatalogCounts {
   capabilities: number;
 }
 
+export interface CapabilityChoice {
+  id: string;
+  label: string;
+  standalone?: boolean;
+}
+
+export interface CapabilityPresentation {
+  tabs: Record<string, string>;
+  category_choices: Array<CapabilityChoice>;
+  text_image_intents: Array<string>;
+  text_image_task: string;
+  query_tabs?: Record<string, string>;
+}
+
 export interface ModelsCatalog {
   schema_version: 1;
   object: "models.catalog";
   aliases: Array<CatalogRow>;
   models: Array<CatalogRow>;
   counts: CatalogCounts;
+  capability_presentations?: CapabilityPresentation;
 }

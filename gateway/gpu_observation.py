@@ -1,4 +1,6 @@
 """Configured host observation; command and column knowledge live in data."""
+import json
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -48,8 +50,8 @@ def _convert(value, kind):
         return None
 
 
-def observe(runner, path=DEFAULT_REGISTRY):
-    config = load_registry(path)
+def observe(runner, path=DEFAULT_REGISTRY, *, descriptor=None):
+    config = descriptor if descriptor is not None else load_registry(path)
     try:
         rc, out, _err = runner(list(config["argv"]))
     except FileNotFoundError:
@@ -185,3 +187,47 @@ def sampling_device_label():
 def attribution_buckets():
     """Stable semantic selectors map to operator-owned output names."""
     return display_config()["attribution_buckets"]
+
+
+def inference_device(record=None, path=DEFAULT_REGISTRY):
+    """A service observation overrides the release inference-device descriptor."""
+    descriptor = ((record or {}).get("config") or {}).get("inference_device") or load_registry(path)["inference_device"]
+    schema_text = DEFAULT_REGISTRY.with_name("engine_record_defaults.schema.json").read_text()
+    return _checked_inference_descriptor(json.dumps(descriptor, sort_keys=True), schema_text)
+
+
+@lru_cache(maxsize=32)
+def _checked_inference_descriptor(text, schema_text):
+    from jsonschema import validate
+    descriptor = json.loads(text)
+    validate(descriptor, json.loads(schema_text)["$defs"]["inference_device"])
+    return descriptor
+
+
+def inference_uuid(runner, record=None, path=DEFAULT_REGISTRY):
+    """Cache host identity per effective observer and selector; changing data invalidates the key."""
+    descriptor = inference_device(record, path)
+    probe = descriptor.get("uuid_probe")
+    if probe is None:
+        registry = load_registry(path)
+        probe = {"argv": registry["argv"], "fields": registry["fields"]}
+    return _cached_uuid(runner, json.dumps(probe, sort_keys=True), json.dumps(descriptor["host_selector"], sort_keys=True))
+
+
+@lru_cache(maxsize=32)
+def _cached_uuid(runner, probe_text, selector_text):
+    rows = observe(runner, descriptor=json.loads(probe_text)) or []
+    device = select_device(rows, json.loads(selector_text))
+    return device.get("uuid") if device else None
+
+
+def select_device(rows, selector):
+    """Select by declared identity; positional compatibility is explicit data."""
+    matches = [row for row in rows if row.get(selector.get("field")) == selector.get("value")]
+    if len(matches) == 1:
+        return matches[0]
+    position = selector.get("fallback_position")
+    if (not matches and not any(selector.get("field") in row for row in rows)
+            and type(position) is int and 0 <= position < len(rows)):
+        return rows[position]
+    return None

@@ -75,7 +75,7 @@ import {
 } from "@/lib/prompt-memory";
 import { periodWords, type RequestHistoryChoice } from "@/lib/request-history";
 import { taskNames } from "@/lib/terms";
-import { capabilityTryHelp } from "@/lib/capability-words";
+import { capabilityTryHelp, capabilityUiPresentation } from "@/lib/capability-words";
 import { modelDisplayName } from "@/lib/model-name";
 import { useUnsavedWork, type UnsavedKind } from "@/lib/unsaved-work";
 import { Button } from "@/components/ui/button";
@@ -375,35 +375,6 @@ const TAB_ITEMS: Array<{
   },
 ];
 
-const INTENT_TABS: Record<string, TryTab> = {
-  "chat.completions": "chat",
-  "image.generate": "image",
-  "speech.synthesis": "speech",
-  "speech.transcription": "transcribe",
-  "audio.transcription": "transcribe",
-  "text.embeddings": "embed",
-  "decision.choice": "decide",
-  "decision.systemone": "decide",
-  systemone: "decide",
-};
-const CAPABILITY_TABS: Record<string, TryTab> = {
-  chat: "chat",
-  image: "image",
-  images: "image",
-  speech: "speech",
-  voice: "speech",
-  tts: "speech",
-  transcribe: "transcribe",
-  transcription: "transcribe",
-  stt: "transcribe",
-  decide: "decide",
-  decision: "decide",
-  embed: "embed",
-  embeddings: "embed",
-  workflow: "workflow",
-  mesh: "mesh",
-};
-
 /**
  * Kinds of work Try runs through a workflow. A request for one opens
  * Workflow with only the workflows whose catalog capability matches. The
@@ -439,7 +410,7 @@ const PANEL_FILES: Partial<Record<TryTab, PanelFiles>> = {
 
 function requestedTabFor(key: string | undefined): TryTab | null {
   if (!key) return null;
-  if (CAPABILITY_TABS[key]) return CAPABILITY_TABS[key];
+  if ((capabilityUiPresentation.query_tabs as Record<string, TryTab>)[key]) return (capabilityUiPresentation.query_tabs as Record<string, TryTab>)[key];
   const kind = REQUESTED_KINDS[key];
   return kind && !kind.untryable ? "workflow" : null;
 }
@@ -954,7 +925,7 @@ function groupCatalog(payload: unknown) {
   const aliasTargets: Partial<Record<TryTab, Map<string, CatalogOption>>> = {};
   for (const [order, value] of records.entries()) {
     if (typeof value !== "object" || value === null) continue;
-    const record = value as Record<string, unknown>;
+    const record: Record<string, unknown> = { ...(value as Record<string, unknown>), capability_presentations: (payload as { capability_presentations?: unknown }).capability_presentations };
     const id =
       stringValue(record.id) ??
       stringValue((record.use as { model?: unknown } | undefined)?.model) ??
@@ -1208,6 +1179,12 @@ function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function presentationFor(record: Record<string, unknown>) {
+  return (record.capability_presentations ?? capabilityUiPresentation) as typeof capabilityUiPresentation;
+}
+function presentationTabs(record: Record<string, unknown>): Record<string, TryTab> {
+  return presentationFor(record).tabs as Record<string, TryTab>;
+}
 function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
   const capabilityIntents = Array.isArray(record.capabilities)
     ? record.capabilities
@@ -1228,7 +1205,7 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
     .filter(Boolean);
   const tabs = new Set<TryTab>();
   for (const intent of intents) {
-    const tab = CAPABILITY_TABS[intent] ?? INTENT_TABS[intent];
+    const tab = presentationTabs(record)[intent];
     // Model rows lack the runnable descriptor required by Workflow. Only the
     // separately discovered workflow catalog can populate that picker.
     if (tab && tab !== "workflow") tabs.add(tab);
@@ -1247,7 +1224,7 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
  */
 function makesPicturesFromText(record: Record<string, unknown>) {
   const task = stringValue(record.task);
-  if (task && task !== "text-to-image") return false;
+  if (task && task !== presentationFor(record).text_image_task) return false;
   const summaries = Array.isArray(record.capabilities)
     ? (record.capabilities as unknown[]).filter(
         (item): item is Record<string, unknown> =>
@@ -1255,11 +1232,13 @@ function makesPicturesFromText(record: Record<string, unknown>) {
       )
     : [];
   const imageIntents = summaries.filter(
-    (item) => String(item.intent ?? "").split(".")[0] === "image",
+    (item) => (presentationFor(record).text_image_intents as readonly string[]).some(
+      (intent) => intent.split(".")[0] === String(item.intent ?? "").split(".")[0],
+    ),
   );
   if (!imageIntents.length) return true;
   return imageIntents.some((item) => {
-    if (item.intent !== "image.generate") return false;
+    if (!(presentationFor(record).text_image_intents as readonly string[]).includes(String(item.intent))) return false;
     const input = Array.isArray(item.input_modalities)
       ? item.input_modalities
       : [];
@@ -1276,10 +1255,10 @@ function capabilitySummaries(record: Record<string, unknown>): Array<Record<stri
     : [];
 }
 
-function capabilityTab(intent: unknown): TryTab | undefined {
+function capabilityTab(intent: unknown, record: Record<string, unknown>): TryTab | undefined {
   if (typeof intent !== "string") return undefined;
   const key = intent.toLowerCase().trim();
-  return CAPABILITY_TABS[key] ?? INTENT_TABS[key];
+  return presentationTabs(record)[key];
 }
 
 /**
@@ -1289,7 +1268,7 @@ function capabilityTab(intent: unknown): TryTab | undefined {
 function takesPictures(record: Record<string, unknown>) {
   return capabilitySummaries(record).some((item) => {
     const input = Array.isArray(item.input_modalities) ? item.input_modalities : [];
-    return capabilityTab(item.intent) === "chat" && input.includes("image");
+    return capabilityTab(item.intent, record) === "chat" && input.includes("image");
   });
 }
 
@@ -1300,7 +1279,7 @@ function takesPictures(record: Record<string, unknown>) {
 function makesEmbeddingsAs(record: Record<string, unknown>, capability: TryTab) {
   return capability === "embed" || capabilitySummaries(record).some((item) => {
     const output = Array.isArray(item.output_modalities) ? item.output_modalities : [];
-    return capabilityTab(item.intent) === capability && output.includes("embedding");
+    return capabilityTab(item.intent, record) === capability && output.includes("embedding");
   });
 }
 
