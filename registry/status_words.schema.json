@@ -41,8 +41,6 @@
             "output_dir_env",
             "custom_nodes_env",
             "baseline_field",
-            "audio_decode_class",
-            "two_stage_class",
             "client_id_attr",
             "disabled_reason",
             "operator_mode_reason"
@@ -125,14 +123,6 @@
               "minLength": 1
             },
             "baseline_field": {
-              "type": "string",
-              "minLength": 1
-            },
-            "audio_decode_class": {
-              "type": "string",
-              "minLength": 1
-            },
-            "two_stage_class": {
               "type": "string",
               "minLength": 1
             },

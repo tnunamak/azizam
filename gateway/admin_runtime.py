@@ -1041,8 +1041,8 @@ class AdminSQLiteStore:
                         if isinstance(config_values.get("models"), (list, tuple)):
                             config_values["models"] = service_registry._form_models_to_config(config_values["models"])
                         config_values["lifecycle"] = service_registry.legacy_lifecycle_from_service(service)
-                    defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
-                                "headers": [], "models": [], "transforms": [], "role": "required", "managed": False}
+                    from gateway.engine_record_defaults import release_defaults
+                    defaults = release_defaults()["service"]
                     # Compare settings that grant connection, routing or host control.
                     # Metadata may be written by administrators; evidence needs the trusted route.
                     keys = {

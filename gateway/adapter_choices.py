@@ -36,15 +36,19 @@ from typing import Any, NamedTuple, Protocol
 
 import yaml
 
+from gateway import release_policy
+_DISCOVERY_POLICY = release_policy.load("adapter_discovery")
+_STORAGE_POLICY = release_policy.load("adapter_upload_policy")
+
 MEMBER_UPLOAD_SUBFOLDER = "azizam-uploads"
 LORAS_INPUT = "loras"
 ENCODER_INPUT = "text_encoder"
 SETTING_KEY = "adapter_marks"
-MAX_AGE_S = 300.0          # a list read from the engine is used this long
-HEADER_AGE_S = 6 * 3600.0  # a header read is used this long; a file's header does not change while it stays listed
-STALE_LIST_S = 10.0        # a requested name missing from a list older than this makes one re-read before it is refused
-FAILED_READ_BACKOFF_S = 30.0  # after a failed list read the engine is not asked again for this long
-HEADER_READS_AT_ONCE = 8
+MAX_AGE_S = _DISCOVERY_POLICY["max_age_s"]
+HEADER_AGE_S = _DISCOVERY_POLICY["header_age_s"]
+STALE_LIST_S = _DISCOVERY_POLICY["stale_list_s"]
+FAILED_READ_BACKOFF_S = _DISCOVERY_POLICY["failed_read_backoff_s"]
+HEADER_READS_AT_ONCE = _DISCOVERY_POLICY["header_reads_at_once"]
 TABLE_PATH = Path(__file__).resolve().parents[1] / "registry" / "adapter_architectures.yml"
 
 log = logging.getLogger(__name__)
@@ -103,7 +107,7 @@ class Uploads(Protocol):
 
 
 UPLOADS: Uploads | None = None
-HOLD_TTL_S = 1800.0        # a copy chosen for a request is held this long when the request cannot say it has ended
+HOLD_TTL_S = _STORAGE_POLICY["request_hold_ttl_s"]
 
 
 def hold_run(key: str, supplied: Mapping[str, Any]) -> None:
@@ -120,7 +124,7 @@ def release(key: str | None) -> None:
         UPLOADS.release(key)
 
 
-RUN_HOLD_TTL_S = 6 * 3600.0   # a run's copies are held until it ends, or this long if it never says
+RUN_HOLD_TTL_S = _STORAGE_POLICY["hold_ttl_s"]
 
 
 @dataclass(frozen=True)

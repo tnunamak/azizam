@@ -103,3 +103,47 @@ operations:
   - id: decisions
     words: ["decision","decisions"]
     intent_prefixes: ["decision."]
+
+quick_tests:
+- title: Chat completion
+  intent: chat.completions
+  model: default
+  template: "curl -s https://gateway.example/openai/v1/chat/completions \\\n  -H \"\
+    Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\"\
+    \ \\\n  -d '{\"model\":\"$selected_model\",\"messages\":[{\"role\":\"user\",\"\
+    content\":\"hi\"}]}'"
+- title: Image generation
+  intent: image.generate
+  model: krea2-turbo
+  template: "curl -s https://gateway.example/openai/v1/images/generations \\\n  -H\
+    \ \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\"\
+    \ \\\n  -d '{\"model\":\"$selected_model\",\"prompt\":\"a calico cat\",\"size\"\
+    :\"512x512\"}'"
+- title: Text-to-speech
+  intent: speech.synthesis
+  model: voxtral-4b-tts
+  template: "curl -s https://gateway.example/openai/v1/audio/speech \\\n  -H \"Authorization:\
+    \ Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d\
+    \ '{\"model\":\"$selected_model\",\"voice\":\"nova\",\"input\":\"hello\"}' --output\
+    \ out.mp3"
+- title: Speech-to-text
+  intent: speech.transcription
+  model: parakeet-tdt-0.6b-v3
+  template: "curl -s https://gateway.example/openai/v1/audio/transcriptions \\\n \
+    \ -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -F \"file=@audio.mp3\" -F\
+    \ \"model=$selected_model\""
+- title: "Video \u2014 text-to-video"
+  intent: video.generate
+  model: ltx-2.5
+  template: "curl -s https://gateway.example/openai/v1/videos \\\n  -H \"Authorization:\
+    \ Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d\
+    \ '{\"model\":\"$selected_model\",\"prompt\":\"a calico cat playing chess\",\"\
+    seconds\":5}'"
+- title: "Video \u2014 image-to-video"
+  input_modalities: [image]
+  intent: video.generate
+  model: ltx-2.5
+  template: "curl -s https://gateway.example/openai/v1/videos \\\n  -H \"Authorization:\
+    \ Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d\
+    \ '{\"model\":\"$selected_model\",\"prompt\":\"camera dolly in\",\"input_image_url\"\
+    :\"\u2026\"}'"

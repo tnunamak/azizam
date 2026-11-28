@@ -44,3 +44,13 @@ defaults:
   videos:
     video_timeout: 1800
     video_workflows_dir: ./workflows
+
+  service:
+    base_path: /v1
+    scheme: http
+    timeout: 600
+    headers: []
+    models: []
+    transforms: []
+    role: required
+    managed: false

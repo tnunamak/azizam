@@ -5,6 +5,10 @@ id: image.generate.krea2-turbo
 intent: image.generate
 capability: image
 annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: false
+    supports_audio: false
+    two_stage: false
   azizam.dev/backfill:
     capability: intent-prefix rule, schema 1 to 2
 display_name: Krea 2 Turbo

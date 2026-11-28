@@ -5,6 +5,10 @@ id: image.edit.qwen-image-2.1-edit
 intent: image.edit
 capability: image
 annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: true
+    supports_audio: false
+    two_stage: false
   azizam.dev/backfill:
     capability: intent-prefix rule, schema 1 to 2
 display_name: Qwen-Image 2.1 Edit

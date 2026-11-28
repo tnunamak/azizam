@@ -1,0 +1,15 @@
+{
+  "max_bytes": 2147483648,
+  "max_bytes_ceiling": 8589934592,
+  "max_header_bytes": 8388608,
+  "max_total_bytes": 10737418240,
+  "total_bytes_ceiling": 549755813888,
+  "framing_bytes": 1048576,
+  "idle_s": 86400.0,
+  "cache_max_bytes": 17179869184,
+  "hold_ttl_s": 21600.0,
+  "scratch_max_age_s": 3600.0,
+  "header_cache_entries": 65536,
+  "sweep_every_s": 600.0,
+  "request_hold_ttl_s": 1800.0
+}

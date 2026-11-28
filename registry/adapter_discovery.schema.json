@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "max_age_s",
+    "header_age_s",
+    "stale_list_s",
+    "failed_read_backoff_s",
+    "header_reads_at_once"
+  ],
+  "properties": {
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "header_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "stale_list_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "failed_read_backoff_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "header_reads_at_once": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    }
+  }
+}

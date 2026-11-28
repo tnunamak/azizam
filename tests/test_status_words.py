@@ -26,7 +26,7 @@ SHIPPED_IMAGES = {
     "dir_env": "AZIZAM_COMFY_DIR", "output_dir_env": "AZIZAM_COMFY_OUTPUT_DIR",
     "custom_nodes_env": "AZIZAM_COMFY_CUSTOM_NODES_DIR", "baseline_field": "comfy_baseline_bytes",
     "disabled_reason": "comfy_disabled", "operator_mode_reason": "comfy_operator_mode",
-    "audio_decode_class": "LTXVAudioVAEDecode", "two_stage_class": "LTXVCropGuides", "client_id_attr": "GRAPH_CLIENT_ID",
+    "client_id_attr": "GRAPH_CLIENT_ID",
 }
 
 

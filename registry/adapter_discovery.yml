@@ -1,0 +1,7 @@
+{
+  "max_age_s": 300.0,
+  "header_age_s": 21600.0,
+  "stale_list_s": 10.0,
+  "failed_read_backoff_s": 30.0,
+  "header_reads_at_once": 8
+}

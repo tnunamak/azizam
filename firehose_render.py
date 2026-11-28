@@ -426,7 +426,7 @@ def render_html(
         ("Repo state", _render_repo_state(payload.get("repo_state") or {})),
         ("Backend readiness", _render_backend_readiness(payload)),
         ("Recent errors (4xx/5xx)", _render_recent_errors(payload.get("recent_events") or []), True),
-        ("Quick test endpoints", _render_quick_test(), True),
+        ("Quick test endpoints", _render_quick_test(payload.get("catalog_rows") or ()), True),
         (f'{_GRAPH_WORDS["label"]} custom nodes', _render_graph_custom_nodes(payload.get(_GRAPH_WORDS["custom_nodes_key"]) or []), True),
     ])
 
@@ -2608,42 +2608,19 @@ def _render_recent_errors(events: list[dict]) -> str:
     return "".join(rows)
 
 
-def _render_quick_test() -> str:
+def _render_quick_test(catalog_rows=()) -> str:
     """Static copy-pasteable curl examples. Kept inside collapsed <details> by
     the caller so it doesn't dominate the main view."""
-    # Use local model names — the proxy aliases OpenAI canonical names to
-    # these, but for self-hosted-stack users the local names are more honest.
-    examples = [
-        ("Chat completion",
-         'curl -s https://gateway.example/openai/v1/chat/completions \\\n'
-         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
-         '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"default","messages":[{"role":"user","content":"hi"}]}\''),
-        ("Image generation",
-         'curl -s https://gateway.example/openai/v1/images/generations \\\n'
-         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
-         '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"krea2-turbo","prompt":"a calico cat","size":"512x512"}\''),
-        ("Text-to-speech",
-         'curl -s https://gateway.example/openai/v1/audio/speech \\\n'
-         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
-         '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"voxtral-4b-tts","voice":"nova","input":"hello"}\' --output out.mp3'),
-        ("Speech-to-text",
-         'curl -s https://gateway.example/openai/v1/audio/transcriptions \\\n'
-         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
-         '  -F "file=@audio.mp3" -F "model=parakeet-tdt-0.6b-v3"'),
-        ("Video — text-to-video",
-         'curl -s https://gateway.example/openai/v1/videos \\\n'
-         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
-         '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"ltx-2.5","prompt":"a calico cat playing chess","seconds":5}\''),
-        ("Video — image-to-video",
-         'curl -s https://gateway.example/openai/v1/videos \\\n'
-         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
-         '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"ltx-2.5","prompt":"camera dolly in","input_image_url":"…"}\''),
-    ]
+    from gateway.models_catalog import status_example_rows
+    rows = status_example_rows()
+    examples = []
+    for row in rows:
+        eligible = [item for item in catalog_rows if item.get("intent") == row["intent"] and item.get("id")
+                    and set(row["input_modalities"]) <= set(item.get("input_modalities") or ())]
+        if catalog_rows and row["input_modalities"] and not eligible:
+            continue
+        model = eligible[0]["id"] if eligible else row["model"]
+        examples.append((row["title"], row["template"].replace("$selected_model", str(model))))
     parts: list[str] = ['<div class="muted small" style="margin-bottom:6px;">'
                         'Set <code>AZIZAM_API_KEY</code> in your shell '
                         '(get a key from the proxy admin).</div>']

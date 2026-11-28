@@ -4,8 +4,9 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-Fourteen sections ship. Three are the owner settings that existed before the layer, one holds the model aliases, and
-ten hold the settings the startup file held:
+Sixteen sections ship. The table lists each owner-changeable section. Release-only adapter admission/storage,
+discovery and workflow tombstone policies live directly in `registry/`, outside this directory: they are not owner
+sections. The existing `adapter_uploads` owner setting remains the sole home for upload enablement and owner size caps:
 
 | Section | Holds | Routes that write it |
 |---|---|---|
@@ -23,6 +24,8 @@ ten hold the settings the startup file held:
 | `voices` | the custom voice limits, the sample rules, and the quality and design engines (the release names none) | the config API |
 | `videos` | the video workflows (graph file and limits), the default, remix and extend workflows, the length caps, the older exact workflow names | the config API |
 | `audio` | the audio workflows (graph file and length limits), the default workflow, the older exact workflow names | the config API |
+| `models` | per-model configuration entries | the config API |
+| `workflow_execution` | workflow save/run bounds, wait and history settings | the config API |
 
 Each settings route keeps its request and response shape. A write is a revision-checked change of the section: a missing
 `If-Match` is 428 and a stale one is 412. On first boot after the upgrade, the values in the old `operator_settings`

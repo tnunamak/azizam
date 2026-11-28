@@ -5147,7 +5147,7 @@ async def _stream_tts_upstream(
             return _tts_error("TTS proxy error.", 502)
 
         # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
-        # first and fails inside the stream when GPU0 is full, so the status alone cannot be
+        # first and fails inside the stream before producing audio, so the status alone cannot be
         # trusted. Read the first chunk before committing a 200 to the client: a stream that
         # dies before any audio becomes a 503 and the tier falls back to its next engine.
         raw_chunks = upstream.__aiter__()
@@ -5155,7 +5155,7 @@ async def _stream_tts_upstream(
             first_chunk = await anext(raw_chunks, b"")
         except TransportFailure as e:
             print(f"[proxy] TTS engine at {log_scrub.describe_origin(url)} dropped the stream before any audio: {log_scrub.describe_error(e)}", flush=True)
-            return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
+            return _tts_error(gateway_messages.GATEWAY_MESSAGES["tts_stream_failed"], 503, "tts_engine_stream_failed")
         if not first_chunk:
             return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
 
@@ -13353,7 +13353,7 @@ async def _submit_video_chain(
     width, height = video_grid.resolve_size(
         str(size or workflow_cfg.get("default_size") or "960x512"),
         video_grid.SizeSpec(default="", max=workflow_cfg.get("max_size", "1280x720"),
-                            multiple=int(workflow_cfg.get("size_multiple", 32))))
+                            multiple=int(workflow_cfg.get("size_multiple", video_grid.DEFAULT_SIZE_MULTIPLE))))
 
     try:
         seed_val = int(body["seed"]) if body.get("seed") is not None else random.randint(0, 2**32 - 1)

@@ -34,18 +34,20 @@ _LOG = logging.getLogger(__name__)
 SETTING_KEY = "adapter_uploads"      # the owner's setting in admin.db: {"enabled": bool, "max_bytes": int, "max_total_bytes": int}
 SUBFOLDER = MEMBER_UPLOAD_SUBFOLDER         # the gateway's own folder inside the engine's adapter folder
 SUFFIX = ".safetensors"
-DEFAULT_MAX_BYTES = 2 * (1 << 30)    # a file over this is refused
-MAX_BYTES_CEILING = 8 * (1 << 30)    # the owner may raise the cap to this, and the request body limit follows it
-MAX_HEADER_BYTES = 8 << 20           # a header over this is refused before it is read
-IDLE_S = 24 * 3600.0                 # a copy no request used for this long is removed
-CACHE_MAX_BYTES = 16 * (1 << 30)     # all copies together stay under this; the least recently used go first
-DEFAULT_TOTAL_BYTES = 10 * (1 << 30)  # one person's uploads together stay under this
-TOTAL_BYTES_CEILING = 512 * (1 << 30)  # the owner may raise the per-person total to this
-HOLD_TTL_S = 6 * 3600.0              # a hold the run never released (a lost worker) ends after this
-SCRATCH_MAX_AGE_S = 3600.0           # a half-written copy older than this is a crash leftover
-FRAMING_BYTES = 1 << 20              # what a multipart body may carry beyond the file
-HEADER_CACHE_ENTRIES = 65536         # parsed headers kept; a full cache drops its oldest entry, never all of them
-SWEEP_EVERY_S = 600.0                # how often the gateway sweeps the engine's folders
+from gateway import release_policy
+_UPLOAD_POLICY = release_policy.load("adapter_upload_policy")
+DEFAULT_MAX_BYTES = _UPLOAD_POLICY["max_bytes"]
+MAX_BYTES_CEILING = _UPLOAD_POLICY["max_bytes_ceiling"]
+MAX_HEADER_BYTES = _UPLOAD_POLICY["max_header_bytes"]
+IDLE_S = _UPLOAD_POLICY["idle_s"]
+CACHE_MAX_BYTES = _UPLOAD_POLICY["cache_max_bytes"]
+DEFAULT_TOTAL_BYTES = _UPLOAD_POLICY["max_total_bytes"]
+TOTAL_BYTES_CEILING = _UPLOAD_POLICY["total_bytes_ceiling"]
+HOLD_TTL_S = _UPLOAD_POLICY["hold_ttl_s"]
+SCRATCH_MAX_AGE_S = _UPLOAD_POLICY["scratch_max_age_s"]
+FRAMING_BYTES = _UPLOAD_POLICY["framing_bytes"]
+HEADER_CACHE_ENTRIES = _UPLOAD_POLICY["header_cache_entries"]
+SWEEP_EVERY_S = _UPLOAD_POLICY["sweep_every_s"]
 
 _METADATA = "__metadata__"
 # Every pattern is used with ``fullmatch``: ``$`` would also accept a trailing newline.

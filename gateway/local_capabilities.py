@@ -51,16 +51,6 @@ from gateway.service_priority import selected_service, service_priority
 if TYPE_CHECKING:  # model_metadata imports this module through stable_aliases; read it at call time
     from gateway.model_metadata import MetadataContract
 
-# Intent vocabulary used by the gateway. Mirrors what proxy.py advertises
-# today, kept here so this module does not depend on the proxy.
-INTENT_CHAT = "chat.completions"
-INTENT_COMPLETIONS = "text.completions"
-INTENT_EMBEDDINGS = "text.embeddings"
-INTENT_SPEECH = "speech.synthesis"
-INTENT_TRANSCRIPTIONS = "speech.transcription"
-INTENT_TRANSLATIONS = "speech.translation"
-INTENT_VIDEO_GENERATE = "video.generate"
-INTENT_AUDIO_GENERATE = "audio.generate"
 
 
 def build_local_capabilities(
@@ -174,7 +164,7 @@ def _parse_local_capability_rows(
             "schema_version", "alias_operations", "workflow_families",
             "image_defaults", "image_rows", "workflow_defaults",
         },
-        "document row 0", frozenset({"backend_rows"}),
+        "document row 0", frozenset({"backend_rows", "intent_exports"}),
     )
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         fail("document row 0", "schema_version must be 1")
@@ -442,6 +432,23 @@ def _load_catalog_local_capability_rows(
     _ALIAS_INTENTS, _WORKFLOW_FAMILIES, _BACKEND_ROWS,
     _IMAGE_DEFAULTS, _IMAGE_ROWS, _WORKFLOW_DEFAULTS, _ALIAS_ROWS,
 ) = _load_catalog_local_capability_rows()
+
+
+def load_intent_exports(path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH) -> Mapping[str, str]:
+    """Compatibility Python names bound to exact declared operation ids."""
+    document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    rows = document.get("intent_exports", {})
+    operations = load_operation_catalog(_LOCAL_CAPABILITY_ROWS_PATH.with_name("operations.yml")).operations
+    if not isinstance(rows, dict) or any(
+        not isinstance(name, str) or not name.isidentifier() or not name.startswith("INTENT_")
+        or value not in operations for name, value in rows.items()
+    ):
+        raise ValueError("intent_exports must bind INTENT_ identifiers to declared operations")
+    return MappingProxyType(rows)
+
+
+_INTENT_EXPORTS = load_intent_exports()
+globals().update(_INTENT_EXPORTS)
 
 
 def alias_operation_rows() -> tuple[Mapping[str, Any], ...]:
@@ -887,14 +894,4 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
     return {}
 
 
-__all__ = [
-    "build_alias_capabilities",
-    "INTENT_CHAT",
-    "INTENT_COMPLETIONS",
-    "INTENT_EMBEDDINGS",
-    "INTENT_SPEECH",
-    "INTENT_TRANSCRIPTIONS",
-    "INTENT_VIDEO_GENERATE",
-    "INTENT_AUDIO_GENERATE",
-    "build_local_capabilities",
-]
+__all__ = ["build_alias_capabilities", "build_local_capabilities", *_INTENT_EXPORTS]

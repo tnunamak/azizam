@@ -1641,6 +1641,12 @@ def _images_budget(config: dict) -> dict:
 _WORKFLOW_CAPS_CACHE: dict[tuple[str, int], dict] = {}
 
 
+@functools.lru_cache(maxsize=2)
+def _status_workflow_contracts(directory: str, signature: tuple) -> dict:
+    from gateway.discovery import bundled_workflow_manifests
+    return bundled_workflow_manifests(Path(directory))
+
+
 def _read_workflow_caps(path: Path) -> dict:
     """Parse a ComfyUI workflow JSON; cached per (path, mtime).
 
@@ -1655,12 +1661,14 @@ def _read_workflow_caps(path: Path) -> dict:
             "node_count": 0, "top_class_types": {}, "all_class_types": {},
         }
     key = (str(path), int(st.st_mtime))
+    from gateway.workflow_projections import graph_status_capabilities
+    from gateway import discovery
+    root = discovery.BUNDLED_WORKFLOWS_DIR
+    contracts = _status_workflow_contracts(str(root), discovery._manifest_signature(root))
+    capabilities = graph_status_capabilities(path, contracts)
     cached = _WORKFLOW_CAPS_CACHE.get(key)
     if cached is not None:
-        return cached
-    supports_i2v = False
-    supports_audio = False
-    two_stage = False
+        return {**cached, **capabilities}
     class_types: Counter = Counter()
     try:
         wf_json = json.loads(path.read_text(encoding="utf-8"))
@@ -1673,19 +1681,8 @@ def _read_workflow_caps(path: Path) -> dict:
             ct = v.get("class_type")
             if ct:
                 class_types[str(ct)] += 1
-            meta = v.get("_meta")
-            if isinstance(meta, dict) and "image_node" in meta:
-                supports_i2v = True
-            if ct == "LoadImage":
-                supports_i2v = True
-            if ct == _GRAPH_WORDS["audio_decode_class"]:
-                supports_audio = True
-            if ct == _GRAPH_WORDS["two_stage_class"]:
-                two_stage = True
     result = {
-        "supports_i2v": supports_i2v,
-        "supports_audio": supports_audio,
-        "two_stage": two_stage,
+        **capabilities,
         "node_count": sum(class_types.values()),
         "top_class_types": dict(class_types.most_common(3)),
         "all_class_types": dict(class_types.most_common(50)),
@@ -1696,6 +1693,13 @@ def _read_workflow_caps(path: Path) -> dict:
         for k in list(_WORKFLOW_CAPS_CACHE.keys())[:16]:
             _WORKFLOW_CAPS_CACHE.pop(k, None)
     return result
+
+
+def _status_catalog_rows(config: dict) -> list[dict[str, Any]]:
+    """Examples use the same declared local model/operation pairs as discovery."""
+    from gateway.local_capabilities import build_local_capabilities
+    return [{"id": row.model, "intent": row.intent, "input_modalities": list(row.input_modalities)}
+            for row in build_local_capabilities(config) if row.model]
 
 
 def _capabilities(config: dict) -> list[dict]:
@@ -3898,6 +3902,7 @@ async def build_status_payload(config: dict) -> dict:
         "ram_attribution": _section(_ram_attribution, config),
         "repo_state": _section(_repo_state),
         _GRAPH_WORDS["custom_nodes_key"]: _section(_graph_custom_nodes),
+        "catalog_rows": _section(_status_catalog_rows, config),
         "capabilities": _section(_capabilities, config),
         "image_capabilities": _section(_image_capabilities, config),
         "xids": _section(_journal_xids),
@@ -4242,6 +4247,7 @@ async def build_status_payload(config: dict) -> dict:
                 "reasons": system_health_reasons,
             },
         },
+        "catalog_rows": first.get("catalog_rows") or [],
         "backends": backends or [],
         "gpus": gpus,
         "vram_attribution": vram_attr,

@@ -177,3 +177,13 @@ workflow_defaults:
   execution: job
   streaming: false
   gpu_required: true
+
+intent_exports:
+  INTENT_CHAT: chat.completions
+  INTENT_COMPLETIONS: text.completions
+  INTENT_EMBEDDINGS: text.embeddings
+  INTENT_SPEECH: speech.synthesis
+  INTENT_TRANSCRIPTIONS: speech.transcription
+  INTENT_TRANSLATIONS: speech.translation
+  INTENT_VIDEO_GENERATE: video.generate
+  INTENT_AUDIO_GENERATE: audio.generate

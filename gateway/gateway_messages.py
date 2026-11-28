@@ -11,7 +11,7 @@ import yaml
 
 _GATEWAY_MESSAGES_PATH = Path(__file__).resolve().parents[1] / "registry" / "gateway_messages.yml"
 _MESSAGE_FIELDS = frozenset({
-    "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "tts_stream_failed", "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
     "prompt_namespace_description",
     "workflow_namespace_description",
     "chat_namespace_description",
@@ -27,7 +27,7 @@ _MESSAGE_FIELDS = frozenset({
 # Placeholders each of these flat templates takes (the rest are plain text, or checked by the explicit calls below).
 _FLAT_SLOTS: Mapping[str, frozenset[str]] = {
     **{name: frozenset() for name in (
-        "current_loaded_model_description", "current_loaded_fast_model_description",
+        "tts_stream_failed", "current_loaded_model_description", "current_loaded_fast_model_description",
         "transition_unsupported", "engine_transitioning", "audio_translation_unsupported",
         "video_extend_shots_unsupported", "video_extend_not_configured", "voice_design_not_configured",
         "measurement_backend_unavailable", "mcp_reconnect_required", "definition_unavailable",

@@ -31,7 +31,7 @@ from typing import Any, Protocol
 import yaml
 
 from gateway import adapter_choices, engine_unavailable, generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
-from gateway import config_runtime
+from gateway import config_runtime, release_policy
 from gateway.definition_store import DefinitionUnavailable
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
@@ -119,12 +119,11 @@ CLAIM_WAIT_S = _WORKFLOW_SCHEDULING["claim_wait_s"]
 CLAIM_POLL_S = _WORKFLOW_SCHEDULING["claim_poll_s"]
 SUBMIT_POLL_S = _WORKFLOW_SCHEDULING["submit_poll_s"]
 RETRY_AFTER_S = _WORKFLOW_SCHEDULING["retry_after_s"]
-TOMBSTONE_RETENTION_S = 24 * 3600     # a deleted job is hidden at once and removed after this long
+TOMBSTONE_RETENTION_S = release_policy.load("workflow_retention")["deleted_job_s"]
 
-# I7: the code's value of each key is its ceiling; the runtime config (section ``workflow_execution``) may only lower it.
+# I7: the release default of each key is its ceiling; the runtime config (section ``workflow_execution``) may only lower it.
 CONFIG_SECTION = "workflow_execution"
-RUN_CEILINGS = {"max_wait_s": 60, "history_depth": 20,
-                "bounds": {"max_template_bytes": 512 * 1024, "max_nodes": 2000, "max_depth": 32}}
+RUN_CEILINGS = config_runtime.load_sections()[CONFIG_SECTION].defaults
 
 
 @dataclass(frozen=True)
@@ -145,7 +144,7 @@ def _lowered(raw: Any, ceiling: int) -> int:
 
 def run_limits_from_config(config: Mapping[str, Any]) -> RunLimits:
     """The limits of I7 from the runtime config, as ``result_bundle.limits_from_config`` reads ``result_limits``, with the
-    code's value as the ceiling."""
+    release default as the ceiling."""
     section = config.get(CONFIG_SECTION) if isinstance(config, Mapping) else None
     section = section if isinstance(section, Mapping) else {}
     bounds = section.get("bounds") if isinstance(section.get("bounds"), Mapping) else {}

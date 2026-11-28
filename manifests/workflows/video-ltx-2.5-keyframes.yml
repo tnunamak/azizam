@@ -6,6 +6,10 @@ license: "LTX-2.x Community License (commercial use at USD 10M or more annual re
 intent: video.generate
 capability: video
 annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: true
+    supports_audio: true
+    two_stage: true
   azizam.dev/backfill:
     capability: intent-prefix rule, schema 1 to 2
 display_name: LTX 2.5 Distilled Keyframes

@@ -44,11 +44,13 @@ from gateway.workflow_runtime_types import (
 log = logging.getLogger(__name__)
 
 CONFIG_SECTION = "workflow_execution"
-# The code's ceilings. The deployment's data may lower them and never raise them (as ``result_bundle.ResultLimits``).
-HISTORY_DEPTH_CEILING = 20
-MAX_TEMPLATE_BYTES_CEILING = 512 * 1024
-MAX_NODES_CEILING = 2000
-MAX_DEPTH_CEILING = 32
+# Release ceilings. The deployment's data may lower them and never raise them (as ``result_bundle.ResultLimits``).
+from gateway import config_runtime
+_RELEASE_LIMITS = config_runtime.load_sections()[CONFIG_SECTION].defaults
+HISTORY_DEPTH_CEILING = _RELEASE_LIMITS["history_depth"]
+MAX_TEMPLATE_BYTES_CEILING = _RELEASE_LIMITS["bounds"]["max_template_bytes"]
+MAX_NODES_CEILING = _RELEASE_LIMITS["bounds"]["max_nodes"]
+MAX_DEPTH_CEILING = _RELEASE_LIMITS["bounds"]["max_depth"]
 OWN_NAME_KINDS = frozenset({"workflow", "workflow_alias", "operation", "component"})
 
 ID_IS_BUNDLED = "id_is_bundled"
@@ -112,7 +114,7 @@ def _lowered(value: Any, ceiling: int) -> int:
 
 
 def history_depth_from_config(config: Mapping[str, Any]) -> int:
-    """``workflow_execution.history_depth``: a positive integer at most the code's ceiling; anything else is the ceiling."""
+    """``workflow_execution.history_depth``: a positive integer at most the release ceiling; anything else is the ceiling."""
     section = config.get(CONFIG_SECTION) if isinstance(config, Mapping) else None
     return _lowered(section.get("history_depth") if isinstance(section, Mapping) else None, HISTORY_DEPTH_CEILING)
 

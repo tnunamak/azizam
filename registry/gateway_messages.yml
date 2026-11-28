@@ -412,3 +412,5 @@ tables:
       layer: workflow
       message: An input of this workflow is set up incorrectly. Ask the owner to check the workflow.
       api_message: Input '{input}' of this workflow is set up incorrectly. Ask the owner to check the workflow.
+
+tts_stream_failed: TTS engine failed before sending audio (likely GPU0 memory pressure)

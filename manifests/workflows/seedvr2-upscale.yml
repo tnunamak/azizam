@@ -5,6 +5,10 @@ id: image.edit.seedvr2-upscale
 intent: image.edit
 capability: image
 annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: true
+    supports_audio: false
+    two_stage: false
   azizam.dev/backfill:
     capability: intent-prefix rule, schema 1 to 2
 display_name: SeedVR2 7B Sharp Upscale

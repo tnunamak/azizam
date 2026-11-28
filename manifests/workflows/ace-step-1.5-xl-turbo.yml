@@ -173,3 +173,8 @@ bindings:
           input: scheduler
 released_at: "2026-04-02"
 source_url: https://huggingface.co/ACE-Step/acestep-v15-xl-turbo
+annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: false
+    supports_audio: false
+    two_stage: false

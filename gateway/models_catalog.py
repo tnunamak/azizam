@@ -57,6 +57,22 @@ MODELS_CATALOG_OPERATIONS_PATH = (
 )
 
 
+def _checked_status_example_rows(rows: Any) -> tuple[Mapping[str, Any], ...]:
+    if rows is None:
+        return ()
+    fields = {"title", "intent", "model", "template"}
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict) or not fields <= set(row) or set(row) - fields - {"input_modalities"}
+        or any(not isinstance(row[key], str) or not row[key].strip() for key in fields)
+        or row["template"].count("$selected_model") != 1
+        or not isinstance(row.get("input_modalities", []), list)
+        or any(not isinstance(item, str) or not item for item in row.get("input_modalities", []))
+        for row in rows
+    ):
+        raise ValueError("quick_tests must declare title, intent, model and a template with one model slot")
+    return tuple(MappingProxyType({**row, "input_modalities": tuple(row.get("input_modalities", []))}) for row in rows)
+
+
 def load_models_catalog_operations(
     path: Path = MODELS_CATALOG_OPERATIONS_PATH,
     *,
@@ -103,9 +119,10 @@ def load_models_catalog_operations(
         raise invalid("<document>", f"could not be loaded: {error}") from error
     if not isinstance(document, dict):
         raise invalid("<document>", "must be a mapping")
-    keys(document, {"schema_version", "row_id_placeholder", "operations"}, "<document>")
+    keys(document, {"schema_version", "row_id_placeholder", "operations", "quick_tests"}, "<document>")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("<document>", "schema_version must be the integer 1")
+    _checked_status_example_rows(document.get("quick_tests"))
     placeholder = nonempty_string(document.get("row_id_placeholder"), "row_id_placeholder", "<document>")
     rows = document.get("operations")
     if not isinstance(rows, list):
@@ -173,6 +190,15 @@ def load_models_catalog_operations(
     _CATALOG_INTENT_ROWS,
     _CATALOG_ROW_ID_PLACEHOLDER,
 ) = load_models_catalog_operations()
+
+
+_STATUS_EXAMPLE_ROWS = _checked_status_example_rows(
+    yaml.safe_load(MODELS_CATALOG_OPERATIONS_PATH.read_text(encoding="utf-8"))["quick_tests"])
+
+
+def status_example_rows() -> tuple[Mapping[str, Any], ...]:
+    """Immutable example templates validated at import, never during rendering."""
+    return _STATUS_EXAMPLE_ROWS
 
 
 def _render_catalog_template(value: Any, row_id: str) -> Any:

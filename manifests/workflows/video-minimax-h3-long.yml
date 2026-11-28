@@ -6,6 +6,10 @@ license: "MiniMax H3 Community License: not for use in the US, EU, UK or South K
 intent: video.generate
 capability: video
 annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: false
+    supports_audio: false
+    two_stage: false
   azizam.dev/backfill:
     capability: intent-prefix rule, schema 1 to 2
 display_name: MiniMax H3 Long

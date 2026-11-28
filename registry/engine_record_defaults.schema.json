@@ -12,6 +12,7 @@
       "description": "One bucket per capability a service is selected for, holding only the keys the gateway reads for it.",
       "additionalProperties": false,
       "properties": {
+        "service": {"type": "object", "additionalProperties": false, "required": ["base_path", "scheme", "timeout", "headers", "models", "transforms", "role", "managed"], "properties": {"base_path": {"type": "string"}, "scheme": {"type": "string"}, "timeout": {"type": "integer", "minimum": 1}, "headers": {"type": "array"}, "models": {"type": "array"}, "transforms": {"type": "array"}, "role": {"type": "string"}, "managed": {"type": "boolean"}}},
         "audio.speech": {"type": "object", "additionalProperties": false, "properties": {
           "default_model": {"type": "string", "minLength": 1},
           "timeout": {"type": "integer", "minimum": 1},

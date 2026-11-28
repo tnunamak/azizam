@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "azizam://registry/defaults/workflow_execution",
   "title": "workflow_execution",
-  "description": "How workflow jobs run (docs/design/CONFIG_HOMES.md, C10; docs/design/CODE_TO_DATA_S4_S8.md, I7): the longest a run request may hold its answer, how much history a workflow keeps, the bounds a saved workflow template must meet, and the limits on what a job's result may hold. The code holds the ceiling of each key; a value above it is cut to it.",
+  "description": "How workflow jobs run (docs/design/CONFIG_HOMES.md, C10; docs/design/CODE_TO_DATA_S4_S8.md, I7): the longest a run request may hold its answer, how much history a workflow keeps, the bounds a saved workflow template must meet, and the limits on what a job's result may hold. The release defaults supply the ceiling of each key; a value above it is cut to it.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -19,7 +19,7 @@
       "type": "integer", "minimum": 1
     },
     "bounds": {
-      "description": "What a saved workflow's template may hold (gateway/workflow_run.py, RUN_CEILINGS). A key left out keeps the code's ceiling.",
+      "description": "What a saved workflow's template may hold (gateway/workflow_run.py, RUN_CEILINGS). A key left out keeps the release ceiling.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

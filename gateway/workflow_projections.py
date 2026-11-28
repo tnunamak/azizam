@@ -154,3 +154,18 @@ class _Projections:
 
 
 PROJECTIONS = _Projections()
+
+
+def graph_status_capabilities(path: Path, contracts: Mapping[str, Any]) -> dict[str, bool]:
+    """Project declared status facts from the contract bound to a graph file.
+
+    Undeclared graphs publish no capability promises. Graph inventory remains diagnostic only.
+    """
+    root = Path(__file__).resolve().parents[1]
+    for contract in contracts.values():
+        if any(isinstance(binding, Mapping) and binding.get("workflow")
+               and (root / binding["workflow"]).resolve() == path.resolve()
+               for binding in contract.get("bindings", {}).values()):
+            facts = contract.get("annotations", {}).get("azizam.dev/status-capabilities", {})
+            return {name: facts.get(name) is True for name in ("supports_i2v", "supports_audio", "two_stage")}
+    return {name: False for name in ("supports_i2v", "supports_audio", "two_stage")}

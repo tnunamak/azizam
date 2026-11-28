@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "max_bytes",
+    "max_bytes_ceiling",
+    "max_header_bytes",
+    "max_total_bytes",
+    "total_bytes_ceiling",
+    "framing_bytes",
+    "idle_s",
+    "cache_max_bytes",
+    "hold_ttl_s",
+    "scratch_max_age_s",
+    "header_cache_entries",
+    "sweep_every_s",
+    "request_hold_ttl_s"
+  ],
+  "properties": {
+    "max_bytes": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "max_bytes_ceiling": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "max_header_bytes": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "max_total_bytes": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "total_bytes_ceiling": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "framing_bytes": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "idle_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "cache_max_bytes": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "hold_ttl_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "scratch_max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "header_cache_entries": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "sweep_every_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "request_hold_ttl_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    }
+  }
+}

@@ -58,3 +58,8 @@ bindings:
         - role: text_encoder
           path: text_encoders/t5gemma_b_b_ul2.safetensors
 source_url: https://huggingface.co/stabilityai/stable-audio-3-small-sfx
+annotations:
+  azizam.dev/status-capabilities:
+    supports_i2v: false
+    supports_audio: false
+    two_stage: false

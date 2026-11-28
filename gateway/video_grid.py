@@ -119,13 +119,14 @@ def stride_reason(step: int | None) -> str:
 
 DEFAULT_SIZE_WHEN_UNPARSED = tuple(_GRID_DEFAULTS["size_when_unparsed"])
 MINIMUM_SIDE = _GRID_DEFAULTS["minimum_side"]
+DEFAULT_SIZE_MULTIPLE = _DOCUMENT["workflow_fact_source"]["facts"]["size"]["multiple"]["default"]
 
 
 @dataclass(frozen=True)
 class SizeSpec:
     default: str        # "WxH", used when the request sends no size
     max: str            # "WxH", a larger request is clamped to it, never refused
-    multiple: int = 32  # each side is floored to a multiple of this
+    multiple: int = DEFAULT_SIZE_MULTIPLE
 
 
 @dataclass(frozen=True)
@@ -170,7 +171,7 @@ def video_facts(entry: Any) -> VideoManifest | None:
     size, length, grid = raw.get("size"), raw.get("length"), raw.get("grid")
     return VideoManifest(
         roles=MappingProxyType(dict(raw.get("roles") or {})),
-        size=SizeSpec(default=size["default"], max=size["max"], multiple=int(size.get("multiple", 32))) if size else None,
+        size=SizeSpec(default=size["default"], max=size["max"], multiple=int(size.get("multiple", DEFAULT_SIZE_MULTIPLE))) if size else None,
         length=LengthSpec(
             min_seconds=length["min_seconds"], max_seconds=length["max_seconds"],
             default_seconds=length.get("default_seconds")) if length else None,
