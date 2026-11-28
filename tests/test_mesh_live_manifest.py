@@ -14,6 +14,8 @@ import proxy
 from gateway.discovery import WorkflowRegistry
 from gateway.manifests import Provenance
 
+pytestmark = pytest.mark.usefixtures("owner_mesh")  # the release ships no mesh workflow: the test holds the owner one
+
 NEW_VERSION = "9.9.9-live-record"
 WATCHED_ID = "mesh.generate.owner-demo"
 
