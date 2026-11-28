@@ -805,7 +805,7 @@
           "intent": "image.edit",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "755bd4cdc8431373fa2eeaa78af7c6f9432e76d25054d49a5306380fbc521b2e",
+          "manifest_hash": "a35f73f13a44a0794248cdba72d3c4bce8d0de0601d7e30547ffb1b451dfa1b2",
           "manifest_id": "image.edit.qwen-image-2.1-edit",
           "manifest_version": "0.1.0",
           "metadata": {},
