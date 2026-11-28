@@ -749,3 +749,39 @@ def test_the_remote_bound_client_sits_over_the_guard_and_the_guard_only_calls_bo
         refs = [text for node, _own, text in module.httpx_references(_HTTPX_CLIENTS | _HTTPX_TRANSPORTS)
                 if (_own, text) != (owner, site)]
         assert not refs, f"{relative} builds another httpx client or transport: {refs}"
+
+
+def test_physical_admission_gate_checks_opaque_aliases_before_fake_transport(monkeypatch, tmp_path):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionScope, AdmissionRequired
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
+    records = {name: {"enabled": True, "config": {"url": address,
+                "resources": {"gpu": {"physical_resources": ["card/a"]}}}}
+               for name, address in (("opaque-upload", ENGINE), ("renamed-graph", OTHER))}
+    engine_egress.install(engine_egress.project(records, admission_resources=frozenset({"card/a"})))
+    store = ArbitrationStore(tmp_path / "admission.db")
+    scheduler = AdmissionScheduler(store, worker_capacity=1)
+    wire = Wire()
+    async def ready():
+        return True
+    async def scenario():
+        async with engine_egress.async_client(transport=wire.transport) as client:
+            with pytest.raises(AdmissionRequired):
+                await client.post(OTHER + "/prompt", json={})
+            assert wire.requests == []
+            plan = scheduler.pin(request_id="request", caller="caller", policy_revision="revision",
+                                     service_id="opaque-upload", resources=("card/a",), claim_envelope={},
+                                     deadline=time.time() + 1, ready=ready)
+            async with AdmissionScope(plan) as scope:
+                await scope.prepare_send()
+                await client.post(ENGINE + "/execute", json={})
+                await client.post(OTHER + "/prompt", json={})
+                scope.completed("terminal protocol result")
+            with pytest.raises(AdmissionRequired):
+                await client.post(OTHER + "/prompt", json={})
+        assert len(wire.requests) == 2
+    try:
+        asyncio.run(scenario())
+    finally:
+        store.close()

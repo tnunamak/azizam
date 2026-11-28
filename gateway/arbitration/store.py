@@ -1,4 +1,4 @@
-"""Durable shadow ledger: an SQLite adapter for operations, fencing generations and shadow comparisons.
+"""Durable resource ledger: operations, fencing, shadow comparisons and admission tickets.
 
 Design §4.1, §4.3, §14 and §16 slice 1. This module is an adapter. It deals in ResourceRef, integer
 quantities, units and operation keys, and it names no engine, device or domain.
@@ -16,13 +16,15 @@ Rules the store keeps:
 - charge counts every operation that is not settled, whatever its state (§4.2).
 - read_snapshot opens an existing ledger read-only, validates it, and never creates, migrates or writes.
 
-The store records the shadow. It does not enforce capacity, and nothing reads it for admission yet.
+Ticket bundle transactions enforce exclusion and worker capacity for the dormant
+scheduler. Product dispatch retains legacy authority until coverage permits cutover.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -34,13 +36,15 @@ from urllib.parse import quote
 from gateway.arbitration.holdings import SettlementKind
 from gateway.arbitration.types import ResourceRef
 
+# Admission tables are additive while authority is dormant. Keep the legacy
+# version so a rollback can still open its operations and shadow comparisons.
 SCHEMA_VERSION = 2
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PATH = _REPO_ROOT / "data" / "arbitration.db"
 # A lease must not wait long on the store. One short busy wait, no retries.
 DEFAULT_BUSY_TIMEOUT_S = 0.05
 READ_BUSY_TIMEOUT_S = 5.0
-REQUIRED_TABLES = frozenset({"resource_generations", "operations", "comparisons"})
+REQUIRED_TABLES = frozenset({"resource_generations", "operations", "comparisons", "admission_tickets"})
 
 OPEN_STATES = ("committed", "reconciling")
 
@@ -98,6 +102,43 @@ class LedgerSnapshot:
     open_operations: list[Operation]
 
 
+@dataclass(frozen=True)
+class AdmissionTicket:
+    request_id: str
+    sequence: int
+    caller: str
+    policy_revision: str
+    service_id: str
+    resources: tuple[str, ...]
+    claim_envelope: dict[str, Any]
+    deadline: float
+    phase: str
+    reason: str
+    no_wait: bool = False
+
+
+_TICKET_TRANSITIONS = {
+    "waiting": frozenset({"withdrawn", "expired"}),
+    "granted": frozenset({"sending", "withdrawn", "expired"}),
+    "sending": frozenset({"sending"}),
+}
+_TICKET_COLUMNS = ("request_id, sequence, caller, policy_revision, service_id, resources, "
+                   "claim_envelope, deadline, phase, reason, no_wait")
+
+
+def _stock_resource_id(resource: str) -> str:
+    return resource if resource == "@gateway/worker" else "physical/" + resource
+
+
+def _ticket_operation(request_id: str, resource: str) -> str:
+    # Length-prefixing keeps operator resource ids and request ids collision-free.
+    return f"ticket/{len(request_id)}:{request_id}/{resource}"
+
+
+def _ticket(row: tuple[Any, ...]) -> AdmissionTicket:
+    return AdmissionTicket(*row[:5], tuple(json.loads(row[5])), json.loads(row[6]), *row[7:10], bool(row[10]))
+
+
 class ArbitrationStore:
     def __init__(self, path: str | os.PathLike[str], *, busy_timeout_s: float = DEFAULT_BUSY_TIMEOUT_S) -> None:
         self.path = Path(path)
@@ -120,7 +161,7 @@ class ArbitrationStore:
 
     def _open_schema(self) -> None:
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, SCHEMA_VERSION):
+        if version not in (0, 2, SCHEMA_VERSION):
             raise StoreSchemaError(f"arbitration store {self.path} has schema {version}; this code reads {SCHEMA_VERSION}")
         self._write(lambda c: self._create_schema(c))
 
@@ -149,6 +190,22 @@ class ArbitrationStore:
                             new_outcome TEXT,
                             open_holdings INTEGER,
                             detail TEXT NOT NULL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS admission_tickets (
+                            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                            request_id TEXT NOT NULL UNIQUE,
+                            caller TEXT NOT NULL,
+                            policy_revision TEXT NOT NULL,
+                            service_id TEXT NOT NULL,
+                            resources TEXT NOT NULL,
+                            claim_envelope TEXT NOT NULL,
+                            deadline REAL NOT NULL,
+                            phase TEXT NOT NULL CHECK (phase IN
+                                ('waiting','granted','sending','unknown','completed','withdrawn','expired')),
+                            reason TEXT NOT NULL DEFAULT '',
+                            no_wait INTEGER NOT NULL DEFAULT 0 CHECK (no_wait IN (0,1)))""")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(admission_tickets)")}
+        if "no_wait" not in columns:
+            conn.execute("ALTER TABLE admission_tickets ADD COLUMN no_wait INTEGER NOT NULL DEFAULT 0 CHECK (no_wait IN (0,1))")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     # ---- transactions -------------------------------------------------------------------------
@@ -301,6 +358,229 @@ class ArbitrationStore:
         with self._lock:
             self._write(action)
 
+    def enqueue_ticket(self, *, request_id: str, caller: str, policy_revision: str, service_id: str,
+                       resources: tuple[str, ...], claim_envelope: dict[str, Any], deadline: float,
+                       no_wait: bool = False) -> AdmissionTicket:
+        """Pin the first eligible request's facts. Recovery preserves its sequence and deadline.
+
+        These records are preparatory: callers must not treat a granted phase as a
+        physical holding until the resource transaction and coverage gates exist.
+        """
+        for name, value in (("request_id", request_id), ("caller", caller),
+                            ("policy_revision", policy_revision), ("service_id", service_id)):
+            _require_text(name, value)
+        if not resources or len(set(resources)) != len(resources):
+            raise ValueError("resources must be non-empty and distinct")
+        for resource in resources:
+            _require_text("resource", resource)
+            if resource.startswith("@gateway/"):
+                raise ValueError("resource uses the gateway reserved namespace")
+        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline):
+            raise ValueError("deadline must be finite epoch seconds")
+        if type(no_wait) is not bool:
+            raise ValueError("no_wait must be a boolean")
+        resource_json = json.dumps(sorted(resources), separators=(",", ":"))
+        envelope_json = json.dumps(claim_envelope, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+        def action(conn):
+            row = conn.execute("SELECT " + _TICKET_COLUMNS + " FROM admission_tickets WHERE request_id=?",
+                               (request_id,)).fetchone()
+            if row is not None:
+                ticket = _ticket(row)
+                if ticket.caller != caller:
+                    raise ValueError("ticket belongs to another caller")
+                return ticket
+            conn.execute("INSERT INTO admission_tickets "
+                         "(request_id, caller, policy_revision, service_id, resources, claim_envelope, deadline, phase, no_wait) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?)",
+                         (request_id, caller, policy_revision, service_id, resource_json, envelope_json, deadline, int(no_wait)))
+            return _ticket(conn.execute("SELECT " + _TICKET_COLUMNS +
+                                        " FROM admission_tickets WHERE request_id=?", (request_id,)).fetchone())
+        with self._lock:
+            return self._write(action)
+
+    def ticket(self, request_id: str) -> AdmissionTicket | None:
+        with self._lock:
+            row = self._conn.execute("SELECT " + _TICKET_COLUMNS +
+                                     " FROM admission_tickets WHERE request_id=?", (request_id,)).fetchone()
+        return _ticket(row) if row else None
+
+    def unknown_tickets(self) -> list[AdmissionTicket]:
+        with self._lock:
+            rows = self._conn.execute("SELECT " + _TICKET_COLUMNS +
+                                      " FROM admission_tickets WHERE phase='unknown' ORDER BY sequence").fetchall()
+        return [_ticket(row) for row in rows]
+
+    def transition_ticket(self, request_id: str, phase: str, *, now: float,
+                          reason: str = "", evidence: str = "") -> bool:
+        """Serialize withdrawal, expiry and send intent. Unknown completion needs evidence.
+
+        This phase transition alone never creates or refunds an operation holding.
+        """
+        if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+            raise ValueError("now must be finite epoch seconds")
+
+        def action(conn):
+            row = conn.execute("SELECT phase, deadline, resources, no_wait FROM admission_tickets WHERE request_id=?",
+                               (request_id,)).fetchone()
+            if row is None or phase not in _TICKET_TRANSITIONS.get(row[0], ()):
+                return False
+            if row[0] in {"waiting", "granted"} and now >= row[1] and not row[3]:
+                conn.execute("UPDATE admission_tickets SET phase='expired', reason='deadline' WHERE request_id=?",
+                             (request_id,))
+                if row[0] == "granted":
+                    self._refund_unsent(conn, request_id, json.loads(row[2]))
+                return phase == "expired"
+            if phase == "completed" and not evidence.strip():
+                return False
+            conn.execute("UPDATE admission_tickets SET phase=?, reason=? WHERE request_id=?",
+                         (phase, evidence or reason, request_id))
+            if phase in {"withdrawn", "expired"} and row[0] == "granted":
+                self._refund_unsent(conn, request_id, json.loads(row[2]))
+            return True
+        with self._lock:
+            return self._write(action)
+
+    @staticmethod
+    def _refund_unsent(conn, request_id, resources):
+        for resource in (*resources, "@gateway/worker"):
+            conn.execute("UPDATE operations SET state='settled', settle_source='unsent withdrawal' "
+                         "WHERE op_key=? AND state!='settled'", (_ticket_operation(request_id, resource),))
+
+    def grant_ticket(self, request_id: str, *, worker_capacity: int, now: float) -> bool:
+        """Atomically acquire all exclusion tokens plus one execution slot.
+
+        Conflicting waiting tickets keep FIFO order; independent bundles can run.
+        This is dormant infrastructure until dispatch coverage authorizes activation.
+        """
+        if isinstance(worker_capacity, bool) or not isinstance(worker_capacity, int) or worker_capacity < 1:
+            raise ValueError("worker_capacity must be positive")
+        if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+            raise ValueError("now must be finite epoch seconds")
+
+        def action(conn):
+            row = conn.execute("SELECT " + _TICKET_COLUMNS +
+                               " FROM admission_tickets WHERE request_id=?", (request_id,)).fetchone()
+            if row is None:
+                return False
+            ticket = _ticket(row)
+            if ticket.phase != "waiting":
+                return False
+            if now >= ticket.deadline and not ticket.no_wait:
+                conn.execute("UPDATE admission_tickets SET phase='expired', reason='deadline' WHERE request_id=?",
+                             (request_id,))
+                return False
+            # Expire old waiters before judging order, including after process restart.
+            conn.execute("UPDATE admission_tickets SET phase='expired', reason='deadline' "
+                         "WHERE phase='waiting' AND no_wait=0 AND deadline<=? AND request_id!=?", (now, request_id))
+            earlier = conn.execute("SELECT resources FROM admission_tickets "
+                                   "WHERE phase='waiting' AND sequence<?", (ticket.sequence,)).fetchall()
+            if any(set(json.loads(other[0])) & set(ticket.resources) for other in earlier):
+                return False
+            resources = (*ticket.resources, "@gateway/worker")
+            for resource in resources:
+                charged = conn.execute("SELECT COALESCE(SUM(quantity),0) FROM operations "
+                                       "WHERE resource_id=? AND incarnation='1' AND state!='settled'",
+                                       (_stock_resource_id(resource),)).fetchone()[0]
+                capacity = worker_capacity if resource == "@gateway/worker" else 1
+                if charged >= capacity:
+                    return False
+            for resource in resources:
+                ref = ResourceRef(_stock_resource_id(resource), "1")
+                generation = _generation(conn, ref.id)
+                if not generation:
+                    generation = 1
+                    conn.execute("INSERT INTO resource_generations VALUES (?, ?)", (ref.id, generation))
+                conn.execute("INSERT INTO operations (op_key, resource_id, incarnation, generation, quantity, unit, "
+                             "payload, state) VALUES (?, ?, '1', ?, 1, 'token', ?, 'committed')",
+                             (_ticket_operation(request_id, resource), ref.id, generation, _payload(ref, 1, "token")))
+            conn.execute("UPDATE admission_tickets SET phase='granted', reason='' WHERE request_id=?", (request_id,))
+            return True
+        with self._lock:
+            return self._write(action)
+
+    def recover_startup(self, *, now: float) -> dict[str, int]:
+        """Run once before starting the sole gateway scheduler, after its old process ended.
+
+        Unsent grants can be withdrawn. Sent/unknown operations keep physical
+        exclusion, but their dead executor cannot keep a worker slot charged.
+        """
+        def action(conn):
+            rows = conn.execute("SELECT request_id, phase, resources FROM admission_tickets "
+                                "WHERE phase IN ('granted','sending','unknown')").fetchall()
+            counts = {"withdrawn": 0, "unknown": 0}
+            for request_id, phase, encoded in rows:
+                if phase == "granted":
+                    self._refund_unsent(conn, request_id, json.loads(encoded))
+                    conn.execute("UPDATE admission_tickets SET phase='withdrawn', reason='startup unsent grant' "
+                                 "WHERE request_id=?", (request_id,))
+                    counts["withdrawn"] += 1
+                else:
+                    conn.execute("UPDATE operations SET state='settled', settle_source='startup executor ended' "
+                                 "WHERE op_key=? AND state!='settled'",
+                                 (_ticket_operation(request_id, "@gateway/worker"),))
+                    conn.execute("UPDATE admission_tickets SET phase='unknown', reason='startup outcome unknown' "
+                                 "WHERE request_id=?", (request_id,))
+                    counts["unknown"] += 1
+            conn.execute("UPDATE admission_tickets SET phase='expired', reason='deadline' "
+                         "WHERE phase='waiting' AND deadline<=?", (now,))
+            return counts
+        with self._lock:
+            return self._write(action)
+
+    def finish_ticket(self, request_id: str, *, now: float, evidence: str | None) -> None:
+        """Return the execution slot; keep physical holdings unless completion is proven.
+
+        Evidence is supplied by a protocol observer or explicit operator reconciliation,
+        never by transport cleanup. A replay settles only this ticket's operations.
+        """
+        if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+            raise ValueError("now must be finite epoch seconds")
+        if evidence is not None and (not isinstance(evidence, str) or not evidence.strip()):
+            raise ValueError("evidence must name the observed postcondition")
+
+        def action(conn):
+            row = conn.execute("SELECT " + _TICKET_COLUMNS +
+                               " FROM admission_tickets WHERE request_id=?", (request_id,)).fetchone()
+            if row is None:
+                return
+            ticket = _ticket(row)
+            if ticket.phase not in {"granted", "sending", "unknown"}:
+                return
+            unsent = ticket.phase == "granted"
+            proven = unsent or evidence is not None
+            for resource in (*ticket.resources, "@gateway/worker"):
+                key = _ticket_operation(request_id, resource)
+                if proven or resource == "@gateway/worker":
+                    conn.execute("UPDATE operations SET state='settled', settle_source=? "
+                                 "WHERE op_key=? AND state!='settled'",
+                                 (evidence or "unsent admission withdrawn" if proven else "executor returned", key))
+                else:
+                    conn.execute("UPDATE operations SET execution_ended=1 WHERE op_key=?", (key,))
+            phase = "withdrawn" if unsent else "completed" if proven else "unknown"
+            conn.execute("UPDATE admission_tickets SET phase=?, reason=? WHERE request_id=?",
+                         (phase, evidence or "execution outcome unknown", request_id))
+        with self._lock:
+            self._write(action)
+
+    def settle_unknown(self, request_id: str, *, evidence: str, now: float) -> bool:
+        """Operator reconciliation is restricted to unknown operations, atomically."""
+        if not isinstance(evidence, str) or not evidence.strip():
+            raise ValueError("settlement requires named evidence")
+        with self._lock:
+            def action(conn):
+                row = conn.execute("SELECT resources FROM admission_tickets WHERE request_id=? AND phase='unknown'",
+                                   (request_id,)).fetchone()
+                if row is None:
+                    return False
+                for resource in (*json.loads(row[0]), "@gateway/worker"):
+                    conn.execute("UPDATE operations SET state='settled', settle_source=? WHERE op_key=? AND state!='settled'",
+                                 (evidence, _ticket_operation(request_id, resource)))
+                conn.execute("UPDATE admission_tickets SET phase='completed', reason=? WHERE request_id=?",
+                             (evidence, request_id))
+                return True
+            return self._write(action)
+
     def comparison_counts(self) -> dict[str, int]:
         with self._lock:
             rows = self._conn.execute("SELECT status, COUNT(*) FROM comparisons GROUP BY status ORDER BY status").fetchall()
@@ -314,7 +594,8 @@ class ArbitrationStore:
 def read_snapshot(path: str | os.PathLike[str]) -> LedgerSnapshot:
     """Read an existing ledger in one read transaction. The file is opened read-only and is never created or migrated.
 
-    Raises FileNotFoundError for a missing file and StoreSchemaError for a file that is not a ledger of this schema.
+    Supports the previous shadow schema without migrating it. Raises FileNotFoundError
+    for a missing file and StoreSchemaError for an unsupported ledger.
     """
     path = Path(path)
     if not path.is_file():
@@ -327,7 +608,8 @@ def read_snapshot(path: str | os.PathLike[str]) -> LedgerSnapshot:
             try:
                 version = conn.execute("PRAGMA user_version").fetchone()[0]
                 tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-                if version != SCHEMA_VERSION or not REQUIRED_TABLES <= tables:
+                required = REQUIRED_TABLES - {"admission_tickets"} if version == 2 else REQUIRED_TABLES
+                if version not in (2, SCHEMA_VERSION) or not required <= tables:
                     raise StoreSchemaError(f"{path} is not a shadow ledger of schema {SCHEMA_VERSION} "
                                            f"(user_version {version})")
                 counts = {status: count for status, count in conn.execute(

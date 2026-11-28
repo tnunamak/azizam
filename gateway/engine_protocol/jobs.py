@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 
+from gateway.gpu_admission import current_scope
 from gateway import host_memory_admission, media_jobs, result_bundle
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2
 from gateway.engine_protocol.errors import BudgetExceeded, ProtocolError, TransportFailure, UpstreamError, retryable_poll_failure
@@ -125,6 +127,19 @@ def _saved_state(value) -> JobState | None:
         return None
 
 
+async def _observe_cancel_completion(adapter, conn, ref, max_wait_s):
+    scope = current_scope()
+    if scope is None:
+        return
+    try:
+        async with asyncio.timeout(min(5.0, max_wait_s)):
+            status = await adapter.poll(conn, ref)
+        if status.state in TERMINAL:
+            scope.completed("cancel followed by terminal protocol observation")
+    except (Exception, asyncio.CancelledError):
+        return  # an acknowledgement or failed observation leaves the operation unknown
+
+
 def _declares_v2(adapter) -> bool:
     """Whether the adapter declares interface version 2 (and so must implement ``start``). The declared number decides,
     never a name. A version 2 adapter without ``start`` is a defect of the adapter, refused before anything is sent."""
@@ -224,6 +239,9 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
         request = None
         saved = metadata.get('protocol_job')
         if saved:
+            scope = current_scope()
+            if scope is not None:
+                await scope.prepare_resume()
             ref = JobRef(op, saved)
         else:
             if metadata.get('protocol_submitting'):
@@ -238,10 +256,16 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
             admit = getattr(adapter, 'admit', None)
             if admit is not None:
                 # The host must have room for the models first. A refusal here sent nothing, so it leaves no marker.
-                lease = await admit(conn, op, request, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(caller), bounded=False, cancelled=cancelled, on_wait=lambda state: media_jobs.append_event(
+                admission_deadline = metadata.get('gpu_admission_deadline') if current_scope() is not None else None
+                remaining_deadline = (time.monotonic() + max(0.0, admission_deadline - time.time())
+                                      if isinstance(admission_deadline, (int, float)) else None)
+                lease = await admit(conn, op, request, host_memory_admission.Ask(deadline_monotonic=remaining_deadline, app_kind=host_memory_admission.app_kind_of_caller(caller), bounded=False, cancelled=cancelled, on_wait=lambda state: media_jobs.append_event(
                     job_id, 'attempt', host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)))
             if lease is not None and cancelled():
                 raise host_memory_admission.HostMemoryCancelled()
+            scope = current_scope()
+            if scope is not None:
+                await scope.prepare_send()
             if record_lifecycle:
                 media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                          metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)
@@ -253,11 +277,15 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
                                     code='submission_unknown') from exc
             except UpstreamError as exc:
                 if 400 <= exc.status < 500:
+                    if scope is not None:
+                        scope.completed("upstream rejected submission before accepting work")
                     # A 4xx refusal is definite: the engine did not start the job, so the marker is cleared. A 5xx keeps it.
                     media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                              metadata_patch={'protocol_submitting': False}, path=media_jobs.DB_PATH)
                 raise
             if isinstance(outcome, Completed):
+                if scope is not None:
+                    scope.completed("synchronous protocol operation completed")
                 succeeded = True
                 # The whole answer is in hand. It is staged and committed before the marker is cleared; a crash before the
                 # commit leaves the marker, which a restart reads as submission_unknown (D3).
@@ -287,6 +315,9 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
                         if record_lifecycle:
                             progress.observe(status.state)
                         if status.state == JobState.succeeded:
+                            scope = current_scope()
+                            if scope is not None:
+                                scope.completed("protocol job observed succeeded")
                             succeeded = True
                             results = getattr(adapter, 'results', None) if v2 else None
                             if results is None:
@@ -296,15 +327,22 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
                             bundle = await results(conn, ref, status, request, _result_context(runtime))
                             return await _commit_authorized_bundle(runtime, job_id, bundle, clear_marker=False)
                         if status.state in (JobState.failed, JobState.cancelled):
+                            scope = current_scope()
+                            if scope is not None:
+                                scope.completed("protocol job observed terminal")
                             # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
                             raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
                     await _pause(wake, interval_s)
         except _PersistedCancel:
             # Outside the wait budget's block, so a slow or stubborn upstream stop gets one bounded attempt, not two.
             cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+            if cleaned:
+                await _observe_cancel_completion(adapter, conn, ref, max_wait_s)
             raise media_jobs.CancellationPending('' if cleaned else _CLEANUP_UNKNOWN) from None
         except TimeoutError:
             cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+            if cleaned:
+                await _observe_cancel_completion(adapter, conn, ref, max_wait_s)
             detail = 'The upstream job exceeded its wait limit.'
             if not cleaned:
                 detail += f' {_CLEANUP_UNKNOWN}'
@@ -317,6 +355,7 @@ async def _run(runtime, op, body, *, job_id, follow_events: bool = False, caller
                 raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from exc
             if not cleaned:
                 raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from None
+            await _observe_cancel_completion(adapter, conn, ref, max_wait_s)
             raise
         finally:
             follower_stopped.set()

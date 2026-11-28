@@ -1,23 +1,13 @@
-"""Which job holds a run slot, so a job that waits for a busy GPU pool can give its slot back while it waits.
+"""Legacy workflow semaphore ownership while admission waits.
 
-The run core runs at most a set number of jobs at once (one semaphore, ``images.media_jobs.concurrency``). A job that waits
-for another job's GPU pool does no work, but a held slot would still count it: with two slots, a job queued behind a busy
-pool would keep a job for a free pool, or for the other GPU, from starting. ``RunSlots.released`` gives the job's slot back
-for the wait and takes a slot again before the job goes on, so the cap still counts only jobs that work.
+``released`` returns a job's slot throughout lock contention and memory recovery,
+then reacquires a slot before the pool lease yields. The legacy pool can hold its
+FIFO lock during that reacquisition; the pool's remaining admission budget now
+bounds the whole preparation, including reacquisition.
 
-The rule that keeps slots and GPU pools from deadlocking: a job never waits for a pool's lock while it holds a run slot.
-``ExclusivePoolLeaseManager.lease`` waits for a lock only inside the ``LeaseWait`` bracket, which gives the slot back
-first, and it chooses that path from a count of the pool's holders and waiters, not from ``lock.locked()`` (which reads
-free in the turn between a release and the woken waiter). So every slot holder is a job that runs or is on its way out;
-none waits on a pool. The other order does happen: a job that has won the pool's lock takes its slot again while it holds
-the lock. That wait has a bound, because the jobs it waits for hold slots, wait for no pool, and end within their own run
-bounds; the wait graph has no cycle. A cancel ends this wait too (``stop``): the job gives the pool back to the next
-waiter, in order. The wait budget does not: the budget is for the pool, and the pool is won by then.
-
-While that job waits for a slot, its pool is held and idle. That is the cap at work, not a lost turn: the pool can run
-only a job that holds a slot, and the slots are in use. The jobs ahead of it in the slot queue either run on another
-pool (real work the cap allows) or meet a busy pool and give their slot straight back. Taking the slot before the lock
-would not shorten this (the pool would wait, reserved, for the same slot) and would put a slot holder in a lock wait.
+The durable scheduler grants execution slots and physical resources together.
+After dispatch coverage permits its activation, workflow dispatch bypasses this
+legacy semaphore rather than running two worker authorities.
 """
 
 from __future__ import annotations

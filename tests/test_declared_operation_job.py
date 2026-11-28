@@ -389,3 +389,36 @@ def test_resistant_event_follower_cannot_hold_runner_exit(monkeypatch, job_store
                 await asyncio.gather(*follower_tasks, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("observed", ["pending", "running", "failed", "succeeded", "cancelled", "unreadable"])
+def test_cancel_acknowledgement_requires_terminal_observation(monkeypatch, tmp_path, observed):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionScope
+    from gateway.engine_protocol.types import JobRef, JobState, JobStatus
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        ref = JobRef("operation", "upstream")
+        async def ready():
+            return True
+        async def poll(*args):
+            if observed == "unreadable":
+                raise RuntimeError("observation unavailable")
+            return JobStatus(ref, JobState(observed))
+        adapter = SimpleNamespace(cancel=AsyncMock(), poll=AsyncMock(side_effect=poll))
+        plan = scheduler.pin(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                             resources=("card/a",), claim_envelope={}, deadline=time.time() + 60, ready=ready)
+        try:
+            async with AdmissionScope(plan) as scope:
+                await scope.prepare_send()
+                await adapter.cancel(object(), ref)  # accepted acknowledgement alone is insufficient
+                await protocol_jobs._observe_cancel_completion(adapter, object(), ref, 1)
+            terminal = observed in {"failed", "succeeded", "cancelled"}
+            assert store.ticket("job").phase == ("completed" if terminal else "unknown")
+            physical = [op for op in store.open_operations() if op.resource_id == "physical/card/a"]
+            assert bool(physical) == (not terminal)
+        finally:
+            store.close()
+    asyncio.run(scenario())

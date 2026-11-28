@@ -374,3 +374,18 @@ def test_devices_are_optional_and_name_the_cards_the_pool_stands_on() -> None:
 def test_malformed_devices_are_refused(devices) -> None:
     with pytest.raises(ValueError, match="devices"):
         parse_resource_capacity("trellis", {**ENABLED, "devices": devices})
+
+
+def test_operator_resource_mapping_unifies_aliases_and_keeps_cards_distinct():
+    from dataclasses import replace
+    from gateway.exclusive_pool import physical_resource_ids
+    first = parse_resource_capacity("upload", {**ENABLED, "physical_resources": ["card/a"]})
+    alias = parse_resource_capacity("graph", {**ENABLED, "pool_id": "another-name", "physical_resources": ["card/a"]})
+    second = parse_resource_capacity("chat", {**ENABLED, "physical_resources": ["card/b"]})
+    assert physical_resource_ids(first) == physical_resource_ids(alias) == ("card/a",)
+    assert physical_resource_ids(second) == ("card/b",)
+    assert physical_resource_ids(replace(first, physical_resources=(), devices=(0, 1))) == ("gpu/0", "gpu/1")
+    assert physical_resource_ids(replace(first, physical_resources=(), devices=())) == ()
+    for invalid in ([], [""], ["card/a", "card/a"], [0], "card/a"):
+        with pytest.raises(ValueError, match="physical_resources"):
+            parse_resource_capacity("fixture", {**ENABLED, "physical_resources": invalid})

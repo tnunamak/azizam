@@ -21,7 +21,7 @@ import math
 import threading
 import time
 from collections import deque
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Mapping
 
@@ -87,13 +87,13 @@ class LeaseWaitStopped(Exception):
 
 @dataclass(frozen=True)
 class LeaseWait:
-    """How a lease waits when another request holds the pool: in arrival order, for at most ``budget_s`` seconds.
+    """FIFO admission preparation, bounded by ``budget_s``.
 
-    ``queued`` brackets the wait. It is entered whenever another request holds or waits for the lease, so every wait for
-    the pool's lock runs inside it, and it is left once this request holds the lease, before the pool is observed; it is
-    left with the exception when the wait ends without the lease. ``stop`` returns when the wait must end early (for
-    example on a cancel); the lease then raises ``LeaseWaitStopped``, also when ``stop`` raises. The end of the budget
-    raises ``PoolCapacityError(DELAYED, lease_held=True)``, the same refusal as a lease that does not wait."""
+    ``queued`` brackets lock contention and memory/observer recovery, returning
+    the worker slot until preparation succeeds. ``stop`` ends waiting early;
+    deadline expiry raises ``PoolCapacityError(DELAYED, lease_held=True)``.
+    The budget includes observation, reclamation and slot reacquisition.
+    """
 
     budget_s: float
     queued: Callable[[], AbstractAsyncContextManager[Any]]
@@ -138,11 +138,12 @@ class ExclusivePoolSpec:
     total_pointer: str
     # The GPU indices the pool stands on. Empty when the block names none; then the release hook frees no declared engine.
     devices: tuple[int, ...] = ()
+    physical_resources: tuple[str, ...] = ()
 
 
 _CAPACITY_KEYS = frozenset({
     "enabled", "mode", "pool_id", "max_claim_bytes", "reserve_bytes", "retry_after_seconds",
-    "timeout_seconds", "observer", "devices",
+    "timeout_seconds", "observer", "devices", "physical_resources",
 })
 _OBSERVER_KEYS = frozenset({"service", "path", "free_pointer", "total_pointer"})
 
@@ -186,7 +187,13 @@ def parse_resource_capacity(service_id: str, block: Any) -> ExclusivePoolSpec | 
             raise ValueError(f"service {service_id!r}: {key} must be a valid RFC 6901 pointer")
     if not isinstance(observer["service"], str) or not observer["service"].strip():
         raise ValueError(f"service {service_id!r}: observer service must be a non-empty service id")
+    resources = block.get("physical_resources")
+    if resources is not None and (not isinstance(resources, list) or not resources
+            or any(not isinstance(value, str) or not value.strip() or value != value.strip() for value in resources)
+            or len(set(resources)) != len(resources)):
+        raise ValueError(f"service {service_id!r}: physical_resources must be non-empty distinct resource ids")
     return ExclusivePoolSpec(
+        physical_resources=tuple(sorted(resources)) if resources is not None else (),
         devices=_devices(service_id, block["devices"]) if "devices" in block else (),
         pool_id=pool_id.strip(),
         max_claim_bytes=ints["max_claim_bytes"],
@@ -198,6 +205,40 @@ def parse_resource_capacity(service_id: str, block: Any) -> ExclusivePoolSpec | 
         free_pointer=observer["free_pointer"],
         total_pointer=observer["total_pointer"],
     )
+
+
+def physical_resource_ids(spec: ExclusivePoolSpec) -> tuple[str, ...]:
+    """Operator-declared identities, or local device indices. Pool names are not physical identities.
+
+    An empty result is explicitly unmapped and must prevent authority activation.
+    The device-index fallback is scoped to the gateway host, never remote pools.
+    """
+    return spec.physical_resources or tuple(f"gpu/{index}" for index in spec.devices)
+
+
+def service_resource_ids(service: Mapping[str, Any]) -> tuple[str, ...]:
+    """Physical identities declared by any protocol's service record.
+
+    Capacity policies may supply the mapping; otherwise resource facts do. Nothing
+    is inferred from a service name, address, protocol or model.
+    """
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    capacity = parse_resource_capacity(str(service.get("id") or "service"), config.get("resource_capacity"))
+    if capacity is not None:
+        return physical_resource_ids(capacity)
+    resources = service.get("resources", config.get("resources"))
+    gpu = resources.get("gpu") if isinstance(resources, Mapping) else None
+    if not isinstance(gpu, Mapping):
+        return ()
+    physical = gpu.get("physical_resources")
+    if physical is not None:
+        if (not isinstance(physical, list) or not physical
+                or any(not isinstance(value, str) or not value.strip() for value in physical)
+                or len(set(physical)) != len(physical)):
+            raise ValueError("physical_resources must contain distinct resource ids")
+        return tuple(sorted(physical))
+    devices = gpu.get("devices")
+    return tuple(f"gpu/{device}" for device in _devices("service", devices)) if devices is not None else ()
 
 
 def _devices(service_id: str, value: Any) -> tuple[int, ...]:
@@ -546,14 +587,13 @@ class ExclusivePoolLeaseManager:
         even one whose caller left) is refused at once with ``PoolCapacityError(DELAYED)`` instead of queued. With
         ``wait`` true the request waits its turn without a bound; a ``LeaseWait`` waits its turn as that says.
 
-        ``release_idle`` is asked once, and only when the lease is free but the observed memory cannot hold the claim:
-        memory that an idle process keeps resident does not free itself, so a refusal with a retry hint would repeat
-        until someone released it. It returns True when it released something; the pool is then observed and judged
-        again, and the second answer stands. It returns ``ENGINE_BUSY`` when the engine is running work (nothing is
-        freed now, but that memory frees when the work ends). A release that raises counts as nothing released.
-
-        Every wait for the lock with a ``LeaseWait`` runs inside its ``queued`` bracket: the decision to wait reads the
-        pool's occupant count, and no await separates that read from this request's own entry in the count."""
+        With ``LeaseWait``, its budget covers lock waiting, observation, reclamation,
+        memory recovery and slot reacquisition. Temporary shortage or observer failure
+        keeps the FIFO turn inside the queued bracket, which returns the worker slot.
+        Reclamation is retried at the declared retry cadence; a successful action is
+        followed by fresh observation. An impossible claim is rejected immediately.
+        Plain boolean callers retain immediate memory/observer outcomes.
+        """
         pool_id = spec.pool_id
         lock = self._locks.setdefault(pool_id, asyncio.Lock())
         # No await from here until the count is raised: asyncio runs this as one step, so no other request comes between.
@@ -563,14 +603,6 @@ class ExclusivePoolLeaseManager:
         self._occupants[pool_id] = self._occupants.get(pool_id, 0) + 1
         owned = False
         try:
-            if busy and isinstance(wait, LeaseWait):
-                async with wait.queued():
-                    await _acquire_in_turn(lock, wait)
-                    owned = True
-            else:
-                # Not busy: the lock is free and has no live waiter, so this takes it without a suspension.
-                await lock.acquire()
-                owned = True
             started = time.time()
 
             async def judge() -> tuple[CapacitySnapshot, ResourceClaim, AdmissionDecision]:
@@ -578,14 +610,61 @@ class ExclusivePoolLeaseManager:
                 snapshot, claim = snapshot_and_claim(
                     spec, observation, observed_at=observed_at() if observed_at else None,
                 )
+                # Free memory can recover; a claim plus reserve above total cannot.
+                if claim.vram_mb + math.ceil(spec.reserve_bytes / MIB) > snapshot.total_vram_mb:
+                    raise PoolCapacityError(AdmissionStatus.REJECTED)
                 return snapshot, claim, evaluate_admission(AdmissionRequest(request_id, claim), snapshot)
 
-            snapshot, claim, decision = await judge()
             release: ReleaseOutcome = "not_asked"
-            if decision.status is not AdmissionStatus.ACCEPTED and release_idle is not None:
-                release = await _released(release_idle)
-                if release == "freed":
-                    snapshot, claim, decision = await judge()
+
+            async def prepare() -> tuple[CapacitySnapshot, ResourceClaim, AdmissionDecision]:
+                nonlocal owned, release
+                async with AsyncExitStack() as waiting:
+                    queued = False
+                    if busy and isinstance(wait, LeaseWait):
+                        await waiting.enter_async_context(wait.queued())
+                        queued = True
+                        await _acquire_in_turn(lock, wait)
+                    else:
+                        await lock.acquire()
+                    owned = True
+                    while True:
+                        try:
+                            facts = await judge()
+                            if facts[2].status is AdmissionStatus.ACCEPTED:
+                                return facts
+                            if release_idle is not None:
+                                release = await _released(release_idle)
+                                if release == "freed":
+                                    facts = await judge()
+                                    if facts[2].status is AdmissionStatus.ACCEPTED:
+                                        return facts
+                        except PoolObserverError:
+                            if not isinstance(wait, LeaseWait):
+                                raise
+                        if not isinstance(wait, LeaseWait):
+                            return facts
+                        if not queued:
+                            await waiting.enter_async_context(wait.queued())
+                            queued = True
+                        # Retain the FIFO lock and release the worker slot throughout
+                        # shortage/observer recovery. Cancellation wakes this pause.
+                        try:
+                            await asyncio.wait_for(wait.stop(), timeout=spec.retry_after_seconds)
+                        except TimeoutError:
+                            continue
+                        except Exception as error:
+                            raise LeaseWaitStopped() from error
+                        raise LeaseWaitStopped()
+
+            if isinstance(wait, LeaseWait):
+                try:
+                    async with asyncio.timeout(wait.budget_s):
+                        snapshot, claim, decision = await prepare()
+                except TimeoutError as error:
+                    raise PoolCapacityError(AdmissionStatus.DELAYED, lease_held=True, release=release) from error
+            else:
+                snapshot, claim, decision = await prepare()
             # The shadow never changes the legacy decision. It only enqueues work, so it adds no await.
             op_key = self._shadow.admit(spec, request_id=request_id, decision=decision, snapshot=snapshot,
                                         claim=claim, observed_at=started)

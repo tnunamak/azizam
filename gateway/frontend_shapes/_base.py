@@ -7,6 +7,8 @@ no model and no engine; the input names it sets come from the chosen workflow's 
 
 from __future__ import annotations
 
+import asyncio
+
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
@@ -288,7 +290,10 @@ class Shape:
         if view.status == "canceled":
             return _wire.error_response(409, "The job was canceled", code="job_canceled")
         if view.status != "succeeded":
-            busy = self.abandon_gpu_wait(view, row, jobs, caller)
+            if getattr(jobs, "ticket_admission", False):
+                busy = await asyncio.to_thread(self.abandon_gpu_wait, view, row, jobs, caller)
+            else:
+                busy = self.abandon_gpu_wait(view, row, jobs, caller)
             if busy is not None:
                 return busy
             return _wire.error_response(504, "The job did not finish in time", kind="api_error", code=self.timeout_code)
@@ -320,8 +325,12 @@ class Shape:
             return None
         try:
             events = jobs.events(view.job_id, caller, limit=200)
-            if view.status == "running" and not job_retry_hint.still_waiting(events):
-                return None
+            withdraw = getattr(jobs, "withdraw_unsent", None)
+            withdrawn = withdraw(view.job_id, caller) if withdraw is not None else None
+            if withdrawn is False:
+                return None  # send intent won; cancellation must follow the execution protocol
+            if withdrawn is None and view.status == "running" and not job_retry_hint.still_waiting(events):
+                return None  # legacy jobs have no ticket yet
             jobs.cancel(view.job_id, caller)
         except JobNotFound:
             return None

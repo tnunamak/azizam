@@ -359,3 +359,84 @@ def test_cancelled_close_waiter_preserves_shared_cleanup_and_result(close_error)
             await asyncio.gather(first, second, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(check(), timeout=3))
+
+
+@pytest.mark.parametrize("finish_stream", [False, True])
+def test_gpu_and_serving_holdings_follow_stream_evidence(tmp_path, finish_stream):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.arbitration.types import ResourceRef
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionOwner
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        async def ready():
+            return True
+        plan = scheduler.pin(request_id="stream", caller="caller", policy_revision="revision", service_id="svc",
+                                 resources=("card/a",), claim_envelope={}, deadline=time.time() + 1, ready=ready)
+        owner = await AdmissionOwner.open(plan)
+        assert owner.lease.send_intent()
+        serving = CountingLease()
+        residency = SwitchLease(serving)
+        source = Source()
+        stream = owner.hand_off(residency.hand_off(source), eof_evidence="declared stream terminal observed")
+        try:
+            assert store.charge(ResourceRef("physical/card/a", "1")) == 1
+            assert await stream.__anext__() == b"first"
+            assert store.charge(ResourceRef("physical/card/a", "1")) == 1
+            assert serving.releases == 0
+            if finish_stream:
+                with pytest.raises(StopAsyncIteration):
+                    await stream.__anext__()
+            await stream.aclose()
+            await stream.aclose()
+            assert serving.releases == 1 and source.closes == 1
+            assert store.ticket("stream").phase == ("completed" if finish_stream else "unknown")
+            assert store.charge(ResourceRef("physical/card/a", "1")) == (0 if finish_stream else 1)
+            assert store.charge(ResourceRef("@gateway/worker", "1")) == 0
+        finally:
+            await owner.aclose()
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_dropped_admission_stream_closes_source_and_moves_ledger_io_off_loop(tmp_path, monkeypatch):
+    import threading
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionOwner
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        main_thread = threading.get_ident()
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        cleaned = asyncio.Event()
+        writers = []
+        original = store.finish_ticket
+        def tracked(*args, **kwargs):
+            writers.append(threading.get_ident())
+            result = original(*args, **kwargs)
+            loop.call_soon_threadsafe(cleaned.set)
+            return result
+        monkeypatch.setattr(store, "finish_ticket", tracked)
+        async def ready():
+            return True
+        plan = scheduler.pin(request_id="stream", caller="caller", policy_revision="rev", service_id="svc",
+                             resources=("card/a",), claim_envelope={}, deadline=time.time() + 10, ready=ready)
+        owner = await AdmissionOwner.open(plan)
+        assert owner.lease.send_intent()
+        serving, source = CountingLease(), Source()
+        stream = owner.hand_off(SwitchLease(serving).hand_off(source))
+        try:
+            del stream
+            gc.collect()
+            await asyncio.wait_for(cleaned.wait(), 2)
+            await owner.aclose()
+            await scheduler.drain_cleanup()
+            assert writers and main_thread not in writers
+            assert source.closes == 1 and serving.releases == 1
+            assert store.ticket("stream").phase == "unknown"
+        finally:
+            await owner.aclose()
+            store.close()
+    asyncio.run(scenario())

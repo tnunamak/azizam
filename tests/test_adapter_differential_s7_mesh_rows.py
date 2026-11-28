@@ -111,6 +111,8 @@ def rig(monkeypatch, tmp_path):
     cache.mkdir()
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
     harness = Harness()
+    # Preserve wire goldens while bounding permanent observer/shortage fixtures.
+    monkeypatch.setattr(workflow_run, "GPU_WAIT_S", 0.5)
     install_owner_mesh(monkeypatch)
     monkeypatch.setattr(proxy, "_workflow_core_cache", None)
     harness.retry_delays = []
@@ -619,9 +621,8 @@ def test_lease_free_capacity_refusal_reports_release_outcome(rig, monkeypatch, r
     assert [e["payload"].get("step") for e in got["events"] if e["event_type"] == "retry_after"] == retry_steps
 
 
-def test_freed_but_still_short_retries_and_each_attempt_asks_the_release_hook_again(rig):
-    """The release frees something, memory is still short, so the job waits and retries; every retry is a new lease
-    that asks the hook again (the pool asks once per lease, never in a loop)."""
+def test_freed_but_still_short_waits_in_one_attempt_until_its_deadline(rig):
+    """Memory shortage stays in admission; the deadline settles the original attempt."""
     rig.observer_body = {"free": 1024 * (1 << 20), "total": TOTAL}  # below the claim, whatever is released
     rig.release_answer = True
 
@@ -634,8 +635,11 @@ def test_freed_but_still_short_retries_and_each_attempt_asks_the_release_hook_ag
 
     got = run(rig, go)
     assert got["row"]["error"] == "The graphics card is busy with other work. Try again soon."
-    assert [e["payload"].get("step") for e in got["events"] if e["event_type"] == "retry_after"] == [30] * 11
-    assert rig.release_calls == ["gpu0"] * 11
+    assert [e["payload"].get("step") for e in got["events"] if e["event_type"] == "retry_after"] == [30]
+    assert len(rig.release_calls) == 1
+    assert rig.retry_delays == []
+    assert len([e for e in got["events"] if e["event_type"] == "attempt"]) == 1
+    assert len([e for e in got["events"] if e["event_type"] == "waiting_for_gpu"]) == 1
     assert rig.downstream == []  # the engine was never called
 
 
@@ -789,3 +793,38 @@ def test_a_sync_caller_whose_wait_ends_after_its_job_took_the_gpu_gets_504_and_t
     assert got["sync"]["status"] == 504 and got["sync"]["retry_after"] is None
     assert got["job"]["status"] == "succeeded"
     assert _seeds(got["engine_requests"]) == ["1"]
+
+
+@pytest.mark.parametrize("upstream_status", [200, 400, 503])
+def test_durable_multipart_dispatch_uses_one_bundle_and_refunds_only_completed_work(rig, monkeypatch, tmp_path, upstream_status):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    from gateway.arbitration.types import ResourceRef
+    store = ArbitrationStore(tmp_path / "admission.db")
+    scheduler = AdmissionScheduler(store, worker_capacity=1, poll_s=0.001)
+    rig.downstream_mode = "ok" if upstream_status == 200 else upstream_status
+    original = workflow_adapters._RUNNERS["http-multipart"]
+    host = dataclasses.replace(original._host, admission=lambda: scheduler)
+    runner = multipart_adapter.runner(host)
+    monkeypatch.setitem(workflow_adapters._RUNNERS, runner.binding_key, runner)
+    monkeypatch.setattr(proxy, "_GPU_ADMISSION_SCHEDULER", scheduler)
+    for service in rig.services.values():
+        capacity = (service.get("config") or {}).get("resource_capacity")
+        if capacity and capacity.get("enabled"):
+            capacity["physical_resources"] = ["card/a"]
+    async def go(c):
+        response = await c.post(RAW, **form())
+        assert response.status_code == (200 if upstream_status == 200 else 502)
+        return {}
+    try:
+        run(rig, go)
+        tickets = store._conn.execute("SELECT request_id FROM admission_tickets").fetchall()
+        assert len(tickets) == 1
+        kinds = {event["event_type"] for event in media_jobs.events(tickets[0][0], audience="internal", path=media_jobs.DB_PATH)}
+        assert not kinds & {"waiting_for_gpu", "gpu_ready", "retry_after"}
+        assert store.ticket(tickets[0][0]).phase == ("completed" if upstream_status < 500 else "unknown")
+        assert store.charge(ResourceRef("physical/card/a", "1")) == (0 if upstream_status < 500 else 1)
+        assert len(rig.downstream) == 1
+        assert rig.leases.active_claims() == 0
+    finally:
+        store.close()

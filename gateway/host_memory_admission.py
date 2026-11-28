@@ -231,6 +231,15 @@ class Ask:
     bounded: bool = True
     on_wait: Callable[[WaitState | None], Any] | None = None
     cancelled: Callable[[], Any] | None = None
+    # Optional shared admission deadline in the gate's monotonic clock domain.
+    deadline_monotonic: float | None = None
+
+    def __post_init__(self):
+        if self.deadline_monotonic is not None and (
+                isinstance(self.deadline_monotonic, bool)
+                or not isinstance(self.deadline_monotonic, (int, float))
+                or not math.isfinite(self.deadline_monotonic)):
+            raise ValueError("deadline_monotonic must be finite")
 
 
 
@@ -358,6 +367,8 @@ class HostMemoryAdmission:
 
     async def admit(self, graph: Mapping[str, Any], ask: Ask = Ask()) -> Lease | None:
         policy = effective(self.policy, await self._saved_setting())
+        if ask.deadline_monotonic is not None and self._clock() >= ask.deadline_monotonic:
+            raise HostMemoryBusy()
         if not policy.enabled:
             return None
         if await is_cancelled(ask):
@@ -367,6 +378,8 @@ class HostMemoryAdmission:
         fresh = [n for n in names if not self._resident(n, now)]
         sizes = await asyncio.to_thread(lambda: [self.size_of(n) for n in fresh])
         staged = sum(s for s in sizes if s)
+        if ask.deadline_monotonic is not None and self._clock() >= ask.deadline_monotonic:
+            raise HostMemoryBusy()
         for name, size in zip(fresh, sizes):
             if size is None:
                 LOG.info("host memory: no size known for a model of this prompt; it counts for nothing")
@@ -382,7 +395,11 @@ class HostMemoryAdmission:
             while True:
                 if await is_cancelled(ask):
                     raise HostMemoryCancelled()
+                if ask.deadline_monotonic is not None and self._clock() >= ask.deadline_monotonic:
+                    raise HostMemoryBusy()
                 available = await asyncio.to_thread(self._read)
+                if ask.deadline_monotonic is not None and self._clock() >= ask.deadline_monotonic:
+                    raise HostMemoryBusy()
                 if available is None:
                     LOG.warning("host memory: MemAvailable is unreadable; the prompt is admitted")
                     break
@@ -399,7 +416,10 @@ class HostMemoryAdmission:
                     result = ask.on_wait(WaitState(needed, available, now - started))
                     if asyncio.iscoroutine(result):
                         await result
-                await self._sleep(policy.poll_s)
+                pause = policy.poll_s
+                if ask.deadline_monotonic is not None:
+                    pause = min(pause, max(0.0, ask.deadline_monotonic - self._clock()))
+                await self._sleep(pause)
         finally:
             self._waiting.remove(waiter)
         now = self._clock()

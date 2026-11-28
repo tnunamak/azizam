@@ -10,6 +10,7 @@ import copy
 import hashlib
 import inspect
 import json
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
@@ -514,3 +515,29 @@ def test_a_shapes_profile_names_why_a_workflow_is_out_of_reach_of_its_wire() -> 
 def test_to_response_can_honour_the_callers_choice_of_answer_form() -> None:
     parameters = inspect.signature(frontend_shapes.shapes.OpenAIImagesJson.to_response).parameters
     assert {"request", "wire", "context", "run_request"} & set(parameters)
+
+
+def test_sync_timeout_withdraws_durable_unsent_admission_without_display_event(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    core, view = _running_mesh_job("mesh-glb")
+    jobs = EventedJobs(core, {view.job_id: []})
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    scheduler = AdmissionScheduler(store, worker_capacity=1)
+    store.enqueue_ticket(request_id=view.job_id, caller="caller", policy_revision="rev", service_id="svc",
+                         resources=("card/a",), claim_envelope={}, deadline=time.time() + 60)
+    import threading
+    loop_thread = threading.get_ident()
+    def withdraw(job_id, caller):
+        assert threading.get_ident() != loop_thread, "ticket cancellation SQLite must run off the event loop"
+        return scheduler.withdraw(job_id)
+    jobs.withdraw_unsent = withdraw
+    jobs.ticket_admission = True
+    try:
+        response = answer("mesh-glb", view, jobs)
+        assert response.status_code == 503
+        assert jobs.cancelled == [view.job_id]
+        assert store.ticket(view.job_id).phase == "withdrawn"
+        assert not store.grant_ticket(view.job_id, worker_capacity=1, now=time.time())
+    finally:
+        store.close()

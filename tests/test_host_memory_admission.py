@@ -627,3 +627,17 @@ def test_unreadable_switch_setting_leaves_admission_off(tmp_path):
     assert run(made.is_enabled()) is False
     assert run(made.admit(graph("a.safetensors"))) is None
     assert not made._reserved and not made._loaded
+
+
+def test_host_ram_wait_uses_remaining_shared_admission_deadline(tmp_path):
+    weights(tmp_path, "checkpoints/big.safetensors", 10_000)
+    made, clock = admission(tmp_path, [5_000])
+    ask = hma.Ask(bounded=False, deadline_monotonic=3.0)
+    with pytest.raises(hma.HostMemoryBusy):
+        run(made.admit(graph("big.safetensors"), ask))
+    assert clock.slept == [2.0, 1.0]
+    assert made._waiting == [] and made._reserved == []
+    # Recovery or a new readiness reading cannot reset an already expired ask.
+    made._read = lambda: 100_000
+    with pytest.raises(hma.HostMemoryBusy):
+        run(made.admit(graph("big.safetensors"), ask))

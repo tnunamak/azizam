@@ -479,10 +479,9 @@ def test_a_cancel_in_the_same_turn_the_wait_wins_the_lock_does_not_keep_the_lock
     asyncio.run(scenario())
 
 
-def test_a_wait_that_wins_the_lock_in_the_turn_its_budget_ends_keeps_the_lock_and_runs() -> None:
-    """Guards the ``if owned: return`` of ``_acquire_in_turn``. The holder leaves, then the loop is blocked past the
-    budget, so the next loop step has both the woken acquire and the expired timer. The acquire is first in the queue and
-    wins: the waiter runs (it is not told the pool is busy), and leaves nothing behind."""
+def test_an_expired_admission_deadline_wins_even_when_the_pool_becomes_free() -> None:
+    """Admission includes observation and slot reacquisition; winning the lock
+    at expiry no longer authorizes a fresh preparation phase."""
     pool = spec("gpu0")
     slots_held = RunSlots()
 
@@ -503,11 +502,12 @@ def test_a_wait_that_wins_the_lock_in_the_turn_its_budget_ends_keeps_the_lock_an
         await settle_loop()
         await holder.__aexit__(None, None, None)
         time.sleep(0.12)  # past the 0.05 s budget, with no suspension
-        await asyncio.wait_for(w, timeout=2)
+        with pytest.raises(PoolCapacityError):
+            await asyncio.wait_for(w, timeout=2)
         await assert_nothing_left(leases, pool, slots, 1)
         return order
 
-    assert asyncio.run(scenario()) == ["w"]
+    assert asyncio.run(scenario()) == []
 
 
 def test_a_stop_while_the_won_pool_waits_for_a_run_slot_ends_the_wait_and_the_next_waiter_gets_the_pool() -> None:
@@ -667,3 +667,550 @@ def test_the_end_of_the_wait_is_written_again_once_when_the_first_write_fails(
     assert [r.getMessage() for r in caplog.records].count("the end of the GPU wait was not recorded (try 2 of 2); "
                                                          "a sync caller that times out may read this job as still waiting") == (fail == 2)
     assert len(caplog.records) == fail
+
+
+@pytest.mark.xfail(strict=True, reason="Whole-card admission is not enabled: protocol egress has no GPU holding check")
+@pytest.mark.parametrize("path,body", [
+    ("/prompt", {"prompt": {}}),
+    ("/v1/chat/completions", {"model": "fixture", "messages": [], "stream": True}),
+    ("/v1/audio/transcriptions", {}),
+])
+def test_protocol_egress_cannot_bypass_a_conflicting_pool(path, body):
+    """Coverage activation gate: a fake transport must not see conflicting work.
+
+    This probes the common HTTP boundary, rather than claiming route integration.
+    It is deliberately red until graph/chat/speech share physical admission.
+    """
+    import httpx
+    from gateway import engine_egress
+
+    async def scenario():
+        leases = ExclusivePoolLeaseManager()
+        sent = []
+
+        async def transport(request):
+            sent.append(request.url.path)
+            return httpx.Response(200, json={})
+
+        async with leases.lease(spec("physical-card"), request_id="multipart", observe=roomy):
+            async with engine_egress.async_client(transport=httpx.MockTransport(transport)) as client:
+                await client.post("http://fixture.invalid" + path, json=body)
+            assert sent == [], "protocol egress bypasses the occupied GPU admission boundary"
+
+    asyncio.run(scenario())
+
+
+def test_multipart_admission_deadline_survives_shortage_retry_and_recovery(monkeypatch):
+    from gateway import workflow_run, media_jobs
+    clock = [1000.0]
+    row = {"status": "running", "metadata": {}}
+    writes = []
+    monkeypatch.setattr(workflow_run.time, "time", lambda: clock[0])
+    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: row)
+
+    def update(*args, metadata_patch, **kwargs):
+        writes.append(metadata_patch)
+        row["metadata"].update(metadata_patch)
+
+    monkeypatch.setattr(media_jobs, "update_status", update)
+    assert workflow_run.admission_remaining("job", 30, path=None) == 30
+    clock[0] += 12  # lock wait, observation, then shortage
+    assert workflow_run.admission_remaining("job", 30, path=None) == 18
+    clock[0] += 10  # retry/recovery; policy cannot reset or extend this ticket
+    assert workflow_run.admission_remaining("job", 90, path=None) == 8
+    clock[0] += 9
+    assert workflow_run.admission_remaining("job", 30, path=None) == 0
+    assert writes == [{"gpu_admission_deadline": 1030.0}]
+
+
+def test_memory_shortage_keeps_fifo_turn_and_wait_bracket_until_capacity_returns():
+    from dataclasses import replace
+    pool = replace(spec("gpu0"), retry_after_seconds=0.01)
+
+    async def scenario():
+        leases = ExclusivePoolLeaseManager()
+        enough = False
+        log = []
+        observed_short = asyncio.Event()
+
+        async def observe():
+            observed_short.set()
+            return {"free": TOTAL if enough else 0, "total": TOTAL}
+
+        async def job(name):
+            async with leases.lease(pool, request_id=name, observe=observe, wait=turn(log=log, name=name)):
+                log.append("run " + name)
+
+        a = asyncio.create_task(job("a"))
+        try:
+            await observed_short.wait()
+            await settle_loop()
+            assert not a.done(), "shortage must wait inside the original attempt"
+            b = asyncio.create_task(job("b"))
+            await settle_loop()
+            assert log == ["wait a", "wait b"]
+            enough = True
+            await asyncio.wait_for(asyncio.gather(a, b), 1)
+            assert log == ["wait a", "wait b", "ready a", "run a", "ready b", "run b"]
+        finally:
+            a.cancel()
+            await asyncio.gather(a, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_observer_recovery_waits_in_the_same_turn_and_impossible_claim_fails_once():
+    from dataclasses import replace
+    from gateway.exclusive_pool import PoolObserverError
+    pool = replace(spec("gpu0"), retry_after_seconds=0.001)
+
+    async def scenario():
+        calls = 0
+        async def observe():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise PoolObserverError("temporarily missing")
+            return await roomy()
+        leases = ExclusivePoolLeaseManager()
+        async with leases.lease(pool, request_id="recover", observe=observe, wait=turn()):
+            assert calls == 2
+        with pytest.raises(PoolCapacityError) as failure:
+            async with leases.lease(replace(pool, max_claim_bytes=TOTAL), request_id="impossible",
+                                    observe=roomy, wait=turn()):
+                pytest.fail("impossible claim admitted")
+        assert failure.value.status.value == "rejected"
+    asyncio.run(scenario())
+
+
+def test_durable_scheduler_two_cards_one_slot_and_ambiguous_upstream(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1, poll_s=0.001)
+        order = []
+        released = asyncio.Event()
+        sent = asyncio.Event()
+        def args(name, card):
+            return dict(request_id=name, caller="caller", policy_revision="rev", service_id=name,
+                        resources=(card,), claim_envelope={}, deadline=time.time() + 1, ready=lambda: roomy())
+        async def multipart():
+            async with scheduler.admit(**args("upload", "card/a")) as lease:
+                assert lease.send_intent()
+                sent.set()
+                await released.wait()
+                # Transport closed; intentionally no completion evidence.
+        a = asyncio.create_task(multipart())
+        await sent.wait()
+        async def graph():
+            async with scheduler.admit(**args("graph", "card/a")):
+                order.append("graph")
+        b = asyncio.create_task(graph())
+        await settle_loop()
+        async def chat():
+            async with scheduler.admit(**args("chat", "card/b")) as lease:
+                assert lease.send_intent()
+                order.append("chat")
+                lease.completed("stream reached declared terminal state")
+        c = asyncio.create_task(chat())
+        await settle_loop()
+        assert order == []
+        released.set()
+        await a
+        await c
+        assert order == ["chat"]
+        assert store.ticket("upload").phase == "unknown"
+        assert not b.done()
+        store.finish_ticket("upload", now=time.time(), evidence="upstream absence confirmed")
+        await b
+        assert order == ["chat", "graph"]
+        store.close()
+    asyncio.run(scenario())
+
+
+def test_transport_timeout_does_not_refund_a_fake_upstream_that_keeps_computing(tmp_path):
+    import httpx
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1, poll_s=0.001)
+        upstream_finished = asyncio.Event()
+        still_computing = asyncio.Event()
+        async def compute():
+            still_computing.set()
+            await upstream_finished.wait()
+        upstream = asyncio.create_task(compute())
+        await still_computing.wait()
+        def args(name):
+            return dict(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                        resources=("card/a",), claim_envelope={}, deadline=time.time() + 1, ready=roomy)
+        async def timeout(request):
+            raise httpx.ReadTimeout("response lost; engine still computing", request=request)
+        try:
+            with pytest.raises(httpx.ReadTimeout):
+                async with scheduler.admit(**args("first")) as lease:
+                    assert lease.send_intent()
+                    async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
+                        await client.post("http://fixture.invalid/execute")
+            assert not upstream.done()
+            ran = []
+            async def second():
+                async with scheduler.admit(**args("second")):
+                    ran.append("second")
+            pending = asyncio.create_task(second())
+            await settle_loop()
+            assert ran == []
+            assert store.ticket("first").phase == "unknown"
+            upstream_finished.set()
+            await upstream
+            store.finish_ticket("first", now=time.time(), evidence="fake upstream observed completed")
+            await pending
+            assert ran == ["second"]
+        finally:
+            upstream_finished.set()
+            await upstream
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_duplicate_admission_cannot_withdraw_another_executor(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionInProgress
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        args = dict(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                    resources=("card/a",), claim_envelope={}, deadline=time.time() + 1, ready=roomy)
+        try:
+            async with scheduler.admit(**args) as first:
+                with pytest.raises(AdmissionInProgress):
+                    async with scheduler.admit(**args):
+                        pytest.fail("duplicate executor granted")
+                assert first.send_intent()
+                first.completed("response complete")
+            assert store.ticket("job").phase == "completed"
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_restart_recovery_adopts_unknown_without_leaking_execution_slots(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    path = tmp_path / "ledger.db"
+    store = ArbitrationStore(path)
+    args = dict(request_id="sent", caller="caller", policy_revision="rev", service_id="svc",
+                resources=("card/a",), claim_envelope={}, deadline=time.time() + 60)
+    store.enqueue_ticket(**args)
+    assert store.grant_ticket("sent", worker_capacity=1, now=time.time())
+    assert store.transition_ticket("sent", "sending", now=time.time())
+    store.close()  # process vanished after send intent, before cleanup
+    async def scenario():
+        store = ArbitrationStore(path)
+        store.recover_startup(now=time.time())  # explicit, quiescent process startup
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        try:
+            assert store.ticket("sent").phase == "unknown"
+            async with scheduler.admit(**{**args, "request_id": "other", "resources": ("card/b",)}, ready=roomy):
+                pass  # stale worker charge cannot block an idle independent card
+            plan = scheduler.pin(**args, ready=roomy, recover=True)
+            async with plan.grant() as lease:
+                assert lease.recovering
+                assert not lease.send_intent()  # adoption permits observation, never replay
+                lease.completed("recovered upstream terminal result")
+            assert store.ticket("sent").phase == "completed"
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_zero_wait_tries_once_on_free_capacity_and_refuses_busy_without_sleep(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionExpired
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        def args(name, *, no_wait=False):
+            return dict(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                        resources=("card/a",), claim_envelope={}, deadline=time.time() if no_wait else time.time() + 60,
+                        ready=roomy, no_wait=no_wait)
+        try:
+            async with scheduler.admit(**args("free", no_wait=True)) as lease:
+                assert lease.send_intent()
+                lease.completed("synchronous response complete")
+            async with scheduler.admit(**args("holder")) as lease:
+                assert lease.send_intent()
+                with pytest.raises(AdmissionExpired):
+                    async with scheduler.admit(**args("busy", no_wait=True)):
+                        pytest.fail("busy immediate request was granted")
+                assert store.ticket("busy").phase == "expired"
+                lease.completed("holder completed")
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_one_waiter_cannot_clear_another_waiters_capacity_wakeup(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1, poll_s=60)
+        probing_a, release_probe, probing_b = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        calls = 0
+        async def readiness_a():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                probing_a.set()
+                await release_probe.wait()
+                return False  # old observation, taken before the notification
+            return True
+        async def readiness_b():
+            probing_b.set()
+            return False
+        async def job(name, ready):
+            async with scheduler.admit(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                                       resources=(name,), claim_envelope={}, deadline=time.time() + 60, ready=ready):
+                pass
+        a = asyncio.create_task(job("a", readiness_a))
+        b = None
+        try:
+            await probing_a.wait()
+            scheduler.withdraw("not-present")  # notify A while its observation is in flight
+            b = asyncio.create_task(job("b", readiness_b))
+            await probing_b.wait()
+            await settle_loop()  # B enters its wait; it must not consume A's wake
+            release_probe.set()
+            await asyncio.wait_for(a, 1)
+            assert calls == 2
+        finally:
+            a.cancel()
+            if b is not None:
+                b.cancel()
+            await asyncio.gather(a, *([b] if b is not None else []), return_exceptions=True)
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_cleanup_store_failure_still_discards_executor(tmp_path, monkeypatch):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        def broken(*args, **kwargs):
+            raise RuntimeError("injected ledger write failure")
+        monkeypatch.setattr(store, "finish_ticket", broken)
+        try:
+            with pytest.raises(RuntimeError, match="injected ledger"):
+                async with scheduler.admit(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                                           resources=("card/a",), claim_envelope={}, deadline=time.time() + 1, ready=roomy):
+                    pass
+            assert "job" not in scheduler._executors
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_pin_assigns_conflict_fifo_before_staging_or_first_send(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionExpired
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        def facts(name, no_wait=False):
+            return dict(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                        resources=("card/a",), claim_envelope={}, deadline=time.time() if no_wait else time.time() + 30,
+                        ready=roomy, no_wait=no_wait)
+        try:
+            first = scheduler.pin(**facts("slow-staging"))
+            second = scheduler.pin(**facts("fast-staging", no_wait=True))
+            assert first.ticket.sequence < second.ticket.sequence
+            with pytest.raises(AdmissionExpired):
+                async with second.grant():
+                    pytest.fail("first-send order overtook eligibility order")
+            async with first.grant() as lease:
+                assert lease.send_intent()
+                lease.completed("first completed")
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_ledger_grant_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    import threading
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        started, proceed = threading.Event(), threading.Event()
+        original = store.grant_ticket
+        def delayed(*args, **kwargs):
+            started.set()
+            assert proceed.wait(2), "the event loop could not release the ledger writer"
+            return original(*args, **kwargs)
+        monkeypatch.setattr(store, "grant_ticket", delayed)
+        async def ticker():
+            while not started.is_set():
+                await asyncio.sleep(0.001)
+            proceed.set()
+        tick = asyncio.create_task(ticker())
+        try:
+            async with scheduler.admit(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                                       resources=("card/a",), claim_envelope={}, deadline=time.time() + 10, ready=roomy):
+                pass
+            await tick
+        finally:
+            proceed.set()
+            tick.cancel()
+            await asyncio.gather(tick, return_exceptions=True)
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_transient_cleanup_failure_returns_worker_on_next_admission(tmp_path, monkeypatch):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        original = store.finish_ticket
+        failed = False
+        def once(*args, **kwargs):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("temporary cleanup write failure")
+            return original(*args, **kwargs)
+        monkeypatch.setattr(store, "finish_ticket", once)
+        def args(name, resource, no_wait=False):
+            return dict(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                        resources=(resource,), claim_envelope={}, deadline=time.time() if no_wait else time.time() + 10,
+                        no_wait=no_wait, ready=roomy)
+        try:
+            with pytest.raises(RuntimeError, match="temporary cleanup"):
+                async with scheduler.admit(**args("first", "card/a")) as lease:
+                    assert lease.send_intent()
+                    lease.completed("upstream completed")
+            async with scheduler.admit(**args("next", "card/b", no_wait=True)):
+                pass
+            assert store.ticket("first").phase == "completed"
+            assert scheduler._executors == set()
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_cancellation_during_a_threaded_grant_refunds_before_dispatch(tmp_path, monkeypatch):
+    import threading
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.arbitration.types import ResourceRef
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        started, proceed = threading.Event(), threading.Event()
+        original = store.grant_ticket
+        sent = []
+        def delayed(*args, **kwargs):
+            started.set()
+            assert proceed.wait(2)
+            return original(*args, **kwargs)
+        monkeypatch.setattr(store, "grant_ticket", delayed)
+        async def job():
+            async with scheduler.admit(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                                       resources=("card/a",), claim_envelope={}, deadline=time.time() + 10, ready=roomy):
+                sent.append("dispatched")
+        task = asyncio.create_task(job())
+        try:
+            while not started.is_set():
+                await asyncio.sleep(0.001)
+            task.cancel()
+            proceed.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert sent == []
+            assert store.ticket("job").phase == "withdrawn"
+            assert store.charge(ResourceRef("physical/card/a", "1")) == 0
+            assert store.charge(ResourceRef("@gateway/worker", "1")) == 0
+        finally:
+            proceed.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_unrelated_grant_does_not_expire_pinned_no_wait(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    facts = dict(caller="caller", policy_revision="rev", service_id="svc", claim_envelope={})
+    try:
+        store.enqueue_ticket(request_id="immediate", resources=("card/a",), deadline=1, no_wait=True, **facts)
+        store.enqueue_ticket(request_id="other", resources=("card/b",), deadline=100, **facts)
+        assert store.grant_ticket("other", worker_capacity=2, now=2)
+        assert store.ticket("immediate").phase == "waiting"
+        assert store.grant_ticket("immediate", worker_capacity=2, now=2)
+    finally:
+        store.close()
+
+
+def test_cleanup_failure_joins_other_tasks_before_dropping_tracking(tmp_path):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        release, failed = asyncio.Event(), asyncio.Event()
+        async def broken():
+            failed.set()
+            raise RuntimeError("cleanup failed")
+        async def slow():
+            await release.wait()
+        slow_task = asyncio.create_task(slow())
+        scheduler._cleanup_tasks.update((asyncio.create_task(broken()), slow_task))
+        drain = asyncio.create_task(scheduler.drain_cleanup())
+        try:
+            await failed.wait()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert slow_task in scheduler._cleanup_tasks
+            assert not drain.done()
+            release.set()
+            await drain
+            assert slow_task.done() and not scheduler._cleanup_tasks
+        finally:
+            release.set()
+            await asyncio.gather(drain, slow_task, return_exceptions=True)
+            store.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("sent", [False, True])
+def test_scheduler_construction_cannot_recover_live_holding(tmp_path, sent):
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        first = AdmissionScheduler(store, worker_capacity=1)
+        try:
+            async with first.admit(request_id="live", caller="caller", policy_revision="rev", service_id="svc",
+                                   resources=("card/a",), claim_envelope={}, deadline=time.time() + 60, ready=roomy) as lease:
+                if sent:
+                    assert lease.send_intent()
+                phase = store.ticket("live").phase
+                holdings = store.open_operations()
+                second = AdmissionScheduler(store, worker_capacity=1)
+                assert second.store is store
+                assert store.ticket("live").phase == phase
+                assert store.open_operations() == holdings
+                lease.completed("live operation ended")
+        finally:
+            store.close()
+    asyncio.run(scenario())

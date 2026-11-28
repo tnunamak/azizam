@@ -9,12 +9,12 @@ One run:
 1. The service must be present, enabled, and declare an enabled exclusive pool (``binding_problem``, also asked before a
    job exists).
 2. The service's health is read. The egress guard is asked just before the send.
-3. The pool's lease is taken in turn. When another job holds it, the job waits in arrival order for up to the binding's
-   ``retry.gpu_wait_s`` (``waiting_for_gpu`` event, then ``gpu_ready``), gives its run slot back while it waits, and stops
-   at once on a cancel (nothing was sent). After the wait, health and the egress guard are asked again. A wait that runs
-   out fails the job with ``resource_unavailable`` (retryable by the caller). A pool that is free but short of memory, or
-   an observer that does not answer, also fails the attempt with ``resource_unavailable``; that refusal requests an
-   in-job retry and writes a ``retry_after`` event. ``gpu_wait_s: 0`` refuses a held pool at once, as such a refusal.
+3. The durable job pins one admission deadline. Lock contention, insufficient memory
+   and missing observations wait in the original FIFO turn, without an execution
+   attempt or worker slot. The job projects ``waiting_for_gpu`` then ``gpu_ready``.
+   Cancellation withdraws waiting work; deadline expiry returns retryable busy.
+   A claim above total capacity is rejected without retry. ``gpu_wait_s: 0`` retains
+   immediate refusal with the configured execution retry policy.
 4. The lease is held from the observation until the service answers or the wall-clock bound ends. The service has no
    cancel call: a cancel of a running job waits for the answer, and the answer is then dropped.
 5. The model is kept in the Library and published as the job's one result.
@@ -52,8 +52,12 @@ from gateway.exclusive_pool import (
     PoolObserverError,
     observation_from_document,
     parse_resource_capacity,
+    physical_resource_ids,
+    snapshot_and_claim,
 )
 from gateway.frontend_shapes.media_job import GPU_BUSY_COPY
+from gateway.resource_claims import AdmissionStatus, AdmissionRequest, evaluate_admission
+from gateway.gpu_admission import AdmissionScheduler, AdmissionLease, AdmissionExpired, AdmissionWithdrawn
 from gateway.http_multipart import (
     KIND_CONNECT,
     KIND_MALFORMED,
@@ -64,7 +68,7 @@ from gateway.http_multipart import (
 )
 from gateway.mesh_manifest import ImageAsset
 from gateway.service_registry import service_base_url
-from gateway.workflow_run import BINDING_UNAVAILABLE, AdapterIdentity, RunContext, retry_policy
+from gateway.workflow_run import BINDING_UNAVAILABLE, AdapterIdentity, RunContext, admission_remaining, retry_policy
 
 LOG = logging.getLogger("azizam.multipart")
 
@@ -123,6 +127,8 @@ class MultipartHost:
     # slot_released(job_id, stop): a block in which the job does not hold its run slot (it waits for a held pool); ``stop``
     # ends the wait for the slot after the block (a cancel). None: no slots.
     slot_released: Callable[[str, Callable[[], Awaitable[None]]], AbstractAsyncContextManager[Any]] | None = None
+    # Installed only after dispatch coverage permits replacing the legacy authority.
+    admission: Callable[[], AdmissionScheduler | None] = lambda: None
 
 
 def exclusive_pool_problem(services: Mapping[str, Mapping[str, Any]], service_id: str,
@@ -324,6 +330,8 @@ class MultipartRunner:
         observer_issue, observer_url = observer_problem(self._host.services(), spec)
         client = self._host.client_factory()
         gpu_wait_s = retry_policy(ctx.pin.binding).gpu_wait_s
+        if gpu_wait_s > 0:
+            admission_remaining(ctx.job_id, gpu_wait_s, path=path)
         async with AsyncExitStack() as resources:
             resources.push_async_callback(client.aclose)
 
@@ -338,10 +346,20 @@ class MultipartRunner:
 
             await ready()
             try:
+                if gpu_wait_s > 0:
+                    remaining = admission_remaining(ctx.job_id, gpu_wait_s, path=path)
+                    if remaining <= 0:
+                        raise PoolCapacityError(AdmissionStatus.DELAYED, lease_held=True)
+                else:
+                    remaining = 0
                 await self._lease_and_run(
                     ctx, client, resources, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
-                    fields, _send_timeout_s(config), gpu_wait_s=gpu_wait_s, ready=ready)
-            except LeaseWaitStopped as error:
+                    fields, _send_timeout_s(config), gpu_wait_s=remaining, ready=ready)
+            except AdmissionExpired as error:
+                self._tell_retry_after(ctx.job_id, spec)
+                raise RunError(RESOURCE_UNAVAILABLE, "capacity", retryable=True,
+                               client_message=GPU_BUSY_COPY, before_send=True) from error
+            except (LeaseWaitStopped, AdmissionWithdrawn) as error:
                 # A cancel while the job waited its turn: nothing was sent, so the job ends cancelled.
                 raise media_jobs.CancellationPending("Cancel requested while the job waited for the GPU") from error
             except (PoolCapacityError, PoolObserverError) as error:
@@ -350,6 +368,10 @@ class MultipartRunner:
                              error, error.lease_held, error.release)
                 else:
                     LOG.info("multipart capacity refused: %s", error)
+                if isinstance(error, PoolCapacityError) and error.status is AdmissionStatus.REJECTED:
+                    raise RunError(RESOURCE_UNAVAILABLE, "capacity", retryable=False,
+                                   client_message="The resource claim exceeds the graphics card capacity.",
+                                   before_send=True) from error
                 if isinstance(error, PoolCapacityError) and error.lease_held and gpu_wait_s > 0:
                     # The job waited its turn for the whole budget. A retry would wait again, so the job fails as busy and
                     # its caller may ask again. The wait wrote the retry delay when it started (``_turn``).
@@ -380,18 +402,53 @@ class MultipartRunner:
                 raise PoolObserverError(observer_issue)
             return await read_observer(client, spec, observer_url)
 
-        waited: list[float] = []
-        await resources.enter_async_context(
-            self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe,
-                                      wait=self._turn(ctx.job_id, spec, gpu_wait_s, waited) if gpu_wait_s > 0 else False,
-                                      release_idle=(functools.partial(self._host.release_idle, spec)
-                                                    if self._host.release_idle is not None else None)))
-        if waited:
-            # The job waited its turn, perhaps for long: a cancel, the service and the egress guard are read again.
-            if self._cancel_asked(ctx.job_id):
-                raise media_jobs.CancellationPending("Cancel requested while the job waited for the GPU")
+        admission = self._host.admission()
+        lease = None
+        if admission is not None:
+            physical = physical_resource_ids(spec)
+            if not physical:
+                raise RunError(SERVICE_UNAVAILABLE, "capacity", client_message="Physical resource mapping is missing.")
+            job = media_jobs.get(ctx.job_id, audience="internal", path=self._host.jobs_path()) or {}
+            deadline = (job.get("metadata") or {}).get("gpu_admission_deadline", time.time() + gpu_wait_s)
+            async def capacity_ready() -> bool:
+                try:
+                    observed = observation_from_document(await observe(), spec)
+                except PoolObserverError:
+                    return False
+                snapshot, claim = snapshot_and_claim(spec, observed, observed_at=time.time())
+                if claim.vram_mb + math.ceil(spec.reserve_bytes / MIB) > snapshot.total_vram_mb:
+                    raise PoolCapacityError(AdmissionStatus.REJECTED)
+                return evaluate_admission(AdmissionRequest(ctx.job_id, claim), snapshot).accepted
+            async def stop() -> None:
+                with job_wake.watch(ctx.job_id) as wake:
+                    while not self._cancel_asked(ctx.job_id):
+                        await wake.event.wait()
+                        wake.event.clear()
+            def waiting() -> None:
+                self._tell_retry_after(ctx.job_id, spec)
+                self._tell_gpu_wait(ctx.job_id, max(0, deadline - time.time()))
+            lease = await resources.enter_async_context(admission.admit(
+                request_id=ctx.job_id, caller=str(job.get("owner_scope") or "unscoped"),
+                policy_revision=str(ctx.pin.envelope.record_revision),
+                service_id=str(_body(ctx.pin.binding).get(self._fields["service"]) or ""),
+                resources=physical, claim_envelope={"max_claim_bytes": spec.max_claim_bytes,
+                                                    "reserve_bytes": spec.reserve_bytes},
+                deadline=deadline, ready=capacity_ready, stop=stop,
+                no_wait=retry_policy(ctx.pin.binding).gpu_wait_s == 0,
+                on_wait=waiting, on_ready=lambda waited: self._tell_gpu_ready(ctx.job_id, waited)))
             await ready()
-        prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout, resources.aclose)
+        else:
+            waited: list[float] = []
+            await resources.enter_async_context(
+                self._host.leases.lease(spec, request_id=ctx.job_id, observe=observe,
+                                          wait=self._turn(ctx.job_id, spec, gpu_wait_s, waited) if gpu_wait_s > 0 else False,
+                                          release_idle=(functools.partial(self._host.release_idle, spec)
+                                                        if self._host.release_idle is not None else None)))
+            if waited:
+                if self._cancel_asked(ctx.job_id):
+                    raise media_jobs.CancellationPending("Cancel requested while the job waited for the GPU")
+                await ready()
+        prepared = _MultipartRun(self, ctx, client, url, file_field, file, fields, timeout, resources.aclose, lease)
         await declared_operation_job.run(prepared, str(ctx.pin.contract["intent"]),
                                          {**ctx.generated, **ctx.inputs}, job_id=ctx.job_id, caller=ctx.caller)
 
@@ -446,9 +503,10 @@ class MultipartRunner:
             LOG.exception("the GPU wait was not recorded")
 
     def _tell_gpu_ready(self, job_id: str, waited_s: float) -> None:
-        """The wait ended: the job holds the GPU pool and goes on. A sync caller that stops waiting reads the job as still
-        waiting, and cancels it, while this event is the newest of the pair (``job_retry_hint.still_waiting``). The job
-        records no other fact that it began to send, so a failed write is tried once more and then logged loudly."""
+        """The legacy wait ended. A sync caller uses this event to stop treating
+        the job as waiting. Retry one failed event write; ticket-based admission
+        uses persisted phase and atomic withdrawal instead of this courtesy event.
+        """
         for attempt in (1, 2):
             try:
                 media_jobs.append_event(job_id, "gpu_ready", {
@@ -527,6 +585,7 @@ class _MultipartRun:
     fields: Mapping[str, str]
     timeout: float
     finish_send: Callable[[], Awaitable[None]]
+    admission: AdmissionLease | None = None
     interface_version = ADAPTER_INTERFACE_VERSION_V2
 
     @property
@@ -546,6 +605,14 @@ class _MultipartRun:
         return ResultContext(self.runner._host.limits())
 
     async def start(self, conn: Any, op: str, request: CanonicalRequest) -> Completed:
+        if self.admission is not None:
+            if self.runner._cancel_asked(self.ctx.job_id):
+                raise AdmissionWithdrawn()
+            if not await self.admission.commit_send():
+                phase = (await asyncio.to_thread(self.admission.store.ticket, self.ctx.job_id)).phase
+                if phase == "expired":
+                    raise AdmissionExpired()
+                raise AdmissionWithdrawn()
         try:
             async with asyncio.timeout(self.timeout):
                 answer = await post_multipart(
@@ -553,6 +620,12 @@ class _MultipartRun:
                     fields=self.fields, timeout_seconds=self.timeout, max_response_bytes=MAX_ANSWER_BYTES)
         except TimeoutError as error:
             raise MultipartFailure(KIND_TIMEOUT) from error
+        except MultipartFailure as error:
+            if self.admission is not None and error.kind == KIND_UPSTREAM and error.status is not None and 400 <= error.status < 500:
+                self.admission.completed("upstream rejected synchronous request")
+            raise
+        if self.admission is not None:
+            self.admission.completed("synchronous operation returned its complete response")
         await self.finish_send()  # Release the pool and close the client before Library storage, as before.
         return Completed(await self.runner._result(self.ctx, self.file, answer))
 

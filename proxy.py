@@ -17,7 +17,7 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway.service_priority import service_priority
-from gateway import engine_egress, engine_inventory, engine_record_defaults, status_words, workflow_prompts
+from gateway import job_retry_hint, job_wake, gpu_admission, engine_egress, engine_inventory, engine_record_defaults, status_words, workflow_prompts
 from gateway.image_size import SIZE_REFUSAL, read_size
 
 _GRAPH_WORDS = status_words.words("images")
@@ -17432,6 +17432,9 @@ async def _release_idle_engines(spec: exclusive_pool.ExclusivePoolSpec) -> bool 
     return await idle_release.release_together(members)
 
 
+# Disabled until every managed dispatch family passes the common-resource coverage gate.
+_GPU_ADMISSION_SCHEDULER: gpu_admission.AdmissionScheduler | None = None
+
 # The multipart runner: the pool lease, the observer and the service call behind the binding the protocol description names.
 MULTIPART_HOST = multipart_adapter.MultipartHost(
     services=lambda: MESH_DEPS.services(),
@@ -17444,6 +17447,7 @@ MULTIPART_HOST = multipart_adapter.MultipartHost(
     limits=lambda: result_bundle.limits_from_config(runtime().config),
     release_idle=_release_idle_engines,
     slot_released=lambda job_id, stop: _WORKFLOW_RUN_SLOTS.released(job_id, stop=stop),
+    admission=lambda: _GPU_ADMISSION_SCHEDULER,
 )
 for _multipart_runner in multipart_adapter.runners(MULTIPART_HOST):
     workflow_adapters.register(_multipart_runner)
@@ -28782,6 +28786,65 @@ def _binding_ui_twin(binding: Mapping[str, Any]) -> dict | None:
 _RESULT_STAGES: dict[str, Callable[..., Awaitable[list[bytes]]]] = {}
 
 
+def _workflow_gpu_plan(ctx: workflow_run.RunContext) -> gpu_admission.AdmissionPlan:
+    """Pin a workflow's physical bundle before staging, from operator capacity data."""
+    scheduler = _GPU_ADMISSION_SCHEDULER
+    if scheduler is None:
+        raise RuntimeError("resource admission authority is not enabled")
+    service_id = ctx.pin.envelope.service_id
+    services = MESH_DEPS.services()
+    record = services.get(service_id) or {}
+    spec = exclusive_pool.parse_resource_capacity(service_id, (record.get("config") or {}).get("resource_capacity"))
+    if spec is None or not exclusive_pool.physical_resource_ids(spec):
+        raise node_graph_runner.RunFailed("resource_mapping_missing", "capacity", "Physical capacity policy is missing.")
+    issue, observer_url = multipart_adapter.observer_problem(services, spec)
+    job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+    deadline = (job.get("metadata") or {}).get("gpu_admission_deadline")
+    if not isinstance(deadline, (int, float)):
+        raise ValueError("workflow admission deadline is missing")
+
+    async def ready() -> bool:
+        if issue is not None:
+            return False
+        try:
+            async with MESH_DEPS.client_factory() as client:
+                observation = exclusive_pool.observation_from_document(
+                    await multipart_adapter.read_observer(client, spec, observer_url), spec)
+        except exclusive_pool.PoolObserverError:
+            return False
+        snapshot, claim = exclusive_pool.snapshot_and_claim(spec, observation, observed_at=time.time())
+        if claim.vram_mb + math.ceil(spec.reserve_bytes / exclusive_pool.MIB) > snapshot.total_vram_mb:
+            raise node_graph_runner.RunFailed("resource_claim_impossible", "capacity", "The resource claim exceeds total capacity.")
+        return exclusive_pool.evaluate_admission(exclusive_pool.AdmissionRequest(ctx.job_id, claim), snapshot).accepted
+
+    async def stop() -> None:
+        with job_wake.watch(ctx.job_id) as wake:
+            while True:
+                current = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+                if media_jobs.is_terminal(str(current.get("status") or "")) or (current.get("metadata") or {}).get("cancel_requested_at"):
+                    return
+                await wake.event.wait()
+                wake.event.clear()
+
+    def waiting() -> None:
+        job_retry_hint.write(ctx.job_id, spec.retry_after_seconds, path=media_jobs.DB_PATH)
+        media_jobs.append_event(ctx.job_id, "waiting_for_gpu", {"phase": "waiting_for_gpu", "status": "running",
+                                "progress": int(job.get("progress") or 0), "reason": "gpu_busy",
+                                "wait_s": int(max(0, deadline - time.time()))}, path=media_jobs.DB_PATH)
+
+    def admitted(waited: float) -> None:
+        media_jobs.append_event(ctx.job_id, "gpu_ready", {"phase": "running", "status": "running",
+                                "progress": int(job.get("progress") or 0), "waited_s": int(waited)}, path=media_jobs.DB_PATH)
+
+    return scheduler.pin(request_id=ctx.job_id, caller=str(job.get("owner_scope") or "unscoped"),
+                             policy_revision=str(ctx.pin.envelope.record_revision), service_id=service_id,
+                             resources=exclusive_pool.physical_resource_ids(spec),
+                             claim_envelope={"max_claim_bytes": spec.max_claim_bytes, "reserve_bytes": spec.reserve_bytes},
+                             deadline=deadline, ready=ready, stop=stop, on_wait=waiting, on_ready=admitted,
+                             recover=bool((job.get("metadata") or {}).get("protocol_job") or (job.get("metadata") or {}).get("protocol_submitting")),
+                             no_wait=workflow_run.retry_policy(getattr(ctx.pin, "binding", {})).gpu_wait_s == 0)
+
+
 def _graph_runner_host() -> node_graph_runner.GraphHost:
     def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext, sources: Sequence[Mapping[str, str]] = ()) -> Any:
         from gateway.engine_protocol.media import GatewayAssetStore
@@ -28873,6 +28936,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
 
     return node_graph_runner.GraphHost(
         engine=_workflow_engine, identity=identity,
+        admission=_workflow_gpu_plan if _GPU_ADMISSION_SCHEDULER is not None else None,
         problem=_graph_binding_problem,
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
         control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
@@ -29049,15 +29113,19 @@ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
 
 def _workflow_job_service() -> workflow_run.WorkflowJobService:
     return workflow_run.WorkflowJobService(port=_WORKFLOW_RUN_PORT, path=media_jobs.DB_PATH,
-                                           prompt_lookup=_job_prompt_text, wire_id=_job_wire_id)
+                                           prompt_lookup=_job_prompt_text, wire_id=_job_wire_id,
+                                           admission=_GPU_ADMISSION_SCHEDULER)
 
 
 async def _run_workflow_job(job_id: str) -> None:
     core = _workflow_run_core()
     if core is None:
         raise RuntimeError("the workflow run core is not configured")
-    async with _WORKFLOW_RUN_SLOTS.hold(job_id, _workflow_run_slots()):
-        await core.execute_run(job_id)
+    if _GPU_ADMISSION_SCHEDULER is not None:
+        await core.execute_run(job_id)  # the resource transaction owns execution slots
+    else:
+        async with _WORKFLOW_RUN_SLOTS.hold(job_id, _workflow_run_slots()):
+            await core.execute_run(job_id)
 
 
 def _schedule_workflow_run(job_id: str) -> bool:

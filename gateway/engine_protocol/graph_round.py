@@ -14,6 +14,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
+from gateway.gpu_admission import current_scope
 from gateway.engine_protocol import node_graph
 from gateway.engine_protocol.description import Poll
 from gateway.engine_protocol.errors import MalformedResponse, SelectionRefused, TransportFailure, UpstreamError
@@ -122,8 +123,35 @@ async def cancel(adapter: Any, connection: Callable[[], Any], session: Any, prom
     except Exception as error:  # noqa: BLE001
         say(f"{adapter.label} cancel failed for {prompt_id} after {reason}: {type(error).__name__}")
         return False
+    scope = current_scope()
+    if scope is not None and await prompt_in_queue(adapter, session, prompt_id, headers, timeout=timeout) == "absent":
+        scope.completed("cancel accepted and prompt observed absent from queue")
     say(f"{adapter.label} prompt cancelled after {reason}: {prompt_id}")
     return True
+
+
+async def reconcile_unknown(adapter: Any, session: Any, ref: JobRef, *, headers: Mapping[str, str],
+                            graph: Mapping[str, Any], control_timeout: Any,
+                            gap_s: float = ORPHAN_GRACE_S) -> str | None:
+    """Read history and queue for an existing operation without submitting it.
+
+    Missing history alone is ambiguous. Two valid queue-absence observations,
+    separated by the protocol's orphan grace, establish the same absence as a run.
+    """
+    for observation in range(2):
+        try:
+            status = await adapter.poll(session.conn, ref, headers=dict(headers), session=session, graph=dict(graph))
+        except Exception:
+            return None
+        if status.state in {JobState.succeeded, JobState.failed, JobState.cancelled}:
+            return "reconciliation observed terminal protocol history"
+        if status.state is not JobState.pending:
+            return None
+        if await prompt_in_queue(adapter, session, ref.id, headers, timeout=control_timeout) != "absent":
+            return None
+        if observation == 0:
+            await asyncio.sleep(max(0.0, gap_s))
+    return "reconciliation observed prompt absent from history and queue twice"
 
 
 async def run_round(
@@ -159,12 +187,20 @@ async def run_round(
     prompt_id: Optional[str] = None
     try:
         try:
+            scope = current_scope()
+            if scope is not None:
+                if resume_prompt_id:
+                    await scope.prepare_resume()
+                else:
+                    await scope.prepare_send()
             ref = JobRef("graph.submit", resume_prompt_id) if resume_prompt_id else await adapter.submit(session.conn, "graph.submit",
                                        CanonicalRequest(op="graph.submit", body=dict(payload), headers=dict(headers), params={"session": session}))
         except TransportFailure as error:
             kind = {"timeout": SUBMIT_TIMEOUT, "unreachable": UNREACHABLE}.get(error.kind, DROPPED)
             raise RoundFailure(kind) from error
         except UpstreamError as error:
+            if scope is not None and 400 <= error.status < 500:
+                scope.completed("upstream rejected submission before accepting work")
             raise RoundFailure(REFUSED, excerpt=str(error.excerpt or ""), status=error.status,
                                refusal_body=parse_refusal_body(error.body)) from error
         except MalformedResponse as error:
@@ -198,8 +234,12 @@ async def run_round(
                 continue
             status = observe(status)
             if status.state is JobState.failed:
+                if scope is not None:
+                    scope.completed("protocol job observed failed")
                 raise RoundFailure(EXECUTION_FAILED, detail=str(status.detail or ""), prompt_id=prompt_id)
             if status.state is JobState.succeeded:
+                if scope is not None:
+                    scope.completed("protocol job observed succeeded")
                 on_completed()
                 finished = status
                 break
@@ -213,6 +253,8 @@ async def run_round(
                 if where == "running":
                     on_progress(PROGRESS_IN_QUEUE)
                 if unseen >= 2:
+                    if scope is not None:
+                        scope.completed("prompt absent from history and queue in two observations")
                     raise RoundFailure(ORPHANED, prompt_id=prompt_id)
         if finished is None:
             position = await queue_position(adapter, session, prompt_id, headers, timeout=control_timeout)

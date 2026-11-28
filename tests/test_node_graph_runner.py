@@ -629,3 +629,293 @@ def test_declared_image_must_be_readable_before_cutout_fallback(monkeypatch):
     assert (caught.value.code, caught.value.upstream_status, caught.value.retryable) == (
         "upstream_invalid_image", 502, False,
     )
+
+
+def test_graph_submit_ack_keeps_shared_holding_until_terminal_observation(tmp_path):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionScope
+    from gateway.arbitration.types import ResourceRef
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        ack = asyncio.Event()
+        finish = asyncio.Event()
+        args = dict(request_id="graph", caller="caller", policy_revision="rev", service_id="graph",
+                    resources=("card/a",), claim_envelope={}, deadline=time.time() + 1)
+        async def ready():
+            return True
+        class Protocol(Adapter):
+            async def submit(self, *args):
+                assert store.ticket("graph").phase == "sending"
+                ack.set()
+                return JobRef("graph.submit", "prompt")
+            async def poll(self, conn, ref, **kwargs):
+                await finish.wait()
+                return JobStatus(ref, JobState.succeeded)
+        async def graph():
+            async with AdmissionScope(scheduler.pin(**args, ready=ready)):
+                await graph_round.run_round(
+                    Protocol([]), Session([queue_with()]), {}, {}, graph={}, label="test", max_wait_s=1,
+                    control_timeout=1, cancel_connection=lambda: None, is_disconnected=ready_false,
+                    binding={}, contract_outputs={}, limits=None,
+                    cadence=Poll(ramp_s=(), interval_s=0, max_polls=1))
+        async def ready_false():
+            return False
+        task = asyncio.create_task(graph())
+        try:
+            await asyncio.wait_for(ack.wait(), 1)
+            assert store.charge(ResourceRef("physical/card/a", "1")) == 1
+            assert not store.grant_ticket("missing", worker_capacity=1, now=time.time())
+            finish.set()
+            await task
+            assert store.ticket("graph").phase == "completed"
+            assert store.charge(ResourceRef("physical/card/a", "1")) == 0
+        finally:
+            finish.set()
+            await asyncio.gather(task, return_exceptions=True)
+            store.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancel_before_send", [False, True])
+def test_runner_prepares_before_lazy_admission_and_propagates_original_deadline(monkeypatch, tmp_path, cancel_before_send):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, current_scope
+    from gateway import node_graph_runner
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    scheduler = AdmissionScheduler(store, worker_capacity=1)
+    args = dict(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                resources=("card/a",), claim_envelope={}, deadline=time.time() + 30)
+    async def ready():
+        return True
+    def factory(ctx):
+        return scheduler.pin(**args, ready=ready)
+    host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None,
+                     control_timeout=None, headers=None, batching=None, stages={}, admission=factory)
+    runner_ = NodeGraphRunner("binding", "adapter", host)
+    ctx = SimpleNamespace(job_id="job", pin=SimpleNamespace(binding={}))
+    monkeypatch.setattr(node_graph_runner, "admission_remaining", lambda *args, **kwargs: 30)
+    async def prepared(ctx):
+        assert store.ticket("job").phase == "waiting"
+        assert store.open_operations() == []  # staging and initial RAM preparation own no GPU/worker bundle
+        if cancel_before_send:
+            raise asyncio.CancelledError()
+        scope = current_scope()
+        await scope.prepare_send()
+        assert store.ticket("job").phase == "sending"
+        scope.completed("terminal protocol observation")
+    monkeypatch.setattr(runner_, "_run", prepared, raising=False)
+    try:
+        if cancel_before_send:
+            with pytest.raises(asyncio.CancelledError):
+                asyncio.run(runner_.run(ctx))
+            assert store.ticket("job").phase == "withdrawn"
+        else:
+            asyncio.run(runner_.run(ctx))
+            assert store.ticket("job").phase == "completed"
+    finally:
+        store.close()
+
+
+def test_registry_backed_graph_plan_pins_physical_data_before_dispatch(monkeypatch, tmp_path):
+    import time
+    import dataclasses
+    import proxy
+    import httpx
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionScope
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    scheduler = AdmissionScheduler(store, worker_capacity=1)
+    capacity = {"enabled": True, "mode": "exclusive-route-pool", "pool_id": "alias",
+                "max_claim_bytes": 1048576, "reserve_bytes": 1048576, "retry_after_seconds": 1, "timeout_seconds": 1,
+                "physical_resources": ["card/a"],
+                "observer": {"service": "observer", "path": "/facts", "free_pointer": "/free", "total_pointer": "/total"}}
+    services = {"renamed": {"enabled": True, "config": {"base_url": "http://execution.invalid", "resource_capacity": capacity}},
+                "observer": {"enabled": True, "config": {"base_url": "http://observation.invalid"}}}
+    async def transport(request):
+        return httpx.Response(200, json={"free": 10485760, "total": 10485760})
+    monkeypatch.setattr(proxy, "_GPU_ADMISSION_SCHEDULER", scheduler)
+    monkeypatch.setattr(proxy, "MESH_DEPS", dataclasses.replace(proxy.MESH_DEPS, services=lambda: services,
+                        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(transport))))
+    monkeypatch.setattr(media_jobs, "get", lambda *args, **kwargs: {"owner_scope": "owner", "metadata": {"gpu_admission_deadline": time.time() + 10}})
+    monkeypatch.setattr(media_jobs, "append_event", lambda *args, **kwargs: None)
+    ctx = SimpleNamespace(job_id="job", pin=SimpleNamespace(envelope=SimpleNamespace(service_id="renamed", record_revision=7)))
+    try:
+        plan = proxy._workflow_gpu_plan(ctx)
+        assert store.ticket("job").phase == "waiting"
+        assert plan.ticket.resources == ("card/a",) and plan.ticket.service_id == "renamed"
+        async def scenario():
+            async with AdmissionScope(plan) as scope:
+                await scope.prepare_send()
+                scope.completed("terminal graph result")
+        asyncio.run(scenario())
+        assert store.ticket("job").phase == "completed"
+    finally:
+        store.close()
+
+
+def test_graph_admission_expiry_is_capacity_failure_without_execution_retry(monkeypatch, tmp_path):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, current_scope
+    from gateway import node_graph_runner
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    scheduler = AdmissionScheduler(store, worker_capacity=1)
+    async def not_ready():
+        return False
+    def factory(ctx):
+        return scheduler.pin(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                                 resources=("card/a",), claim_envelope={}, deadline=time.time() - 1, ready=not_ready)
+    host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None,
+                     control_timeout=None, headers=None, batching=None, stages={}, admission=factory)
+    graph = NodeGraphRunner("binding", "adapter", host)
+    monkeypatch.setattr(node_graph_runner, "admission_remaining", lambda *args, **kwargs: 0)
+    async def run(ctx):
+        await current_scope().prepare_send()
+    monkeypatch.setattr(graph, "_run", run)
+    try:
+        with pytest.raises(RunFailed) as failure:
+            asyncio.run(graph.run(SimpleNamespace(job_id="job", pin=SimpleNamespace(binding={}))))
+        assert (failure.value.code, failure.value.category, failure.value.retry_reason) == ("resource_unavailable", "capacity", None)
+        assert store.ticket("job").phase == "expired"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("outcome,expected_phase", [("refused", "completed"), ("server_error", "unknown"),
+                                                   ("cancelled_absent", "completed"), ("cancel_ack_only", "unknown"),
+                                                   ("orphaned", "completed")])
+def test_graph_definite_absence_settles_but_ambiguous_outcomes_stay_charged(monkeypatch, tmp_path, outcome, expected_phase):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler, AdmissionScope
+    async def no_sleep(_delay):
+        pass
+    monkeypatch.setattr(graph_round.asyncio, "sleep", no_sleep)
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        async def ready():
+            return True
+        async def disconnected():
+            return outcome.startswith("cancel")
+        class Protocol(Adapter):
+            async def submit(self, *args):
+                if outcome in {"refused", "server_error"}:
+                    raise UpstreamError(400 if outcome == "refused" else 503, "refused")
+                return JobRef("graph.submit", "p1")
+        plan = scheduler.pin(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                                 resources=("card/a",), claim_envelope={}, deadline=time.time() + 60, ready=ready)
+        try:
+            with pytest.raises(graph_round.RoundFailure):
+                async with AdmissionScope(plan):
+                    await graph_round.run_round(
+                        Protocol([JobState.pending]), Session([queue_with(running=["p1"]) if outcome == "cancel_ack_only" else queue_with()]),
+                        {}, {}, graph={}, label="test", max_wait_s=60, control_timeout=1,
+                        cancel_connection=lambda: None, is_disconnected=disconnected, binding={}, contract_outputs={}, limits=None,
+                        cadence=Poll(ramp_s=(), interval_s=15, max_polls=2))
+            assert store.ticket("job").phase == expected_phase
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+def test_unknown_reconciler_requires_terminal_history_or_two_valid_absence_reads(monkeypatch, tmp_path):
+    import time
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def no_sleep(_delay):
+        pass
+    monkeypatch.setattr(graph_round.asyncio, "sleep", no_sleep)
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        async def ready():
+            return True
+        for name in ("gone", "busy", "unreadable"):
+            async with scheduler.admit(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                                       resources=(name,), claim_envelope={}, deadline=time.time() + 60, ready=ready) as lease:
+                assert lease.send_intent()
+        async def inspect(ticket):
+            looks = queue_with(running=[ticket.request_id]) if ticket.request_id == "busy" else Reply(503, {}) if ticket.request_id == "unreadable" else queue_with()
+            return await graph_round.reconcile_unknown(Adapter([JobState.pending]), Session([looks]),
+                                                       JobRef("graph.submit", ticket.request_id), headers={}, graph={},
+                                                       control_timeout=1, gap_s=0)
+        try:
+            settled = await scheduler.reconcile_unknown(inspect)
+            assert settled == ["gone"]
+            assert store.ticket("gone").phase == "completed"
+            assert [ticket.request_id for ticket in store.unknown_tickets()] == ["busy", "unreadable"]
+        finally:
+            store.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("second", ["absent", "present", "unreadable"])
+def test_reconciliation_needs_two_valid_absence_reads(monkeypatch, second):
+    async def no_sleep(_delay):
+        pass
+    monkeypatch.setattr(graph_round.asyncio, "sleep", no_sleep)
+    other = queue_with() if second == "absent" else queue_with(running=["p1"]) if second == "present" else Reply(503, {})
+    session = Session([queue_with(), other])
+    result = asyncio.run(graph_round.reconcile_unknown(Adapter([JobState.pending]), session,
+                         JobRef("graph.submit", "p1"), headers={}, graph={}, control_timeout=1, gap_s=0))
+    assert session.asked == 2
+    assert bool(result) == (second == "absent")
+
+
+@pytest.mark.parametrize("state", [JobState.succeeded, JobState.failed, JobState.cancelled])
+def test_reconciliation_terminal_history_needs_no_queue(state):
+    session = Session([])
+    result = asyncio.run(graph_round.reconcile_unknown(Adapter([state]), session,
+                         JobRef("graph.submit", "p1"), headers={}, graph={}, control_timeout=1))
+    assert result == "reconciliation observed terminal protocol history"
+    assert session.asked == 0
+
+
+def test_cancel_during_threaded_pin_withdraws_late_ticket(monkeypatch, tmp_path):
+    import threading
+    import time
+    from gateway import node_graph_runner
+    from gateway.arbitration.store import ArbitrationStore
+    from gateway.gpu_admission import AdmissionScheduler
+    async def scenario():
+        store = ArbitrationStore(tmp_path / "ledger.db")
+        scheduler = AdmissionScheduler(store, worker_capacity=1)
+        started, release, finished = threading.Event(), threading.Event(), threading.Event()
+        async def ready():
+            return True
+        def factory(ctx):
+            started.set()
+            assert release.wait(5)
+            try:
+                return scheduler.pin(request_id="job", caller="caller", policy_revision="rev", service_id="svc",
+                                     resources=("card/a",), claim_envelope={}, deadline=time.time() + 60, ready=ready)
+            finally:
+                finished.set()
+        host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None,
+                         control_timeout=None, headers=None, batching=None, stages={}, admission=factory)
+        runner = NodeGraphRunner("binding", "adapter", host)
+        ctx = SimpleNamespace(job_id="job", pin=SimpleNamespace(binding={}))
+        monkeypatch.setattr(node_graph_runner, "admission_remaining", lambda *args, **kwargs: 30)
+        async def unexpected(ctx):
+            pytest.fail("cancelled pin must not stage")
+        monkeypatch.setattr(runner, "_run", unexpected)
+        task = asyncio.create_task(runner.run(ctx))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert await asyncio.to_thread(finished.wait, 5)
+            assert store.ticket("job").phase == "withdrawn"
+            assert store.open_operations() == []
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            store.close()
+    asyncio.run(scenario())

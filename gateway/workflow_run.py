@@ -33,6 +33,7 @@ import yaml
 from gateway import adapter_choices, engine_unavailable, generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
 from gateway import config_runtime, release_policy
 from gateway.definition_store import DefinitionUnavailable
+from gateway.gpu_admission import AdmissionScheduler
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
 from gateway.manifests import ContractError, ManifestError, validate_inputs
@@ -207,8 +208,9 @@ CANCELED_BEFORE_SEND = "canceled_before_send"
 RETRY_MAX_ATTEMPTS = _WORKFLOW_SCHEDULING["retry_max_attempts"]
 RETRY_BASE_S = _WORKFLOW_SCHEDULING["retry_base_s"]
 RETRY_MAX_S = _WORKFLOW_SCHEDULING["retry_max_s"]
-# How long a job waits its turn for a GPU pool another job holds before it fails as busy (``retry.gpu_wait_s``). A wait
-# uses no attempt. 0 refuses at once, and the refusal then retries as above.
+# Multipart admission budget across contention, observation and memory recovery.
+# Waiting uses no execution attempt. Legacy initial worker-slot waiting is separate.
+# Zero preserves immediate refusal and the binding's execution retry policy.
 GPU_WAIT_S = _WORKFLOW_SCHEDULING["gpu_wait_s"]
 
 
@@ -270,6 +272,26 @@ class AdapterIdentity:
     interface_version: int
     service_id: str
     origin: str
+
+
+def admission_remaining(job_id: str, budget_s: float, *, path: Path | None) -> float:
+    """Pin the multipart admission deadline once; retries and recovery use its remainder.
+
+    Epoch seconds survive process restart. This synchronous read/write contains no
+    event-loop yield; the run core permits only one executor for a durable job.
+    """
+    job = media_jobs.get(job_id, audience="internal", include_deleted=True, path=path)
+    if job is None:
+        raise ValueError("admission requires a durable job")
+    deadline = (job.get("metadata") or {}).get("gpu_admission_deadline")
+    now = time.time()
+    if deadline is None:
+        deadline = now + budget_s
+        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
+                                 metadata_patch={"gpu_admission_deadline": deadline}, path=path)
+    if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline):
+        raise ValueError("invalid admission deadline")
+    return max(0.0, deadline - now)
 
 
 @dataclass(frozen=True)
@@ -1411,9 +1433,11 @@ class WorkflowJobService:
     def __init__(self, *, port: RunPort, path: Path | None = None,
                  tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time,
                  prompt_lookup: Callable[[str, str], str | None] | None = None,
-                 wire_id: Callable[[str], str] | None = None) -> None:
+                 wire_id: Callable[[str], str] | None = None,
+                 admission: AdmissionScheduler | None = None) -> None:
         # ``wire_id(job_id)`` is the id the frontend shows for a job: the placeholder in the recorded facts becomes it on read.
         self._wire_id = wire_id
+        self._admission = admission
         # ``prompt_lookup(job_id, person_id)`` is the text the prompt-memory rules still keep for the maker, or None. The
         # main module gives it; without it no facts carry a prompt.
         self._prompt_lookup = prompt_lookup
@@ -1445,11 +1469,29 @@ class WorkflowJobService:
                     return job_view(job, self._path, disposition="replay")
                 await woken.wait(min(remaining, job_wake.FALLBACK_S))
 
+    @property
+    def ticket_admission(self) -> bool:
+        return self._admission is not None
+
+    def withdraw_unsent(self, job_id: str, caller: CallerContext) -> bool | None:
+        """Atomically withdraw a ticket, or None for jobs still using legacy admission."""
+        job = self._readable(job_id, caller)
+        if not self._port.can_cancel(job, caller):
+            raise JobNotFound(job_id)
+        if self._admission is None:
+            return None
+        ticket = self._admission.store.ticket(job_id)
+        if ticket is None:
+            return None
+        return self._admission.withdraw(job_id) or ticket.phase in {"withdrawn", "expired"}
+
     def cancel(self, job_id: str, caller: CallerContext) -> RunJobView:
         job = self._readable(job_id, caller)
         if not self._port.can_cancel(job, caller):
             raise JobNotFound(job_id)
         if not media_jobs.is_terminal(str(job["status"])):
+            if self._admission is not None:
+                self._admission.withdraw(job_id)
             try:
                 media_jobs.request_cancel(job_id, path=self._path)
             except ValueError:          # finished between the read and the cancel: answer the job as it is

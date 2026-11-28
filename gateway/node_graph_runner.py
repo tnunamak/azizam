@@ -29,12 +29,14 @@ from types import MappingProxyType
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
 from gateway import asset_types, generated_defaults, host_memory_admission, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
+from gateway.gpu_admission import AdmissionScope, AdmissionPlan, AdmissionExpired, AdmissionWithdrawn, pin_plan
+from gateway.frontend_shapes.media_job import GPU_BUSY_COPY
 from gateway.engine_protocol import graph_round
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.engine_protocol.node_validation import input_refusals
 from gateway.engine_protocol.types import AssetsResult, CanonicalRequest, ResultBundle, ResultContext
-from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, requested_file_count, with_wire_id
+from gateway.workflow_run import admission_remaining, retry_policy, REQUEST_FACTS_KEY, AdapterIdentity, RunContext, requested_file_count, with_wire_id
 from gateway.workflow_runtime_types import AUDIO_FACT, RESULT_REFUSED_MESSAGE
 
 LOG = logging.getLogger("azizam.node_graph_runner")
@@ -181,6 +183,7 @@ class GraphHost:
     batching: Callable[[RunContext, Any], Batching | None]
     stages: Mapping[str, Callable[..., Awaitable[list[bytes]]]]
     say: Callable[[str], None] = lambda text: None
+    admission: Callable[[RunContext], AdmissionPlan] | None = None
     # Each media input of the run, held by the engine, as the name the engine gives it: ``(ctx, adapter, connection) -> {input: name}``.
     stage_media: Callable[..., Awaitable[Mapping[str, str]]] | None = None
     # The id a caller sees for a job, for the stage that stamps the file with the request it answers (None: the placeholder stays).
@@ -296,6 +299,19 @@ class NodeGraphRunner:
     # -- the run ----------------------------------------------------------------------------------------------------
 
     async def run(self, ctx: RunContext) -> None:
+        if self.host.admission is None:
+            return await self._run(ctx)
+        admission_remaining(ctx.job_id, retry_policy(ctx.pin.binding).gpu_wait_s, path=media_jobs.DB_PATH)
+        context = await pin_plan(self.host.admission, ctx)  # pin before staging; cancellation withdraws
+        try:
+            async with AdmissionScope(context):
+                return await self._run(ctx)
+        except AdmissionExpired as error:
+            raise RunFailed("resource_unavailable", "capacity", GPU_BUSY_COPY, retryable=True) from error
+        except AdmissionWithdrawn as error:
+            raise media_jobs.CancellationPending("Cancel requested during resource admission") from error
+
+    async def _run(self, ctx: RunContext) -> None:
         engine = self.host.engine(ctx.pin.envelope.binding_key, ctx.pin.envelope.service_id)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
@@ -540,7 +556,11 @@ class NodeGraphRunner:
         def report(state: host_memory_admission.WaitState | None) -> None:
             media_jobs.append_event(ctx.job_id, "attempt", host_memory_admission.wait_event(state), path=media_jobs.DB_PATH)
 
-        return await admit(payload, host_memory_admission.Ask(app_kind=host_memory_admission.app_kind_of_caller(getattr(ctx, "caller", None)), bounded=False, on_wait=report, cancelled=cancelled))
+        deadline = None
+        if getattr(self.host, "admission", None) is not None:
+            deadline = time.monotonic() + admission_remaining(
+                ctx.job_id, retry_policy(ctx.pin.binding).gpu_wait_s, path=media_jobs.DB_PATH)
+        return await admit(payload, host_memory_admission.Ask(deadline_monotonic=deadline, app_kind=host_memory_admission.app_kind_of_caller(getattr(ctx, "caller", None)), bounded=False, on_wait=report, cancelled=cancelled))
 
     # -- the reviewed stages that read the run's own facts (a host may still supply a stage of the same name) ----------------
 

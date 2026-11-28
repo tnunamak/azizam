@@ -579,3 +579,186 @@ def test_settle_fails_closed_on_evidence_that_is_not_a_settlement_kind(store: Ar
     assert store.settle(op_key="op-1", ref=POOL, kind=kind, source="test") == INVALID_EVIDENCE
     assert store.charge(POOL) == 8
     assert _state(store, "op-1") != "settled"
+
+
+def test_v2_migration_preserves_unknown_operations_and_pins_durable_ticket(tmp_path):
+    """Start from the deployed v2 SQL shape, rather than today's schema creator."""
+    from gateway.arbitration.store import read_snapshot
+    path = tmp_path / "v2.db"
+    conn = sqlite3.connect(path)
+    conn.executescript('''
+        PRAGMA user_version=2;
+        CREATE TABLE resource_generations (resource_id TEXT PRIMARY KEY, generation INTEGER NOT NULL CHECK (generation >= 1));
+        CREATE TABLE operations (
+            op_key TEXT PRIMARY KEY, resource_id TEXT NOT NULL, incarnation TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK (generation >= 1), quantity INTEGER NOT NULL CHECK (quantity >= 0),
+            unit TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('committed','reconciling','settled')),
+            execution_ended INTEGER NOT NULL DEFAULT 0 CHECK (execution_ended IN (0,1)), settle_source TEXT);
+        CREATE TABLE comparisons (id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_key TEXT NOT NULL,
+            status TEXT NOT NULL, old_admits INTEGER, new_outcome TEXT, open_holdings INTEGER, detail TEXT NOT NULL);
+        INSERT INTO resource_generations VALUES ('card/a', 1);
+        INSERT INTO operations VALUES ('old', 'card/a', 'boot', 1, 1, 'token', 'old-payload', 'reconciling', 1, NULL);
+    ''')
+    conn.close()
+    # The read-only dashboard must remain usable before the first writer migrates.
+    snapshot = read_snapshot(path)
+    assert snapshot.schema_version == 2 and snapshot.open_operations[0].op_key == "old"
+    store = ArbitrationStore(path)
+    try:
+        assert store.charge(ResourceRef("card/a", "boot")) == 1
+        args = dict(request_id="job", caller="caller", policy_revision="rev1", service_id="service",
+                    resources=("card/a",), claim_envelope={"vram_bytes": 100}, deadline=1200.0)
+        first = store.enqueue_ticket(**args)
+        again = store.enqueue_ticket(**{**args, "deadline": 1800.0})
+        assert first == again
+        assert first.phase == "waiting" and first.deadline == 1200.0
+        assert store.grant_ticket("job", worker_capacity=1, now=1000)
+        # Withdrawal and send intent race on the same persisted state.
+        assert store.transition_ticket("job", "withdrawn", now=1001)
+        assert not store.transition_ticket("job", "sending", now=1001)
+    finally:
+        store.close()
+    reopened = ArbitrationStore(path)
+    try:
+        ticket = reopened.ticket("job")
+        assert ticket.phase == "withdrawn" and ticket.sequence == first.sequence
+        assert ticket.resources == ("card/a",) and ticket.claim_envelope == {"vram_bytes": 100}
+        assert reopened.charge(ResourceRef("card/a", "boot")) == 1
+    finally:
+        reopened.close()
+
+
+def test_ticket_deadline_and_send_intent_are_atomic(tmp_path):
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    try:
+        for name in ("expired", "sent"):
+            store.enqueue_ticket(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                                 resources=("card/a",), claim_envelope={}, deadline=100.0)
+        assert not store.grant_ticket("expired", worker_capacity=1, now=100)
+        assert store.ticket("expired").phase == "expired"
+        assert store.grant_ticket("sent", worker_capacity=1, now=99)
+        assert store.transition_ticket("sent", "sending", now=99)
+        assert not store.transition_ticket("sent", "withdrawn", now=99)
+        store.finish_ticket("sent", now=101, evidence=None)
+        assert store.ticket("sent").phase == "unknown"
+        store.finish_ticket("sent", now=102, evidence="upstream absence confirmed")
+        assert store.ticket("sent").phase == "completed"
+    finally:
+        store.close()
+
+
+def test_ticket_bundle_grants_slot_and_resources_together_and_retains_unknown(tmp_path):
+    path = tmp_path / "ledger.db"
+    store = ArbitrationStore(path)
+    def enqueue(name, resources):
+        return store.enqueue_ticket(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                                    resources=resources, claim_envelope={}, deadline=100)
+    try:
+        enqueue("a", ("card/a",))
+        enqueue("b", ("card/a",))
+        enqueue("c", ("card/b",))
+        assert not store.grant_ticket("b", worker_capacity=1, now=1)  # original FIFO
+        assert store.grant_ticket("a", worker_capacity=1, now=1)
+        assert not store.grant_ticket("c", worker_capacity=1, now=1)
+        assert store.charge(ResourceRef("physical/card/b", "1")) == 0  # no idle resource holding
+        assert store.transition_ticket("a", "sending", now=2)
+        store.finish_ticket("a", now=3, evidence=None)  # HTTP timeout does not prove stop
+        assert store.ticket("a").phase == "unknown"
+        assert store.grant_ticket("c", worker_capacity=1, now=3)  # execution slot returned
+        assert not store.grant_ticket("b", worker_capacity=2, now=3)
+    finally:
+        store.close()
+    store = ArbitrationStore(path)
+    try:
+        assert not store.grant_ticket("b", worker_capacity=2, now=4)
+        store.finish_ticket("a", now=5, evidence="upstream absence observed")
+        assert store.grant_ticket("b", worker_capacity=2, now=5)
+        assert store.charge(ResourceRef("physical/card/a", "1")) == 1
+        store.finish_ticket("a", now=6, evidence="same evidence replay")
+        assert store.charge(ResourceRef("physical/card/a", "1")) == 1  # settle only original operation
+    finally:
+        store.close()
+
+
+def test_startup_sweep_refunds_unsent_grants_and_only_worker_for_sent_work(tmp_path):
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    try:
+        for name, resource in (("unsent", "card/a"), ("sent", "card/b")):
+            store.enqueue_ticket(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                                 resources=(resource,), claim_envelope={}, deadline=100)
+            assert store.grant_ticket(name, worker_capacity=2, now=1)
+        assert store.transition_ticket("sent", "sending", now=2)
+        store.recover_startup(now=3)
+        assert store.ticket("unsent").phase == "withdrawn"
+        assert store.ticket("sent").phase == "unknown"
+        assert store.charge(ResourceRef("physical/card/a", "1")) == 0
+        assert store.charge(ResourceRef("physical/card/b", "1")) == 1
+        assert store.charge(ResourceRef("@gateway/worker", "1")) == 0
+        store.recover_startup(now=4)  # repeat is harmless
+        assert store.charge(ResourceRef("physical/card/b", "1")) == 1
+    finally:
+        store.close()
+
+
+def test_dormant_ticket_tables_preserve_the_old_v2_writer_and_reader_contract(tmp_path):
+    path = tmp_path / "ledger.db"
+    store = ArbitrationStore(path)
+    store.close()
+    # The rollback binary checks the exact version, and reads only its own tables.
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        old_tables = {"resource_generations", "operations", "comparisons"}
+        actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert old_tables <= actual
+        assert conn.execute("SELECT op_key FROM operations WHERE state!='settled'").fetchall() == []
+        conn.execute("INSERT INTO resource_generations VALUES ('legacy-pool',1)")
+        conn.commit()
+    finally:
+        conn.close()
+    reopened = ArbitrationStore(path)
+    try:
+        assert reopened.generation("legacy-pool") == 1
+    finally:
+        reopened.close()
+
+
+def test_operator_settle_tool_requires_evidence_and_only_settles_unknown(tmp_path, capsys):
+    import runpy
+    tool = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts" / "admission-ledger.py"))["main"]
+    path = tmp_path / "ledger.db"
+    store = ArbitrationStore(path)
+    for name in ("unknown", "unsent"):
+        store.enqueue_ticket(request_id=name, caller="caller", policy_revision="rev", service_id="svc",
+                             resources=(name,), claim_envelope={}, deadline=100)
+    assert store.grant_ticket("unknown", worker_capacity=1, now=1)
+    assert store.transition_ticket("unknown", "sending", now=2)
+    store.finish_ticket("unknown", now=3, evidence=None)
+    store.close()
+    assert tool(["--ledger", str(path), "unknown"]) == 0
+    assert '"unknown"' in capsys.readouterr().out
+    assert tool(["--ledger", str(path), "settle", "unsent", "--evidence", "observed absent"]) == 2
+    with pytest.raises(SystemExit):
+        tool(["--ledger", str(path), "settle", "unknown"])
+    assert tool(["--ledger", str(path), "settle", "unknown", "--evidence", "queue and history verified absent"]) == 0
+    store = ArbitrationStore(path)
+    try:
+        assert store.ticket("unknown").phase == "completed"
+        assert store.ticket("unsent").phase == "waiting"
+    finally:
+        store.close()
+
+
+def test_ticket_physical_stocks_do_not_collide_with_legacy_shadow_pool_ids(tmp_path):
+    store = ArbitrationStore(tmp_path / "ledger.db")
+    try:
+        ref = ResourceRef("card/a", "1")
+        generation = store.take_over(ref.id)
+        assert store.acquire(op_key="legacy", ref=ref, quantity=1, unit="token", generation=generation).status == ACQUIRED
+        store.enqueue_ticket(request_id="new", caller="caller", policy_revision="rev", service_id="svc",
+                             resources=("card/a",), claim_envelope={}, deadline=100)
+        assert store.grant_ticket("new", worker_capacity=1, now=1)
+        assert store.charge(ref) == 1
+        assert store.charge(ResourceRef("physical/card/a", "1")) == 1
+    finally:
+        store.close()

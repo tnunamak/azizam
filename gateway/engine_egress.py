@@ -242,10 +242,11 @@ class Projection:
     whole projection once and never combines the maps of two projections.
     """
 
-    __slots__ = ("destinations", "probe_paths", "remote_destinations", "registry_path", "registry_generation", "service_destinations", "registry_reader", "registry_version")
+    __slots__ = ("destinations", "probe_paths", "remote_destinations", "registry_path", "registry_generation", "service_destinations", "registry_reader", "registry_version", "admission_resources")
 
-    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]], remote_destinations: frozenset[str] = frozenset(), service_destinations=None) -> None:
+    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]], remote_destinations: frozenset[str] = frozenset(), service_destinations=None, admission_resources=None) -> None:
         self.destinations = destinations
+        self.admission_resources = admission_resources or MappingProxyType({})
         self.probe_paths = probe_paths
         self.remote_destinations = remote_destinations
         self.registry_path = None
@@ -260,7 +261,8 @@ _live: Projection = Projection(MappingProxyType({}), MappingProxyType({}))
 _LIVE_LOCK = threading.RLock()
 
 
-def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> Projection:
+def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None,
+            admission_resources: frozenset[str] = frozenset()) -> Projection:
     """Build the map from these services without making it live, so a failure here changes nothing.
 
     ``extra_probe_paths`` names further metadata paths a record reads (its ``loaded_model_probe`` endpoint, or the
@@ -273,6 +275,7 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
     gate had not admitted.
     """
     built: dict[str, list[str]] = {}
+    gpu: dict[str, set[str]] = {}
     paths: dict[str, set[str]] = {}
     remote_destinations = set()
     service_destinations = {}
@@ -285,20 +288,28 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
         from gateway.remote_engine import remote_enabled
         if remote_enabled(connection_config(record)):
             remote_destinations.update(destinations_of(record))
+        physical = ()
+        if admission_resources:
+            from gateway.exclusive_pool import service_resource_ids
+            physical = service_resource_ids(record)
+        managed = bool(set(physical) & admission_resources)
         policy = policy_for(str(service_id), services)
-        if not policy.enabled:
+        if not policy.enabled and not managed:
             continue
         declared, rooted = split_declared_probe_paths(record)
         declared = declared | observer_paths.get(str(service_id), set())
         if extra_probe_paths is not None:
             declared.update(path for path in map(_path_of, extra_probe_paths(record)) if path)
         for key, prefixes in _destination_prefixes(record).items():
-            if policy.domain not in built.setdefault(key, []):
+            if managed:
+                gpu.setdefault(key, set()).update(physical)
+            if policy.enabled and policy.domain not in built.setdefault(key, []):
                 built[key].append(policy.domain)
             paths.setdefault(key, set()).update(prefix + path for prefix in prefixes | {""} for path in declared)
             paths[key].update(rooted)
     return Projection(MappingProxyType({key: tuple(domains) for key, domains in built.items()}),
-                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}), frozenset(remote_destinations), MappingProxyType(service_destinations))
+                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}), frozenset(remote_destinations), MappingProxyType(service_destinations),
+                      MappingProxyType({key: tuple(sorted(value)) for key, value in gpu.items()}))
 
 
 def install(projection: Projection, *, registry_path=None, registry_generation=None) -> None:
@@ -309,6 +320,10 @@ def install(projection: Projection, *, registry_path=None, registry_generation=N
         projection.registry_generation = registry_generation
         if projection.registry_path is not None and projection.registry_path == _live.registry_path:
             projection.remote_destinations = projection.remote_destinations | _live.remote_destinations
+            merged = {key: set(value) for key, value in _live.admission_resources.items()}
+            for key, value in projection.admission_resources.items():
+                merged.setdefault(key, set()).update(value)
+            projection.admission_resources = MappingProxyType({key: tuple(sorted(value)) for key, value in merged.items()})
             projection.registry_reader = _live.registry_reader
             projection.registry_version = _live.registry_version
         elif projection.registry_path is not None:
@@ -337,7 +352,14 @@ def protect_registry_write(path, services) -> None:
             if isinstance(record, Mapping) and remote_enabled(connection_config(record)):
                 remote.update(destinations_of(record))
                 remote.update(live.service_destinations.get(str(service_id), ()))
-        install(Projection(live.destinations, live.probe_paths, frozenset(remote), live.service_destinations), registry_path=path,
+        enabled = frozenset(resource for bundle in live.admission_resources.values() for resource in bundle)
+        projected = project(services, admission_resources=enabled) if enabled else None
+        physical = {key: set(value) for key, value in live.admission_resources.items()}
+        if projected is not None:
+            for key, value in projected.admission_resources.items():
+                physical.setdefault(key, set()).update(value)
+        install(Projection(live.destinations, live.probe_paths, frozenset(remote), live.service_destinations,
+                           MappingProxyType({key: tuple(sorted(value)) for key, value in physical.items()})), registry_path=path,
                 registry_generation=live.registry_generation)
 
 
@@ -419,6 +441,10 @@ def check_request(request: httpx.Request, *, remote_bound=None, refreshed=False)
         remote_bound.check()
         if origin(str(request.url)) != remote_bound.capability.exact_origin:
             raise refused()
+    required = live.admission_resources.get(key)
+    if required and not (marked and request.url.path in live.probe_paths.get(key, ())):
+        from gateway.gpu_admission import require_holding
+        require_holding(required)
     domains = live.destinations.get(key)
     if not domains or (marked and request.url.path in live.probe_paths.get(key, ())):
         return
@@ -432,7 +458,10 @@ def check_request(request: httpx.Request, *, remote_bound=None, refreshed=False)
 
 async def _check_async(request: httpx.Request) -> None:
     await refresh_remote_destinations_async()
-    check_request(request, refreshed=True)
+    if _live.admission_resources:
+        await asyncio.to_thread(check_request, request, refreshed=True)
+    else:
+        check_request(request, refreshed=True)
 
 
 def _guard(created: Any, hook: Any) -> Any:
@@ -627,7 +656,10 @@ def async_client(*, _remote_bound=None, **kwargs: Any) -> httpx.AsyncClient:
         return _counted(_guard(httpx.AsyncClient(**kwargs), _check_async))
     async def check(request):
         await _remote_bound.check_current()
-        check_request(request, remote_bound=_remote_bound, refreshed=True)
+        if _live.admission_resources:
+            await asyncio.to_thread(check_request, request, remote_bound=_remote_bound, refreshed=True)
+        else:
+            check_request(request, remote_bound=_remote_bound, refreshed=True)
     return _counted(_guard(httpx.AsyncClient(**kwargs), check))
 
 
