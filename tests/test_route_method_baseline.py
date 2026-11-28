@@ -136,6 +136,7 @@ DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
 ADAPTER_UPLOAD_PATH = "/me/api/adapters"  # a member's adapter upload; tests/test_adapter_upload_route.py covers it
 ADAPTER_UPLOADS = "/admin/api/operator/adapter-uploads"  # the owner's switch for member adapter uploads; tests/test_adapter_upload_setting.py covers it
+MODEL_ROUTES = "/admin/api/operator/model-routes"  # the owner's ordered targets of one model, saved as one registry edit; tests/test_model_route_editor.py covers it
 ENGINE_FOLDERS = "/admin/api/operator/engine-folders"  # the owner's list of folders engines may run from; tests/test_engine_process_template.py covers it
 SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere",
                  "/auth/api/clear-browser-cache"}
@@ -242,7 +243,7 @@ def _deliberate(key: str) -> str | None:
         return "video_row"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
-    if path in (HOST_COMMANDS, ENGINE_FOLDERS, ADAPTER_UPLOADS):
+    if path in (HOST_COMMANDS, ENGINE_FOLDERS, ADAPTER_UPLOADS, MODEL_ROUTES):
         return "host_commands"
     if path in SESSION_PATHS:
         return "sessions"

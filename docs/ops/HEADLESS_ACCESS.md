@@ -413,6 +413,8 @@ Selected successful workflows are exercised separately.
 | `PATCH /admin/api/engines/{service_id}/stt-settings` | owner-bearer | denied | `gateway.stt_measurement_api.configure`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.get_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.update_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/model-routes` | owner-bearer | denied | `gateway.admin_api.edit_model_routes`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/operator/model-routes` | owner-bearer | denied | `gateway.admin_api.edit_model_routes`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/operator/services` | owner-bearer | denied | `gateway.admin_api.add_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/services/detect-models` | owner-bearer | denied | `gateway.admin_api.detect_service_models`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/services/test` | owner-bearer | denied | `gateway.admin_api.test_service_connection`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

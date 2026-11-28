@@ -809,6 +809,22 @@
   },
   {
     "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.admin_api.edit_model_routes",
+    "method": "GET",
+    "path": "/admin/api/operator/model-routes",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.admin_api.edit_model_routes",
+    "method": "PUT",
+    "path": "/admin/api/operator/model-routes",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.remove_excluded_record",
     "method": "DELETE",

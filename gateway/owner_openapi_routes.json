@@ -345,6 +345,16 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "owner_only": false
   },
+  "GET /admin/api/operator/model-routes": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "PUT /admin/api/operator/model-routes": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
   "POST /admin/api/operator/services": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",

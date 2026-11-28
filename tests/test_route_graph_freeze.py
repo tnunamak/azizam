@@ -216,6 +216,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     with monkeypatch.context() as patch:
         patch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(rs.build({}, rs.BundledRelease(records, ()), generation=1)))
         proxy.app.openapi_schema = None
-        assert route_graph.openapi_digest(proxy.app) == "407d99a0c189a65b4b741d748ca27b28dec2506e94cc6f620fd19202767ffbb0"
+        assert route_graph.openapi_digest(proxy.app) == "2aa9b2fb9fd4acd828d786acfdf0b06c0880d6864bb6c6ff60379e1d13d78c9d"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
