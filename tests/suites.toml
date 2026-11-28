@@ -411,6 +411,22 @@ framework = "pytest"
 case = "tests/test_s7_parity_images.py::test_s7_background_fallback_preserves_composition"
 reason = "row path pending: builder I steps 2-4"
 
+# Whole-card GPU admission is merged dormant (train 145): protocol egress has no GPU holding check until it is enabled.
+[[xfail]]
+framework = "pytest"
+case = "tests/test_gpu_wait.py::test_protocol_egress_cannot_bypass_a_conflicting_pool[/prompt-body0]"
+reason = "Whole-card admission is not enabled: protocol egress has no GPU holding check"
+
+[[xfail]]
+framework = "pytest"
+case = "tests/test_gpu_wait.py::test_protocol_egress_cannot_bypass_a_conflicting_pool[/v1/chat/completions-body1]"
+reason = "Whole-card admission is not enabled: protocol egress has no GPU holding check"
+
+[[xfail]]
+framework = "pytest"
+case = "tests/test_gpu_wait.py::test_protocol_egress_cannot_bypass_a_conflicting_pool[/v1/audio/transcriptions-body2]"
+reason = "Whole-card admission is not enabled: protocol egress has no GPU holding check"
+
 [[skip]]
 framework = "pytest"
 case = "tests/test_face_service_detect.py"
