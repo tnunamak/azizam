@@ -759,3 +759,12 @@ def test_an_attempt_that_finishes_after_a_reconnect_counts_for_the_sign_in_it_st
     assert counted()["day"]["requests"] - all_time == 1
     assert counted(generation=started_on, signed_in_at=0)["sign_in"]["day"]["requests"] - old == 1
     assert counted(generation=current, signed_in_at=0)["sign_in"]["day"]["requests"] == 0
+
+
+def test_owner_usage_projection_preserves_distinct_window_identity():
+    from gateway.subscription_oauth import usage_limits_view
+    stored = {"captured_at": 100, "windows": [
+        {"id": identity, "scope": scope, "source": "runner", "captured_at": 99,
+         "used_percent": 25, "window_minutes": 10080, "resets_at": 200}
+        for identity, scope in [("base", "Account"), ("extra", "Overage")]]}
+    assert usage_limits_view(stored) == stored

@@ -431,7 +431,7 @@ it("links the opened row to the provider's usage page, in a new tab", async () =
   renderSection();
   const region = await screen.findByRole("region", { name: "Subscriptions" });
   fireEvent.click(within(region).getByRole("button", { name: "Open ChatGPT subscription" }));
-  const usage = within(region).getByRole("group", { name: "Plan usage" });
+  const usage = within(region).getByRole("group", { name: "Provider allowance" });
   const link = within(usage).getByRole("link", { name: "Open ChatGPT usage (opens in a new tab)" });
   expect(link.getAttribute("href")).toBe("https://chatgpt.com/settings/usage");
   expect(link.getAttribute("target")).toBe("_blank");
@@ -445,7 +445,7 @@ it("shows the plan's usage in the opened row", async () => {
   const region = await screen.findByRole("region", { name: "Subscriptions" });
   expect(within(region).getByText(/5-hour limit 42% used/)).toBeInTheDocument();
   fireEvent.click(within(region).getByRole("button", { name: "Open ChatGPT subscription" }));
-  const usage = within(region).getByRole("group", { name: "Plan usage" });
+  const usage = within(region).getByRole("group", { name: "Provider allowance" });
   expect(within(usage).getByText(/^5-hour limit: 42% used, resets /)).toBeInTheDocument();
   expect(within(usage).getByText("Read from ChatGPT just now.")).toBeInTheDocument();
 });

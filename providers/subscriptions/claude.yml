@@ -65,6 +65,12 @@ runner:
   park_limit_per_connection: 8
   # The system prompt when the caller sends none (the binary's own default prompt is a coding agent's).
   default_system_prompt: You are a helpful assistant.
+  usage_windows:
+    - {key: five_hour, id: five_hour, scope: Account, window_minutes: 300, used_field: utilization, reset_field: resetsAt, scale: 100}
+    - {key: seven_day, id: seven_day, scope: Account, window_minutes: 10080, used_field: utilization, reset_field: resetsAt, scale: 100}
+    - {key: seven_day_overage_included, id: seven_day_overage_included, scope: Overage, window_minutes: 10080, used_field: utilization, reset_field: resetsAt, scale: 100}
+    - {key: seven_day_opus, id: seven_day_opus, scope: Model, window_minutes: 10080, used_field: utilization, reset_field: resetsAt, scale: 100, models: Opus}
+    - {key: seven_day_sonnet, id: seven_day_sonnet, scope: Model, window_minutes: 10080, used_field: utilization, reset_field: resetsAt, scale: 100, models: Sonnet}
 # Chat and Anthropic callers commonly send these; the binary takes none of them. Dropped and disclosed.
 dropped_fields:
   - max_tokens

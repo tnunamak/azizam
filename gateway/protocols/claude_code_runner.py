@@ -55,27 +55,23 @@ _CHAT_FIELDS = frozenset({"model", "messages", "stream", "stream_options", "reas
 _RESPONSES_FIELDS = frozenset({"model", "input", "instructions", "stream", "reasoning", "tools", "tool_choice", "text", "parallel_tool_calls", "store", "include", "prompt_cache_key"})
 _LEAST_EFFORTS = ("minimal", "none")
 # Line limit, kill grace, exit wait, discovery timeout and park TTL: the kind's runner section, else registry/transport_budgets.yml.
-# Each window the runner reports: its length, and the models it counts when it counts only some of them.
-_USAGE_WINDOWS = {"five_hour": (300, None), "seven_day": (10080, None), "seven_day_overage_included": (10080, None),
-                  "seven_day_opus": (10080, "Opus"), "seven_day_sonnet": (10080, "Sonnet")}
-
-
-def _usage_snapshot(raw: Any, *, now: int) -> dict[str, Any] | None:
+def _usage_snapshot(raw: Any, *, now: int, mappings: list[dict]) -> dict[str, Any] | None:
     if not isinstance(raw, Mapping):
         return None
     windows = []
-    for name, (minutes, models) in _USAGE_WINDOWS.items():
-        window = raw.get(name)
+    for spec in mappings:
+        window = raw.get(spec["key"])
         if not isinstance(window, Mapping):
             continue
-        utilization, reset = window.get("utilization"), window.get("resetsAt")
+        utilization, reset = window.get(spec["used_field"]), window.get(spec["reset_field"])
         if type(utilization) not in (int, float) or type(reset) is not int:
             continue
-        used = usage_percent(utilization * 100)
+        used = usage_percent(utilization * spec["scale"])
         resets_at = usage_reset_at(reset, now=now)
         if used is not None and resets_at is not None:
-            windows.append({"used_percent": used, "window_minutes": minutes, "resets_at": resets_at,
-                            **({"models": models} if models else {})})
+            windows.append({"used_percent": used, "window_minutes": spec["window_minutes"], "resets_at": resets_at,
+                            "id": spec["id"], "scope": spec["scope"], "source": "runner", "captured_at": now,
+                            **({"models": spec["models"]} if spec.get("models") else {})})
     return {"captured_at": now, "windows": windows} if windows else None
 
 
@@ -750,7 +746,8 @@ class _Run:
                 info = event.get("rate_limit_info")
                 # The last event that carries windows wins; one without them (a bare rejection) keeps the earlier reading.
                 reading = _usage_snapshot(
-                    info.get("unifiedWindows") if isinstance(info, Mapping) else None, now=int(time.time()))
+                    info.get("unifiedWindows") if isinstance(info, Mapping) else None, now=int(time.time()),
+                    mappings=self._kind.row["runner"].get("usage_windows", []))
                 if reading is not None:
                     self.usage_snapshot = reading
                 if isinstance(info, Mapping) and info.get("status") == "rejected":
@@ -813,6 +810,22 @@ class ClaudeCodeRunner:
             raise ValueError(f"{source}: runner.session_ttl_seconds must be a whole number, 0 or more")
         if not isinstance(runner.get("default_system_prompt"), str) or not runner["default_system_prompt"].strip():
             raise ValueError(f"{source}: runner.default_system_prompt must be text")
+        mappings = runner.get("usage_windows", [])
+        if not isinstance(mappings, list) or len(mappings) > 32:
+            raise ValueError(f"{source}: runner.usage_windows must be a bounded list")
+        ids = set()
+        for spec in mappings:
+            if (not isinstance(spec, Mapping) or set(spec) - {
+                    "key", "id", "scope", "window_minutes", "used_field", "reset_field", "scale", "models"}
+                    or any(not isinstance(spec.get(key), str) or not 0 < len(spec[key]) <= 80
+                           for key in ("key", "id", "scope", "used_field", "reset_field"))
+                    or type(spec.get("window_minutes")) is not int or not 1 <= spec["window_minutes"] <= 527040
+                    or type(spec.get("scale")) not in (int, float) or spec["scale"] not in (1, 100)
+                    or ("models" in spec and (not isinstance(spec["models"], str) or not 0 < len(spec["models"]) <= 40))):
+                raise ValueError(f"{source}: invalid runner usage window mapping")
+            if spec["id"] in ids:
+                raise ValueError(f"{source}: duplicate runner usage window id")
+            ids.add(spec["id"])
         transport_budgets.check_runner_budgets(runner, source=source)
 
     # -- request preparation (local only)

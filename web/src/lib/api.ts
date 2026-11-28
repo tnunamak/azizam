@@ -265,6 +265,10 @@ export interface ModelRoute {
 }
 
 export interface PlanUsageWindow {
+  id?: string;
+  scope?: string;
+  source?: string;
+  captured_at?: number;
   used_percent: number;
   /** The window's length; null when the plan did not say. */
   window_minutes: number | null;
@@ -363,6 +367,9 @@ export interface ConnectionStatus {
   /** For each model, the ordered steps a request for its plain name walks: the router's own chain. */
   model_chains?: PlanModelChain[];
   /** Health fields: absent until the gateway reports them. */
+  last_ok_at?: number | null;
+  access_plan_id?: string;
+  access_plan_name?: string;
   models_checked_at?: number | null;
   status_changed_at?: number | null;
   last_error?: { code: string; at: number } | null;
@@ -1210,4 +1217,21 @@ export function createQueryClient(): QueryClient {
       mutations: { retry: false },
     },
   });
+}
+
+export interface RouteTargetChoice {
+  service_id: string;
+  model_id: string;
+  name: string;
+  upstream_model: string;
+  billing_class: "plan" | "paid" | "local";
+  available: boolean;
+  route_id?: string;
+}
+export interface RouteEditorState {
+  generation: number;
+  service_id: string;
+  model_id: string;
+  routes: RouteTargetChoice[];
+  targets: RouteTargetChoice[];
 }

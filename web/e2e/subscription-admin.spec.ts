@@ -29,6 +29,8 @@ async function setProviderModels(baseURL: string, count: number) {
   await api.dispose();
 }
 
+test.describe.serial("subscription administration", () => {
+
 test("the owner connects, checks and disconnects a subscription end to end", async ({ page, baseURL }) => {
   await setProviderModels(baseURL!, 2);
   await page.goto("/providers/");
@@ -87,4 +89,50 @@ test("the owner connects, checks and disconnects a subscription end to end", asy
   await expect(stateWord(page, "Off")).toBeVisible();
   await expect(row(page).getByRole("button", { name: `Connect ${ROW}` })).toBeVisible();
   await expect(row(page).getByText("Disconnected. Connect again to use its models.")).toBeVisible();
+});
+
+test("saved plan detail links persist a selected route order", async ({ page, baseURL }) => {
+  // The preceding journey leaves the plan disconnected; its saved detail link still opens.
+  await page.goto("/providers/?subscription=test-plan");
+  await expect(page.getByRole("heading", { name: ROW })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Through Azizam" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: ROW })).toBeVisible();
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: `Connect ${ROW}` });
+  const startedResponse = page.waitForResponse((response) => response.url().endsWith("/admin/api/subscriptions/test-plan/connect") && response.request().method() === "POST");
+  await dialog.getByRole("button", { name: "Open Test Plan sign-in" }).click();
+  const started = (await (await startedResponse).json()).subscription;
+  const authorize = new URL(started.authorize_url);
+  await dialog.getByLabel("Address from the browser bar").fill(`${started.redirect_uri}?code=fake-${authorize.searchParams.get("nonce")}&state=${authorize.searchParams.get("state")}`);
+  await dialog.getByRole("button", { name: "Finish" }).click();
+  await expect(dialog.getByText("Connected as owner@example.test.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Done" }).click();
+  const session = await (await page.request.get("/admin/api/session")).json();
+  const registry = await page.request.get("/admin/api/operator/service-registry");
+  const added = await page.request.post("/admin/api/operator/services", {
+    headers: { "x-azizam-csrf": session.actor.csrf_token, "If-Match": registry.headers().etag },
+    data: { id: "paid-fixture", name: "Paid fixture", base_url: `http://127.0.0.1:${Number(new URL(baseURL!).port) + 1}/v1`,
+      remote_provider: true, provider_id: "fixture-paid", api_key_env: "AZIZAM_FIXTURE_PAID_KEY", capabilities: ["chat"],
+      models: [{ id: "fixture-wire", public: "fixture-wire", upstream: "plan-model-1", execution_only: true }] },
+  });
+  expect(added.ok(), await added.text()).toBe(true);
+  await page.getByRole("button", { name: "Route order for plan-model-1", exact: true }).click();
+  const group = page.getByRole("group", { name: "Route order for plan-model-1", exact: true });
+  await expect(group.getByRole("option", { name: "Paid fixture · plan-model-1 · paid", exact: true })).toBeAttached();
+  await group.getByLabel("Add route for plan-model-1").selectOption({ label: "Paid fixture · plan-model-1 · paid" });
+  await group.getByRole("button", { name: "Move Paid fixture up" }).click();
+  await group.getByRole("button", { name: "Save routes" }).click();
+  await expect(group.getByText("Routes saved")).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Route order for plan-model-1", exact: true }).click();
+  await expect(page.getByText("Current saved order: Paid fixture → test-plan")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Move Paid fixture down" })).toBeVisible();
+  await page.getByRole("link", { name: "Back to Providers" }).click();
+  await expect(page.getByRole("heading", { name: "Providers", exact: true })).toBeVisible();
+  await page.goto("/providers/?subscription=test-plan-second");
+  await expect(page.getByRole("heading", { name: "Second Plan subscription" })).toBeVisible();
+});
+
 });

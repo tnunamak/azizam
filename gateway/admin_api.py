@@ -2646,6 +2646,53 @@ def create_admin_router(
             "service registry changed; refresh and retry",
         ).as_response()
 
+    @router.get("/operator/model-routes")
+    @router.put("/operator/model-routes")
+    async def edit_model_routes(request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(_guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(403, "owner_required", "Only the owner can manage routes.").as_response()
+        from gateway import model_route_editor, secret_store, subscription_store, registry_snapshot
+        try:
+            body = await _read_json_body(request) if request.method == "PUT" else dict(request.query_params)
+            anchor = (body.get("service_id"), body.get("model_id"))
+            if not all(isinstance(value, str) and value for value in anchor):
+                raise ValueError("Choose a model from the catalog.")
+            with secret_store.provider_mutation_lock(store.path):
+                document, generation = store.get_service_registry_snapshot()
+                snapshot = getattr(request.state, "registry_snapshot", None)
+                if snapshot is None or snapshot.revision != generation:
+                    return _RouteError(409, "catalog_changed", "Reload the model catalog before editing routes.").as_response()
+                services = snapshot.services
+                discoveries = subscription_store.cached_model_discovery(subscription_store.store_path(store.path))
+                if request.method == "PUT":
+                    expected = _registry_match(request)
+                    if expected != generation:
+                        return _registry_conflict_response()
+                    raw = body.get("targets")
+                    if not isinstance(raw, list) or any(not isinstance(row, dict) or set(row) != {"service_id", "model_id"}
+                            or not all(isinstance(v, str) and v for v in row.values()) for row in raw):
+                        raise ValueError("Choose routes from the catalog.")
+                    targets = [(row["service_id"], row["model_id"]) for row in raw]
+                    candidate = model_route_editor.draft(document, services, anchor, targets, discoveries=discoveries)
+                    candidate = _validate_service_registry(candidate, before=document)
+                    record = store.update_service_registry(data=candidate, actor=ctx, expected_generation=expected)
+                    generation = record["operator_settings_generation"]
+                    # The store has validated and hot-reloaded the whole registry before returning.
+                    services = registry_snapshot.with_connection_models(candidate["services"], discoveries)
+                shown = model_route_editor.view(services, anchor, generation, discoveries=discoveries)
+            return egress.projected_response({"route_editor": shown}, headers={"ETag": f'"os-{generation}"', "Cache-Control": "no-store"})
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
+        except ValueError:
+            return _RouteError(400, "invalid_model_routes", "The selected routes cannot be saved. Reload the catalog and choose available leaf targets.").as_response()
+
     @router.put("/operator/service-registry")
     async def update_service_registry(request: Request) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))

@@ -14,9 +14,12 @@ import { adminFetch, type ConnectionStatus } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { SubscriptionConnectDialog } from "./subscription-connect-dialog";
 import { SubscriptionDisconnectDialog } from "./subscription-disconnect-dialog";
+import { SubscriptionDetail, navigateSubscription, useSelectedSubscription } from "./subscription-detail";
+import { RouteOrderEditor } from "./route-order-editor";
 import { SubscriptionRow } from "./subscription-row";
 import {
-  planUsageDetail,
+  providerAllowanceLines,
+  planTokenLines,
   planUsagePageUrl,
   routeChainLines,
   sameRouteChain,
@@ -44,6 +47,7 @@ export function useSubscriptions(enabled: boolean) {
 }
 
 export function SubscriptionsSection({ enabled }: { enabled: boolean }) {
+  const selected = useSelectedSubscription();
   const queryClient = useQueryClient();
   const { data, isError, refetch } = useSubscriptions(enabled);
   const [connecting, setConnecting] = useState<ConnectionStatus | null>(null);
@@ -107,13 +111,33 @@ export function SubscriptionsSection({ enabled }: { enabled: boolean }) {
 
   return (
     <section className="space-y-3" aria-label="Subscriptions">
-      <h2 className="text-label">Subscriptions</h2>
+      {!selected && <h2 className="text-label">Subscriptions</h2>}
       {notice && (
         <Callout severity="attention" title="Disconnected here" as="div">
           <p>{notice}</p>
         </Callout>
       )}
-      <ListCard label="Subscriptions">
+      {selected !== null ? <SubscriptionDetail sub={rows.find((sub) => sub.kind === selected)} stale={isError}>
+        {rows.filter((sub) => sub.kind === selected).map((sub) => <Fragment key={sub.kind}>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => run(sub, sub.status === "connected" ? "check" : "connect")}>
+              {sub.status === "connected" ? "Check models" : "Connect"}
+            </Button>
+            <Button variant="outline" onClick={() => void refetch()}>Refresh displayed usage</Button>
+            {sub.status !== "not_connected" && sub.status !== "disconnected" && <Button variant="outline" onClick={() => setDisconnecting(sub)}>Disconnect</Button>}
+          </div>
+          <p>Refresh reads recorded usage. Check models refreshes the model list, not provider allowance.</p>
+          <ul><SubscriptionDetails sub={sub} subscriptions={rows}
+            onTopEffortChange={(top_effort) => saveLevel.mutate({ kind: sub.kind, top_effort })}
+            savingTopEffort={saveLevel.isPending && saveLevel.variables.kind === sub.kind}
+            onCheck={() => requestCheck(sub)} showRouteEditor /></ul>
+          {check.isError && check.variables?.kind === sub.kind && <p role="alert">{check.error.message}</p>}
+          {saveLevel.isError && saveLevel.variables?.kind === sub.kind && <p role="alert">{saveLevel.error.message}</p>}
+          <h3>Who can use this plan</h3>
+          {sub.access_plan_name && <p>Your access plan: {sub.access_plan_name}.</p>}
+          <p>Other people and apps need an explicit grant in <Link href="/people/" className="underline">Access plans</Link>.</p>
+        </Fragment>)}
+      </SubscriptionDetail> : <ListCard label="Subscriptions">
         {rows.map((sub) => (
           <Fragment key={sub.kind}>
             <SubscriptionRow
@@ -134,6 +158,9 @@ export function SubscriptionsSection({ enabled }: { enabled: boolean }) {
                 )
               }
             />
+            <li className="px-4 py-2"><a className="underline underline-offset-2"
+              href={`/providers/?subscription=${encodeURIComponent(sub.kind)}`}
+              onClick={(event) => { event.preventDefault(); navigateSubscription(sub.kind); }}>View {subscriptionLabel(sub)}</a></li>
             {isExpanded(sub) && (
               <SubscriptionDetails
                 sub={sub}
@@ -145,7 +172,7 @@ export function SubscriptionsSection({ enabled }: { enabled: boolean }) {
             )}
           </Fragment>
         ))}
-      </ListCard>
+      </ListCard>}
       {connecting && (
         <SubscriptionConnectDialog
           open
@@ -191,13 +218,20 @@ export function SubscriptionDetails({
   onTopEffortChange,
   savingTopEffort = false,
   onCheck,
+  showRouteEditor = false,
 }: {
   sub: ConnectionStatus;
   subscriptions: ConnectionStatus[];
   onTopEffortChange?: (effort: string | null) => void;
   savingTopEffort?: boolean;
   onCheck?: () => void;
+  showRouteEditor?: boolean;
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
   const levelId = useId();
   const topEffortIndex = EFFORTS.indexOf(sub.top_effort ?? "");
   const unknownTopEffort = !!sub.top_effort && topEffortIndex < 0;
@@ -268,11 +302,15 @@ export function SubscriptionDetails({
           </p>
         </div>
       )}
-      {sub.status === "connected" && (
-        <div aria-label="Plan usage" role="group" className="space-y-0.5">
-          {planUsageDetail(sub).map((line, index) => (
+      {(
+        <div aria-label="Provider allowance" role="group" className="space-y-0.5">
+          <h3>Provider allowance</h3>
+          {providerAllowanceLines(sub, now).map((line, index) => (
             <p key={`${index}-${line}`}>{line}</p>
           ))}
+          {sub.usage_limits?.windows.filter((window) => window.source).map((window, index) => <p key={window.id ?? index}>
+            {window.scope ?? "Unknown scope"} · Source: {window.source} · Observed {new Date((window.captured_at ?? sub.usage_limits!.captured_at) * 1000).toLocaleString()}
+          </p>)}
           {usagePageUrl && (
             <p>
               <a href={usagePageUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">
@@ -282,6 +320,10 @@ export function SubscriptionDetails({
           )}
         </div>
       )}
+      <div role="group" aria-label="Through Azizam" className="space-y-1">
+        <h3>Through Azizam</h3>
+        {(planTokenLines(sub, now).length ? planTokenLines(sub, now) : ["Recorded token usage unavailable."]).map((line) => <p key={line}>{line}</p>)}
+      </div>
       {slugs.length > 0 && (
         <ul className="space-y-2" aria-label={`Models of ${subscriptionLabel(sub)}`}>
           {slugs.map((slug) => (
@@ -304,6 +346,10 @@ export function SubscriptionDetails({
                   buttonLabel={`Copy the pinned name for ${slug}`}
                 />
               )}
+              {showRouteEditor && sub.routes?.find((route) => route.logical_model === slug) && (() => {
+                const route = sub.routes!.find((item) => item.logical_model === slug)!;
+                return <RouteOrderEditor serviceId={route.service_id} modelId={route.model_id} />;
+              })()}
               {!shared && chains.has(slug) && steps(`Steps for ${slug}`, routeChainLines(chains.get(slug)!, subscriptions))}
             </li>
           ))}

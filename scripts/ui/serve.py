@@ -96,6 +96,10 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         template = (REPO / 'scripts' / 'ui' / 'fixture_subscription_kind.yml').read_text()
         private_io.atomic_write_text(kinds / 'test-plan.yml', template.replace(
             '{upstream}', f'https://127.0.0.1:{ENGINE_PORT + 1}').replace('{redirect}', f'http://127.0.0.1:{ENGINE_PORT + 2}'))
+        second = template.replace('id: test-plan', 'id: test-plan-second').replace(
+            'display_name: Test Plan', 'display_name: Second Plan').replace('model_prefix: test-plan', 'model_prefix: test-plan-second')
+        private_io.atomic_write_text(kinds / 'second.yml', second.replace(
+            '{upstream}', f'https://127.0.0.1:{ENGINE_PORT + 1}').replace('{redirect}', f'http://127.0.0.1:{ENGINE_PORT + 2}'))
         # Only this gateway trusts the throwaway certificate, and only it reads the extra kind.
         env['AZIZAM_SUBSCRIPTION_KINDS_DIR'] = str(kinds)
         env['SSL_CERT_FILE'] = str(cert_path)

@@ -53,6 +53,10 @@ class UsageWindow(TypedDict):
     used_percent: float
     window_minutes: int | None  # the window's length; None when the plan did not say
     resets_at: int | None  # Unix seconds; None when the plan did not say
+    id: NotRequired[str]
+    scope: NotRequired[str]
+    source: NotRequired[str]
+    captured_at: NotRequired[int]
     models: NotRequired[str]  # the models the window counts, only when it counts some of them ("Opus")
 
 
@@ -74,9 +78,16 @@ def usage_limits_view(stored: Mapping[str, Any]) -> UsageLimits:
         ok = isinstance(value, str) and 0 < len(value.strip()) <= 40
         return {"models": value.strip()} if ok else {}
 
+    def identity(item: Mapping[str, Any]) -> dict:
+        fields = {key: item[key] for key in ("id", "scope", "source")
+                  if isinstance(item.get(key), str) and 0 < len(item[key]) <= 80}
+        if whole(item.get("captured_at")) is not None:
+            fields["captured_at"] = item["captured_at"]
+        return fields
+
     windows: list[UsageWindow] = [
         {"used_percent": percent(item.get("used_percent")), "window_minutes": whole(item.get("window_minutes")),
-         "resets_at": whole(item.get("resets_at")), **models(item.get("models"))}
+         "resets_at": whole(item.get("resets_at")), **models(item.get("models")), **identity(item)}
         for item in stored.get("windows") or [] if isinstance(item, Mapping) and percent(item.get("used_percent")) is not None]
     return {"captured_at": whole(stored.get("captured_at")) or 0, "windows": windows}
 

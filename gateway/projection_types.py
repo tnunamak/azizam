@@ -260,7 +260,12 @@ BACKEND_VIEW = Obj("BackendView", {**CONFIG.fields, "api_key": INLINE_SECRET, "a
 # the projector refuses the whole body, so a new route cannot answer with a field nobody classified.
 EXCLUDED_LIST = seq(EXCLUDED_ITEM)
 AFFECTED_RECORD = Obj("AffectedRecord", {"kind": SHORT, "id": SHORT, "action": SHORT})
+ROUTE_CHOICE = Obj("RouteChoice", {"service_id": STR, "model_id": STR, "name": STR, "upstream_model": STR,
+                                         "billing_class": SHORT, "available": BOOL, "route_id": STR})
+ROUTE_EDITOR = Obj("RouteEditor", {"generation": INT, "service_id": STR, "model_id": STR,
+                                  "routes": seq(ROUTE_CHOICE), "targets": seq(ROUTE_CHOICE)})
 BODY_KEYS: dict[str, Policy] = {
+    "route_editor": ROUTE_EDITOR,
     "service_registry": REGISTRY_DOC,
     "excluded": EXCLUDED_LIST,
     # {id: {"source", "fields"}}: names of the manifest fields a stored workflow changes over the bundled one, no values

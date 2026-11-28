@@ -733,8 +733,10 @@ USAGE_NOW = 1_800_000_000
 USAGE_WINDOWS = {"five_hour": {"utilization": 0.05, "resetsAt": USAGE_NOW + 300},
                  "seven_day": {"utilization": 0.83, "resetsAt": USAGE_NOW + 7000}}
 USAGE_SNAPSHOT = {"captured_at": USAGE_NOW, "windows": [
-    {"used_percent": 5.0, "window_minutes": 300, "resets_at": USAGE_NOW + 300},
-    {"used_percent": 83.0, "window_minutes": 10080, "resets_at": USAGE_NOW + 7000}]}
+    {"used_percent": 5.0, "window_minutes": 300, "resets_at": USAGE_NOW + 300,
+     "id": "five_hour", "scope": "Account", "source": "runner", "captured_at": USAGE_NOW},
+    {"used_percent": 83.0, "window_minutes": 10080, "resets_at": USAGE_NOW + 7000,
+     "id": "seven_day", "scope": "Account", "source": "runner", "captured_at": USAGE_NOW}]}
 
 
 def usage_limits(env):
@@ -815,7 +817,8 @@ def test_runner_records_other_known_weekly_windows_and_over_limit_use(env, monke
     assert usage_request(env).status_code == 200
     models = {"seven_day_opus": {"models": "Opus"}, "seven_day_sonnet": {"models": "Sonnet"}}.get(window_id, {})
     assert usage_limits(env) == {"captured_at": USAGE_NOW, "windows": [
-        {"used_percent": 120.0, "window_minutes": 10080, "resets_at": USAGE_NOW, **models}]}
+        {"used_percent": 120.0, "window_minutes": 10080, "resets_at": USAGE_NOW, **models, "id": window_id,
+         "scope": "Model" if models else "Overage", "source": "runner", "captured_at": USAGE_NOW}]}
 
 
 @pytest.mark.parametrize("last_info", [{}, {"unifiedWindows": {}}, {"unifiedWindows": []}, None])
@@ -860,3 +863,36 @@ def test_runner_reading_names_the_sign_in_and_a_late_earlier_one_is_refused(env,
     env.store.record_usage("claude", {"captured_at": USAGE_NOW - 1, "generation": row["generation"], "windows": [
         {"used_percent": 1.0, "window_minutes": 300, "resets_at": USAGE_NOW}]})
     assert usage_limits(env) == USAGE_SNAPSHOT
+
+
+def test_usage_window_identity_and_fields_are_provider_data():
+    mappings = [
+        {"key": "base", "id": "account", "scope": "Account", "window_minutes": 90,
+         "used_field": "percent", "reset_field": "reset", "scale": 1},
+        {"key": "extra", "id": "overage", "scope": "Overage", "window_minutes": 90,
+         "used_field": "percent", "reset_field": "reset", "scale": 1},
+    ]
+    result = claude_code_runner._usage_snapshot(
+        {key: {"percent": 25, "reset": USAGE_NOW + 100} for key in ("base", "extra")},
+        now=USAGE_NOW, mappings=mappings)
+    assert [w["id"] for w in result["windows"]] == ["account", "overage"]
+    assert [w["scope"] for w in result["windows"]] == ["Account", "Overage"]
+    assert all(w["used_percent"] == 25 and w["window_minutes"] == 90 for w in result["windows"])
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_request_preserves_distinct_weekly_window_identity_in_owner_status(env, monkeypatch, stream):
+    connect(env)
+    monkeypatch.setattr(claude_code_runner.time, "time", lambda: USAGE_NOW)
+    env.scenario(rate_limit_events=[{"status": "allowed", "unifiedWindows": {
+        "seven_day": {"utilization": 0.25, "resetsAt": USAGE_NOW + 7000},
+        "seven_day_overage_included": {"utilization": 0.50, "resetsAt": USAGE_NOW + 7000},
+        "seven_day_opus": {"utilization": 0.75, "resetsAt": USAGE_NOW + 7000}}}])
+    assert usage_request(env, stream=stream).status_code == 200
+    windows = usage_limits(env)["windows"]
+    assert [(window["id"], window["scope"], window["used_percent"]) for window in windows] == [
+        ("seven_day", "Account", 25.0), ("seven_day_overage_included", "Overage", 50.0),
+        ("seven_day_opus", "Model", 75.0)]
+    assert all(window["window_minutes"] == 10080 and window["source"] == "runner"
+               and window["captured_at"] == USAGE_NOW for window in windows)
+    assert windows[2]["models"] == "Opus"

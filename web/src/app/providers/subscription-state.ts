@@ -98,7 +98,7 @@ export function usageWindowName(minutes: number | null): string {
 
 /** A window's name, with the models it counts when it counts only some: "7-day Opus limit". */
 function windowName(window: PlanUsageWindow, models = window.models?.trim() ?? ""): string {
-  const name = usageWindowName(window.window_minutes);
+  const name = `${window.scope ? window.scope + " · " : ""}${usageWindowName(window.window_minutes)}`;
   if (!models) return name;
   return name === "Usage limit" ? `${models} usage limit` : name.replace(/ limit$/, () => ` ${models} limit`);
 }
@@ -140,8 +140,10 @@ export interface PlanUsageLine {
 export function planUsage(sub: ConnectionStatus, nowMs: number = Date.now(), timeZone?: string): PlanUsageLine[] {
   const usage = sub.usage_limits;
   if (!usage) return [];
-  const ageMs = nowMs - usage.captured_at * 1000;
+
   return usage.windows.map((window) => {
+    const observed = window.captured_at ?? usage.captured_at;
+    const ageMs = nowMs - observed * 1000;
     const models = window.models?.trim() ?? "";
     const name = windowName(window, models);
     // A model name keeps its capital: "Sonnet usage limit reading out of date".
@@ -165,15 +167,26 @@ export function planUsage(sub: ConnectionStatus, nowMs: number = Date.now(), tim
 }
 
 /** The requests and tokens Azizam counted on this plan: one line per span, or none when the gateway sent none. */
-export function planTokenLines(sub: ConnectionStatus): string[] {
+export function planTokenLines(sub: ConnectionStatus, nowMs = Date.now()): string[] {
   const totals = sub.token_totals;
   if (!totals) return [];
-  const line = (span: string, t: PlanTokenTotals) => {
-    const cached = t.cached_input_tokens ? ` (${formatNumber(t.cached_input_tokens)} cached)` : "";
-    return `${span} through Azizam: ${formatNumber(t.requests)} ${t.requests === 1 ? "request" : "requests"}, ` +
-      `${formatNumber(t.input_tokens)} input tokens${cached}, ${formatNumber(t.output_tokens)} output tokens.`;
+  const segment = totals.sign_in;
+  const asOf = totals.read_at;
+  const line = (span: string, t: PlanTokenTotals, seconds: number) => {
+    const start = Math.max((asOf ?? nowMs / 1000) - seconds, segment?.since ?? 0);
+    const partial = t.covered_since == null || t.covered_since > start;
+    const categories = [`${formatNumber(t.input_tokens)} input tokens`, `${formatNumber(t.output_tokens)} output tokens`];
+    if (t.cached_input_tokens) categories.push(`${formatNumber(t.cached_input_tokens)} cached input (subset)`);
+    if (t.cache_write_tokens !== undefined) categories.push(`${formatNumber(t.cache_write_tokens)} cache writes (subset)`);
+    if (t.reasoning_tokens !== undefined) categories.push(`${formatNumber(t.reasoning_tokens)} reasoning (output subset)`);
+    return `${span} through Azizam: ${formatNumber(t.requests)} ${t.requests === 1 ? "request" : "requests"}. Reported tokens: ${categories.join(", ")}. ` +
+      (t.incomplete_attempts === undefined ? "Usage completeness unknown; " : `${t.incomplete_attempts} attempt${t.incomplete_attempts === 1 ? "" : "s"} without complete usage; `) +
+      `${partial ? "partial history" : "covered history"}.` +
+      (t.unattributed_requests ? ` ${t.unattributed_requests} requests cannot be attributed to this sign-in.` : "");
   };
-  return [line("Last 24 hours", totals.day), line("Last 7 days", totals.week)];
+  return [segment ? "Since this sign-in." : "Connection history including previous sign-ins.",
+    asOf ? `Counts as of ${new Date(asOf * 1000).toLocaleString()} (${formatRelativeTime(asOf, nowMs)}).` : "Count observation time unknown.",
+    line("Last 24 hours", segment?.day ?? totals.day, 86400), line("Last 7 days", segment?.week ?? totals.week, 604800)];
 }
 
 /** The provider's usage link, when it points to an HTTPS URL. */
@@ -188,7 +201,7 @@ export function planUsagePageUrl(url: string | null | undefined): string | undef
 }
 
 /** The detail's usage lines: each window, when it was read, and Azizam's own counts. */
-export function planUsageDetail(sub: ConnectionStatus, nowMs: number = Date.now(), timeZone?: string): string[] {
+export function providerAllowanceLines(sub: ConnectionStatus, nowMs: number = Date.now(), timeZone?: string): string[] {
   const name = sub.display_name || sub.kind;
   const lines = planUsage(sub, nowMs, timeZone);
   const usage = sub.usage_limits && lines.length
@@ -196,7 +209,12 @@ export function planUsageDetail(sub: ConnectionStatus, nowMs: number = Date.now(
     : planUsagePageUrl(sub.usage_page_url)
       ? [`${name} has not sent plan usage to Azizam. ${name} shows it on its own Usage page.`]
       : [`Plan usage shows here only if ${name} reports it.`];
-  const tokens = planTokenLines(sub);
+  return usage;
+}
+
+export function planUsageDetail(sub: ConnectionStatus, nowMs = Date.now(), timeZone?: string): string[] {
+  const usage = providerAllowanceLines(sub, nowMs, timeZone);
+  const tokens = planTokenLines(sub, nowMs);
   return tokens.length ? [...usage, "Azizam's own counts for this plan:", ...tokens] : usage;
 }
 

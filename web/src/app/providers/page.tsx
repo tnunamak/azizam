@@ -60,6 +60,7 @@ import { adminFetch, ApiError, type AccessPlanEditorContract } from "@/lib/api";
 import { networkFetch } from "@/lib/network-error";
 import { useViewer } from "@/components/shell/session";
 import { toast } from "@/lib/toast";
+import { useSelectedSubscription } from "./subscription-detail";
 import { SubscriptionsSection } from "./subscriptions-section";
 import { cn } from "@/lib/cn";
 
@@ -2443,6 +2444,7 @@ function ReplaceKeyDialog({
 }
 
 export default function ProvidersPage() {
+  const selectedSubscription = useSelectedSubscription();
   const viewer = useViewer();
   // Every provider write belongs to the owner; an administrator may only look.
   const readOnly = viewer.admin && viewer.role !== "owner";
@@ -2624,6 +2626,7 @@ export default function ProvidersPage() {
       }
     />
   );
+  if (selectedSubscription !== null) return <SubscriptionsSection enabled={viewer.role === "owner"} />;
   return (
     <>
       <PageHeader

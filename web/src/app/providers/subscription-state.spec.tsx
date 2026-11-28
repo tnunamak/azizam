@@ -273,22 +273,16 @@ it("names the full window rather than the other usage window", () => {
 
 });
 
-it("adds Azizam's own token counts when the gateway sends them", () => {
-  const totals = {
+it("adds reported token counts with coverage and sign-in scope", () => {
+  const sub = { ...chatgpt, status: "connected", token_totals: {
     day: { requests: 1, input_tokens: 1200, cached_input_tokens: 800, output_tokens: 300 },
     week: { requests: 12, input_tokens: 45000, cached_input_tokens: 0, output_tokens: 2000 },
-  };
-  const withTotals = { ...live, token_totals: totals };
-  expect(planUsageDetail({ ...withTotals, usage_page_url: "https://example.test/usage" }, NOON).slice(0, 2)).toEqual([
-    "ChatGPT has not sent plan usage to Azizam. ChatGPT shows it on its own Usage page.",
-    "Azizam's own counts for this plan:",
-  ]);
-  expect(planUsageDetail({ ...withTotals, usage_limits: usage(120) }, NOON, "UTC").slice(-3)[0]).toBe("Azizam's own counts for this plan:");
-  expect(planUsageDetail(withTotals, NOON).slice(1)).toEqual([
-    "Azizam's own counts for this plan:",
-    "Last 24 hours through Azizam: 1 request, 1,200 input tokens (800 cached), 300 output tokens.",
-    "Last 7 days through Azizam: 12 requests, 45,000 input tokens, 2,000 output tokens.",
-  ]);
+  } };
+  const text = planUsageDetail(sub, NOW).join(" ");
+  expect(text).toContain("1 request. Reported tokens: 1,200 input tokens");
+  expect(text).toContain("800 cached input (subset)");
+  expect(text).toContain("partial history");
+  expect(text).toContain("including previous sign-ins");
 });
 
 const detailMarkup = (sub: Parameters<typeof SubscriptionDetails>[0]["sub"]) =>
@@ -375,4 +369,20 @@ it("names a full model window in the reached sentence, but keeps the generic fal
   }, NOON).detail;
   expect(detail(" Opus ")).toBe(`ChatGPT said the 7-day Opus limit was reached 1m ago. 7-day Opus limit resets ${formatResetTime(resets_at, NOON)}.`);
   expect(detail()).toBe(`ChatGPT said the usage limit was reached 1m ago. 7-day limit resets ${formatResetTime(resets_at, NOON)}.`);
+});
+
+it("labels partial recorded counts and distinct allowance scopes", () => {
+  const sub = { ...chatgpt, status: "connected", usage_limits: { captured_at: sec(1), windows: [
+    { id: "base", scope: "Account", used_percent: 10, window_minutes: 10080, resets_at: sec(-60) },
+    { id: "extra", scope: "Overage", used_percent: 20, window_minutes: 10080, resets_at: sec(-60) },
+  ] }, token_totals: { read_at: sec(2), day: { requests: 1, input_tokens: 5, cached_input_tokens: 0,
+    output_tokens: 2, incomplete_attempts: 1, covered_since: sec(30) },
+    week: { requests: 1, input_tokens: 5, cached_input_tokens: 0, output_tokens: 2, incomplete_attempts: 1, covered_since: sec(30) } } };
+  const text = planUsageDetail(sub, NOW).join(" ");
+  expect(text).toContain("Account");
+  expect(text).toContain("Overage");
+  expect(text).toContain("Reported tokens");
+  expect(text).toContain("1 attempt without complete usage");
+  expect(text).toContain("partial history");
+  expect(text).toContain("Counts as of");
 });
