@@ -27,3 +27,15 @@ def test_two_failures_keep_two_directories(tmp_path):
     first = retain_logs(state, tmp_path / 'failed')
     second = retain_logs(state, tmp_path / 'failed')
     assert first != second and first.is_dir() and second.is_dir()
+
+def test_retention_does_not_follow_symlinked_logs(tmp_path):
+    state = tmp_path / 'state'
+    state.mkdir()
+    outside = tmp_path / 'outside.txt'
+    outside.write_text('synthetic outside data')
+    (state / 'outside.log').symlink_to(outside)
+    (state / '18180.log').write_text('process output')
+
+    kept = retain_logs(state, tmp_path / 'failed')
+
+    assert sorted(p.name for p in kept.iterdir()) == ['18180.log']

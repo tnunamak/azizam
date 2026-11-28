@@ -36,6 +36,7 @@ if not 18000 <= PORT < 18999:
 state_base = Path(os.environ.get('UI_E2E_STATE_ROOT', str(REPO / '.ui-e2e-state')))
 sys.path.insert(0, str(REPO))
 from scripts import scratch_owner  # noqa: E402
+from scripts.ui.serve_logs import retain_logs  # noqa: E402
 from gateway import private_io  # noqa: E402
 from scripts.ui.serve_ports import busy_port_message, busy_ports  # noqa: E402
 
@@ -56,6 +57,15 @@ children = []
 
 def stop(_signum=None, _frame=None):
     raise KeyboardInterrupt
+
+
+def readiness_failure(message, state):
+    # Child logs can include key material. Never print log contents or I/O errors.
+    try:
+        kept = retain_logs(state, state_base / 'failed')
+    except OSError:
+        return RuntimeError(f'{message}; private logs could not be retained')
+    return RuntimeError(f'{message}; private logs retained at {kept}')
 
 
 signal.signal(signal.SIGTERM, stop)
@@ -180,9 +190,9 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
             log.close()
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
-            if any(p.poll() is not None for p in children):
-                # Logs can include key material; retain privately until cleanup, do not print.
-                raise RuntimeError('An isolated server exited before readiness')
+            exited = next((code for child in children if (code := child.poll()) is not None), None)
+            if exited is not None:
+                raise readiness_failure(f'An isolated server exited before readiness (exit code {exited})', state)
             try:
                 urllib.request.urlopen(f'http://127.0.0.1:{PORT}/health', timeout=1).close()
                 print(f'Isolated UI gateway ready on port {PORT}', flush=True)
@@ -190,7 +200,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
             except OSError:
                 time.sleep(.2)
         else:
-            raise RuntimeError('Isolated gateway readiness timed out')
+            raise readiness_failure('Isolated gateway readiness timed out', state)
         while True:
             time.sleep(.5)
             if any(p.poll() is not None for p in children):
