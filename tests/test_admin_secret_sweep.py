@@ -247,6 +247,7 @@ def test_no_admin_or_me_get_route_returns_a_canary_and_each_record_route_answere
 
 # Management GET routes whose success needs a resource the sweep does not seed, each with the reason.
 NO_SUCCESS_FIXTURE: dict[str, str] = {
+    "/admin/api/operator/model-routes": "the read names its model in the query (service_id and model_id), which the sweep does not send; owner reads are covered by tests/test_model_route_editor.py",
     "/admin/api/operator/litellm/keys": "asks the LiteLLM sidecar, which does not run in a test; phase 2 gives it a fake sidecar",
     "/admin/api/engines/{service_id}/stt-measurements/{job_id}": "the sweep does not seed a durable measurement job; owner job reads are covered by tests/test_stt_measurement.py",
     "/admin/api/engines/domains/{domain}/gate": "needs a residency domain with a transition profile, which the sweep does not seed; owner reads are covered by tests/test_transition_admin.py",

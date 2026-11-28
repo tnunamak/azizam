@@ -63,6 +63,7 @@ ROUTES = [
     ("POST", "/admin/api/workflows/{workflow_id}/publish"),
     ("POST", "/admin/api/workflows/{workflow_id}/restore"),
     ("POST", "/admin/api/workflows/{workflow_id}/state"),
+    ("PUT", "/admin/api/operator/model-routes"),
     ("PUT", "/admin/api/operator/service-registry"),
     ("PUT", "/admin/api/operator/service-registry/excluded/{section}/{record_id}"),
     ("PUT", "/admin/api/providers/{provider_id}/models"),

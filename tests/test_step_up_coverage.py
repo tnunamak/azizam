@@ -57,6 +57,9 @@ REVIEWED_SAFE = {
         "credential, and the write goes through _persist_service_registry, which asks before any binding moves",
     ("DELETE", "/admin/api/operator/services/*"): "removing a service moves no credential",
     ("DELETE", "/admin/api/operator/service-registry/excluded/*/*"): "dropping a left-out record moves no credential",
+    ("GET", "/admin/api/operator/model-routes"): "a read; the one handler also saves, and its save is the PUT entry below",
+    ("PUT", "/admin/api/operator/model-routes"): "orders models the registry already holds into a route group (owner only); the "
+        "body names only service and model ids, so no credential binding can move",
     # Routine own-account actions (gateway/step_up.py): a person's own keys, addresses, Try key and first App are not
     # asked for. The admin routes refuse everyone but the App's accountable person, owners included.
     ("POST", "/admin/api/apps/*/keys"): "a key on an App only its accountable person can key (create_credential refuses "

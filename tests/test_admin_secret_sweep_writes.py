@@ -149,6 +149,11 @@ BUILT: dict[tuple[str, str], list[Built]] = {
         ("registry echo", True, lambda c: {"json": c.registry_echo()}),
         ("registry echo with a broken record", False, lambda c: {"json": _broken(c.registry_echo())}),
     ],
+    ("PUT", "/admin/api/operator/model-routes"): [
+        ("route a model to itself", True, lambda c: {"json": {
+            "service_id": "engine-a", "model_id": "first",
+            "targets": [{"service_id": "engine-a", "model_id": "first"}]}}),
+    ],
     ("POST", "/admin/api/operator/services"): [
         ("engine create with a plain header", True,
          lambda c: {"json": {**_engine_body(c, disabled=True), "name": "Copy", "values": {
