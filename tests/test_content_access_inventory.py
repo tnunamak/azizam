@@ -99,7 +99,7 @@ def _observed():
 # Reviewed body changes and the generic completion extraction retain existing event types and access checks.
 # Closure checks change these writers' bodies; their events and access classifications are unchanged.
 _REVIEWED_WRITER_BODIES = {('proxy.py', '_run_identity_job'): ('_run_identity_job',
-                                                '5f3e4f68507864a23e09f9059f2aa5c26c5bbdd198b138713466790bfada83a9'),
+                                                '742a698c611794a8128a9833478ea7d8103ce2ab7f7cf52a1ffc8e3d9d2b1125'),
  ('proxy.py', '_submit_audio_media_job'): ('_submit_audio_media_job',
                                          'fd5cf0bcb8cd1a46ff95ea83bbc983325fcd3fb6ab539ea3bea359c1ec90ec3a'),
  ('proxy.py', 'gateway_image_generations_media_job'): ('gateway_image_generations_media_job',
@@ -109,7 +109,7 @@ _REVIEWED_WRITER_BODIES = {('proxy.py', '_run_identity_job'): ('_run_identity_jo
  ('proxy.py', '_run_audio_media_job'): ('_run_audio_media_job',
                                         '1e05170dddaab9d1aebf2ef890c62fba6d18d5f375c8dd115df5df38a4ea669f'),
  ('gateway/multipart_adapter.py', '_tell_gpu_ready'): ('_tell_gpu_ready',
-                                                      '4aa606c6796357fe6be2ab07f40be4ff7e4d4b52c37b48133c91350f3d1362a3')}
+                                                      '90550cad10a8ee52b3db8426d756c15455717592860abd38f9b537b5be0c8418')}
 
 def _frozen():
     frozen = json.loads(FIXTURE.read_text())

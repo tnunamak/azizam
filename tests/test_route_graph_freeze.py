@@ -24,6 +24,8 @@ ADDED_PATHS: dict[str, str] = {
                                           "tests/test_engine_process_template.py covers it",
     "/admin/api/operator/adapter-uploads": "owner-only switch and size cap for member adapter uploads (read and write, audited, step-up on write); "
                                            "tests/test_adapter_upload_setting.py covers it",
+    "/admin/api/operator/model-routes": "owner-only read and save of the ordered targets of one model (GET and PUT, one registry edit with a "
+                                        "generation check); tests/test_model_route_editor.py covers it",
     "/me/api/adapters": "a signed-in member uploads one safetensors adapter into their own Library; refused unless the owner allows it; "
                         "tests/test_adapter_upload_route.py covers it",
     "/admin/api/operator/engine-folders": "owner-only list of folders engines may be started from (read and write, audited, step-up on write); "

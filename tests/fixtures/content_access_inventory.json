@@ -349,7 +349,7 @@
     {
       "path": "gateway/engine_protocol/jobs.py",
       "function": "_run",
-      "source_sha256": "2fbd4332e88f6e9adb0b2349ef098fb797408721f940bb59a374245c5614a492",
+      "source_sha256": "b40c82c0b430733162351fa84b90254b455d2613b90d555c3f2b6311a48735b6",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
@@ -376,6 +376,22 @@
       "function": "_tell_gpu_wait",
       "path": "gateway/multipart_adapter.py",
       "source_sha256": "1e937514a091828e89b94aedfd49a825cc8ecf2f3256b267aaee1f04e7c26c94",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
+      "function": "admitted",
+      "source_sha256": "7839a6cebcbba13b1829608e5ded944a7f5de31e6c622bff4dea5b871e2216d5",
+      "call": "append_event",
+      "event": "'gpu_ready'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
+      "function": "waiting",
+      "source_sha256": "d0a92650d060f7b6b0b8ac79e4fbde3477b625ead1d97313d4ac357a90820c33",
+      "call": "append_event",
+      "event": "'waiting_for_gpu'",
       "access": "content:job:read"
     }
   ],
@@ -3870,6 +3886,18 @@
       "method": "POST",
       "path": "/auth/api/browser-people/{action}",
       "access": "own-account"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.edit_model_routes",
+      "method": "GET",
+      "path": "/admin/api/operator/model-routes",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.edit_model_routes",
+      "method": "PUT",
+      "path": "/admin/api/operator/model-routes",
+      "access": "operational"
     }
   ],
   "event_types": {

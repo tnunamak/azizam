@@ -1,4 +1,4 @@
-"""What a capability section adds to a bundled workflow document, so a test can compare the document with its schema 1 origin.
+"""What a bundled workflow document adds after its schema 1 origin, so a test can compare the two.
 
 The frozen schema 1 release copies (``tests/fixtures`` and ``gateway/migration_data``) predate the section a video
 manifest keeps under its capability's name (CODE_TO_DATA S7, V5a). A bundled document equals the conversion of its frozen
@@ -12,9 +12,23 @@ from collections.abc import Mapping
 from typing import Any
 
 
+STATUS_CAPABILITIES = "azizam.dev/status-capabilities"
+
+
+def _without_status_capabilities(document: dict[str, Any], origin: Mapping[str, Any]) -> dict[str, Any]:
+    """The status page's capability flags are an annotation the bundled documents gained after the frozen copies (CODE_TO_DATA M16)."""
+    annotations = document.get("annotations")
+    if isinstance(annotations, dict) and STATUS_CAPABILITIES not in (origin.get("annotations") or {}):
+        annotations.pop(STATUS_CAPABILITIES, None)
+        if not annotations and "annotations" not in origin:
+            del document["annotations"]
+    return document
+
+
 def without_section_additions(bundled: Mapping[str, Any], origin: Mapping[str, Any]) -> dict[str, Any]:
     """``bundled`` minus its capability section and minus every role input (and its mapping) the origin document lacks."""
     document = copy.deepcopy(dict(bundled))
+    document = _without_status_capabilities(document, origin)
     capability = document.get("capability")
     section = document.get(capability) if isinstance(capability, str) and capability not in ("inputs", "outputs", "bindings") else None
     if not isinstance(section, Mapping):
