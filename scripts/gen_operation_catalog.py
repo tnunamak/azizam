@@ -107,13 +107,18 @@ LOCAL_GAP_REASON = "Local routing/default rows lack a closed operation request/r
 LOCAL_ALIAS_GAP_REASON = "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
 LOCAL_LISTS = ("alias_operations", "workflow_families", "backend_rows", "image_rows")
 LOCAL_DEFAULTS = ("image_defaults", "workflow_defaults")
+# Binds the intent constants the gateway exports to operations declared elsewhere in the catalog. It states no
+# operation contract, so it is a classified key that leaves no gap row.
+LOCAL_EXPORTS = "intent_exports"
 
 
 def local_capability_gaps(source: Path) -> list[dict[str, str]]:
     """Conservatively enumerate gaps without copying payloads or inventing relations."""
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
-    if not isinstance(document, dict) or set(document) != {"schema_version", *LOCAL_LISTS, *LOCAL_DEFAULTS}:
+    if not isinstance(document, dict) or set(document) - {LOCAL_EXPORTS} != {"schema_version", *LOCAL_LISTS, *LOCAL_DEFAULTS}:
         raise ValueError("Every local source top-level key must be classified")
+    if not isinstance(document.get(LOCAL_EXPORTS, {}), dict):
+        raise ValueError("Local intent exports must be a mapping")
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise ValueError("Unsupported local source version")
     gaps = [{"source": source.name, "key": "schema_version",
@@ -173,8 +178,11 @@ MODELS_WORDS_GAP_REASON = "Words are projected; intent_prefixes and examples are
 def models_catalog_projection(source: Path, existing: list[dict]) -> tuple[list[dict], list[dict]]:
     """Project unambiguous literal words, never prefixes or example payloads."""
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
-    if not isinstance(document, dict) or set(document) != {"schema_version", "row_id_placeholder", "operations"}:
+    # quick_tests are copy-paste examples shown beside a model, not operation facts: classified, with no gap row.
+    if not isinstance(document, dict) or set(document) - {"quick_tests"} != {"schema_version", "row_id_placeholder", "operations"}:
         raise ValueError("Every models source top-level key must be classified")
+    if not isinstance(document.get("quick_tests", []), list):
+        raise ValueError("Models quick tests must be a list")
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise ValueError("Unsupported models source version")
     if not isinstance(document["row_id_placeholder"], str) or not document["row_id_placeholder"]:

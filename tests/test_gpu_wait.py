@@ -24,6 +24,7 @@ from gateway.exclusive_pool import (
 )
 from gateway.run_slots import RunSlots
 from gateway.workflow_run import GPU_WAIT_S, retry_policy
+from tests.support.fake_upstream.handler_transport import HandlerTransport
 
 TOTAL = 24 * 1024 * MIB
 
@@ -693,7 +694,7 @@ def test_protocol_egress_cannot_bypass_a_conflicting_pool(path, body):
             return httpx.Response(200, json={})
 
         async with leases.lease(spec("physical-card"), request_id="multipart", observe=roomy):
-            async with engine_egress.async_client(transport=httpx.MockTransport(transport)) as client:
+            async with engine_egress.async_client(transport=HandlerTransport(transport)) as client:
                 await client.post("http://fixture.invalid" + path, json=body)
             assert sent == [], "protocol egress bypasses the occupied GPU admission boundary"
 
@@ -854,7 +855,7 @@ def test_transport_timeout_does_not_refund_a_fake_upstream_that_keeps_computing(
             with pytest.raises(httpx.ReadTimeout):
                 async with scheduler.admit(**args("first")) as lease:
                     assert lease.send_intent()
-                    async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
+                    async with httpx.AsyncClient(transport=HandlerTransport(timeout)) as client:
                         await client.post("http://fixture.invalid/execute")
             assert not upstream.done()
             ran = []

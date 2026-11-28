@@ -464,6 +464,10 @@ NOT_CREDENTIAL_TABLES = {
     # The resource-arbitration shadow ledger: operation refs, resource generations and kernel-versus-pool comparisons.
     # It holds no secret and grants nothing; the pool decides admission, the ledger only records (gateway/arbitration/store.py).
     "operations", "resource_generations", "comparisons",
+    # The admission scheduler's ticket ledger (gateway/arbitration/store.py): one row per admission request, with its
+    # caller, resources and phase. It holds no secret and grants nothing; the authority is off, and a ticket only records
+    # what the scheduler decided for a request.
+    "admission_tickets",
     # Owner overrides of release-default config sections and their change log. An entry that holds a secret keeps only a
     # secret reference; the values grant nothing by themselves. The one writer (apply_config_change / revert_config_change)
     # checks the browser session in its transaction anyway (decision D41).

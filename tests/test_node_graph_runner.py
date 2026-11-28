@@ -20,6 +20,7 @@ from gateway.engine_protocol.errors import TransportFailure, UpstreamError
 from gateway.engine_protocol.types import JobRef, JobState, JobStatus
 from gateway.node_graph_runner import GraphHost, NodeGraphRunner, Plan, RunFailed, Variant, _input_bindings, failure_of
 from gateway.workflow_run import REQUEST_FACTS_KEY
+from tests.support.fake_upstream.handler_transport import HandlerTransport
 
 CADENCE = Poll(ramp_s=(), interval_s=5.0, max_polls=None)
 
@@ -738,7 +739,7 @@ def test_registry_backed_graph_plan_pins_physical_data_before_dispatch(monkeypat
         return httpx.Response(200, json={"free": 10485760, "total": 10485760})
     monkeypatch.setattr(proxy, "_GPU_ADMISSION_SCHEDULER", scheduler)
     monkeypatch.setattr(proxy, "MESH_DEPS", dataclasses.replace(proxy.MESH_DEPS, services=lambda: services,
-                        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(transport))))
+                        client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(transport))))
     monkeypatch.setattr(media_jobs, "get", lambda *args, **kwargs: {"owner_scope": "owner", "metadata": {"gpu_admission_deadline": time.time() + 10}})
     monkeypatch.setattr(media_jobs, "append_event", lambda *args, **kwargs: None)
     ctx = SimpleNamespace(job_id="job", pin=SimpleNamespace(envelope=SimpleNamespace(service_id="renamed", record_revision=7)))

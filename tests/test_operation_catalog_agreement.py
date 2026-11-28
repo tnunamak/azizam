@@ -327,6 +327,12 @@ def test_local_gaps_reject_unclassified_sections_and_bad_rows(tmp_path):
     source.write_text(yaml.safe_dump(document), encoding="utf-8")
     assert [row["key"] for row in local_capability_gaps(source)] == [
         "schema_version", "alias_operations[0]", "image_defaults", "workflow_defaults"]
+    source.write_text(yaml.safe_dump({**document, "intent_exports": {"INTENT_CHAT": "chat.completions"}}), encoding="utf-8")
+    assert [row["key"] for row in local_capability_gaps(source)] == [
+        "schema_version", "alias_operations[0]", "image_defaults", "workflow_defaults"]
+    with pytest.raises(ValueError, match="intent exports must be a mapping"):
+        source.write_text(yaml.safe_dump({**document, "intent_exports": []}), encoding="utf-8")
+        local_capability_gaps(source)
     for invalid in ({**document, "extra": []}, {**document, "backend_rows": [None]},
                     {**document, "schema_version": True}):
         source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
@@ -862,3 +868,18 @@ def test_dispatch_task_aliases_follow_catalog_mutation(tmp_path, monkeypatch):
         assert _dispatch_accepts_task(monkeypatch, "speech", "embed", catalog=binding)
         assert _dispatch_accepts_task(monkeypatch, "speech", "speech", catalog=binding)
         assert not _dispatch_accepts_task(monkeypatch, "speech", "speech.synthesis", catalog=binding)
+
+
+def test_models_quick_tests_are_classified_without_a_gap(tmp_path):
+    from scripts.gen_operation_catalog import models_catalog_projection
+
+    document = {"schema_version": 1, "row_id_placeholder": "$row", "operations": []}
+    source = tmp_path / "models.yml"
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    plain = models_catalog_projection(source, [])
+    source.write_text(yaml.safe_dump({**document, "quick_tests": [{"title": "t", "intent": "x", "model": "m", "template": "c"}]}),
+                      encoding="utf-8")
+    assert models_catalog_projection(source, []) == plain
+    source.write_text(yaml.safe_dump({**document, "quick_tests": {}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="quick tests must be a list"):
+        models_catalog_projection(source, [])
