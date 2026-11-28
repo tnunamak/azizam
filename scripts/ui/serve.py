@@ -37,6 +37,16 @@ state_base = Path(os.environ.get('UI_E2E_STATE_ROOT', str(REPO / '.ui-e2e-state'
 sys.path.insert(0, str(REPO))
 from scripts import scratch_owner  # noqa: E402
 from gateway import private_io  # noqa: E402
+from scripts.ui.serve_ports import busy_port_message, busy_ports  # noqa: E402
+
+ports = [PORT]
+if not EXTERNAL_UPSTREAM_PORT:
+    ports.append(ENGINE_PORT)
+    if FIRST_RUN or SUBSCRIPTION_FIXTURE:
+        ports.append(ENGINE_PORT + 1)
+busy = busy_ports(ports)
+if busy:
+    raise SystemExit(busy_port_message(busy))
 
 private_io.ensure_private_dir(state_base)
 
