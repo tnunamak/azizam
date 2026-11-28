@@ -24,7 +24,7 @@ EXPECTED_METADATA = {
     ),
 }
 MESSAGE_FIELDS = {
-    "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "tts_stream_failed", "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
     "prompt_namespace_description",
     "workflow_namespace_description",
     "chat_namespace_description",

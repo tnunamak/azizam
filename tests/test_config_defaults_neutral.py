@@ -406,7 +406,9 @@ def test_the_release_names_no_model_listing_but_openais_and_no_owner_choice():
     documents = release_documents()
     assert documents["model_compatibility.yml"]["openai_models_api_url"] == "https://api.openai.com/v1/models"
     # These sections hold only an owner's choices; the release ships them empty.
-    assert all(documents[f"{name}.yml"] == {} for name in ("identity", "models", "roles", "service_availability"))
+    assert all(documents[f"{name}.yml"] == {} for name in ("models", "roles", "service_availability"))
+    # The identity section ships the release's own capacity and crop policy, which is no owner choice, and no face service.
+    assert set(documents["identity.yml"]) == {"profile"}
 
 
 def comment_problems(name: str, text: str) -> list[str]:
