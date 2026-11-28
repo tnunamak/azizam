@@ -1,0 +1,239 @@
+"""Image reseeding follows operator bindings; all submissions stay offline."""
+import asyncio
+import copy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+import yaml
+
+import proxy
+from gateway import generated_defaults
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def batch(monkeypatch):
+    monkeypatch.setattr(proxy, "get_vram_estimate", lambda *args: 100)
+    monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
+    monkeypatch.setattr(proxy, "compute_max_batch", lambda *args: 1)
+    monkeypatch.setattr(proxy.media_delivery, "current", lambda: None)
+    monkeypatch.setattr(proxy, "_build_image_response_payload", lambda *args, **kwargs: proxy.Response(status_code=200))
+
+    def run(workflow, manifest, *, fixed_seed=41, outcomes=None, name="seed-fixture",
+            meta=None, n=2, seed_field="seed", status=200):
+        seen = []
+        results = iter(outcomes or [[b"a"], [b"b"]])
+
+        async def submit(client, graph, *args, **kwargs):
+            seen.append(copy.deepcopy(graph))
+            return None, next(results)
+
+        monkeypatch.setattr(proxy, "_graph_run_round", submit)
+        # The route resolves the generated inputs once; a caller's number is the input's own value.
+        values = {}
+        if manifest is not None:
+            values = {"seed": fixed_seed} if fixed_seed is not None else generated_defaults.resolved_values(
+                manifest["inputs"], {})
+        response = asyncio.run(proxy._generate_images_with_adaptive_batching(
+            request=SimpleNamespace(), client=object(), base_workflow=workflow,
+            meta=meta or {}, manifest=manifest, workflow_name=name, width=512, height=512,
+            n_requested=n, response_format="b64_json", headers={},
+            fixed_seed=fixed_seed if manifest is None else None, generated_values=values,
+            legacy_seed_field=seed_field,
+        ))
+        assert response.status_code == status
+        run.response = response
+        return seen
+
+    return run
+
+
+def manifest_for(field):
+    return {"schema_version": 2, "id": "image.generate.seed-fixture", "intent": "image.generate", "capability": "image",
+            "inputs": {"seed": {"type": "integer", "minimum": 0,
+                                "generate": {"generator": "random_integer", "minimum": 0, "maximum": 4294967295}}},
+            "outputs": {},
+            "bindings": {"comfyui": {"map": {"seed": [
+                {"node": "a", "input": field}, {"node": "b", "input": "operator_seed"},
+            ]}}}}
+
+
+@pytest.mark.parametrize("field", ["noise_seed", "seed"])
+@pytest.mark.parametrize("fixed_seed", [41, None])
+@pytest.mark.parametrize("retry", [False, True])
+def test_every_seed_binding_changes_for_batch_items_and_empty_retry_rounds(batch, monkeypatch, field, fixed_seed, retry):
+    draws = iter([101, 102, 103])
+    monkeypatch.setattr(generated_defaults, "secure_source", lambda *args: next(draws))
+    workflow = {"a": {"inputs": {field: 0}}, "b": {"inputs": {"operator_seed": 0}}}
+    before = copy.deepcopy(workflow)
+    outcomes = [[], [b"a"], [b"b"]] if retry else [[b"a"], [b"b"]]
+    seen = batch(workflow, manifest_for(field), fixed_seed=fixed_seed, outcomes=outcomes)
+    start = 41 if fixed_seed is not None else 101
+    expected = list(range(start, start + len(outcomes)))
+    assert [g["a"]["inputs"][field] for g in seen] == expected
+    assert [g["b"]["inputs"]["operator_seed"] for g in seen] == expected
+    assert all(set(g["a"]["inputs"]) == {field} for g in seen)
+    assert workflow == before
+
+
+@pytest.mark.parametrize("missing", [None, [], "absent"])
+def test_no_seed_binding_keeps_graph_and_logs_once_per_workflow(batch, capsys, missing):
+    manifest = manifest_for("seed")
+    if missing is None:
+        manifest = None
+    elif missing == "absent":
+        del manifest["bindings"]["comfyui"]["map"]["seed"]
+    else:
+        manifest["bindings"]["comfyui"]["map"]["seed"] = []
+    workflow = {"a": {"inputs": {"seed": 17}}}
+    for _ in range(2):
+        assert batch(workflow, manifest, name=f"unbound-{missing}") == [workflow, workflow]
+    output = capsys.readouterr().out
+    assert output.count("reseeding unavailable") == 1
+    assert f"unbound-{missing}" in output
+
+
+def legacy_manifests():
+    for path in sorted((ROOT / "manifests/workflows").glob("*.yml")):
+        manifest = yaml.safe_load(path.read_text())
+        binding = manifest["bindings"].get("comfyui", {})
+        if manifest["intent"] in {"image.generate", "image.edit"} and binding.get("workflow"):
+            yield pytest.param(manifest, id=path.stem)
+
+
+@pytest.mark.parametrize("manifest", list(legacy_manifests()))
+def test_legacy_submitted_graph_bytes_unchanged(batch, manifest):
+    workflow = json.loads((ROOT / manifest["bindings"]["comfyui"]["workflow"]).read_text())
+    meta = workflow.pop("_meta", {})
+    expected = []
+    for seed in (41, 42):
+        graph = copy.deepcopy(workflow)
+        node = meta.get("seed_node")
+        if node:
+            # Frozen pre-fix route behavior: generation wrote seed; edit detected noise_seed.
+            inputs = graph[node]["inputs"]
+            field = "noise_seed" if manifest["intent"] == "image.edit" and "noise_seed" in inputs else "seed"
+            inputs[field] = seed
+        proxy.apply_batch_size(graph, meta, 1)
+        expected.append(json.dumps(graph).encode())
+    submitted = batch(workflow, manifest)
+    assert [json.dumps(graph).encode() for graph in submitted] == expected
+
+
+# An operator can drop a workflow JSON into the workflows directory without writing a
+# manifest. These copies of open image graphs stand in for such operator-authored files.
+MANIFESTLESS = {"operator-image": "krea2-turbo", "operator-image-edit": "qwen-image-2.1-edit"}
+
+
+@pytest.mark.parametrize("name", MANIFESTLESS)
+@pytest.mark.parametrize("fixed_seed", [41, None])
+def test_manifestless_submission_matches_main_and_records_seeds(batch, monkeypatch, tmp_path, name, fixed_seed):
+    operation = "image_edits" if name.endswith("-edit") else "images"
+    intent = "image.edit" if name.endswith("-edit") else "image.generate"
+    source = ROOT / "workflows/images" / f"{MANIFESTLESS[name]}.json"
+    (tmp_path / f"{name}.json").write_bytes(source.read_bytes())
+    monkeypatch.setitem(proxy.runtime().derived, "GRAPH_WORKFLOWS_DIR", tmp_path)
+    assert proxy.load_graph_workflow(name) is not None
+    assert proxy._find_image_manifest(intent, name) is None
+    assert proxy.resolve_model_for_operation(operation, name).effective_model == name
+    if intent == "image.edit":
+        assert proxy._select_edit_workflow(name, image_count=1, has_mask=False) == name
+    graph = json.loads(source.read_text())
+    meta = graph.pop("_meta")
+    field = "seed"
+    delivery = SimpleNamespace(seeds=[])
+    monkeypatch.setattr(proxy.media_delivery, "current", lambda: delivery)
+    draws = iter([101, 102])
+    monkeypatch.setattr(proxy.random, "randint", lambda *args: next(draws))
+    seeds = [41, 42] if fixed_seed is not None else [101, 102]
+    expected = []
+    for seed in seeds:
+        submitted = copy.deepcopy(graph)
+        submitted[meta["seed_node"]]["inputs"][field] = seed
+        proxy.apply_batch_size(submitted, meta, 1)
+        expected.append(json.dumps(submitted).encode())
+    seen = batch(graph, None, meta=meta, name=name, fixed_seed=fixed_seed, seed_field=field)
+    assert [json.dumps(g).encode() for g in seen] == expected
+    assert delivery.seeds == seeds
+
+
+def test_missing_seed_target_returns_configuration_error_without_submitting(batch, capsys):
+    manifest = manifest_for("seed")
+    manifest["id"] = "image.generate.broken-seed-target"
+    for _ in range(2):
+        assert batch({}, manifest, name="broken-seed-target", status=503) == []
+        error = json.loads(batch.response.body)["error"]
+        assert error["code"] == "invalid_workflow_extension"
+        assert error["message"] == "The image workflow configuration is invalid."
+        graph, response = asyncio.run(proxy._apply_workflow_extensions_to_image_request(
+            request_body={"extensions": {"com.azizam.workflow": {"seed": 41}}},
+            manifest=manifest, backend_request={},
+            standard_fields=proxy.STANDARD_IMAGE_GENERATE_FIELDS, receipt=None,
+        ))
+        assert graph is None
+        assert response.status_code == 503
+        assert json.loads(response.body)["error"] == error
+        response, image = asyncio.run(proxy._run_single_graph_image(
+            client=object(), workflow={}, meta={}, manifest=manifest,
+            headers={}, label="broken-seed-target", seed=41,
+        ))
+        assert image is None
+        assert response.status_code == 503
+        assert json.loads(response.body)["error"] == error
+    assert capsys.readouterr().out.count(manifest["id"]) == 1
+
+
+def test_manifest_identity_is_computed_once_for_multiround_request(batch, monkeypatch):
+    import gateway.manifests as manifests
+    calls = []
+    original = manifests.manifest_identity
+
+    def identity(manifest):
+        calls.append(manifest)
+        return original(manifest)
+
+    monkeypatch.setattr(manifests, "manifest_identity", identity)
+    monkeypatch.setattr(proxy, "manifest_identity", identity)
+    batch({"a": {"inputs": {"seed": 0}}, "b": {"inputs": {"operator_seed": 0}}}, manifest_for("seed"))
+    assert len(calls) == 1
+
+
+def test_manifestless_empty_round_preserves_main_fixed_seed_offset(batch):
+    seen = batch(
+        {"s": {"inputs": {"seed": 0}}}, None,
+        meta={"seed_node": "s"}, outcomes=[[], [b"a"], [b"b"]],
+    )
+    # Main advances fixed seeds by images collected, including zero-image rounds.
+    assert [graph["s"]["inputs"]["seed"] for graph in seen] == [41, 41, 42]
+
+
+def ranged_manifest(low, high):
+    manifest = manifest_for("seed")
+    manifest["inputs"]["seed"] = {"type": "integer", "minimum": low, "maximum": high,
+                                  "generate": {"generator": "random_integer", "minimum": low, "maximum": high}}
+    return manifest
+
+
+def bound_values(seen):
+    return [g["a"]["inputs"]["seed"] for g in seen]
+
+
+@pytest.mark.parametrize(("low", "high", "base", "outcomes", "expected"), [
+    (0, 9, 9, [[b"a"], [b"b"]], [9, 0]),                       # the upper bound wraps, it does not reach 10
+    (0, 9, 8, [[b"a", b"b"], [b"c"]], [8, 0]),                  # a round of two images moves the offset by two
+    (0, 9, 9, [[b"a"], [b"b"], [b"c"]], [9, 0, 1]),
+    (4, 4, 4, [[b"a"], [b"b"], [b"c"]], [4, 4, 4]),             # a range of one
+    (3, 4, 4, [[b"a"], [b"b"], [b"c"]], [4, 3, 4]),             # a range of two
+    (0, 4294967295, 4294967295, [[b"a"], [b"b"]], [4294967295, 0]),   # the public maximum does not reach 2**32
+    (0, 9, 9, [[], [b"a"], [b"b"]], [9, 0, 1]),                 # an empty round still moves on
+], ids=["upper-bound", "two-image-round", "three-rounds", "size-one", "size-two", "public-maximum", "empty-round"])
+def test_every_value_bound_to_the_graph_is_inside_the_declared_range(batch, low, high, base, outcomes, expected):
+    workflow = {"a": {"inputs": {"seed": 0}}, "b": {"inputs": {"operator_seed": 0}}}
+    seen = batch(workflow, ranged_manifest(low, high), fixed_seed=base, outcomes=outcomes, n=sum(len(o) for o in outcomes))
+    assert bound_values(seen) == expected
+    assert all(low <= value <= high for value in bound_values(seen))
+    assert [g["b"]["inputs"]["operator_seed"] for g in seen] == expected

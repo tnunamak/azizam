@@ -1,0 +1,3731 @@
+{
+ "removed_auth_settings": [
+  [
+   "enabled",
+   "Auth is always on. Remove auth.enabled."
+  ],
+  [
+   "lan_bypass_enabled",
+   "Keyless LAN access is removed. Give each device an app and a key in Apps."
+  ],
+  [
+   "lan_bypass_cidrs",
+   "Keyless LAN access is removed. Give each device an app and a key in Apps."
+  ],
+  [
+   "path_tokens",
+   "Path tokens are removed. Give each device an app and a key in Apps."
+  ],
+  [
+   "ollama_compat_discovery",
+   "Public Ollama discovery is removed. Ollama clients send an app key."
+  ]
+ ],
+ "removed_auth_env": [
+  [
+   "AZIZAM_AUTH_ENABLED",
+   "Auth is always on."
+  ],
+  [
+   "AZIZAM_LAN_BYPASS",
+   "Keyless LAN access is removed."
+  ],
+  [
+   "OLLAMA_COMPAT_DISCOVERY",
+   "Public Ollama discovery is removed."
+  ]
+ ],
+ "startup_removed_auth_settings": [
+  [
+   "enabled",
+   "Auth is always on. Remove auth.enabled."
+  ],
+  [
+   "lan_bypass_enabled",
+   "Keyless LAN access is removed. Give each device an app and a key in Apps."
+  ],
+  [
+   "lan_bypass_cidrs",
+   "Keyless LAN access is removed. Give each device an app and a key in Apps."
+  ],
+  [
+   "path_tokens",
+   "Path tokens are removed. Give each device an app and a key in Apps."
+  ],
+  [
+   "ollama_compat_discovery",
+   "Public Ollama discovery is removed. Ollama clients send an app key."
+  ]
+ ],
+ "access_errors": [
+  [
+   "key_required",
+   "This gateway needs an app key. Create one in Apps."
+  ],
+  [
+   "key_invalid",
+   "This key isn't valid. It may have been revoked. Create a new key in Apps."
+  ],
+  [
+   "app_disabled",
+   "This app is turned off. Ask the gateway owner to turn it on."
+  ],
+  [
+   "person_disabled",
+   "The person this app belongs to is turned off or missing. Ask the gateway owner."
+  ],
+  [
+   "person_signin_refused",
+   "Sign-in for the person this app belongs to was refused. The app works again after they sign in successfully."
+  ]
+ ],
+ "definition_unavailable": "A definition this job was accepted with is no longer available; please submit it again.",
+ "reasons": [
+  [
+   "upstream_unreachable",
+   "The engine could not be reached."
+  ],
+  [
+   "upstream_timeout",
+   "The engine did not answer in time."
+  ],
+  [
+   "upstream_failed",
+   "The engine failed while handling this request."
+  ],
+  [
+   "upstream_refused",
+   "The engine refused this request."
+  ],
+  [
+   "upstream_dropped",
+   "The connection to the engine dropped."
+  ],
+  [
+   "upstream_out_of_memory",
+   "The engine ran out of memory. Try a smaller request."
+  ],
+  [
+   "upstream_invalid_reply",
+   "The engine's reply could not be read."
+  ],
+  [
+   "upload_failed",
+   "Image upload failed: the engine refused the file."
+  ],
+  [
+   "upload_no_name",
+   "No filename returned from upload"
+  ],
+  [
+   "mask_upload_failed",
+   "Mask upload failed: the engine refused the file."
+  ],
+  [
+   "asset_upload_failed",
+   "Asset upload failed: the engine refused the file."
+  ],
+  [
+   "proxy_error",
+   "The gateway could not complete this request. Try again."
+  ],
+  [
+   "invalid_form",
+   "The form data could not be read."
+  ],
+  [
+   "invalid_request",
+   "The request could not be read. Check its shape and try again."
+  ],
+  [
+   "invalid_json",
+   "The request body is not valid JSON."
+  ],
+  [
+   "cancel_failed",
+   "The gateway could not cancel the job that was in progress."
+  ],
+  [
+   "tts_unavailable",
+   "The speech engine is unavailable."
+  ],
+  [
+   "tts_failed",
+   "The speech engine failed while handling this request."
+  ],
+  [
+   "voice_design_failed",
+   "Voice design failed."
+  ],
+  [
+   "audio_failed",
+   "The audio engine failed while handling this request."
+  ],
+  [
+   "video_failed",
+   "The video engine failed while handling this request."
+  ],
+  [
+   "setup_failed",
+   "The gateway could not complete this step. Try again."
+  ],
+  [
+   "provider_failed",
+   "The provider failed while handling this request."
+  ],
+  [
+   "admin_failed",
+   "The administration service could not be reached."
+  ],
+  [
+   "sign_in_failed",
+   "The identity provider refused the request."
+  ],
+  [
+   "host_memory_busy",
+   "The host's memory is busy with other work. Try again soon."
+  ]
+ ],
+ "status_reasons": [
+  [
+   400,
+   "The engine rejected the request."
+  ],
+  [
+   401,
+   "The engine did not accept the credentials the gateway holds for it."
+  ],
+  [
+   403,
+   "The engine refused the request."
+  ],
+  [
+   404,
+   "The engine does not have what the request asked for."
+  ],
+  [
+   408,
+   "The engine did not answer in time."
+  ],
+  [
+   409,
+   "The engine could not accept the request in its current state."
+  ],
+  [
+   413,
+   "The request is larger than the engine accepts."
+  ],
+  [
+   415,
+   "The engine does not accept this kind of content."
+  ],
+  [
+   422,
+   "The engine could not process the request."
+  ],
+  [
+   429,
+   "The engine is busy or limiting requests. Try again later."
+  ]
+ ],
+ "code_reasons": [
+  [
+   "member_origin_forbidden",
+   "Use your account page on this gateway to make changes."
+  ],
+  [
+   "context_length_exceeded",
+   "The request is longer than the model's context window."
+  ],
+  [
+   "model_not_found",
+   "The model was not found."
+  ],
+  [
+   "model_not_deployed",
+   "The model is not deployed."
+  ],
+  [
+   "rate_limit_exceeded",
+   "The engine is busy or limiting requests. Try again later."
+  ],
+  [
+   "insufficient_quota",
+   "The provider quota is used up."
+  ],
+  [
+   "billing_not_active",
+   "The provider account is not active."
+  ],
+  [
+   "billing_hard_limit_reached",
+   "The provider spending limit is reached."
+  ],
+  [
+   "content_policy_violation",
+   "The request was refused by the model's content policy."
+  ],
+  [
+   "content_filter",
+   "The request was refused by the model's content policy."
+  ],
+  [
+   "string_above_max_length",
+   "A value in the request is longer than the engine accepts."
+  ],
+  [
+   "string_below_min_length",
+   "A value in the request is shorter than the engine accepts."
+  ],
+  [
+   "array_above_max_length",
+   "A list in the request has more items than the engine accepts."
+  ],
+  [
+   "array_below_min_length",
+   "A list in the request has fewer items than the engine needs."
+  ],
+  [
+   "integer_above_max_value",
+   "A number in the request is larger than the engine accepts."
+  ],
+  [
+   "integer_below_min_value",
+   "A number in the request is smaller than the engine accepts."
+  ],
+  [
+   "decimal_above_max_value",
+   "A number in the request is larger than the engine accepts."
+  ],
+  [
+   "decimal_below_min_value",
+   "A number in the request is smaller than the engine accepts."
+  ],
+  [
+   "empty_string",
+   "A value in the request is empty."
+  ],
+  [
+   "invalid_api_key",
+   "The credentials were not accepted."
+  ],
+  [
+   "invalid_value",
+   "A value in the request is not valid."
+  ],
+  [
+   "invalid_type",
+   "A value in the request has the wrong type."
+  ],
+  [
+   "unsupported_value",
+   "A value in the request is not supported."
+  ],
+  [
+   "unsupported_parameter",
+   "A field in the request is not supported."
+  ],
+  [
+   "unknown_parameter",
+   "A field in the request is not known."
+  ],
+  [
+   "missing_required_parameter",
+   "A required field is missing from the request."
+  ],
+  [
+   "invalid_image",
+   "The image could not be read."
+  ],
+  [
+   "invalid_image_format",
+   "The image format is not supported."
+  ],
+  [
+   "invalid_image_url",
+   "The image address could not be used."
+  ],
+  [
+   "invalid_media_job_input",
+   "The media job input must be a JSON object."
+  ],
+  [
+   "invalid_prompt",
+   "The prompt was refused."
+  ],
+  [
+   "invalid_json",
+   "The request body is not valid JSON."
+  ],
+  [
+   "json_validate_failed",
+   "The model's reply did not match the requested format."
+  ],
+  [
+   "tool_use_failed",
+   "The model could not complete the tool call."
+  ],
+  [
+   "request_too_large",
+   "The request is larger than the engine accepts."
+  ],
+  [
+   "payload_too_large",
+   "The request is larger than the engine accepts."
+  ],
+  [
+   "file_too_large",
+   "The file is larger than the engine accepts."
+  ],
+  [
+   "overloaded",
+   "The engine is overloaded. Try again later."
+  ],
+  [
+   "engine_overloaded",
+   "The engine is overloaded. Try again later."
+  ],
+  [
+   "model_overloaded",
+   "The engine is overloaded. Try again later."
+  ],
+  [
+   "service_unavailable",
+   "The engine is unavailable. Try again later."
+  ],
+  [
+   "backend_unavailable",
+   "The engine is unavailable. Try again later."
+  ],
+  [
+   "timeout",
+   "The engine did not answer in time."
+  ],
+  [
+   "request_timeout",
+   "The engine did not answer in time."
+  ],
+  [
+   "server_error",
+   "The engine failed while handling the request."
+  ],
+  [
+   "internal_error",
+   "The engine failed while handling the request."
+  ],
+  [
+   "upstream_error",
+   "The engine failed while handling the request."
+  ],
+  [
+   "upstream_stream_interrupted",
+   "The LLM execution stream ended before the response was complete."
+  ],
+  [
+   "unsupported_country_region_territory",
+   "The provider does not serve this region."
+  ]
+ ],
+ "server_reason": "The engine failed while handling the request.",
+ "public_copy": [
+  [
+   "target_unknown",
+   [
+    "request",
+    "This model isn't available. Choose another model.",
+    "Unknown target. Call capabilities to list valid targets."
+   ]
+  ],
+  [
+   "mode_unavailable",
+   [
+    "request",
+    "This way of running the task isn't available. Choose another way.",
+    "The requested execution mode is unavailable for this target."
+   ]
+  ],
+  [
+   "response_invalid",
+   [
+    "gateway",
+    "The gateway returned a result it couldn't read. Try again.",
+    "The gateway returned an unsupported result format."
+   ]
+  ],
+  [
+   "value_too_large",
+   [
+    "request",
+    "A request value is too large. Choose a smaller value.",
+    "A request value must be at most {maximum}."
+   ]
+  ],
+  [
+   "value_too_small",
+   [
+    "request",
+    "A request value is too small. Choose a larger value.",
+    "A request value must be at least {minimum}."
+   ]
+  ],
+  [
+   "input_string",
+   [
+    "request",
+    "An input needs text. Enter text and try again.",
+    "An input must be a string."
+   ]
+  ],
+  [
+   "input_integer",
+   [
+    "request",
+    "An input needs a whole number. Enter a whole number.",
+    "An input must be an integer."
+   ]
+  ],
+  [
+   "input_number",
+   [
+    "request",
+    "An input needs a number. Enter a number.",
+    "An input must be a number."
+   ]
+  ],
+  [
+   "input_boolean",
+   [
+    "request",
+    "An input needs a yes or no choice. Choose one.",
+    "An input must be a boolean."
+   ]
+  ],
+  [
+   "input_choice",
+   [
+    "request",
+    "An input has an unsupported choice. Choose a supported value.",
+    "An input must match one of the supported choices."
+   ]
+  ],
+  [
+   "input_required",
+   [
+    "request",
+    "A required input is missing. Add the missing input.",
+    "A required input is missing."
+   ]
+  ],
+  [
+   "input_unknown",
+   [
+    "request",
+    "The request has an unknown input. Remove the unknown input.",
+    "The request contains an unknown input."
+   ]
+  ],
+  [
+   "file_base64_invalid",
+   [
+    "request",
+    "The input file couldn't be read. Send a valid file again.",
+    "The input file has invalid base64 encoding."
+   ]
+  ],
+  [
+   "file_url_unsupported",
+   [
+    "request",
+    "The file link can't be read. Send the file itself.",
+    "External file URLs are not fetched; use a data URI or a file from an earlier result."
+   ]
+  ],
+  [
+   "invalid_inputs",
+   [
+    "request",
+    "The request has an invalid input. Check the inputs and try again.",
+    "One or more inputs do not match the required type or supported choices."
+   ]
+  ],
+  [
+   "input_file_invalid",
+   [
+    "request",
+    "The input file couldn't be read. Send a valid file again.",
+    "The input must be a valid data URI or a file from an earlier result."
+   ]
+  ],
+  [
+   "dimensions_incomplete",
+   [
+    "request",
+    "A picture dimension is missing. Send both dimensions.",
+    "Width and height must be supplied together."
+   ]
+  ],
+  [
+   "out_of_memory",
+   [
+    "engine",
+    "The engine couldn't finish this request. Try a smaller request.",
+    "The engine ran out of memory. Try a smaller request."
+   ]
+  ],
+  [
+   "profile_denied",
+   [
+    "account",
+    "Your account can't run this request. Ask the owner for access.",
+    "This profile may not run this request."
+   ]
+  ],
+  [
+   "canceled",
+   [
+    "request",
+    "This task was canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "unknown",
+   [
+    "unknown",
+    "We couldn't tell where this request stopped. Try again."
+   ]
+  ],
+  [
+   "not_authenticated",
+   [
+    "account",
+    "You're signed out. Sign in again."
+   ]
+  ],
+  [
+   "session_user_not_found",
+   [
+    "account",
+    "Your sign-in no longer matches an account. Sign in again."
+   ]
+  ],
+  [
+   "owner_required",
+   [
+    "account",
+    "Only the owner can see other people's work. Choose your own work."
+   ]
+  ],
+  [
+   "source_not_allowed",
+   [
+    "account",
+    "You can't see this app's work. Choose one of your apps."
+   ]
+  ],
+  [
+   "make_disabled",
+   [
+    "account",
+    "Making is turned off for your account. Ask the owner to turn it on."
+   ]
+  ],
+  [
+   "too_many_jobs",
+   [
+    "account",
+    "You already have {maximum} things being made. Wait for one to finish, then try again."
+   ]
+  ],
+  [
+   "asset_not_found",
+   [
+    "library",
+    "This item isn't in your Library. Return to the Library and choose another item."
+   ]
+  ],
+  [
+   "asset_unavailable",
+   [
+    "library",
+    "This file is no longer available in the Library. Check a downloaded copy, or make it again."
+   ]
+  ],
+  [
+   "media_folder_unavailable",
+   [
+    "library",
+    "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
+   ]
+  ],
+  [
+   "media_folder_empty",
+   [
+    "library",
+    "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
+   ]
+  ],
+  [
+   "media_folder_unconfirmed",
+   [
+    "library",
+    "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_no_matches",
+   [
+    "library",
+    "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again."
+   ]
+  ],
+  [
+   "media_folder_owner_required",
+   [
+    "account",
+    "Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_changed",
+   [
+    "library",
+    "Your Library changed since you opened this. Review it again."
+   ]
+  ],
+  [
+   "prompt_not_accessible",
+   [
+    "library",
+    "Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt."
+   ]
+  ],
+  [
+   "job_not_found",
+   [
+    "library",
+    "This task isn't in your account. Return to the list and choose another task."
+   ]
+  ],
+  [
+   "job_finished",
+   [
+    "library",
+    "This task has already finished. Refresh to see the result."
+   ]
+  ],
+  [
+   "job_finishing",
+   [
+    "library",
+    "This picture is already made, so it can't be canceled. Wait for it to appear in your Library."
+   ]
+  ],
+  [
+   "source_not_found",
+   [
+    "library",
+    "That source picture isn't in your Library. Choose another picture."
+   ]
+  ],
+  [
+   "source_pending",
+   [
+    "library",
+    "That picture isn't ready. Wait for it to finish."
+   ]
+  ],
+  [
+   "source_missing",
+   [
+    "library",
+    "That task didn't produce a picture. Choose another source picture."
+   ]
+  ],
+  [
+   "input_file_unavailable",
+   [
+    "library",
+    "The input file isn't available. Send the file again, or choose another one.",
+    "The file for input '{input}' isn't available. Send the file again, or choose another one."
+   ]
+  ],
+  [
+   "invalid_since",
+   [
+    "request",
+    "This list can't be refreshed from that point. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_cursor",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_limit",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_status",
+   [
+    "request",
+    "This task filter isn't recognized. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_source",
+   [
+    "request",
+    "This app filter isn't recognized. Choose an app from the list."
+   ]
+  ],
+  [
+   "invalid_date",
+   [
+    "request",
+    "This date isn't recognized. Choose the date again."
+   ]
+  ],
+  [
+   "invalid_metadata",
+   [
+    "request",
+    "This download option isn't offered. Choose Download again."
+   ]
+  ],
+  [
+   "unsupported_period",
+   [
+    "request",
+    "Usage is shown for the current month only. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_json",
+   [
+    "request",
+    "The gateway couldn't read this request. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_field",
+   [
+    "request",
+    "This request has a setting the gateway doesn't accept. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_intent",
+   [
+    "request",
+    "This page can only make or edit pictures. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_prompt_mode",
+   [
+    "request",
+    "The prompt setting isn't recognized. Refresh the page and try again."
+   ]
+  ],
+  [
+   "model_required",
+   [
+    "request",
+    "No model is chosen. Choose a model."
+   ]
+  ],
+  [
+   "prompt_required",
+   [
+    "request",
+    "The description is empty. Describe what to make."
+   ]
+  ],
+  [
+   "prompt_too_long",
+   [
+    "request",
+    "The description is too long. Keep it to {max_chars:,} characters or fewer."
+   ]
+  ],
+  [
+   "invalid_n",
+   [
+    "request",
+    "That number of pictures isn't allowed. Choose from 1 to {max_images}."
+   ]
+  ],
+  [
+   "edit_needs_source",
+   [
+    "request",
+    "Editing needs a source picture. Choose a picture to edit."
+   ]
+  ],
+  [
+   "generate_takes_no_source",
+   [
+    "request",
+    "A new picture doesn't use a source picture. Remove the source picture."
+   ]
+  ],
+  [
+   "one_source",
+   [
+    "request",
+    "Two source pictures were sent. Choose one."
+   ]
+  ],
+  [
+   "idempotency_conflict",
+   [
+    "request",
+    "This submission was already used for a different request. Refresh the page before you submit again."
+   ]
+  ],
+  [
+   "input_not_accepted",
+   [
+    "request",
+    "This workflow doesn't take that input. Remove it and try again.",
+    "This workflow doesn't take input '{input}'. Remove it and try again."
+   ]
+  ],
+  [
+   "input_set_by_gateway",
+   [
+    "request",
+    "The gateway sets that input itself. Remove it and try again.",
+    "The gateway sets input '{input}' itself. Remove it and try again."
+   ]
+  ],
+  [
+   "make_unavailable",
+   [
+    "gateway",
+    "Making pictures isn't set up on this gateway. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "make_busy",
+   [
+    "gateway",
+    "The gateway is busy making other things. Try again in a minute."
+   ]
+  ],
+  [
+   "make_queue_failed",
+   [
+    "gateway",
+    "The gateway couldn't save this task to the queue. Try again."
+   ]
+  ],
+  [
+   "input_lost",
+   [
+    "gateway",
+    "The gateway lost this task's details before it ran. Make it again."
+   ]
+  ],
+  [
+   "restart_while_canceling",
+   [
+    "gateway",
+    "The gateway restarted while this task was being canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "restart_before_finish",
+   [
+    "gateway",
+    "The gateway restarted before this task finished. Make it again."
+   ]
+  ],
+  [
+   "restart_while_running",
+   [
+    "gateway",
+    "The gateway restarted while this task was running, and it wasn't run again. Check your Library, then make it again if the picture is missing."
+   ]
+  ],
+  [
+   "alias_misconfigured",
+   [
+    "gateway",
+    "This model is set up incorrectly on this gateway. Ask the owner to check it.",
+    "Model '{model}' is set up incorrectly on this gateway. Ask the owner to check it."
+   ]
+  ],
+  [
+   "alias_not_configured",
+   [
+    "gateway",
+    "This model isn't set up on this gateway yet. Ask the owner to set it up.",
+    "Model '{model}' isn't set up on this gateway yet. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "model_not_deployed",
+   [
+    "engine",
+    "No engine or provider is running this model right now. Choose another model, or ask the owner to turn one on.",
+    "No engine or provider is running model '{model}' right now. Choose another model, or ask the owner to turn one on."
+   ]
+  ],
+  [
+   "make_failed",
+   [
+    "unknown",
+    "The picture couldn't be made, and we couldn't tell where it stopped. Try again."
+   ]
+  ],
+  [
+   "no_picture",
+   [
+    "model",
+    "The model finished without a picture. Try again."
+   ]
+  ],
+  [
+   "input_mapping_invalid",
+   [
+    "workflow",
+    "An input of this workflow is set up incorrectly. Ask the owner to check the workflow.",
+    "Input '{input}' of this workflow is set up incorrectly. Ask the owner to check the workflow."
+   ]
+  ]
+ ],
+ "public_values": [
+  {
+   "maximum": 5,
+   "minimum": 2,
+   "max_chars": 1234,
+   "max_images": 4,
+   "input": "image_in",
+   "model": "m-1"
+  },
+  {
+   "maximum": 7.5,
+   "minimum": 0,
+   "max_chars": 20000,
+   "max_images": 9,
+   "input": "x",
+   "model": "alpha"
+  }
+ ],
+ "public_renders": [
+  [
+   "target_unknown",
+   "api",
+   [
+    "request",
+    "Unknown target. Call capabilities to list valid targets."
+   ]
+  ],
+  [
+   "target_unknown",
+   "api",
+   [
+    "request",
+    "Unknown target. Call capabilities to list valid targets."
+   ]
+  ],
+  [
+   "target_unknown",
+   "ui",
+   [
+    "request",
+    "This model isn't available. Choose another model."
+   ]
+  ],
+  [
+   "target_unknown",
+   "ui",
+   [
+    "request",
+    "This model isn't available. Choose another model."
+   ]
+  ],
+  [
+   "mode_unavailable",
+   "api",
+   [
+    "request",
+    "The requested execution mode is unavailable for this target."
+   ]
+  ],
+  [
+   "mode_unavailable",
+   "api",
+   [
+    "request",
+    "The requested execution mode is unavailable for this target."
+   ]
+  ],
+  [
+   "mode_unavailable",
+   "ui",
+   [
+    "request",
+    "This way of running the task isn't available. Choose another way."
+   ]
+  ],
+  [
+   "mode_unavailable",
+   "ui",
+   [
+    "request",
+    "This way of running the task isn't available. Choose another way."
+   ]
+  ],
+  [
+   "response_invalid",
+   "api",
+   [
+    "gateway",
+    "The gateway returned an unsupported result format."
+   ]
+  ],
+  [
+   "response_invalid",
+   "api",
+   [
+    "gateway",
+    "The gateway returned an unsupported result format."
+   ]
+  ],
+  [
+   "response_invalid",
+   "ui",
+   [
+    "gateway",
+    "The gateway returned a result it couldn't read. Try again."
+   ]
+  ],
+  [
+   "response_invalid",
+   "ui",
+   [
+    "gateway",
+    "The gateway returned a result it couldn't read. Try again."
+   ]
+  ],
+  [
+   "value_too_large",
+   "api",
+   [
+    "request",
+    "A request value must be at most 5."
+   ]
+  ],
+  [
+   "value_too_large",
+   "api",
+   [
+    "request",
+    "A request value must be at most 7.5."
+   ]
+  ],
+  [
+   "value_too_large",
+   "ui",
+   [
+    "request",
+    "A request value is too large. Choose a smaller value."
+   ]
+  ],
+  [
+   "value_too_large",
+   "ui",
+   [
+    "request",
+    "A request value is too large. Choose a smaller value."
+   ]
+  ],
+  [
+   "value_too_small",
+   "api",
+   [
+    "request",
+    "A request value must be at least 2."
+   ]
+  ],
+  [
+   "value_too_small",
+   "api",
+   [
+    "request",
+    "A request value must be at least 0."
+   ]
+  ],
+  [
+   "value_too_small",
+   "ui",
+   [
+    "request",
+    "A request value is too small. Choose a larger value."
+   ]
+  ],
+  [
+   "value_too_small",
+   "ui",
+   [
+    "request",
+    "A request value is too small. Choose a larger value."
+   ]
+  ],
+  [
+   "input_string",
+   "api",
+   [
+    "request",
+    "An input must be a string."
+   ]
+  ],
+  [
+   "input_string",
+   "api",
+   [
+    "request",
+    "An input must be a string."
+   ]
+  ],
+  [
+   "input_string",
+   "ui",
+   [
+    "request",
+    "An input needs text. Enter text and try again."
+   ]
+  ],
+  [
+   "input_string",
+   "ui",
+   [
+    "request",
+    "An input needs text. Enter text and try again."
+   ]
+  ],
+  [
+   "input_integer",
+   "api",
+   [
+    "request",
+    "An input must be an integer."
+   ]
+  ],
+  [
+   "input_integer",
+   "api",
+   [
+    "request",
+    "An input must be an integer."
+   ]
+  ],
+  [
+   "input_integer",
+   "ui",
+   [
+    "request",
+    "An input needs a whole number. Enter a whole number."
+   ]
+  ],
+  [
+   "input_integer",
+   "ui",
+   [
+    "request",
+    "An input needs a whole number. Enter a whole number."
+   ]
+  ],
+  [
+   "input_number",
+   "api",
+   [
+    "request",
+    "An input must be a number."
+   ]
+  ],
+  [
+   "input_number",
+   "api",
+   [
+    "request",
+    "An input must be a number."
+   ]
+  ],
+  [
+   "input_number",
+   "ui",
+   [
+    "request",
+    "An input needs a number. Enter a number."
+   ]
+  ],
+  [
+   "input_number",
+   "ui",
+   [
+    "request",
+    "An input needs a number. Enter a number."
+   ]
+  ],
+  [
+   "input_boolean",
+   "api",
+   [
+    "request",
+    "An input must be a boolean."
+   ]
+  ],
+  [
+   "input_boolean",
+   "api",
+   [
+    "request",
+    "An input must be a boolean."
+   ]
+  ],
+  [
+   "input_boolean",
+   "ui",
+   [
+    "request",
+    "An input needs a yes or no choice. Choose one."
+   ]
+  ],
+  [
+   "input_boolean",
+   "ui",
+   [
+    "request",
+    "An input needs a yes or no choice. Choose one."
+   ]
+  ],
+  [
+   "input_choice",
+   "api",
+   [
+    "request",
+    "An input must match one of the supported choices."
+   ]
+  ],
+  [
+   "input_choice",
+   "api",
+   [
+    "request",
+    "An input must match one of the supported choices."
+   ]
+  ],
+  [
+   "input_choice",
+   "ui",
+   [
+    "request",
+    "An input has an unsupported choice. Choose a supported value."
+   ]
+  ],
+  [
+   "input_choice",
+   "ui",
+   [
+    "request",
+    "An input has an unsupported choice. Choose a supported value."
+   ]
+  ],
+  [
+   "input_required",
+   "api",
+   [
+    "request",
+    "A required input is missing."
+   ]
+  ],
+  [
+   "input_required",
+   "api",
+   [
+    "request",
+    "A required input is missing."
+   ]
+  ],
+  [
+   "input_required",
+   "ui",
+   [
+    "request",
+    "A required input is missing. Add the missing input."
+   ]
+  ],
+  [
+   "input_required",
+   "ui",
+   [
+    "request",
+    "A required input is missing. Add the missing input."
+   ]
+  ],
+  [
+   "input_unknown",
+   "api",
+   [
+    "request",
+    "The request contains an unknown input."
+   ]
+  ],
+  [
+   "input_unknown",
+   "api",
+   [
+    "request",
+    "The request contains an unknown input."
+   ]
+  ],
+  [
+   "input_unknown",
+   "ui",
+   [
+    "request",
+    "The request has an unknown input. Remove the unknown input."
+   ]
+  ],
+  [
+   "input_unknown",
+   "ui",
+   [
+    "request",
+    "The request has an unknown input. Remove the unknown input."
+   ]
+  ],
+  [
+   "file_base64_invalid",
+   "api",
+   [
+    "request",
+    "The input file has invalid base64 encoding."
+   ]
+  ],
+  [
+   "file_base64_invalid",
+   "api",
+   [
+    "request",
+    "The input file has invalid base64 encoding."
+   ]
+  ],
+  [
+   "file_base64_invalid",
+   "ui",
+   [
+    "request",
+    "The input file couldn't be read. Send a valid file again."
+   ]
+  ],
+  [
+   "file_base64_invalid",
+   "ui",
+   [
+    "request",
+    "The input file couldn't be read. Send a valid file again."
+   ]
+  ],
+  [
+   "file_url_unsupported",
+   "api",
+   [
+    "request",
+    "External file URLs are not fetched; use a data URI or a file from an earlier result."
+   ]
+  ],
+  [
+   "file_url_unsupported",
+   "api",
+   [
+    "request",
+    "External file URLs are not fetched; use a data URI or a file from an earlier result."
+   ]
+  ],
+  [
+   "file_url_unsupported",
+   "ui",
+   [
+    "request",
+    "The file link can't be read. Send the file itself."
+   ]
+  ],
+  [
+   "file_url_unsupported",
+   "ui",
+   [
+    "request",
+    "The file link can't be read. Send the file itself."
+   ]
+  ],
+  [
+   "invalid_inputs",
+   "api",
+   [
+    "request",
+    "One or more inputs do not match the required type or supported choices."
+   ]
+  ],
+  [
+   "invalid_inputs",
+   "api",
+   [
+    "request",
+    "One or more inputs do not match the required type or supported choices."
+   ]
+  ],
+  [
+   "invalid_inputs",
+   "ui",
+   [
+    "request",
+    "The request has an invalid input. Check the inputs and try again."
+   ]
+  ],
+  [
+   "invalid_inputs",
+   "ui",
+   [
+    "request",
+    "The request has an invalid input. Check the inputs and try again."
+   ]
+  ],
+  [
+   "input_file_invalid",
+   "api",
+   [
+    "request",
+    "The input must be a valid data URI or a file from an earlier result."
+   ]
+  ],
+  [
+   "input_file_invalid",
+   "api",
+   [
+    "request",
+    "The input must be a valid data URI or a file from an earlier result."
+   ]
+  ],
+  [
+   "input_file_invalid",
+   "ui",
+   [
+    "request",
+    "The input file couldn't be read. Send a valid file again."
+   ]
+  ],
+  [
+   "input_file_invalid",
+   "ui",
+   [
+    "request",
+    "The input file couldn't be read. Send a valid file again."
+   ]
+  ],
+  [
+   "dimensions_incomplete",
+   "api",
+   [
+    "request",
+    "Width and height must be supplied together."
+   ]
+  ],
+  [
+   "dimensions_incomplete",
+   "api",
+   [
+    "request",
+    "Width and height must be supplied together."
+   ]
+  ],
+  [
+   "dimensions_incomplete",
+   "ui",
+   [
+    "request",
+    "A picture dimension is missing. Send both dimensions."
+   ]
+  ],
+  [
+   "dimensions_incomplete",
+   "ui",
+   [
+    "request",
+    "A picture dimension is missing. Send both dimensions."
+   ]
+  ],
+  [
+   "out_of_memory",
+   "api",
+   [
+    "engine",
+    "The engine ran out of memory. Try a smaller request."
+   ]
+  ],
+  [
+   "out_of_memory",
+   "api",
+   [
+    "engine",
+    "The engine ran out of memory. Try a smaller request."
+   ]
+  ],
+  [
+   "out_of_memory",
+   "ui",
+   [
+    "engine",
+    "The engine couldn't finish this request. Try a smaller request."
+   ]
+  ],
+  [
+   "out_of_memory",
+   "ui",
+   [
+    "engine",
+    "The engine couldn't finish this request. Try a smaller request."
+   ]
+  ],
+  [
+   "profile_denied",
+   "api",
+   [
+    "account",
+    "This profile may not run this request."
+   ]
+  ],
+  [
+   "profile_denied",
+   "api",
+   [
+    "account",
+    "This profile may not run this request."
+   ]
+  ],
+  [
+   "profile_denied",
+   "ui",
+   [
+    "account",
+    "Your account can't run this request. Ask the owner for access."
+   ]
+  ],
+  [
+   "profile_denied",
+   "ui",
+   [
+    "account",
+    "Your account can't run this request. Ask the owner for access."
+   ]
+  ],
+  [
+   "canceled",
+   "api",
+   [
+    "request",
+    "This task was canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "canceled",
+   "api",
+   [
+    "request",
+    "This task was canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "canceled",
+   "ui",
+   [
+    "request",
+    "This task was canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "canceled",
+   "ui",
+   [
+    "request",
+    "This task was canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "unknown",
+   "api",
+   [
+    "unknown",
+    "We couldn't tell where this request stopped. Try again."
+   ]
+  ],
+  [
+   "unknown",
+   "api",
+   [
+    "unknown",
+    "We couldn't tell where this request stopped. Try again."
+   ]
+  ],
+  [
+   "unknown",
+   "ui",
+   [
+    "unknown",
+    "We couldn't tell where this request stopped. Try again."
+   ]
+  ],
+  [
+   "unknown",
+   "ui",
+   [
+    "unknown",
+    "We couldn't tell where this request stopped. Try again."
+   ]
+  ],
+  [
+   "not_authenticated",
+   "api",
+   [
+    "account",
+    "You're signed out. Sign in again."
+   ]
+  ],
+  [
+   "not_authenticated",
+   "api",
+   [
+    "account",
+    "You're signed out. Sign in again."
+   ]
+  ],
+  [
+   "not_authenticated",
+   "ui",
+   [
+    "account",
+    "You're signed out. Sign in again."
+   ]
+  ],
+  [
+   "not_authenticated",
+   "ui",
+   [
+    "account",
+    "You're signed out. Sign in again."
+   ]
+  ],
+  [
+   "session_user_not_found",
+   "api",
+   [
+    "account",
+    "Your sign-in no longer matches an account. Sign in again."
+   ]
+  ],
+  [
+   "session_user_not_found",
+   "api",
+   [
+    "account",
+    "Your sign-in no longer matches an account. Sign in again."
+   ]
+  ],
+  [
+   "session_user_not_found",
+   "ui",
+   [
+    "account",
+    "Your sign-in no longer matches an account. Sign in again."
+   ]
+  ],
+  [
+   "session_user_not_found",
+   "ui",
+   [
+    "account",
+    "Your sign-in no longer matches an account. Sign in again."
+   ]
+  ],
+  [
+   "owner_required",
+   "api",
+   [
+    "account",
+    "Only the owner can see other people's work. Choose your own work."
+   ]
+  ],
+  [
+   "owner_required",
+   "api",
+   [
+    "account",
+    "Only the owner can see other people's work. Choose your own work."
+   ]
+  ],
+  [
+   "owner_required",
+   "ui",
+   [
+    "account",
+    "Only the owner can see other people's work. Choose your own work."
+   ]
+  ],
+  [
+   "owner_required",
+   "ui",
+   [
+    "account",
+    "Only the owner can see other people's work. Choose your own work."
+   ]
+  ],
+  [
+   "source_not_allowed",
+   "api",
+   [
+    "account",
+    "You can't see this app's work. Choose one of your apps."
+   ]
+  ],
+  [
+   "source_not_allowed",
+   "api",
+   [
+    "account",
+    "You can't see this app's work. Choose one of your apps."
+   ]
+  ],
+  [
+   "source_not_allowed",
+   "ui",
+   [
+    "account",
+    "You can't see this app's work. Choose one of your apps."
+   ]
+  ],
+  [
+   "source_not_allowed",
+   "ui",
+   [
+    "account",
+    "You can't see this app's work. Choose one of your apps."
+   ]
+  ],
+  [
+   "make_disabled",
+   "api",
+   [
+    "account",
+    "Making is turned off for your account. Ask the owner to turn it on."
+   ]
+  ],
+  [
+   "make_disabled",
+   "api",
+   [
+    "account",
+    "Making is turned off for your account. Ask the owner to turn it on."
+   ]
+  ],
+  [
+   "make_disabled",
+   "ui",
+   [
+    "account",
+    "Making is turned off for your account. Ask the owner to turn it on."
+   ]
+  ],
+  [
+   "make_disabled",
+   "ui",
+   [
+    "account",
+    "Making is turned off for your account. Ask the owner to turn it on."
+   ]
+  ],
+  [
+   "too_many_jobs",
+   "api",
+   [
+    "account",
+    "You already have 5 things being made. Wait for one to finish, then try again."
+   ]
+  ],
+  [
+   "too_many_jobs",
+   "api",
+   [
+    "account",
+    "You already have 7.5 things being made. Wait for one to finish, then try again."
+   ]
+  ],
+  [
+   "too_many_jobs",
+   "ui",
+   [
+    "account",
+    "You already have 5 things being made. Wait for one to finish, then try again."
+   ]
+  ],
+  [
+   "too_many_jobs",
+   "ui",
+   [
+    "account",
+    "You already have 7.5 things being made. Wait for one to finish, then try again."
+   ]
+  ],
+  [
+   "asset_not_found",
+   "api",
+   [
+    "library",
+    "This item isn't in your Library. Return to the Library and choose another item."
+   ]
+  ],
+  [
+   "asset_not_found",
+   "api",
+   [
+    "library",
+    "This item isn't in your Library. Return to the Library and choose another item."
+   ]
+  ],
+  [
+   "asset_not_found",
+   "ui",
+   [
+    "library",
+    "This item isn't in your Library. Return to the Library and choose another item."
+   ]
+  ],
+  [
+   "asset_not_found",
+   "ui",
+   [
+    "library",
+    "This item isn't in your Library. Return to the Library and choose another item."
+   ]
+  ],
+  [
+   "asset_unavailable",
+   "api",
+   [
+    "library",
+    "This file is no longer available in the Library. Check a downloaded copy, or make it again."
+   ]
+  ],
+  [
+   "asset_unavailable",
+   "api",
+   [
+    "library",
+    "This file is no longer available in the Library. Check a downloaded copy, or make it again."
+   ]
+  ],
+  [
+   "asset_unavailable",
+   "ui",
+   [
+    "library",
+    "This file is no longer available in the Library. Check a downloaded copy, or make it again."
+   ]
+  ],
+  [
+   "asset_unavailable",
+   "ui",
+   [
+    "library",
+    "This file is no longer available in the Library. Check a downloaded copy, or make it again."
+   ]
+  ],
+  [
+   "media_folder_unavailable",
+   "api",
+   [
+    "library",
+    "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
+   ]
+  ],
+  [
+   "media_folder_unavailable",
+   "api",
+   [
+    "library",
+    "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
+   ]
+  ],
+  [
+   "media_folder_unavailable",
+   "ui",
+   [
+    "library",
+    "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
+   ]
+  ],
+  [
+   "media_folder_unavailable",
+   "ui",
+   [
+    "library",
+    "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
+   ]
+  ],
+  [
+   "media_folder_empty",
+   "api",
+   [
+    "library",
+    "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
+   ]
+  ],
+  [
+   "media_folder_empty",
+   "api",
+   [
+    "library",
+    "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
+   ]
+  ],
+  [
+   "media_folder_empty",
+   "ui",
+   [
+    "library",
+    "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
+   ]
+  ],
+  [
+   "media_folder_empty",
+   "ui",
+   [
+    "library",
+    "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
+   ]
+  ],
+  [
+   "media_folder_unconfirmed",
+   "api",
+   [
+    "library",
+    "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_unconfirmed",
+   "api",
+   [
+    "library",
+    "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_unconfirmed",
+   "ui",
+   [
+    "library",
+    "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_unconfirmed",
+   "ui",
+   [
+    "library",
+    "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_no_matches",
+   "api",
+   [
+    "library",
+    "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again."
+   ]
+  ],
+  [
+   "media_folder_no_matches",
+   "api",
+   [
+    "library",
+    "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again."
+   ]
+  ],
+  [
+   "media_folder_no_matches",
+   "ui",
+   [
+    "library",
+    "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again."
+   ]
+  ],
+  [
+   "media_folder_no_matches",
+   "ui",
+   [
+    "library",
+    "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again."
+   ]
+  ],
+  [
+   "media_folder_owner_required",
+   "api",
+   [
+    "account",
+    "Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_owner_required",
+   "api",
+   [
+    "account",
+    "Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_owner_required",
+   "ui",
+   [
+    "account",
+    "Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_owner_required",
+   "ui",
+   [
+    "account",
+    "Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings."
+   ]
+  ],
+  [
+   "media_folder_changed",
+   "api",
+   [
+    "library",
+    "Your Library changed since you opened this. Review it again."
+   ]
+  ],
+  [
+   "media_folder_changed",
+   "api",
+   [
+    "library",
+    "Your Library changed since you opened this. Review it again."
+   ]
+  ],
+  [
+   "media_folder_changed",
+   "ui",
+   [
+    "library",
+    "Your Library changed since you opened this. Review it again."
+   ]
+  ],
+  [
+   "media_folder_changed",
+   "ui",
+   [
+    "library",
+    "Your Library changed since you opened this. Review it again."
+   ]
+  ],
+  [
+   "prompt_not_accessible",
+   "api",
+   [
+    "library",
+    "Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt."
+   ]
+  ],
+  [
+   "prompt_not_accessible",
+   "api",
+   [
+    "library",
+    "Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt."
+   ]
+  ],
+  [
+   "prompt_not_accessible",
+   "ui",
+   [
+    "library",
+    "Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt."
+   ]
+  ],
+  [
+   "prompt_not_accessible",
+   "ui",
+   [
+    "library",
+    "Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt."
+   ]
+  ],
+  [
+   "job_not_found",
+   "api",
+   [
+    "library",
+    "This task isn't in your account. Return to the list and choose another task."
+   ]
+  ],
+  [
+   "job_not_found",
+   "api",
+   [
+    "library",
+    "This task isn't in your account. Return to the list and choose another task."
+   ]
+  ],
+  [
+   "job_not_found",
+   "ui",
+   [
+    "library",
+    "This task isn't in your account. Return to the list and choose another task."
+   ]
+  ],
+  [
+   "job_not_found",
+   "ui",
+   [
+    "library",
+    "This task isn't in your account. Return to the list and choose another task."
+   ]
+  ],
+  [
+   "job_finished",
+   "api",
+   [
+    "library",
+    "This task has already finished. Refresh to see the result."
+   ]
+  ],
+  [
+   "job_finished",
+   "api",
+   [
+    "library",
+    "This task has already finished. Refresh to see the result."
+   ]
+  ],
+  [
+   "job_finished",
+   "ui",
+   [
+    "library",
+    "This task has already finished. Refresh to see the result."
+   ]
+  ],
+  [
+   "job_finished",
+   "ui",
+   [
+    "library",
+    "This task has already finished. Refresh to see the result."
+   ]
+  ],
+  [
+   "job_finishing",
+   "api",
+   [
+    "library",
+    "This picture is already made, so it can't be canceled. Wait for it to appear in your Library."
+   ]
+  ],
+  [
+   "job_finishing",
+   "api",
+   [
+    "library",
+    "This picture is already made, so it can't be canceled. Wait for it to appear in your Library."
+   ]
+  ],
+  [
+   "job_finishing",
+   "ui",
+   [
+    "library",
+    "This picture is already made, so it can't be canceled. Wait for it to appear in your Library."
+   ]
+  ],
+  [
+   "job_finishing",
+   "ui",
+   [
+    "library",
+    "This picture is already made, so it can't be canceled. Wait for it to appear in your Library."
+   ]
+  ],
+  [
+   "source_not_found",
+   "api",
+   [
+    "library",
+    "That source picture isn't in your Library. Choose another picture."
+   ]
+  ],
+  [
+   "source_not_found",
+   "api",
+   [
+    "library",
+    "That source picture isn't in your Library. Choose another picture."
+   ]
+  ],
+  [
+   "source_not_found",
+   "ui",
+   [
+    "library",
+    "That source picture isn't in your Library. Choose another picture."
+   ]
+  ],
+  [
+   "source_not_found",
+   "ui",
+   [
+    "library",
+    "That source picture isn't in your Library. Choose another picture."
+   ]
+  ],
+  [
+   "source_pending",
+   "api",
+   [
+    "library",
+    "That picture isn't ready. Wait for it to finish."
+   ]
+  ],
+  [
+   "source_pending",
+   "api",
+   [
+    "library",
+    "That picture isn't ready. Wait for it to finish."
+   ]
+  ],
+  [
+   "source_pending",
+   "ui",
+   [
+    "library",
+    "That picture isn't ready. Wait for it to finish."
+   ]
+  ],
+  [
+   "source_pending",
+   "ui",
+   [
+    "library",
+    "That picture isn't ready. Wait for it to finish."
+   ]
+  ],
+  [
+   "source_missing",
+   "api",
+   [
+    "library",
+    "That task didn't produce a picture. Choose another source picture."
+   ]
+  ],
+  [
+   "source_missing",
+   "api",
+   [
+    "library",
+    "That task didn't produce a picture. Choose another source picture."
+   ]
+  ],
+  [
+   "source_missing",
+   "ui",
+   [
+    "library",
+    "That task didn't produce a picture. Choose another source picture."
+   ]
+  ],
+  [
+   "source_missing",
+   "ui",
+   [
+    "library",
+    "That task didn't produce a picture. Choose another source picture."
+   ]
+  ],
+  [
+   "input_file_unavailable",
+   "api",
+   [
+    "library",
+    "The file for input 'image_in' isn't available. Send the file again, or choose another one."
+   ]
+  ],
+  [
+   "input_file_unavailable",
+   "api",
+   [
+    "library",
+    "The file for input 'x' isn't available. Send the file again, or choose another one."
+   ]
+  ],
+  [
+   "input_file_unavailable",
+   "ui",
+   [
+    "library",
+    "The input file isn't available. Send the file again, or choose another one."
+   ]
+  ],
+  [
+   "input_file_unavailable",
+   "ui",
+   [
+    "library",
+    "The input file isn't available. Send the file again, or choose another one."
+   ]
+  ],
+  [
+   "invalid_since",
+   "api",
+   [
+    "request",
+    "This list can't be refreshed from that point. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_since",
+   "api",
+   [
+    "request",
+    "This list can't be refreshed from that point. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_since",
+   "ui",
+   [
+    "request",
+    "This list can't be refreshed from that point. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_since",
+   "ui",
+   [
+    "request",
+    "This list can't be refreshed from that point. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_cursor",
+   "api",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_cursor",
+   "api",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_cursor",
+   "ui",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_cursor",
+   "ui",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_limit",
+   "api",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_limit",
+   "api",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_limit",
+   "ui",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_limit",
+   "ui",
+   [
+    "request",
+    "This page of results can't be loaded. Refresh the list."
+   ]
+  ],
+  [
+   "invalid_status",
+   "api",
+   [
+    "request",
+    "This task filter isn't recognized. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_status",
+   "api",
+   [
+    "request",
+    "This task filter isn't recognized. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_status",
+   "ui",
+   [
+    "request",
+    "This task filter isn't recognized. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_status",
+   "ui",
+   [
+    "request",
+    "This task filter isn't recognized. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_source",
+   "api",
+   [
+    "request",
+    "This app filter isn't recognized. Choose an app from the list."
+   ]
+  ],
+  [
+   "invalid_source",
+   "api",
+   [
+    "request",
+    "This app filter isn't recognized. Choose an app from the list."
+   ]
+  ],
+  [
+   "invalid_source",
+   "ui",
+   [
+    "request",
+    "This app filter isn't recognized. Choose an app from the list."
+   ]
+  ],
+  [
+   "invalid_source",
+   "ui",
+   [
+    "request",
+    "This app filter isn't recognized. Choose an app from the list."
+   ]
+  ],
+  [
+   "invalid_date",
+   "api",
+   [
+    "request",
+    "This date isn't recognized. Choose the date again."
+   ]
+  ],
+  [
+   "invalid_date",
+   "api",
+   [
+    "request",
+    "This date isn't recognized. Choose the date again."
+   ]
+  ],
+  [
+   "invalid_date",
+   "ui",
+   [
+    "request",
+    "This date isn't recognized. Choose the date again."
+   ]
+  ],
+  [
+   "invalid_date",
+   "ui",
+   [
+    "request",
+    "This date isn't recognized. Choose the date again."
+   ]
+  ],
+  [
+   "invalid_metadata",
+   "api",
+   [
+    "request",
+    "This download option isn't offered. Choose Download again."
+   ]
+  ],
+  [
+   "invalid_metadata",
+   "api",
+   [
+    "request",
+    "This download option isn't offered. Choose Download again."
+   ]
+  ],
+  [
+   "invalid_metadata",
+   "ui",
+   [
+    "request",
+    "This download option isn't offered. Choose Download again."
+   ]
+  ],
+  [
+   "invalid_metadata",
+   "ui",
+   [
+    "request",
+    "This download option isn't offered. Choose Download again."
+   ]
+  ],
+  [
+   "unsupported_period",
+   "api",
+   [
+    "request",
+    "Usage is shown for the current month only. Refresh the page."
+   ]
+  ],
+  [
+   "unsupported_period",
+   "api",
+   [
+    "request",
+    "Usage is shown for the current month only. Refresh the page."
+   ]
+  ],
+  [
+   "unsupported_period",
+   "ui",
+   [
+    "request",
+    "Usage is shown for the current month only. Refresh the page."
+   ]
+  ],
+  [
+   "unsupported_period",
+   "ui",
+   [
+    "request",
+    "Usage is shown for the current month only. Refresh the page."
+   ]
+  ],
+  [
+   "invalid_json",
+   "api",
+   [
+    "request",
+    "The gateway couldn't read this request. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_json",
+   "api",
+   [
+    "request",
+    "The gateway couldn't read this request. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_json",
+   "ui",
+   [
+    "request",
+    "The gateway couldn't read this request. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_json",
+   "ui",
+   [
+    "request",
+    "The gateway couldn't read this request. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_field",
+   "api",
+   [
+    "request",
+    "This request has a setting the gateway doesn't accept. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_field",
+   "api",
+   [
+    "request",
+    "This request has a setting the gateway doesn't accept. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_field",
+   "ui",
+   [
+    "request",
+    "This request has a setting the gateway doesn't accept. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_field",
+   "ui",
+   [
+    "request",
+    "This request has a setting the gateway doesn't accept. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_intent",
+   "api",
+   [
+    "request",
+    "This page can only make or edit pictures. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_intent",
+   "api",
+   [
+    "request",
+    "This page can only make or edit pictures. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_intent",
+   "ui",
+   [
+    "request",
+    "This page can only make or edit pictures. Refresh the page and try again."
+   ]
+  ],
+  [
+   "unsupported_intent",
+   "ui",
+   [
+    "request",
+    "This page can only make or edit pictures. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_prompt_mode",
+   "api",
+   [
+    "request",
+    "The prompt setting isn't recognized. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_prompt_mode",
+   "api",
+   [
+    "request",
+    "The prompt setting isn't recognized. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_prompt_mode",
+   "ui",
+   [
+    "request",
+    "The prompt setting isn't recognized. Refresh the page and try again."
+   ]
+  ],
+  [
+   "invalid_prompt_mode",
+   "ui",
+   [
+    "request",
+    "The prompt setting isn't recognized. Refresh the page and try again."
+   ]
+  ],
+  [
+   "model_required",
+   "api",
+   [
+    "request",
+    "No model is chosen. Choose a model."
+   ]
+  ],
+  [
+   "model_required",
+   "api",
+   [
+    "request",
+    "No model is chosen. Choose a model."
+   ]
+  ],
+  [
+   "model_required",
+   "ui",
+   [
+    "request",
+    "No model is chosen. Choose a model."
+   ]
+  ],
+  [
+   "model_required",
+   "ui",
+   [
+    "request",
+    "No model is chosen. Choose a model."
+   ]
+  ],
+  [
+   "prompt_required",
+   "api",
+   [
+    "request",
+    "The description is empty. Describe what to make."
+   ]
+  ],
+  [
+   "prompt_required",
+   "api",
+   [
+    "request",
+    "The description is empty. Describe what to make."
+   ]
+  ],
+  [
+   "prompt_required",
+   "ui",
+   [
+    "request",
+    "The description is empty. Describe what to make."
+   ]
+  ],
+  [
+   "prompt_required",
+   "ui",
+   [
+    "request",
+    "The description is empty. Describe what to make."
+   ]
+  ],
+  [
+   "prompt_too_long",
+   "api",
+   [
+    "request",
+    "The description is too long. Keep it to 1,234 characters or fewer."
+   ]
+  ],
+  [
+   "prompt_too_long",
+   "api",
+   [
+    "request",
+    "The description is too long. Keep it to 20,000 characters or fewer."
+   ]
+  ],
+  [
+   "prompt_too_long",
+   "ui",
+   [
+    "request",
+    "The description is too long. Keep it to 1,234 characters or fewer."
+   ]
+  ],
+  [
+   "prompt_too_long",
+   "ui",
+   [
+    "request",
+    "The description is too long. Keep it to 20,000 characters or fewer."
+   ]
+  ],
+  [
+   "invalid_n",
+   "api",
+   [
+    "request",
+    "That number of pictures isn't allowed. Choose from 1 to 4."
+   ]
+  ],
+  [
+   "invalid_n",
+   "api",
+   [
+    "request",
+    "That number of pictures isn't allowed. Choose from 1 to 9."
+   ]
+  ],
+  [
+   "invalid_n",
+   "ui",
+   [
+    "request",
+    "That number of pictures isn't allowed. Choose from 1 to 4."
+   ]
+  ],
+  [
+   "invalid_n",
+   "ui",
+   [
+    "request",
+    "That number of pictures isn't allowed. Choose from 1 to 9."
+   ]
+  ],
+  [
+   "edit_needs_source",
+   "api",
+   [
+    "request",
+    "Editing needs a source picture. Choose a picture to edit."
+   ]
+  ],
+  [
+   "edit_needs_source",
+   "api",
+   [
+    "request",
+    "Editing needs a source picture. Choose a picture to edit."
+   ]
+  ],
+  [
+   "edit_needs_source",
+   "ui",
+   [
+    "request",
+    "Editing needs a source picture. Choose a picture to edit."
+   ]
+  ],
+  [
+   "edit_needs_source",
+   "ui",
+   [
+    "request",
+    "Editing needs a source picture. Choose a picture to edit."
+   ]
+  ],
+  [
+   "generate_takes_no_source",
+   "api",
+   [
+    "request",
+    "A new picture doesn't use a source picture. Remove the source picture."
+   ]
+  ],
+  [
+   "generate_takes_no_source",
+   "api",
+   [
+    "request",
+    "A new picture doesn't use a source picture. Remove the source picture."
+   ]
+  ],
+  [
+   "generate_takes_no_source",
+   "ui",
+   [
+    "request",
+    "A new picture doesn't use a source picture. Remove the source picture."
+   ]
+  ],
+  [
+   "generate_takes_no_source",
+   "ui",
+   [
+    "request",
+    "A new picture doesn't use a source picture. Remove the source picture."
+   ]
+  ],
+  [
+   "one_source",
+   "api",
+   [
+    "request",
+    "Two source pictures were sent. Choose one."
+   ]
+  ],
+  [
+   "one_source",
+   "api",
+   [
+    "request",
+    "Two source pictures were sent. Choose one."
+   ]
+  ],
+  [
+   "one_source",
+   "ui",
+   [
+    "request",
+    "Two source pictures were sent. Choose one."
+   ]
+  ],
+  [
+   "one_source",
+   "ui",
+   [
+    "request",
+    "Two source pictures were sent. Choose one."
+   ]
+  ],
+  [
+   "idempotency_conflict",
+   "api",
+   [
+    "request",
+    "This submission was already used for a different request. Refresh the page before you submit again."
+   ]
+  ],
+  [
+   "idempotency_conflict",
+   "api",
+   [
+    "request",
+    "This submission was already used for a different request. Refresh the page before you submit again."
+   ]
+  ],
+  [
+   "idempotency_conflict",
+   "ui",
+   [
+    "request",
+    "This submission was already used for a different request. Refresh the page before you submit again."
+   ]
+  ],
+  [
+   "idempotency_conflict",
+   "ui",
+   [
+    "request",
+    "This submission was already used for a different request. Refresh the page before you submit again."
+   ]
+  ],
+  [
+   "input_not_accepted",
+   "api",
+   [
+    "request",
+    "This workflow doesn't take input 'image_in'. Remove it and try again."
+   ]
+  ],
+  [
+   "input_not_accepted",
+   "api",
+   [
+    "request",
+    "This workflow doesn't take input 'x'. Remove it and try again."
+   ]
+  ],
+  [
+   "input_not_accepted",
+   "ui",
+   [
+    "request",
+    "This workflow doesn't take that input. Remove it and try again."
+   ]
+  ],
+  [
+   "input_not_accepted",
+   "ui",
+   [
+    "request",
+    "This workflow doesn't take that input. Remove it and try again."
+   ]
+  ],
+  [
+   "input_set_by_gateway",
+   "api",
+   [
+    "request",
+    "The gateway sets input 'image_in' itself. Remove it and try again."
+   ]
+  ],
+  [
+   "input_set_by_gateway",
+   "api",
+   [
+    "request",
+    "The gateway sets input 'x' itself. Remove it and try again."
+   ]
+  ],
+  [
+   "input_set_by_gateway",
+   "ui",
+   [
+    "request",
+    "The gateway sets that input itself. Remove it and try again."
+   ]
+  ],
+  [
+   "input_set_by_gateway",
+   "ui",
+   [
+    "request",
+    "The gateway sets that input itself. Remove it and try again."
+   ]
+  ],
+  [
+   "make_unavailable",
+   "api",
+   [
+    "gateway",
+    "Making pictures isn't set up on this gateway. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "make_unavailable",
+   "api",
+   [
+    "gateway",
+    "Making pictures isn't set up on this gateway. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "make_unavailable",
+   "ui",
+   [
+    "gateway",
+    "Making pictures isn't set up on this gateway. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "make_unavailable",
+   "ui",
+   [
+    "gateway",
+    "Making pictures isn't set up on this gateway. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "make_busy",
+   "api",
+   [
+    "gateway",
+    "The gateway is busy making other things. Try again in a minute."
+   ]
+  ],
+  [
+   "make_busy",
+   "api",
+   [
+    "gateway",
+    "The gateway is busy making other things. Try again in a minute."
+   ]
+  ],
+  [
+   "make_busy",
+   "ui",
+   [
+    "gateway",
+    "The gateway is busy making other things. Try again in a minute."
+   ]
+  ],
+  [
+   "make_busy",
+   "ui",
+   [
+    "gateway",
+    "The gateway is busy making other things. Try again in a minute."
+   ]
+  ],
+  [
+   "make_queue_failed",
+   "api",
+   [
+    "gateway",
+    "The gateway couldn't save this task to the queue. Try again."
+   ]
+  ],
+  [
+   "make_queue_failed",
+   "api",
+   [
+    "gateway",
+    "The gateway couldn't save this task to the queue. Try again."
+   ]
+  ],
+  [
+   "make_queue_failed",
+   "ui",
+   [
+    "gateway",
+    "The gateway couldn't save this task to the queue. Try again."
+   ]
+  ],
+  [
+   "make_queue_failed",
+   "ui",
+   [
+    "gateway",
+    "The gateway couldn't save this task to the queue. Try again."
+   ]
+  ],
+  [
+   "input_lost",
+   "api",
+   [
+    "gateway",
+    "The gateway lost this task's details before it ran. Make it again."
+   ]
+  ],
+  [
+   "input_lost",
+   "api",
+   [
+    "gateway",
+    "The gateway lost this task's details before it ran. Make it again."
+   ]
+  ],
+  [
+   "input_lost",
+   "ui",
+   [
+    "gateway",
+    "The gateway lost this task's details before it ran. Make it again."
+   ]
+  ],
+  [
+   "input_lost",
+   "ui",
+   [
+    "gateway",
+    "The gateway lost this task's details before it ran. Make it again."
+   ]
+  ],
+  [
+   "restart_while_canceling",
+   "api",
+   [
+    "gateway",
+    "The gateway restarted while this task was being canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "restart_while_canceling",
+   "api",
+   [
+    "gateway",
+    "The gateway restarted while this task was being canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "restart_while_canceling",
+   "ui",
+   [
+    "gateway",
+    "The gateway restarted while this task was being canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "restart_while_canceling",
+   "ui",
+   [
+    "gateway",
+    "The gateway restarted while this task was being canceled. Make it again if you still want it."
+   ]
+  ],
+  [
+   "restart_before_finish",
+   "api",
+   [
+    "gateway",
+    "The gateway restarted before this task finished. Make it again."
+   ]
+  ],
+  [
+   "restart_before_finish",
+   "api",
+   [
+    "gateway",
+    "The gateway restarted before this task finished. Make it again."
+   ]
+  ],
+  [
+   "restart_before_finish",
+   "ui",
+   [
+    "gateway",
+    "The gateway restarted before this task finished. Make it again."
+   ]
+  ],
+  [
+   "restart_before_finish",
+   "ui",
+   [
+    "gateway",
+    "The gateway restarted before this task finished. Make it again."
+   ]
+  ],
+  [
+   "restart_while_running",
+   "api",
+   [
+    "gateway",
+    "The gateway restarted while this task was running, and it wasn't run again. Check your Library, then make it again if the picture is missing."
+   ]
+  ],
+  [
+   "restart_while_running",
+   "api",
+   [
+    "gateway",
+    "The gateway restarted while this task was running, and it wasn't run again. Check your Library, then make it again if the picture is missing."
+   ]
+  ],
+  [
+   "restart_while_running",
+   "ui",
+   [
+    "gateway",
+    "The gateway restarted while this task was running, and it wasn't run again. Check your Library, then make it again if the picture is missing."
+   ]
+  ],
+  [
+   "restart_while_running",
+   "ui",
+   [
+    "gateway",
+    "The gateway restarted while this task was running, and it wasn't run again. Check your Library, then make it again if the picture is missing."
+   ]
+  ],
+  [
+   "alias_misconfigured",
+   "api",
+   [
+    "gateway",
+    "Model 'm-1' is set up incorrectly on this gateway. Ask the owner to check it."
+   ]
+  ],
+  [
+   "alias_misconfigured",
+   "api",
+   [
+    "gateway",
+    "Model 'alpha' is set up incorrectly on this gateway. Ask the owner to check it."
+   ]
+  ],
+  [
+   "alias_misconfigured",
+   "ui",
+   [
+    "gateway",
+    "This model is set up incorrectly on this gateway. Ask the owner to check it."
+   ]
+  ],
+  [
+   "alias_misconfigured",
+   "ui",
+   [
+    "gateway",
+    "This model is set up incorrectly on this gateway. Ask the owner to check it."
+   ]
+  ],
+  [
+   "alias_not_configured",
+   "api",
+   [
+    "gateway",
+    "Model 'm-1' isn't set up on this gateway yet. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "alias_not_configured",
+   "api",
+   [
+    "gateway",
+    "Model 'alpha' isn't set up on this gateway yet. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "alias_not_configured",
+   "ui",
+   [
+    "gateway",
+    "This model isn't set up on this gateway yet. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "alias_not_configured",
+   "ui",
+   [
+    "gateway",
+    "This model isn't set up on this gateway yet. Ask the owner to set it up."
+   ]
+  ],
+  [
+   "model_not_deployed",
+   "api",
+   [
+    "engine",
+    "No engine or provider is running model 'm-1' right now. Choose another model, or ask the owner to turn one on."
+   ]
+  ],
+  [
+   "model_not_deployed",
+   "api",
+   [
+    "engine",
+    "No engine or provider is running model 'alpha' right now. Choose another model, or ask the owner to turn one on."
+   ]
+  ],
+  [
+   "model_not_deployed",
+   "ui",
+   [
+    "engine",
+    "No engine or provider is running this model right now. Choose another model, or ask the owner to turn one on."
+   ]
+  ],
+  [
+   "model_not_deployed",
+   "ui",
+   [
+    "engine",
+    "No engine or provider is running this model right now. Choose another model, or ask the owner to turn one on."
+   ]
+  ],
+  [
+   "make_failed",
+   "api",
+   [
+    "unknown",
+    "The picture couldn't be made, and we couldn't tell where it stopped. Try again."
+   ]
+  ],
+  [
+   "make_failed",
+   "api",
+   [
+    "unknown",
+    "The picture couldn't be made, and we couldn't tell where it stopped. Try again."
+   ]
+  ],
+  [
+   "make_failed",
+   "ui",
+   [
+    "unknown",
+    "The picture couldn't be made, and we couldn't tell where it stopped. Try again."
+   ]
+  ],
+  [
+   "make_failed",
+   "ui",
+   [
+    "unknown",
+    "The picture couldn't be made, and we couldn't tell where it stopped. Try again."
+   ]
+  ],
+  [
+   "no_picture",
+   "api",
+   [
+    "model",
+    "The model finished without a picture. Try again."
+   ]
+  ],
+  [
+   "no_picture",
+   "api",
+   [
+    "model",
+    "The model finished without a picture. Try again."
+   ]
+  ],
+  [
+   "no_picture",
+   "ui",
+   [
+    "model",
+    "The model finished without a picture. Try again."
+   ]
+  ],
+  [
+   "no_picture",
+   "ui",
+   [
+    "model",
+    "The model finished without a picture. Try again."
+   ]
+  ],
+  [
+   "input_mapping_invalid",
+   "api",
+   [
+    "workflow",
+    "Input 'image_in' of this workflow is set up incorrectly. Ask the owner to check the workflow."
+   ]
+  ],
+  [
+   "input_mapping_invalid",
+   "api",
+   [
+    "workflow",
+    "Input 'x' of this workflow is set up incorrectly. Ask the owner to check the workflow."
+   ]
+  ],
+  [
+   "input_mapping_invalid",
+   "ui",
+   [
+    "workflow",
+    "An input of this workflow is set up incorrectly. Ask the owner to check the workflow."
+   ]
+  ],
+  [
+   "input_mapping_invalid",
+   "ui",
+   [
+    "workflow",
+    "An input of this workflow is set up incorrectly. Ask the owner to check the workflow."
+   ]
+  ]
+ ],
+ "transition": {
+  "unsupported": {
+   "status": 503,
+   "body": {
+    "error": {
+     "message": "This engine's residency domain enables transitions, and this gateway does not lease this kind of request for it yet.",
+     "type": "service_unavailable",
+     "param": null,
+     "code": "transition_unsupported"
+    }
+   },
+   "retry_after": "3"
+  },
+  "transitioning": {
+   "status": 503,
+   "body": {
+    "error": {
+     "message": "The engine is changing state and is not admitting requests now. Retry after the stated delay.",
+     "type": "service_unavailable",
+     "param": null,
+     "code": "engine_transitioning",
+     "reason": "engine_transitioning"
+    }
+   },
+   "retry_after": "3"
+  }
+ },
+ "audio_translation": {
+  "status": 400,
+  "body": {
+   "error": {
+    "message": "Audio translation is not supported by the configured local STT backend. This gateway will not return transcription output from the translations route.",
+    "type": "invalid_request_error",
+    "param": "file",
+    "code": "unsupported_audio_translation"
+   }
+  },
+  "retry_after": null
+ },
+ "protocol_failures": {
+  "invalid_description": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The engine protocol description is invalid. Check Status for the file name.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "invalid_description"
+    }
+   },
+   "retry_after": null
+  },
+  "malformed_response": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The mapped engine response does not match the public OpenAI response shape.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "malformed_response"
+    }
+   },
+   "retry_after": null
+  },
+  "mapping_failed": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The engine mapping could not process this request or response.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "mapping_failed"
+    }
+   },
+   "retry_after": null
+  },
+  "transport_failed": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The engine could not be reached or did not respond in time.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "transport_failed"
+    }
+   },
+   "retry_after": null
+  },
+  "budget_exceeded": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The engine response exceeded a protocol size, depth or time limit.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "budget_exceeded"
+    }
+   },
+   "retry_after": null
+  },
+  "engine_credential_unavailable": {
+   "status": 503,
+   "body": {
+    "error": {
+     "message": "The credential required by this operation is unavailable.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "engine_credential_unavailable"
+    }
+   },
+   "retry_after": null
+  },
+  "unknown_operation": {
+   "status": 400,
+   "body": {
+    "error": {
+     "message": "The selected engine does not declare this operation.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "unknown_operation"
+    }
+   },
+   "retry_after": null
+  },
+  "unknown_protocol": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The selected engine protocol description is unavailable.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "unknown_protocol"
+    }
+   },
+   "retry_after": null
+  },
+  "ambiguous_model": {
+   "status": 400,
+   "body": {
+    "error": {
+     "message": "The model names more than one offering. Use engine/id.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "ambiguous_model"
+    }
+   },
+   "retry_after": null
+  },
+  "engine_disabled": {
+   "status": 503,
+   "body": {
+    "error": {
+     "message": "The selected engine is disabled.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "engine_disabled"
+    }
+   },
+   "retry_after": null
+  },
+  "protocol_dispatch_refused": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "Protocol dispatch does not enforce paid-provider access or spend limits. Use the existing provider route.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "protocol_dispatch_refused"
+    }
+   },
+   "retry_after": null
+  },
+  "something_else": {
+   "status": 502,
+   "body": {
+    "error": {
+     "message": "The engine protocol request failed. Check Status or gateway logs.",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "something_else"
+    }
+   },
+   "retry_after": null
+  }
+ },
+ "protocol_upstream": {
+  "status": 502,
+  "body": {
+   "error": {
+    "message": "The engine refused the request. Check its status and protocol configuration.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": "upstream_error"
+   }
+  },
+  "retry_after": null
+ },
+ "asset_delete_404": {
+  "description": "asset_not_found: no such asset, or it is not owned by this App's accountable person."
+ },
+ "source_strings": {
+  "mcp_reconnect": "This connection was made before renaming could be allowed, so it can't rename apps or keys. Disconnect it on the Connect page and connect it again to allow renaming.",
+  "voice_design": "Voice design is not configured: set voices.design_engine to a speech engine.",
+  "measurement": "The transcription service is unavailable; measurement stopped before downloading samples.",
+  "video_extend_not_configured": "Video extension is not configured on this gateway. Set videos.extend_workflow in proxy_config.yml to enable it.",
+  "video_extend_shots": "shots is not supported on extensions; call extensions once per shot, or send shots to POST /v1/videos"
+ },
+ "chunking_notes": {
+  "defaults": "Values listed in from_bundled_defaults are not saved on this engine; they come from the bundled defaults (registry/stt_chunking_defaults.yml). Save them on the engine to fix them.",
+  "saved": "All values are saved on this engine."
+ }
+}

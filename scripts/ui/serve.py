@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Run an isolated gateway and fake engine for the portable browser tests."""
+from __future__ import annotations
+
+
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+REPO = Path(__file__).resolve().parents[2]
+PORT = int(os.environ.get('UI_E2E_PORT', '18180'))
+# A scheduled run points the gateway at an upstream it already started (the
+# fake upstream, scripts/scheduled/); then no fake engine is spawned here.
+EXTERNAL_UPSTREAM_PORT = os.environ.get('UI_E2E_UPSTREAM_PORT', '')
+ENGINE_PORT = int(EXTERNAL_UPSTREAM_PORT) if EXTERNAL_UPSTREAM_PORT else PORT + 1
+SEED_PROFILE = os.environ.get('UI_SEED_PROFILE', '')
+if SEED_PROFILE not in ('', 'household'):
+    raise SystemExit('UI_SEED_PROFILE must be household or unset')
+# The shipped first-run config (no backends) instead of the fixture's: the
+# instance a new operator starts with, for web/e2e/first-run.spec.ts.
+FIRST_RUN = os.environ.get('UI_E2E_FIRST_RUN') == '1'
+SEED_SCENARIO = os.environ.get('UI_HOUSEHOLD_SCENARIO', 'default')
+# A fake plan provider and a test-only subscription kind that points at it, for web/e2e/subscription-admin.spec.ts.
+# The upstream sits on the port after the fake engine's and the sign-in listener on the one after it; both are
+# inside the harness's strict-port window.
+SUBSCRIPTION_FIXTURE = os.environ.get('UI_E2E_SUBSCRIPTION_FIXTURE') == '1'
+if not 18000 <= PORT < 18999:
+    raise SystemExit('UI_E2E_PORT must be between 18000 and 18998')
+# Use a disk-backed, test-owned directory; do not inherit operator environment.
+state_base = Path(os.environ.get('UI_E2E_STATE_ROOT', str(REPO / '.ui-e2e-state')))
+sys.path.insert(0, str(REPO))
+from scripts import scratch_owner  # noqa: E402
+from gateway import private_io  # noqa: E402
+
+private_io.ensure_private_dir(state_base)
+
+scratch_owner.sweep(state_base, 'run-')  # what a SIGKILLed server left
+children = []
+
+
+def stop(_signum=None, _frame=None):
+    raise KeyboardInterrupt
+
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
+    state = Path(temp)
+    scratch_owner.mark(state)
+    home = state / 'home'
+    private_io.ensure_private_dir(home)
+    private_io.ensure_private_dir(state / 'images')
+    config = state / 'config.yml'
+    sys.path.insert(0, str(REPO / 'scripts' / 'ui'))
+    import seed_config  # noqa: E402
+    import yaml  # noqa: E402
+    if FIRST_RUN:
+        # The tracked startup file is the first-run file: no engines, no owner, nothing in admin.db.
+        document = yaml.safe_load((REPO / 'proxy_config.yml').read_text())
+        document['proxy']['port'] = PORT
+        private_io.atomic_write_text(config, yaml.safe_dump(document))
+        legacy = {}
+    else:
+        # What this server holds beyond its startup file, in the old single-file shape (seeded into admin.db below).
+        disabled = {name: {'enabled': False, 'host': '127.0.0.1', 'port': ENGINE_PORT}
+                    for name in ('kobold', 'comfyui', 'embeddings')}
+        legacy = {'backends': {**disabled, 'litellm': {'enabled': True, 'base_url': f'http://127.0.0.1:{ENGINE_PORT}',
+                                                       'host': '127.0.0.1', 'port': ENGINE_PORT}},
+                  'model_aliases': {'chat': {'stable': {'fast': 'demo-chat'}}}}
+        startup = {'proxy': {'host': '127.0.0.1', 'port': PORT}, 'admin': {'oidc': {'cookie': {'secure': False}}},
+                   'images': {'cache_dir': str(state / 'images'), 'vram_estimates_file': str(state / 'vram.json')}}
+        private_io.atomic_write_text(config, yaml.safe_dump(startup))
+    env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home),
+           'PYTHONPATH': str(REPO), 'PYTHONDONTWRITEBYTECODE': '1',
+           'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',
+           'AZIZAM_LITELLM_BASE_URL': f'http://127.0.0.1:{ENGINE_PORT}',
+           'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache'),
+           # A fixed signing key, so the step-up journey (web/e2e/step-up.spec.ts) can forge a
+           # session whose last password check is days old. Test-only; a household run sets its own.
+           'AZIZAM_ADMIN_SESSION_KEY': 'ui-e2e-fixture-session-key-not-production',
+           # Parallel browser tests share 127.0.0.1: each sign-in page load reads the remembered list once,
+           # and each password sign-in counts toward one per-address limit.
+           'AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE': '600',
+           'AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW': '2000'}
+    if SUBSCRIPTION_FIXTURE:
+        from fake_plan_upstream import write_certificate  # noqa: E402
+        cert_path, key_path = write_certificate(state)
+        kinds = state / 'subscription-kinds'
+        private_io.ensure_private_dir(kinds)
+        template = (REPO / 'scripts' / 'ui' / 'fixture_subscription_kind.yml').read_text()
+        private_io.atomic_write_text(kinds / 'test-plan.yml', template.replace(
+            '{upstream}', f'https://127.0.0.1:{ENGINE_PORT + 1}').replace('{redirect}', f'http://127.0.0.1:{ENGINE_PORT + 2}'))
+        # Only this gateway trusts the throwaway certificate, and only it reads the extra kind.
+        env['AZIZAM_SUBSCRIPTION_KINDS_DIR'] = str(kinds)
+        env['SSL_CERT_FILE'] = str(cert_path)
+    if os.environ.get('UI_E2E_AVATAR_PICTURE'):
+        env['UI_E2E_AVATAR_PICTURE'] = os.environ['UI_E2E_AVATAR_PICTURE']
+    if os.environ.get('UI_E2E_ALLOWED_PORTS'):
+        env['UI_E2E_ALLOWED_PORTS'] = os.environ['UI_E2E_ALLOWED_PORTS']
+    for name, filename in {
+        'AZIZAM_ADMIN_DB': 'admin.db', 'AZIZAM_METRICS_DB': 'metrics.db',
+        'AZIZAM_RESPONSES_DB': 'responses.db', 'AZIZAM_RECEIPTS_DB': 'receipts.db',
+        'AZIZAM_MEDIA_JOBS_DB': 'media_jobs.db', 'AZIZAM_KEY_ACTIVITY_LOG': 'key_activity.jsonl',
+    }.items():
+        env[name] = str(state / filename)
+    if SEED_PROFILE == 'household':
+        env['UI_SEED_PROFILE'] = 'household'
+        env['UI_HOUSEHOLD_SCENARIO'] = SEED_SCENARIO
+        env['UI_HOUSEHOLD_PROVIDER_KEY'] = 'isolated-household-provider'
+        env['AZIZAM_ADMIN_SESSION_KEY'] = 'household-fixture-session-not-production'
+        env['AZIZAM_PROVIDER_LEDGER_DB'] = str(state / 'provider_spend.db')
+        if os.environ.get('UI_HOUSEHOLD_PROTOCOL_FRONTENDS'):
+            env['UI_HOUSEHOLD_PROTOCOL_FRONTENDS'] = os.environ['UI_HOUSEHOLD_PROTOCOL_FRONTENDS']
+        if os.environ.get('UI_HOUSEHOLD_MANIFEST_PATH'):
+            env['UI_HOUSEHOLD_MANIFEST_PATH'] = os.environ['UI_HOUSEHOLD_MANIFEST_PATH']
+        subprocess.run([sys.executable, '-m', 'scripts.ui.household_seed', str(state), str(PORT), SEED_SCENARIO],
+                       cwd=state, env=env, check=True)
+        manifest_path = Path(env.get('UI_HOUSEHOLD_MANIFEST_PATH', state / 'household-manifest.json'))
+        manifest = json.loads(manifest_path.read_text())
+        manifest['fixture_state'] = state.name
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(manifest_path), json.dumps(manifest))
+    # Extra top-level configuration for a disposable server that needs more than the browser seed: JSON data in the
+    # old single-file shape (web/e2e/fixtures/oracle.ts adds a video workflow and a transcription alias), merged over
+    # the seed. Startup keys go to the startup file; every other block is imported into admin.db.
+    if os.environ.get('UI_E2E_EXTRA_CONFIG'):
+        seed_config.merge(legacy, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
+    if SEED_PROFILE == 'household':
+        aliases = state / 'legacy-sections.json'
+        seed_config.merge(legacy, json.loads(aliases.read_text()))
+        # A household shows the address its members would use, not the loopback test port.
+        seed_config.merge(legacy, {'instance': {'base_url': 'https://ai.household.example'}})
+    extra_startup, legacy = seed_config.split_startup(legacy)
+    if extra_startup:
+        document = yaml.safe_load(config.read_text()) or {}
+        private_io.atomic_write_text(config, yaml.safe_dump(seed_config.merge(document, extra_startup)))
+    if legacy:
+        seed_config.seed_admin_db(state / 'admin.db', legacy, seed_registry=SEED_PROFILE != 'household')
+    try:
+        servers = [('scripts.ui.fake_engine:app', ENGINE_PORT, {}), ('proxy:app', PORT, {})]
+        if FIRST_RUN:
+            # The engine at ENGINE_PORT stands in for LiteLLM and sends each chat to the
+            # address in the config the gateway writes; the operator adds the engine
+            # one port above it (inside the harness's strict-port window), which has a
+            # model and a reply of its own.
+            servers[0][2].update(FAKE_SUBSTRATE_CONFIG=str(state / 'litellm.config.yaml'))
+            servers.insert(1, ('scripts.ui.fake_engine:app', ENGINE_PORT + 1,
+                               {'FAKE_ENGINE_MODEL': 'marker-engine-chat',
+                                'FAKE_ENGINE_REPLY': 'Answered by the engine you just added: marker-engine-chat.'}))
+        if SUBSCRIPTION_FIXTURE:
+            servers.insert(1, ('scripts.ui.fake_plan_upstream:app', ENGINE_PORT + 1, {}))
+        for module, port, extra_env in servers:
+            if module != 'proxy:app' and EXTERNAL_UPSTREAM_PORT:
+                continue
+            log = (state / f'{port}.log').open('w')
+            command = ([sys.executable, '-m', 'scripts.ui.fixture_gateway', str(PORT), str(ENGINE_PORT)]
+                       if module == 'proxy:app' else [sys.executable, '-m', 'uvicorn', module, '--host',
+                                                    '127.0.0.1', '--port', str(port),
+                                                    '--timeout-keep-alive', '3600',
+                                                    *(['--ssl-certfile', str(cert_path), '--ssl-keyfile', str(key_path)]
+                                                      if module == 'scripts.ui.fake_plan_upstream:app' else [])])
+            children.append(subprocess.Popen(command, cwd=state, env={**env, **extra_env},
+                                             stdout=log, stderr=subprocess.STDOUT))
+            log.close()
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            if any(p.poll() is not None for p in children):
+                # Logs can include key material; retain privately until cleanup, do not print.
+                raise RuntimeError('An isolated server exited before readiness')
+            try:
+                urllib.request.urlopen(f'http://127.0.0.1:{PORT}/health', timeout=1).close()
+                print(f'Isolated UI gateway ready on port {PORT}', flush=True)
+                break
+            except OSError:
+                time.sleep(.2)
+        else:
+            raise RuntimeError('Isolated gateway readiness timed out')
+        while True:
+            time.sleep(.5)
+            if any(p.poll() is not None for p in children):
+                raise RuntimeError('An isolated server stopped during browser tests')
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.terminate()
+        for child in children:
+            try:
+                child.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()

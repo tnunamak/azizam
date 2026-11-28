@@ -1,0 +1,312 @@
+"""The facts a video request is checked and sized against, read from a workflow manifest (CODE_TO_DATA S7, section 2).
+
+A video manifest carries one optional section named after its capability: the role each size, length and picture input
+plays, the size and length limits, the frame grid, which workflow takes over for a picture or a long clip, what a request
+must supply, and two switches. This module reads that section into frozen types and applies the two numeric rules that
+used to live in ``proxy.py``: the frame grid (``seconds_to_length``) and the size clamp (``resolve_size``). It names no
+model, engine or workflow; the manifest is the only place those numbers live.
+
+``proxy._seconds_to_length`` and ``proxy._parse_size_clamped`` are the old copies. They stay until the old create path
+goes (V5c), and the tests hold the two to the same answers over a sweep, so there is one rule with two readers, not two
+rules.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType, SimpleNamespace
+from typing import Any
+from pathlib import Path
+
+import json
+
+import jsonschema
+import yaml
+
+
+_REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
+BUNDLED_PATH = _REGISTRY_DIR / "video_grid.yml"
+SCHEMA_PATH = _REGISTRY_DIR / "video_grid.schema.json"
+
+
+
+def _checked_fact_rules(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Reject an incomplete projection before it can produce missing video facts."""
+    source = document.get("workflow_fact_source") or {}
+    facts = source.get("facts") or {}
+    required = {"size": ("default", "max", "multiple"),
+                "length": ("min_seconds", "max_seconds"), "grid": ("fps", "step", "offset")}
+    for group, names in required.items():
+        fields = facts.get(group)
+        if not isinstance(fields, Mapping):
+            raise ValueError(f"workflow_fact_source.facts.{group}: missing group")
+        for name in names:
+            rule = fields.get(name)
+            path = f"workflow_fact_source.facts.{group}.{name}"
+            if not isinstance(rule, Mapping):
+                raise ValueError(f"{path}: missing rule")
+            for key in ("key", "default"):
+                if key not in rule:
+                    raise ValueError(f"{path}.{key}: missing field")
+    step = facts["grid"]["step"]["default"]
+    if type(step) is not int or step <= 0:
+        raise ValueError("workflow_fact_source.facts.grid.step.default must be a positive integer")
+    for name, rule in (source.get("roles") or {}).items():
+        for key in ("keys", "fields"):
+            if not isinstance(rule.get(key), list) or not rule[key]:
+                raise ValueError(f"workflow_fact_source.roles.{name}.{key}: missing selector")
+        if "index" in rule and (type(rule["index"]) is not int or rule["index"] < 0):
+            raise ValueError(f"workflow_fact_source.roles.{name}.index must be an exact nonnegative integer")
+    return facts
+
+def _load_document(path: Path) -> dict[str, Any]:
+    """Read and validate the defaults and wire reasons together."""
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        checked = document
+        if isinstance(document, dict):
+            reasons = document.get("stride_reasons")
+            if isinstance(reasons, dict):
+                by_step = reasons.get("by_step")
+                if isinstance(by_step, dict):
+                    if any(type(step) is not int or step <= 0 for step in by_step):
+                        raise ValueError("stride_reasons.by_step keys must be positive integers (not bools)")
+                    checked = {
+                        **document,
+                        "stride_reasons": {
+                            **reasons,
+                            "by_step": {str(step): reason for step, reason in by_step.items()},
+                        },
+                    }
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(checked)
+        _checked_fact_rules(document)
+        defaults = document["grid_defaults"]
+        for key in ("length_step", "length_offset", "minimum_side"):
+            if type(defaults[key]) is not int:
+                raise ValueError(f"grid_defaults.{key} must be an exact integer (not bool or float)")
+        if any(type(side) is not int for side in defaults["size_when_unparsed"]):
+            raise ValueError("grid_defaults.size_when_unparsed must contain exact integers (not bools or floats)")
+    except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError, jsonschema.ValidationError) as error:
+        raise ValueError(f"{path}: invalid video grid registry: {error}") from error
+    return document
+
+
+def _stride_reasons(document: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "default": document["stride_reasons"]["default"],
+        "by_step": dict(document["stride_reasons"]["by_step"]),
+    }
+
+
+def load_stride_reasons(path: Path = BUNDLED_PATH) -> dict[str, Any]:
+    """Read validated wire reasons, preserving integer step keys for callers."""
+    return _stride_reasons(_load_document(path))
+
+
+_DOCUMENT = _load_document(BUNDLED_PATH)
+_STRIDE_REASONS = _stride_reasons(_DOCUMENT)
+_GRID_DEFAULTS = MappingProxyType(_DOCUMENT["grid_defaults"])
+_LENGTH_STEP = _GRID_DEFAULTS["length_step"]
+_LENGTH_OFFSET = _GRID_DEFAULTS["length_offset"]
+
+
+def stride_reason(step: int | None) -> str:
+    """Published duration-adjustment reason for the frame grid used by a request."""
+    return _STRIDE_REASONS["by_step"].get(step, _STRIDE_REASONS["default"])
+
+
+DEFAULT_SIZE_WHEN_UNPARSED = tuple(_GRID_DEFAULTS["size_when_unparsed"])
+MINIMUM_SIDE = _GRID_DEFAULTS["minimum_side"]
+
+
+@dataclass(frozen=True)
+class SizeSpec:
+    default: str        # "WxH", used when the request sends no size
+    max: str            # "WxH", a larger request is clamped to it, never refused
+    multiple: int = 32  # each side is floored to a multiple of this
+
+
+@dataclass(frozen=True)
+class LengthSpec:
+    min_seconds: float
+    max_seconds: float
+    default_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class GridSpec:
+    """The frame count of a clip is ``step * k + offset``. ``fps`` is the rate when the request sends none."""
+
+    fps: float
+    step: int = _LENGTH_STEP
+    offset: int = _LENGTH_OFFSET
+    min_frames: int | None = None
+    max_frames: int | None = None
+
+
+@dataclass(frozen=True)
+class VideoManifest:
+    roles: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    size: SizeSpec | None = None
+    length: LengthSpec | None = None
+    grid: GridSpec | None = None
+    variants: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    requires: frozenset[str] = frozenset()
+    select_subject: bool = False
+    chain: bool = False
+
+
+def video_facts(entry: Any) -> VideoManifest | None:
+    """The typed section of a registry entry (anything with a ``contract`` mapping) or of a contract mapping itself.
+    ``None`` when the manifest has none. The section is the one named by the manifest's own capability."""
+    contract = entry if isinstance(entry, Mapping) else getattr(entry, "contract", None)
+    if not isinstance(contract, Mapping):
+        return None
+    raw = contract.get(contract.get("capability"))
+    if not isinstance(raw, Mapping):
+        return None
+    size, length, grid = raw.get("size"), raw.get("length"), raw.get("grid")
+    return VideoManifest(
+        roles=MappingProxyType(dict(raw.get("roles") or {})),
+        size=SizeSpec(default=size["default"], max=size["max"], multiple=int(size.get("multiple", 32))) if size else None,
+        length=LengthSpec(
+            min_seconds=length["min_seconds"], max_seconds=length["max_seconds"],
+            default_seconds=length.get("default_seconds")) if length else None,
+        grid=GridSpec(
+            fps=grid["fps"], step=int(grid.get("step", _LENGTH_STEP)), offset=int(grid.get("offset", _LENGTH_OFFSET)),
+            min_frames=grid.get("min_frames"), max_frames=grid.get("max_frames")) if grid else None,
+        variants=MappingProxyType(dict(raw.get("variants") or {})),
+        requires=frozenset(raw.get("requires") or ()),
+        select_subject=bool(raw.get("select_subject", False)),
+        chain=bool(raw.get("chain", False)),
+    )
+
+
+def reference_variants(
+    manifest: VideoManifest,
+    get_workflow: Callable[[str], Any | None],
+    reference_input: Callable[[Any], str | None],
+    facts_for: Callable[[Any], VideoManifest | None] = video_facts,
+) -> list[tuple[Any, VideoManifest]]:
+    """Variants whose declared role is the input carried by the create protocol's reference field.
+
+    Share this relation between registry validation and request selection so a checked registry cannot select two
+    variants. Missing workflows or sections retain the selector's existing fallback behavior.
+    """
+    eligible = []
+    for role, workflow_id in manifest.variants.items():
+        candidate = get_workflow(workflow_id)
+        if candidate is None:
+            continue
+        candidate_manifest = facts_for(candidate)
+        if candidate_manifest is None:
+            continue
+        candidate_input = reference_input(candidate)
+        if candidate_input is not None and candidate_manifest.roles.get(role, role) == candidate_input \
+                and all(candidate is not chosen for chosen, _ in eligible):   # two roles may name one workflow
+            eligible.append((candidate, candidate_manifest))
+    return eligible
+
+
+def check_video_variants(records: Iterable[Any]) -> None:
+    """Reject ambiguous reference variants after all registry records have loaded, before publishing the registry.
+
+    Pass the complete registry's records (not a filtered public catalog). The check reads contracts and the current
+    async request maps, just like create selection; it neither changes manifests nor depends on workflow spellings.
+    """
+    from gateway.workflow_openapi import reference_input
+
+    by_id = {record.id: record for record in records}
+
+    def reference_target(entry: Any) -> str | None:
+        record = SimpleNamespace(id=entry.id, intent=entry.contract["intent"], contract=entry.contract)
+        return reference_input(record, "async")
+
+    for entry in by_id.values():
+        manifest = video_facts(entry)
+        if manifest is None:
+            continue
+        eligible = reference_variants(manifest, by_id.get, reference_target)
+        if len(eligible) > 1:
+            raise ValueError(f"{entry.id}: multiple variants accept the reference: {sorted(item.id for item, _ in eligible)!r}")
+
+
+def seconds_to_length(seconds: float, frame_rate: float, *, step: int = _LENGTH_STEP, offset: int = _LENGTH_OFFSET) -> int:
+    """The nearest frame count of the form ``step * k + offset`` for ``seconds`` at ``frame_rate``.
+
+    Rounds to the nearest k, not down, so 3 s at 24 fps with step 8 and offset 1 gives 73 frames (3.0417 s). Python's
+    ``round`` decides ties (banker's rounding); that is the rule the old create code used, kept exactly. Callers compare
+    ``length / frame_rate`` with ``seconds`` to decide whether the duration was adjusted.
+    """
+    frames = max(1, int(round(seconds * frame_rate)))
+    k = max(1, int(round((frames - offset) / float(step))))
+    return k * step + offset
+
+
+def frame_count(seconds: float, frame_rate: float | None, grid: GridSpec) -> int:
+    """The frame count sent to the engine: the grid length at the request's rate (or the grid's), within the declared bounds."""
+    length = seconds_to_length(seconds, frame_rate or grid.fps, step=grid.step, offset=grid.offset)
+    if grid.min_frames is not None:
+        length = max(length, grid.min_frames)
+    if grid.max_frames is not None:
+        length = min(length, grid.max_frames)
+    return length
+
+
+def parse_size(text: str) -> tuple[int, int]:
+    """``WxH`` to (width, height). Anything else uses the registry fallback size."""
+    if not text or "x" not in text:
+        return DEFAULT_SIZE_WHEN_UNPARSED
+    try:
+        width, height = text.lower().split("x")
+        return int(width), int(height)
+    except ValueError:
+        return DEFAULT_SIZE_WHEN_UNPARSED
+
+
+def resolve_size(requested: str | None, size: SizeSpec) -> tuple[int, int]:
+    """The size a run uses: the request's (or the default when it sends none), clamped to the largest, then each side
+    floored to the multiple with the registry minimum-side floor. A size is adjusted, never refused."""
+    width, height = parse_size(requested or size.default)
+    largest = parse_size(size.max)
+    width, height = min(width, largest[0]), min(height, largest[1])
+    multiple = max(1, int(size.multiple))
+    return max(MINIMUM_SIDE, (width // multiple) * multiple), max(MINIMUM_SIDE, (height // multiple) * multiple)
+
+
+def workflow_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The configuration table declared as the source of legacy workflow facts."""
+    source = _DOCUMENT["workflow_fact_source"]
+    return (config.get(source["section"]) or {}).get(source["table"]) or {}
+
+
+def configured_facts(config: Mapping[str, Any], contract: Mapping[str, Any]) -> VideoManifest:
+    """Project the same configuration values and node-role bindings both create paths use."""
+    rules = _checked_fact_rules(_DOCUMENT)
+    raw = {group: {name: config.get(rule["key"], rule["default"]) for name, rule in fields.items()}
+           for group, fields in rules.items()}
+    roles = {role: item["input"] for role, item in configured_input_targets(config, contract).items()}
+    raw["roles"] = roles
+    # video_facts reads the facts block named by an entry's capability; this projection has no entry, so it names its own block.
+    return video_facts({"capability": "configured", "configured": raw})
+
+
+def configured_input_targets(config: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, Any]:
+    """The precise binding destinations named by the configuration's node roles."""
+    _checked_fact_rules(_DOCUMENT)
+    meta = config.get("node_roles") or {}
+    roles = {}
+    for role, rule in _DOCUMENT["workflow_fact_source"]["roles"].items():
+        selected = next((key for key in rule["keys"] if meta.get(key)), None)
+        nodes = meta.get(selected, [])
+        if isinstance(nodes, (list, tuple)) and selected == rule.get("indexed_key") and "index" in rule:
+            nodes = nodes[rule["index"]:rule["index"] + 1]
+        nodes = nodes if isinstance(nodes, (list, tuple)) else [nodes]
+        for binding in (contract.get("bindings") or {}).values():
+            for name, targets in (binding.get("map") or {}).items():
+                if any(target.get("node") in nodes and target.get("input") in rule["fields"] for target in targets):
+                    roles[role] = {"input": name, "targets": [target for target in targets
+                        if target.get("node") in nodes and target.get("input") in rule["fields"]]}
+    return roles

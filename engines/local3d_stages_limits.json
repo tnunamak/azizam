@@ -1,0 +1,7 @@
+{
+  "max_mesh_bytes": 268435456,
+  "max_reference_bytes": 33554432,
+  "form_slack_bytes": 1048576,
+  "kill_grace_seconds": 5.0,
+  "comfy_http_timeout_seconds": 60.0
+}

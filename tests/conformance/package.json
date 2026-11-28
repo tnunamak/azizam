@@ -1,0 +1,8 @@
+{
+  "name": "azizam-mcp-conformance",
+  "private": true,
+  "description": "Pinned official MCP conformance suite (scripts/ci/mcp_conformance.py). 0.2.0-alpha.12 is the first release with 2026-07-28 requirement sets; the latest stable tag (0.1.16) has none.",
+  "dependencies": {
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.12"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "protocol": "comfyui",
+  "name": "upload-slow-first-byte",
+  "description": "The image upload is accepted and never answered.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image (multipart, answers {name, subfolder, type}), POST /prompt, GET /history/{prompt_id}, POST /api/jobs/{id}/cancel (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "upload",
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "wait_before_headers": "forever",
+        "json": {}
+      }
+    }
+  ]
+}

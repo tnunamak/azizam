@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Capture the Home, Status and Library state matrix for every household scenario.
+# Usage: scripts/ui/d1-states-capture <outdir>   (port from UI_E2E_PORT, default 18441)
+set -euo pipefail
+caller_dir="$PWD"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ $# -ne 1 ]]; then
+  echo "Usage: scripts/ui/d1-states-capture <outdir>" >&2
+  exit 2
+fi
+out="$1"
+[[ "$out" == /* ]] || out="$(realpath -m -- "$caller_dir/$out")"
+export UI_E2E_PORT="${UI_E2E_PORT:-18441}"
+cd -- "$script_dir/../../web"
+
+status=0
+UI_HOUSEHOLD_SCENARIO=default node e2e/d1-states-capture.mjs "$out/default" --states=all || status=1
+for scenario in running budget-exhausted provider-down stale-health new-member; do
+  UI_HOUSEHOLD_SCENARIO="$scenario" node e2e/d1-states-capture.mjs "$out/$scenario" --states=populated || status=1
+done
+exit "$status"

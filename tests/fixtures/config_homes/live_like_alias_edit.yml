@@ -1,0 +1,10 @@
+# The live host's uncommitted edit of proxy_config.yml, as it stood on main 810b57a25 (git diff, hunk at line 1238).
+# The "live_like" input of the config-homes goldens is the tracked file with this mapping merged over it, key by key.
+# docs/design/CONFIG_HOMES.md section 8.2 imports exactly these three pointers; do not change them to follow the live host.
+model_aliases:
+  chat:
+    stable:
+      default: qwen3.8-flash-next-strata
+      fast: qwen3.8-flash-next-strata-fast
+      default-fast: qwen3.8-flash-next-strata-fast
+      vision: default

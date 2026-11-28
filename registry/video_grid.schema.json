@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/video_grid.schema.json",
+  "title": "Video grid defaults and stride reasons",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stride_reasons",
+    "grid_defaults",
+    "workflow_fact_source"
+  ],
+  "properties": {
+    "stride_reasons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default",
+        "by_step"
+      ],
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/reason"
+        },
+        "by_step": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[1-9][0-9]*$": {
+              "$ref": "#/$defs/reason"
+            }
+          }
+        }
+      }
+    },
+    "grid_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "length_step",
+        "length_offset",
+        "minimum_side",
+        "size_when_unparsed"
+      ],
+      "properties": {
+        "length_step": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "length_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum_side": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "size_when_unparsed": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "workflow_fact_source": {
+      "type": "object",
+      "required": [
+        "section",
+        "table",
+        "facts",
+        "roles"
+      ],
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "object",
+          "required": [
+            "size",
+            "length",
+            "grid"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "object",
+              "required": [
+                "default",
+                "max",
+                "multiple"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "max": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "multiple": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "length": {
+              "type": "object",
+              "required": [
+                "min_seconds",
+                "max_seconds"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "min_seconds": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "max_seconds": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            },
+            "grid": {
+              "type": "object",
+              "required": [
+                "fps",
+                "step",
+                "offset"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "fps": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "step": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "offset": {
+                  "$ref": "#/$defs/factRule",
+                  "properties": {
+                    "default": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/roleRule"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "not": {
+        "pattern": "[^a-z0-9_]"
+      }
+    },
+    "factRule": {
+      "type": "object",
+      "required": [
+        "key",
+        "default"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "type": [
+            "string",
+            "number"
+          ]
+        }
+      }
+    },
+    "roleRule": {
+      "type": "object",
+      "required": [
+        "keys",
+        "fields"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indexed_key": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

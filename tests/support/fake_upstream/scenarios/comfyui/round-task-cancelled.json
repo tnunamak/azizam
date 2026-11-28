@@ -1,0 +1,45 @@
+{
+  "protocol": "comfyui",
+  "name": "round-task-cancelled",
+  "description": "The job is submitted and the history check never answers; the gateway task is cancelled and cancels the job upstream, which answers with a status.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image (multipart, answers {name, subfolder, type}), POST /prompt, GET /history/{prompt_id}, POST /api/jobs/{id}/cancel (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "mine"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/mine"
+      },
+      "response": {
+        "wait_before_headers": "forever",
+        "json": {}
+      }
+    },
+    {
+      "id": "cancel",
+      "match": {
+        "method": "POST",
+        "path": "/api/jobs/mine/cancel"
+      },
+      "response": {
+        "status": "{{cancel_status}}",
+        "json": {}
+      }
+    }
+  ]
+}

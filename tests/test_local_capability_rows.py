@@ -1,0 +1,609 @@
+"""Literal pins and test-only data extension for local capability rows."""
+
+from copy import deepcopy
+from pathlib import Path
+from types import MappingProxyType
+
+import pytest
+import yaml
+
+from gateway import local_capabilities as local
+
+
+ROWS = Path(__file__).resolve().parents[1] / "registry" / "local_capability_rows.yml"
+EXPECTED_ALIASES = {
+    "chat": ("chat.completions", ("text",), ("text",), "sync", None),
+    "embeddings": ("text.embeddings", ("text",), ("embedding",), "sync", None),
+    "images": ("image.generate", ("text",), ("image",), "job", None),
+    "image_edits": ("image.edit", ("text", "image"), ("image",), "job", None),
+    "videos": ("video.generate", ("text",), ("video",), "job", None),
+    "speech": ("speech.synthesis", ("text",), ("audio",), "sync", "speech"),
+    "transcriptions": ("speech.transcription", ("audio",), ("text",), "sync", None),
+    "audio_generate": ("audio.generate", ("text",), ("audio",), "job", None),
+}
+EXPECTED_FAMILIES = (
+    ("videos", "videos", "video.generate", ("text",), ("video",), "expensive"),
+    ("audio", "audio", "audio.generate", ("text",), ("audio",), "batch"),
+)
+
+
+def document():
+    shipped = yaml.safe_load(ROWS.read_text(encoding="utf-8"))
+    return {
+        **shipped,
+        "workflow_defaults": {**shipped["workflow_defaults"], "backend_capabilities": {"videos": "videos"}},
+        "schema_version": 1,
+        "alias_operations": [{
+            "name": "chat", "intent": "chat.completions",
+            "input_modalities": ["text"], "output_modalities": ["text"],
+            "execution": "sync",
+        }],
+        "workflow_families": [{
+            "section": "videos", "enabled_flag": "videos", "intent": "video.generate",
+            "input_modalities": ["text"], "output_modalities": ["video"],
+            "resource_tier": "expensive",
+        }],
+    }
+
+
+def write_rows(tmp_path, value):
+    path = tmp_path / "custom-local-capabilities.yml"
+    path.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_decoded_rows_match_legacy_loader_order_without_reading(monkeypatch):
+    # Preparatory parity only: no catalog projection is claimed by this test.
+    decoded = document()
+    expected = local._parse_local_capability_rows(deepcopy(decoded), "synthetic.yml")
+    calls = []
+
+    def read_text(source, **kwargs):
+        calls.append(str(source))
+        return yaml.safe_dump(decoded, sort_keys=False)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    actual = local._load_local_capability_rows("synthetic.yml")
+    assert len(calls) == 1
+    assert actual == expected
+    assert repr(actual) == repr(expected)
+
+    def no_read(*args, **kwargs):
+        raise AssertionError("decoded-row validation must not read files")
+
+    monkeypatch.setattr(Path, "read_text", no_read)
+    assert repr(local._parse_local_capability_rows(decoded, "synthetic.yml")) == repr(expected)
+
+
+def test_decoded_rows_keep_exact_legacy_validation_message(tmp_path):
+    decoded = document()
+    decoded["alias_operations"][0]["execution"] = "invalid"
+    path = write_rows(tmp_path, decoded)
+    with pytest.raises(ValueError) as legacy:
+        local._load_local_capability_rows(path)
+    with pytest.raises(ValueError) as parsed:
+        local._parse_local_capability_rows(decoded, path)
+    assert str(parsed.value) == str(legacy.value)
+    assert str(parsed.value) == f"{path}: alias_operations row 1: execution must be sync or job"
+
+
+def test_shipped_alias_rows_keep_literal_contents_and_order():
+    aliases, _ = local.load_local_capability_rows(ROWS)
+    assert list(aliases.items()) == list(EXPECTED_ALIASES.items())
+    assert list(local._ALIAS_INTENTS.items()) == list(EXPECTED_ALIASES.items())
+
+
+def test_shipped_workflow_rows_keep_literal_contents_and_order():
+    _, families = local.load_local_capability_rows(ROWS)
+    assert families == EXPECTED_FAMILIES
+    assert local._WORKFLOW_FAMILIES == EXPECTED_FAMILIES
+
+
+def test_new_alias_operation_advertises_from_test_only_rows(tmp_path, monkeypatch):
+    value = document()
+    value["alias_operations"].append({
+        "name": "sketches", "intent": "image.generate",
+        "input_modalities": ["text", "image"], "output_modalities": ["image"],
+        "execution": "job",
+    })
+    aliases, _ = local.load_local_capability_rows(write_rows(tmp_path, value))
+    monkeypatch.setattr(local, "_ALIAS_INTENTS", aliases)
+    caps = local.build_alias_capabilities({
+        "sketches": {"stable": [{"alias": "sketch-default", "resolves_to": "canvas"}]},
+    })
+    assert len(caps) == 1
+    cap = caps[0]
+    assert (
+        cap.intent, cap.input_modalities, cap.output_modalities, cap.execution,
+        cap.backend, cap.model, cap.tags,
+    ) == (
+        "image.generate", ("text", "image"), ("image",), "job",
+        "gateway", "sketch-default", ("alias", "resolves_to:canvas"),
+    )
+
+
+def test_new_workflow_family_uses_its_rows_flag_and_tier(tmp_path, monkeypatch):
+    value = document()
+    value["workflow_families"].append({
+        "section": "scenes", "enabled_flag": "scene_enabled", "intent": "video.generate",
+        "input_modalities": ["text", "image"], "output_modalities": ["video"],
+        "resource_tier": "batch",
+    })
+    value["workflow_defaults"]["backend_capabilities"]["scenes"] = "custom.scene"
+    path = write_rows(tmp_path, value)
+    _, families = local.load_local_capability_rows(path)
+    _, _, defaults = local.load_local_capability_image_rows(path)
+    monkeypatch.setattr(local, "_WORKFLOW_FAMILIES", families)
+    monkeypatch.setattr(local, "_WORKFLOW_DEFAULTS", defaults)
+    config = {
+        "backends": {"renderer": {"capabilities": ["custom.scene"], "protocol": "node-graph"}},
+        "scenes": {"workflows": {"scene-one": {"file": "scene.json"}}},
+    }
+    caps = local.build_local_capabilities(config)
+    assert len(caps) == 1
+    cap = caps[0]
+    assert (
+        cap.workflow, cap.backend, cap.intent, cap.input_modalities,
+        cap.output_modalities, cap.execution, cap.resource_tier,
+    ) == (
+        "scene-one", "renderer", "video.generate", ("text", "image"),
+        ("video",), "job", "batch",
+    )
+    assert local.build_local_capabilities(config, enabled_flags={"scene_enabled": False}) == []
+
+
+@pytest.mark.parametrize("table, change, field, value, message", [
+    ("alias_operations", "set", "extra", True, "unknown fields"),
+    ("alias_operations", "delete", "intent", None, "missing fields"),
+    ("alias_operations", "set", "input_modalities", [], "input_modalities"),
+    ("alias_operations", "set", "output_modalities", [], "output_modalities"),
+    ("alias_operations", "set", "execution", "batch", "execution"),
+    ("alias_operations", "duplicate", None, None, "duplicate name"),
+    ("alias_operations", "row", None, [], "must be a mapping"),
+    ("alias_operations", "set", "name", "", "name"),
+    ("alias_operations", "set", "intent", 7, "intent"),
+    ("alias_operations", "set", "input_modalities", "text", "input_modalities"),
+    ("alias_operations", "set", "input_modalities", ["text", 7], "input_modalities"),
+    ("alias_operations", "set", "execution", ["sync"], "execution"),
+    ("workflow_families", "set", "extra", True, "unknown fields"),
+    ("workflow_families", "delete", "enabled_flag", None, "missing fields"),
+    ("workflow_families", "set", "input_modalities", [], "input_modalities"),
+    ("workflow_families", "set", "output_modalities", [], "output_modalities"),
+    ("workflow_families", "set", "resource_tier", "unlimited", "resource_tier"),
+    ("workflow_families", "duplicate", None, None, "duplicate name"),
+    ("workflow_families", "row", None, "videos", "must be a mapping"),
+    ("workflow_families", "set", "section", "", "section"),
+    ("workflow_families", "set", "enabled_flag", False, "enabled_flag"),
+    ("workflow_families", "set", "resource_tier", ["batch"], "resource_tier"),
+    ("workflow_families", "set", "output_modalities", "video", "output_modalities"),
+    ("workflow_families", "set", "input_modalities", [" "], "input_modalities"),
+])
+def test_bad_rows_name_file_table_and_row(tmp_path, table, change, field, value, message):
+    data = document()
+    row_number = 1
+    if change == "duplicate":
+        data[table].append(deepcopy(data[table][0]))
+        row_number = 2
+    elif change == "row":
+        data[table][0] = value
+    elif change == "delete":
+        del data[table][0][field]
+    else:
+        data[table][0][field] = value
+    path = write_rows(tmp_path, data)
+    with pytest.raises(ValueError) as error:
+        local.load_local_capability_rows(path)
+    text = str(error.value)
+    assert str(path) in text
+    assert f"{table} row {row_number}" in text
+    assert message in text
+
+
+@pytest.mark.parametrize("change, field, value, message", [
+    ("set", "extra", True, "unknown fields"),
+    ("delete", "schema_version", None, "missing fields"),
+    ("delete", "alias_operations", None, "missing fields"),
+    ("delete", "workflow_families", None, "missing fields"),
+    ("set", "schema_version", True, "schema_version"),
+    ("set", "schema_version", 2, "schema_version"),
+    ("set", "alias_operations", {}, "must be a list"),
+    ("set", "workflow_families", {}, "must be a list"),
+    ("document", None, [], "must be a mapping"),
+])
+def test_bad_documents_name_file_and_document_row(tmp_path, change, field, value, message):
+    data = document()
+    if change == "document":
+        data = value
+    elif change == "delete":
+        del data[field]
+    else:
+        data[field] = value
+    path = write_rows(tmp_path, data)
+    with pytest.raises(ValueError) as error:
+        local.load_local_capability_rows(path)
+    text = str(error.value)
+    assert str(path) in text
+    assert "document row 0" in text
+    assert message in text
+
+
+def test_loaded_tables_are_deeply_read_only(tmp_path):
+    aliases, families = local.load_local_capability_rows(write_rows(tmp_path, document()))
+    with pytest.raises(TypeError):
+        aliases["extra"] = aliases["chat"]
+    with pytest.raises(TypeError):
+        aliases["chat"][1][0] = "audio"
+    with pytest.raises(TypeError):
+        families[0] = families[0]
+    with pytest.raises(TypeError):
+        families[0][3][0] = "audio"
+
+
+def test_imported_tables_are_read_only():
+    assert isinstance(local._ALIAS_INTENTS, MappingProxyType)
+    assert isinstance(local._WORKFLOW_FAMILIES, tuple)
+    assert all(isinstance(row, tuple) for row in local._WORKFLOW_FAMILIES)
+
+
+def test_builders_do_not_reload_rows(monkeypatch):
+    # Guard only the two row files. Other package data (the engine protocol registry) sits
+    # behind its own caches, which other tests may clear, so it can be read here legitimately.
+    rows_files = {ROWS.resolve(), ROWS.with_name("operations.yml").resolve()}
+    real_read_text = Path.read_text
+
+    def guarded_read(path, *args, **kwargs):
+        if Path(path).resolve() in rows_files:
+            raise AssertionError("a capability builder re-read the rows file")
+        return real_read_text(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", guarded_read)
+    with pytest.raises(AssertionError, match="re-read the rows file"):
+        local.load_local_capability_rows()
+    assert len(local.build_alias_capabilities({
+        "chat": {"stable": [{"alias": "chat-default", "resolves_to": "model"}]},
+    })) == 1
+    assert len(local.build_local_capabilities({
+        "backends": {"renderer": {"capabilities": ["videos"], "protocol": "node-graph"}},
+        "videos": {"workflows": {"one": {"file": "one.json"}}},
+    })) == 1
+
+
+def test_loader_keeps_file_order_instead_of_sorting(tmp_path):
+    value = document()
+    value["alias_operations"].append({**value["alias_operations"][0], "name": "aaa"})
+    value["workflow_families"].append({
+        **value["workflow_families"][0], "section": "aaa", "enabled_flag": "aaa",
+    })
+    value["workflow_defaults"]["backend_capabilities"]["aaa"] = "custom.aaa"
+    aliases, families = local.load_local_capability_rows(write_rows(tmp_path, value))
+    assert list(aliases) == ["chat", "aaa"]
+    assert [row[0] for row in families] == ["videos", "aaa"]
+
+
+def _literal_speech_row():
+    # Pin the complete base-row constructor, independently of the loaded YAML.
+    return local.Capability(
+        intent="speech.synthesis", backend="voice-one", capability="speech",
+        input_modalities=("text",), output_modalities=("audio",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+        tags=(
+            "response_format:wav", "response_format:mp3", "response_format:opus",
+            "response_format:aac", "response_format:flac", "response_format:pcm",
+        ),
+    )
+
+
+def _rows_for_voice_one(capabilities, *, enabled_flags=None):
+    return local.build_local_capabilities(
+        {}, backends={"voice-one": {"capabilities": capabilities}},
+        enabled_flags=enabled_flags,
+    )
+
+
+def test_audio_speech_matches_legacy_row_and_tts_flag():
+    expected = [_literal_speech_row()]
+    for flags in (None, {}, {"tts": True}, {"speech": False, "audio.speech": False}):
+        canonical = _rows_for_voice_one(["audio.speech"], enabled_flags=flags)
+        legacy = _rows_for_voice_one(["speech"], enabled_flags=flags)
+        assert len(canonical) == 1
+        assert canonical == legacy == expected
+    for trigger in ("audio.speech", "speech"):
+        assert _rows_for_voice_one([trigger], enabled_flags={"tts": False}) == []
+
+
+@pytest.mark.parametrize("capabilities", [
+    ["audio.speech", "audio.speech"],
+    ["audio.speech", "speech"],
+])
+def test_audio_speech_aliases_emit_one_literal_row(capabilities):
+    rows = _rows_for_voice_one(capabilities)
+    assert len(rows) == 1
+    assert rows == [_literal_speech_row()]
+
+
+def test_all_preexisting_backend_triggers_keep_literal_rows():
+    # Synthetic coverage of every preexisting trigger, not a shipped-service
+    # inventory. Values below come from the base YAML, not the loaded tables.
+    chat = local.Capability(
+        intent="chat.completions", backend="voice-one",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+    )
+    vision_chat = local.Capability(
+        intent="chat.completions", backend="voice-one",
+        input_modalities=("text", "image"), output_modalities=("text",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+    )
+    completion = local.Capability(
+        intent="text.completions", backend="voice-one",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+    )
+    embedding = local.Capability(
+        intent="text.embeddings", backend="voice-one",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=False,
+        resources=local.ResourceEstimate(gpu_required=False),
+    )
+    transcription = local.Capability(
+        intent="speech.transcription", backend="voice-one",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False,
+        resources=local.ResourceEstimate(gpu_required=True),
+        action_label="Transcribe", recordable_inputs=("audio",),
+    )
+    translation = local.Capability(
+        intent="speech.translation", backend="voice-one",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False,
+        resources=local.ResourceEstimate(gpu_required=True),
+        action_label="Translate", recordable_inputs=("audio",),
+        caveats=(
+            "Only advertised when the local STT backend declares translation support.",
+        ),
+    )
+    speech = _literal_speech_row()
+    cases = [
+        (["chat"], [chat]),
+        (["chat", "vision"], [vision_chat]),
+        (["completions"], [completion]),
+        (["embeddings"], [embedding]),
+        (["speech"], [speech]),
+        (["tts"], [speech]),
+        (["transcriptions"], [transcription]),
+        (["stt"], [transcription]),
+        (["audio.transcriptions"], [transcription]),
+        (["translations"], [translation]),
+        (["translation"], [translation]),
+        (
+            [
+                "chat", "vision", "completions", "embeddings", "speech", "tts",
+                "transcriptions", "stt", "audio.transcriptions",
+                "translations", "translation",
+            ],
+            [vision_chat, completion, embedding, speech, transcription, translation],
+        ),
+    ]
+    for capabilities, expected in cases:
+        assert _rows_for_voice_one(capabilities) == expected, capabilities
+
+def test_catalog_edit_changes_served_alias_intent(tmp_path, monkeypatch):
+    source_text = ROWS.read_text(encoding="utf-8")
+    source = tmp_path / "fixed-local-capabilities.yml"
+    source.write_text(source_text, encoding="utf-8")
+    raw_aliases, raw_families = local.load_local_capability_rows(source)
+    assert raw_aliases["chat"][0] == "chat.completions"
+    catalog_path = ROWS.with_name("operations.yml")
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    assert "text.embeddings" in {row["id"] for row in catalog["operations"]}
+    changed = 0
+    for relation in catalog["relations"]:
+        if (relation["kind"], relation.get("context"), relation.get("word")) == (
+            "spelling", "legacy", "chat",
+        ):
+            assert relation["operation"] == raw_aliases["chat"][0]
+            relation["operation"] = "text.embeddings"
+            changed += 1
+    assert changed == 1
+    edited = tmp_path / "edited-catalog.yml"
+    edited.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+    loaded = local._load_catalog_local_capability_rows(source, catalog_path=edited)
+    assert source.read_text(encoding="utf-8") == source_text
+    assert loaded[0]["chat"] == ("text.embeddings", *raw_aliases["chat"][1:])
+    assert loaded[1] == raw_families
+    # The old raw-source reader keeps chat.completions despite the catalog edit.
+    assert local.load_local_capability_rows(source)[0]["chat"][0] != loaded[0]["chat"][0]
+    monkeypatch.setattr(local, "_ALIAS_INTENTS", loaded[0])
+    monkeypatch.setattr(local, "_ALIAS_ROWS", loaded[6])
+    caps = local.build_alias_capabilities({
+        "chat": {"stable": [{"alias": "custom-default", "resolves_to": "model"}]},
+    })
+    assert len(caps) == 1
+    assert caps[0].intent == "text.embeddings"
+    assert caps[0].input_modalities == ("text",)
+    assert caps[0].output_modalities == ("text",)
+    assert caps[0].execution == "sync"
+    rows = {row["name"]: row for row in local.alias_operation_rows()}
+    assert rows["chat"]["intent"] == "text.embeddings"
+    assert rows["rerank"]["intent"] is None
+
+
+def test_shipped_alias_intents_agree_with_catalog_spellings():
+    from gateway.operation_catalog import load
+
+    rows = yaml.safe_load(ROWS.read_text(encoding="utf-8"))["alias_operations"]
+    catalog = load(ROWS.with_name("operations.yml"))
+    spellings = {
+        row["word"]: row["operation"]
+        for row in catalog.relations("spelling", "legacy")
+    }
+    served = {row["name"]: row for row in local.alias_operation_rows()}
+    for row in rows:
+        assert served[row["name"]]["intent"] == row["intent"]
+        for word in [row["name"], *row.get("shared_operations", [])]:
+            if row["intent"] is None:
+                assert word not in spellings
+            else:
+                assert spellings[word] == row["intent"], word
+
+
+def test_catalog_runtime_loader_is_independent_of_working_directory(tmp_path, monkeypatch):
+    expected = local._load_local_capability_rows()
+    monkeypatch.chdir(tmp_path)
+    actual = local._load_catalog_local_capability_rows()
+    assert actual == expected
+    assert isinstance(actual[0], MappingProxyType)
+    with pytest.raises(TypeError):
+        actual[6][0]["intent"] = "changed"
+
+
+def test_journey_catalog_alias_rows_preserve_literal_key_order():
+    loaded = local._load_catalog_local_capability_rows(ROWS)
+    rows = {row["name"]: row for row in loaded[6]}
+    assert list(rows["chat"].keys()) == [
+        "name", "intent", "input_modalities", "output_modalities",
+        "execution", "capability", "shared_operations", "engine_operation",
+        "publish_capability",
+    ]
+    assert list(rows["rerank"].keys()) == [
+        "name", "intent", "input_modalities", "output_modalities",
+        "execution", "capability", "shared_operations", "engine_operation",
+        "publish_capability",
+    ]
+    assert rows["chat"]["name"] == "chat"
+    assert (
+        rows["chat"]["intent"], rows["chat"]["input_modalities"],
+        rows["chat"]["output_modalities"], rows["chat"]["execution"],
+        rows["chat"]["capability"],
+    ) == ("chat.completions", ("text",), ("text",), "sync", None)
+    assert rows["rerank"]["name"] == "rerank"
+    assert rows["rerank"]["intent"] is None
+    assert rows["rerank"]["publish_capability"] is False
+
+
+def test_journey_catalog_missing_legacy_spelling_names_exact_row_and_path(tmp_path):
+    shipped_catalog = ROWS.with_name("operations.yml")
+    source_text = ROWS.read_text(encoding="utf-8")
+    copied = tmp_path / "custom-operation-catalog.yml"
+    copied.write_text(shipped_catalog.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # Establish that this exact path and the unchanged source rows work first.
+    control = local._load_catalog_local_capability_rows(ROWS, catalog_path=copied)
+    assert control == local._load_catalog_local_capability_rows(ROWS)
+    assert control[6][0]["name"] == "chat"
+    assert control[0]["chat"] == EXPECTED_ALIASES["chat"]
+
+    catalog = yaml.safe_load(copied.read_text(encoding="utf-8"))
+    original = deepcopy(catalog)
+    positions = [
+        index for index, row in enumerate(catalog["relations"])
+        if (row["kind"], row.get("context"), row.get("word")) == (
+            "spelling", "legacy", "chat",
+        )
+    ]
+    assert len(positions) == 1
+    removed = catalog["relations"].pop(positions[0])
+    assert removed["operation"] == "chat.completions"
+    expected = deepcopy(original)
+    expected["relations"].pop(positions[0])
+    assert catalog == expected
+    copied.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+
+    # Structural validity must survive; the error belongs to alias projection.
+    parsed = local.load_operation_catalog(copied)
+    assert all(
+        row["word"] != "chat"
+        for row in parsed.relations("spelling", "legacy")
+    )
+    with pytest.raises(ValueError) as error:
+        local._load_catalog_local_capability_rows(ROWS, catalog_path=copied)
+    assert str(error.value) == (
+        f"{copied}: alias_operations row 1: missing legacy spelling for 'chat'"
+    )
+    assert ROWS.read_text(encoding="utf-8") == source_text
+
+def test_journey_import_binds_catalog_alias_intents(tmp_path):
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    # Only the scoped production module and catalog are copied. The row document
+    # is a minimal synthetic fixture, not a copy of another registry source.
+    package = tmp_path / "gateway"
+    registry = tmp_path / "registry"
+    package.mkdir()
+    registry.mkdir()
+    copied_module = package / "local_capabilities.py"
+    copied_module.write_text(Path(local.__file__).read_text(encoding="utf-8"), encoding="utf-8")
+    defaults = {
+        "section_required": False, "backend_presence": "declared",
+        "execution": "job", "streaming": False, "gpu_required": False,
+    }
+    raw = {
+        "schema_version": 1,
+        "alias_operations": [{
+            "name": "chat", "intent": "chat.completions",
+            "input_modalities": ["text"], "output_modalities": ["text"],
+            "execution": "sync",
+        }],
+        "workflow_families": [],
+        "image_defaults": {
+            **defaults, "section": "images", "enabled_flag": "images",
+            "output_modalities": ["image"], "resource_tier": "batch",
+            "backend_capability": "images",
+        },
+        "image_rows": [],
+        "workflow_defaults": {**defaults, "backend_capabilities": {}},
+    }
+    source = registry / local._LOCAL_CAPABILITY_ROWS_PATH.name
+    source.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    source_before = source.read_text(encoding="utf-8")
+    shipped_catalog = Path(local.__file__).resolve().parents[1] / "registry" / "operations.yml"
+    catalog_before = shipped_catalog.read_text(encoding="utf-8")
+    catalog = yaml.safe_load(catalog_before)
+    assert {"chat.completions", "text.embeddings"} <= {
+        operation["id"] for operation in catalog["operations"]
+    }
+    matches = [
+        relation for relation in catalog["relations"]
+        if (relation["kind"], relation.get("context"), relation.get("word")) == (
+            "spelling", "legacy", "chat",
+        )
+    ]
+    assert len(matches) == 1
+    assert matches[0]["operation"] == "chat.completions"
+    matches[0]["operation"] = "text.embeddings"
+    (registry / "operations.yml").write_text(
+        yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8",
+    )
+    original_intents = local._ALIAS_INTENTS
+    original_rows = local._ALIAS_ROWS
+
+    # Execute the unchanged module source under a fresh name. Its own __file__
+    # selects our tree; no loader call or global assignment activates the catalog.
+    spec = spec_from_file_location("isolated_catalog_alias_journey", copied_module)
+    assert spec is not None and spec.loader is not None
+    imported = module_from_spec(spec)
+    spec.loader.exec_module(imported)
+    assert imported._LOCAL_CAPABILITY_ROWS_PATH == source
+    capabilities = imported.build_alias_capabilities({
+        "chat": {"stable": [{"alias": "journey-default", "resolves_to": "model"}]},
+    })
+    assert len(capabilities) == 1
+    assert (
+        capabilities[0].intent, capabilities[0].input_modalities,
+        capabilities[0].output_modalities, capabilities[0].execution,
+        capabilities[0].model,
+    ) == ("text.embeddings", ("text",), ("text",), "sync", "journey-default")
+    served = imported.alias_operation_rows()
+    assert len(served) == 1
+    assert served[0]["name"] == "chat"
+    assert served[0]["intent"] == "text.embeddings"
+    # The raw reader remains different: reverting the module's activation to it
+    # would serve chat.completions and fail BOTH public-facing assertions above.
+    assert imported.load_local_capability_rows(source)[0]["chat"][0] == "chat.completions"
+    assert source.read_text(encoding="utf-8") == source_before
+    assert shipped_catalog.read_text(encoding="utf-8") == catalog_before
+    assert local._ALIAS_INTENTS is original_intents
+    assert local._ALIAS_ROWS is original_rows

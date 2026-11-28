@@ -1,0 +1,19 @@
+id: generic-openai
+display_name: Generic OpenAI-compatible
+logo_key: generic-openai
+base_url: ""
+protocol: openai-chat
+litellm_provider: openai
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+docs_url: ""
+key_url: ""
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens

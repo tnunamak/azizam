@@ -1,0 +1,1179 @@
+{
+ "scope": "main",
+ "url": "/ui/home/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 1440,
+   "h": 900
+  },
+  "pageHeight": 900,
+  "sidebarWidth": 232,
+  "main": {
+   "x": 236,
+   "w": 1200,
+   "padding": "40px 48px 48px 48px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "1200px",
+  "contentMaxWidthEl": "main.shell-content pb-28 sm:pb-12",
+  "contentLeftFromViewport": 284,
+  "contentRightFromViewport": 52,
+  "contentLeftFromMainEdge": 48,
+  "contentRightFromMainEdge": 48,
+  "titleTop": 45,
+  "titleTopFromMain": 45,
+  "title": {
+   "text": "Home",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.min-w-0",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-6",
+    "top": 40,
+    "height": 64,
+    "sample": "Home Video degraded Checked just now Ope"
+   },
+   {
+    "tag": "div",
+    "classes": "grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]",
+    "top": 128,
+    "height": 654,
+    "sample": "Recent Library Make something Your usual"
+   }
+  ],
+  "sectionGaps": [
+   24
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.min-w-0",
+    "gap": 24,
+    "from": "Home Video degraded Checked ju",
+    "to": "Recent Library Make something "
+   },
+   {
+    "parent": "div.min-w-0 space-y-10 max-sm:space-y-7 lg:col-start-1 lg:row-st",
+    "gap": 40,
+    "from": "Recent Library",
+    "to": "Make something Your usual Make"
+   },
+   {
+    "parent": "section.",
+    "gap": 12,
+    "from": "Recent Library",
+    "to": ""
+   },
+   {
+    "parent": "div.space-y-5 p-5",
+    "gap": 20,
+    "from": "Connect an app For chat apps, ",
+    "to": "Your apps Sam's personal app U"
+   },
+   {
+    "parent": "div.space-y-5 p-5",
+    "gap": 20,
+    "from": "Your apps Sam's personal app U",
+    "to": "Add an app"
+   }
+  ],
+  "headingGaps": [
+   {
+    "tag": "h2",
+    "text": "Recent",
+    "gap": -34
+   },
+   {
+    "tag": "h2",
+    "text": "Make something",
+    "gap": 12
+   },
+   {
+    "tag": "h3",
+    "text": "Your usual",
+    "gap": 8
+   },
+   {
+    "tag": "h3",
+    "text": "Everything else",
+    "gap": 8
+   },
+   {
+    "tag": "h2",
+    "text": "Connect an app",
+    "gap": 0
+   },
+   {
+    "tag": "h3",
+    "text": "Your apps",
+    "gap": 4
+   }
+  ]
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "Home",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 45,
+    "w": 62.6,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Video degraded",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 600,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 306,
+    "y": 84,
+    "w": 101,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Checked",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 419,
+    "y": 84,
+    "w": 113,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "just now",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 479,
+    "y": 85,
+    "w": 53,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Open Status",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(10, 102, 118)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 84,
+    "w": 97,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Recent",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 138,
+    "w": 49.6,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Library",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(10, 102, 118)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 941,
+    "y": 128,
+    "w": 63,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Make something",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 402,
+    "w": 116.6,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "Your usual",
+   "role": "h3",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "-0.21px",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 442,
+    "w": 720,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make a picture",
+   "role": "link",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 20.625,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 301,
+    "y": 536,
+    "w": 101,
+    "h": 20.6,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last used",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 301,
+    "y": 561,
+    "w": 121,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "15m ago",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 367,
+    "y": 562,
+    "w": 55,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Chat",
+   "role": "link",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 20.625,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 667,
+    "y": 536,
+    "w": 32,
+    "h": 20.6,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last used",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 667,
+    "y": 561,
+    "w": 121,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "22m ago",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 733,
+    "y": 562,
+    "w": 55,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "Everything else",
+   "role": "h3",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "-0.21px",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 618,
+    "w": 720,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Read text aloud",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 329,
+    "y": 659,
+    "w": 299,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make music",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 688,
+    "y": 659,
+    "w": 299,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make a sound effect",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 329,
+    "y": 704,
+    "w": 299,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make a video",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 688,
+    "y": 704,
+    "w": 202,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Degraded",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(180, 83, 9)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 902,
+    "y": 704,
+    "w": 85,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Turn a recording into text",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 329,
+    "y": 749,
+    "w": 299,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Connect an app",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 193,
+    "w": 294,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "For chat apps, phone apps and coding too",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 217,
+    "w": 294,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "Your apps",
+   "role": "h3",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "-0.21px",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 277,
+    "w": 294,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Sam's personal app",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 313,
+    "w": 206,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Used",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1291,
+    "y": 315,
+    "w": 76,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "just now",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1321,
+    "y": 315,
+    "w": 46,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Home Assistant voice",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 358,
+    "w": 216,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Used",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1301,
+    "y": 360,
+    "w": 66,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "6h ago",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1331,
+    "y": 360,
+    "w": 36,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Codex",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 403,
+    "w": 216,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Used",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1301,
+    "y": 405,
+    "w": 66,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "7h ago",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1331,
+    "y": 405,
+    "w": 36,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Add an app",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1073,
+    "y": 455,
+    "w": 127,
+    "h": 40,
+    "inViewport": true
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Add an app",
+   "height": 40,
+   "width": 127,
+   "borderRadius": "6px",
+   "padding": "0px 14px 0px 14px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1073,
+    "y": 455,
+    "w": 127,
+    "h": 40,
+    "inViewport": true
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [
+  {
+   "tag": "a",
+   "slot": null,
+   "classes": "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media",
+   "padding": "0px 0px 0px 0px",
+   "borderRadius": "6px",
+   "border": "none",
+   "boxShadow": "none",
+   "background": "rgb(233, 238, 239)",
+   "hasBorder": false,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 284,
+    "y": 184,
+    "w": 174,
+    "h": 174,
+    "inViewport": true
+   },
+   "firstText": ""
+  },
+  {
+   "tag": "a",
+   "slot": null,
+   "classes": "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media",
+   "padding": "0px 0px 0px 0px",
+   "borderRadius": "6px",
+   "border": "none",
+   "boxShadow": "none",
+   "background": "rgb(233, 238, 239)",
+   "hasBorder": false,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 466,
+    "y": 184,
+    "w": 174,
+    "h": 174,
+    "inViewport": true
+   },
+   "firstText": ""
+  },
+  {
+   "tag": "a",
+   "slot": null,
+   "classes": "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media",
+   "padding": "0px 0px 0px 0px",
+   "borderRadius": "6px",
+   "border": "none",
+   "boxShadow": "none",
+   "background": "rgb(233, 238, 239)",
+   "hasBorder": false,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 648,
+    "y": 184,
+    "w": 174,
+    "h": 174,
+    "inViewport": true
+   },
+   "firstText": ""
+  },
+  {
+   "tag": "a",
+   "slot": null,
+   "classes": "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media",
+   "padding": "0px 0px 0px 0px",
+   "borderRadius": "6px",
+   "border": "none",
+   "boxShadow": "none",
+   "background": "rgb(233, 238, 239)",
+   "hasBorder": false,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 830,
+    "y": 184,
+    "w": 174,
+    "h": 174,
+    "inViewport": true
+   },
+   "firstText": ""
+  },
+  {
+   "tag": "a",
+   "slot": null,
+   "classes": "bg-card rounded-panel flex h-32 min-w-0 flex-col items-start gap-1 border p-4 hover:border-input transition-colors",
+   "padding": "16px 16px 16px 16px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 284,
+    "y": 470,
+    "w": 354,
+    "h": 128,
+    "inViewport": true
+   },
+   "firstText": "Make a picture Last used 15m ago"
+  },
+  {
+   "tag": "a",
+   "slot": null,
+   "classes": "bg-card rounded-panel flex h-32 min-w-0 flex-col items-start gap-1 border p-4 hover:border-input transition-colors",
+   "padding": "16px 16px 16px 16px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 650,
+    "y": 470,
+    "w": 354,
+    "h": 128,
+    "inViewport": true
+   },
+   "firstText": "Chat Last used 22m ago"
+  },
+  {
+   "tag": "ul",
+   "slot": null,
+   "classes": "bg-card rounded-panel grid border px-4 @2xl:grid-cols-2 @2xl:gap-x-8",
+   "padding": "0px 16px 0px 16px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 284,
+    "y": 646,
+    "w": 720,
+    "h": 136,
+    "inViewport": true
+   },
+   "firstText": "Read text aloud Make music Make a sound "
+  },
+  {
+   "tag": "section",
+   "slot": null,
+   "classes": "bg-card rounded-panel scroll-mt-20 border",
+   "padding": "0px 0px 0px 0px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 1052,
+    "y": 172,
+    "w": 336,
+    "h": 344,
+    "inViewport": true
+   },
+   "firstText": "Connect an app For chat apps, phone apps"
+  }
+ ],
+ "rowLists": [
+  {
+   "kind": "list",
+   "parent": "ul.grid.grid-cols-4.gap-1.5.sm:gap-2",
+   "count": 4,
+   "visualRows": 1,
+   "perRow": 4,
+   "itemHeights": [
+    174,
+    174,
+    174,
+    174
+   ],
+   "heights": [
+    174
+   ],
+   "gaps": [],
+   "columnGaps": [
+    8,
+    8,
+    8
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 174,
+   "sample": "",
+   "box": {
+    "x": 284,
+    "y": 184,
+    "w": 720,
+    "h": 174,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "list",
+   "parent": "ul.grid.grid-cols-2.gap-2.sm:gap-3",
+   "count": 2,
+   "visualRows": 1,
+   "perRow": 2,
+   "itemHeights": [
+    128,
+    128
+   ],
+   "heights": [
+    128
+   ],
+   "gaps": [],
+   "columnGaps": [
+    12
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 128,
+   "sample": "Make a picture Last used 15m ago",
+   "box": {
+    "x": 284,
+    "y": 470,
+    "w": 720,
+    "h": 128,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "list",
+   "parent": "ul.bg-card.rounded-panel.grid.border",
+   "count": 5,
+   "visualRows": 3,
+   "perRow": 2,
+   "itemHeights": [
+    44,
+    44,
+    45,
+    45,
+    45
+   ],
+   "heights": [
+    44,
+    45,
+    45
+   ],
+   "gaps": [
+    0,
+    0
+   ],
+   "columnGaps": [
+    32,
+    32
+   ],
+   "layout": "grid",
+   "inTablist": false,
+   "spanPx": 134,
+   "sample": "Read text aloud",
+   "box": {
+    "x": 284,
+    "y": 646,
+    "w": 720,
+    "h": 136,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "list",
+   "parent": "ul.divide-y",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    45,
+    45,
+    44
+   ],
+   "heights": [
+    45,
+    45,
+    44
+   ],
+   "gaps": [
+    0,
+    0
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 134,
+   "sample": "Sam's personal app Used just now",
+   "box": {
+    "x": 1073,
+    "y": 301,
+    "w": 294,
+    "h": 134,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "16x16": 10,
+  "24x24": 2
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 16,
+  "rgb(61, 79, 85)": 16,
+  "rgb(10, 102, 118)": 2,
+  "rgb(180, 83, 9)": 1
+ },
+ "bgColors": {
+  "rgb(233, 238, 239)": 4,
+  "rgb(255, 255, 255)": 5
+ },
+ "surface": "home",
+ "width": 1440,
+ "actualRoute": "/ui/home/",
+ "bodyTextLength": 452
+}

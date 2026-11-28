@@ -1,0 +1,7 @@
+timesignature:
+  label: time signature
+  type: string
+  enum: ["2", "3", "4", "6"]
+  choices_from:
+    node_type: TextEncodeAceStepAudio1.5
+    input: timesignature

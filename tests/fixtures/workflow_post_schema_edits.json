@@ -1,0 +1,1373 @@
+{
+  "audio.generate.ace-step-1.5-xl-turbo": [
+    {
+      "after": [
+        "C major",
+        "C# major",
+        "Db major",
+        "D major",
+        "D# major",
+        "Eb major",
+        "E major",
+        "F major",
+        "F# major",
+        "Gb major",
+        "G major",
+        "G# major",
+        "Ab major",
+        "A major",
+        "A# major",
+        "Bb major",
+        "B major",
+        "C minor",
+        "C# minor",
+        "Db minor",
+        "D minor",
+        "D# minor",
+        "Eb minor",
+        "E minor",
+        "F minor",
+        "F# minor",
+        "Gb minor",
+        "G minor",
+        "G# minor",
+        "Ab minor",
+        "A minor",
+        "A# minor",
+        "Bb minor",
+        "B minor"
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "keyscale",
+        "enum"
+      ]
+    },
+    {
+      "after": [
+        "ar",
+        "az",
+        "bg",
+        "bn",
+        "ca",
+        "cs",
+        "da",
+        "de",
+        "el",
+        "en",
+        "es",
+        "fa",
+        "fi",
+        "fr",
+        "he",
+        "hi",
+        "hr",
+        "ht",
+        "hu",
+        "id",
+        "is",
+        "it",
+        "ja",
+        "ko",
+        "la",
+        "lt",
+        "ms",
+        "ne",
+        "nl",
+        "no",
+        "pa",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sa",
+        "sk",
+        "sr",
+        "sv",
+        "sw",
+        "ta",
+        "te",
+        "th",
+        "tl",
+        "tr",
+        "uk",
+        "ur",
+        "vi",
+        "yue",
+        "zh",
+        "unknown"
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "enum"
+      ]
+    },
+    {
+      "after": [
+        "2",
+        "3",
+        "4",
+        "6"
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "enum"
+      ]
+    },
+    {
+      "after": {
+        "input": "timesignature",
+        "node_type": "TextEncodeAceStepAudio1.5"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "choices_from"
+      ]
+    },
+    {
+      "after": {
+        "input": "language",
+        "node_type": "TextEncodeAceStepAudio1.5"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "choices_from"
+      ]
+    },
+    {
+      "after": {
+        "input": "keyscale",
+        "node_type": "TextEncodeAceStepAudio1.5"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "keyscale",
+        "choices_from"
+      ]
+    },
+    {
+      "after": "Choose the number of beats in each bar.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose the language for the lyrics.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "help"
+      ]
+    },
+    {
+      "after": "Choose the musical key for the piece.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "keyscale",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg_scale",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning variety value from 0 to 2.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "temperature",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning choice range from 0 to 1.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "top_p",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the planning choice limit from 0 to 1000.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "top_k",
+        "help"
+      ]
+    },
+    {
+      "after": "Set the minimum planning choice likelihood from 0 to 1.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "min_p",
+        "help"
+      ]
+    },
+    {
+      "after": "Higher follows your words more closely.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "cfg",
+        "help"
+      ]
+    },
+    {
+      "after": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler",
+        "help"
+      ]
+    },
+    {
+      "after": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-04-02",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/ACE-Step/acestep-v15-xl-turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    },
+    {
+      "after": {
+        "ar": "Arabic",
+        "az": "Azerbaijani",
+        "bg": "Bulgarian",
+        "bn": "Bengali",
+        "ca": "Catalan",
+        "cs": "Czech",
+        "da": "Danish",
+        "de": "German",
+        "el": "Greek",
+        "en": "English",
+        "es": "Spanish",
+        "fa": "Persian",
+        "fi": "Finnish",
+        "fr": "French",
+        "he": "Hebrew",
+        "hi": "Hindi",
+        "hr": "Croatian",
+        "ht": "Haitian Creole",
+        "hu": "Hungarian",
+        "id": "Indonesian",
+        "is": "Icelandic",
+        "it": "Italian",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "la": "Latin",
+        "lt": "Lithuanian",
+        "ms": "Malay",
+        "ne": "Nepali",
+        "nl": "Dutch",
+        "no": "Norwegian",
+        "pa": "Punjabi",
+        "pl": "Polish",
+        "pt": "Portuguese",
+        "ro": "Romanian",
+        "ru": "Russian",
+        "sa": "Sanskrit",
+        "sk": "Slovak",
+        "sr": "Serbian",
+        "sv": "Swedish",
+        "sw": "Swahili",
+        "ta": "Tamil",
+        "te": "Telugu",
+        "th": "Thai",
+        "tl": "Tagalog",
+        "tr": "Turkish",
+        "uk": "Ukrainian",
+        "unknown": "No specific language",
+        "ur": "Urdu",
+        "vi": "Vietnamese",
+        "yue": "Cantonese",
+        "zh": "Chinese"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "language",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "2": "2 beats per bar",
+        "3": "3 beats per bar",
+        "4": "4 beats per bar",
+        "6": "6 beats per bar"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "timesignature",
+        "choice_labels"
+      ]
+    }
+  ],
+  "audio.generate.sa3-small-sfx": [
+    {
+      "after": "What to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the sound you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Length in seconds.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "audio.generate.yue2-song": [
+    {
+      "after": "Length in seconds. The model can stop early on long prompts.",
+      "before": "Maximum length in seconds; the song may be shorter.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": "Maximum length",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.",
+      "before": "Describe the genre, instruments, and mood.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "tags",
+        "help"
+      ]
+    },
+    {
+      "after": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "tags",
+        "description"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/m-a-p/YuE2-3B",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "image.edit.qwen-image-2.1-edit": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the change you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "what to avoid",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe anything you want left out.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "negative_prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-09-20",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    },
+    {
+      "after": "More steps add detail but take longer. 20 to 30 works well for this model.",
+      "before": "More steps add detail but take longer.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "steps",
+        "help"
+      ]
+    },
+    {
+      "after": {
+        "choices_from": {
+          "input": "sampler_name",
+          "node_type": "KSampler"
+        },
+        "default": "euler",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "label": "Generation method",
+        "type": "string"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "choices_from": {
+          "input": "scheduler",
+          "node_type": "KSampler"
+        },
+        "default": "simple",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "label": "Step timing",
+        "type": "string"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "input": "sampler_name",
+          "node": "8"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "input": "scheduler",
+          "node": "8"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
+    },
+    {
+      "after": {
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "items": {
+          "properties": {
+            "name": {
+              "help": "One of the installed adapters listed for this model.",
+              "label": "adapter",
+              "required": true,
+              "type": "string"
+            },
+            "weight": {
+              "default": 1.0,
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "label": "strength",
+              "maximum": 4,
+              "minimum": -4,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "label": "style adapters",
+        "max_items": 3,
+        "type": "array"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "enum": [
+          "qwen3vl_8b_w4a8.safetensors"
+        ],
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "label": "text encoder",
+        "type": "string"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "qwen_image_2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "chain": {
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            },
+            "link": "model",
+            "node_type": "LoraLoaderModelOnly"
+          },
+          "input": "model",
+          "node": "5"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "input": "clip_name",
+          "node": "2"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
+      ]
+    }
+  ],
+  "image.edit.seedvr2-upscale": [
+    {
+      "after": {
+        "input": "color_correction_method",
+        "node_type": "SeedVR2PostProcessing"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "choices_from"
+      ]
+    },
+    {
+      "after": "enlargement factor",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "label"
+      ]
+    },
+    {
+      "after": "How much larger the picture gets before sharpening.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "help"
+      ]
+    },
+    {
+      "after": "color matching method",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "label"
+      ]
+    },
+    {
+      "after": "How colors are matched to the original picture.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": {
+        "2": "2\u00d7 width and height",
+        "4": "4\u00d7 width and height"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scale",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": {
+        "adain": "Fastest, roughest",
+        "lab": "Most faithful colors",
+        "none": "No color matching",
+        "wavelet": "Keep fine detail"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "color_correction_method",
+        "choice_labels"
+      ]
+    }
+  ],
+  "image.generate.krea2-turbo": [
+    {
+      "after": "what to make",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe the picture you want.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "prompt",
+        "help"
+      ]
+    },
+    {
+      "after": "variation number",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "label"
+      ]
+    },
+    {
+      "after": "Use the same number to repeat a variation with the same settings.",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "seed",
+        "help"
+      ]
+    },
+    {
+      "after": "2026-06-22",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/krea/Krea-2-Turbo",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    },
+    {
+      "after": {
+        "choices_from": {
+          "input": "sampler_name",
+          "node_type": "KSampler"
+        },
+        "default": "euler",
+        "enum": [
+          "euler",
+          "euler_cfg_pp",
+          "euler_ancestral",
+          "euler_ancestral_cfg_pp",
+          "heun",
+          "heunpp2",
+          "exp_heun_2_x0",
+          "exp_heun_2_x0_sde",
+          "dpm_2",
+          "dpm_2_ancestral",
+          "lms",
+          "dpm_fast",
+          "dpm_adaptive",
+          "dpmpp_2s_ancestral",
+          "dpmpp_2s_ancestral_cfg_pp",
+          "dpmpp_sde",
+          "dpmpp_sde_gpu",
+          "dpmpp_2m",
+          "dpmpp_2m_cfg_pp",
+          "dpmpp_2m_sde",
+          "dpmpp_2m_sde_gpu",
+          "dpmpp_2m_sde_heun",
+          "dpmpp_2m_sde_heun_gpu",
+          "dpmpp_3m_sde",
+          "dpmpp_3m_sde_gpu",
+          "ddpm",
+          "lcm",
+          "ipndm",
+          "ipndm_v",
+          "deis",
+          "cfgpp_ud10_ab",
+          "res_multistep",
+          "res_multistep_cfg_pp",
+          "res_multistep_ancestral",
+          "res_multistep_ancestral_cfg_pp",
+          "gradient_estimation",
+          "gradient_estimation_cfg_pp",
+          "er_sde",
+          "seeds_2",
+          "seeds_3",
+          "sa_solver",
+          "sa_solver_pece",
+          "ddim",
+          "uni_pc",
+          "uni_pc_bh2"
+        ],
+        "help": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+        "label": "Generation method",
+        "type": "string"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "sampler"
+      ]
+    },
+    {
+      "after": {
+        "choices_from": {
+          "input": "scheduler",
+          "node_type": "KSampler"
+        },
+        "default": "simple",
+        "enum": [
+          "simple",
+          "sgm_uniform",
+          "karras",
+          "exponential",
+          "ddim_uniform",
+          "beta",
+          "normal",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "help": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+        "label": "Step timing",
+        "type": "string"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "input": "sampler_name",
+          "node": "7"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "sampler"
+      ]
+    },
+    {
+      "after": [
+        {
+          "input": "scheduler",
+          "node": "7"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "scheduler"
+      ]
+    },
+    {
+      "after": {
+        "help": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+        "items": {
+          "properties": {
+            "name": {
+              "help": "One of the installed adapters listed for this model.",
+              "label": "adapter",
+              "required": true,
+              "type": "string"
+            },
+            "weight": {
+              "default": 1.0,
+              "help": "How strongly the adapter applies. 1.0 is the usual setting.",
+              "label": "strength",
+              "maximum": 4,
+              "minimum": -4,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "label": "style adapters",
+        "max_items": 3,
+        "type": "array"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "loras"
+      ]
+    },
+    {
+      "after": {
+        "enum": [
+          "qwen3vl_4b_fp8_scaled.safetensors"
+        ],
+        "help": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+        "label": "text encoder",
+        "type": "string"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "text_encoder"
+      ]
+    },
+    {
+      "after": "krea2",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_architecture"
+      ]
+    },
+    {
+      "after": "loras",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "adapter_lora_folder"
+      ]
+    },
+    {
+      "after": [
+        {
+          "chain": {
+            "fields": {
+              "name": "lora_name",
+              "weight": "strength_model"
+            },
+            "link": "model",
+            "node_type": "LoraLoaderModelOnly"
+          },
+          "input": "model",
+          "node": "7"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "loras"
+      ]
+    },
+    {
+      "after": [
+        {
+          "input": "clip_name",
+          "node": "2"
+        }
+      ],
+      "before": null,
+      "before_present": false,
+      "path": [
+        "bindings",
+        "comfyui",
+        "map",
+        "text_encoder"
+      ]
+    }
+  ],
+  "video.edit.rife-interpolate": [
+    {
+      "after": {
+        "2": "Twice the frames",
+        "3": "Three times the frames (not tested here)",
+        "4": "Four times the frames (not tested here)"
+      },
+      "before": null,
+      "before_present": false,
+      "path": [
+        "inputs",
+        "multiplier",
+        "choice_labels"
+      ]
+    },
+    {
+      "after": "How many times more frames the video gets.",
+      "before": "2 doubles the frames. 3 and 4 are less tested.",
+      "before_present": true,
+      "path": [
+        "inputs",
+        "multiplier",
+        "help"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-i2v": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-keyframes": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-keyframes-mid": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-long": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.ltx-2.5-t2v": [
+    {
+      "after": "2026-08-11",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "released_at"
+      ]
+    },
+    {
+      "after": "https://huggingface.co/Lightricks/LTX-2.5",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-i2v": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-keyframes": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-keyframes-mid": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-long": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ],
+  "video.generate.minimax-h3-t2v": [
+    {
+      "after": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "before": null,
+      "before_present": false,
+      "path": [
+        "source_url"
+      ]
+    }
+  ]
+}

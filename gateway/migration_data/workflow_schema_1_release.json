@@ -1,0 +1,2435 @@
+{
+ "captured_from": "manifests/workflows at d854e6094 (schema_version 1)",
+ "documents": {
+  "audio.generate.ace-step-1.5-xl-turbo": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "bpm": [
+       {
+        "input": "bpm",
+        "node": "5"
+       }
+      ],
+      "cfg": [
+       {
+        "input": "cfg",
+        "node": "20"
+       }
+      ],
+      "cfg_scale": [
+       {
+        "input": "cfg_scale",
+        "node": "5"
+       }
+      ],
+      "duration": [
+       {
+        "input": "seconds",
+        "node": "10"
+       },
+       {
+        "input": "duration",
+        "node": "5"
+       }
+      ],
+      "keyscale": [
+       {
+        "input": "keyscale",
+        "node": "5"
+       }
+      ],
+      "language": [
+       {
+        "input": "language",
+        "node": "5"
+       }
+      ],
+      "lyrics": [
+       {
+        "input": "lyrics",
+        "node": "5"
+       }
+      ],
+      "min_p": [
+       {
+        "input": "min_p",
+        "node": "5"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "tags",
+        "node": "5"
+       }
+      ],
+      "sampler": [
+       {
+        "input": "sampler_name",
+        "node": "20"
+       }
+      ],
+      "scheduler": [
+       {
+        "input": "scheduler",
+        "node": "20"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "20"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "20"
+       }
+      ],
+      "tags": [
+       {
+        "input": "tags",
+        "node": "5"
+       }
+      ],
+      "temperature": [
+       {
+        "input": "temperature",
+        "node": "5"
+       }
+      ],
+      "timesignature": [
+       {
+        "input": "timesignature",
+        "node": "5"
+       }
+      ],
+      "top_k": [
+       {
+        "input": "top_k",
+        "node": "5"
+       }
+      ],
+      "top_p": [
+       {
+        "input": "top_p",
+        "node": "5"
+       }
+      ]
+     },
+     "selectors": {
+      "audio": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "audio",
+       "node": "38",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/audio/ace-step-1.5-xl-turbo.json"
+    }
+   },
+   "capability": "music",
+   "description": "Songs and instrumentals from a prompt",
+   "display_name": "ACE-Step 1.5 XL Turbo",
+   "id": "audio.generate.ace-step-1.5-xl-turbo",
+   "inputs": {
+    "bpm": {
+     "help": "Set the tempo.",
+     "label": "beats per minute",
+     "maximum": 300,
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cfg": {
+     "label": "prompt guidance",
+     "maximum": 20,
+     "minimum": 0,
+     "type": "number"
+    },
+    "cfg_scale": {
+     "label": "planning guidance",
+     "maximum": 20,
+     "minimum": 0,
+     "type": "number"
+    },
+    "duration": {
+     "help": "Length in seconds.",
+     "label": "length",
+     "maximum": 300,
+     "minimum": 1,
+     "type": "number"
+    },
+    "keyscale": {
+     "label": "musical key",
+     "type": "string"
+    },
+    "language": {
+     "label": "language",
+     "type": "string"
+    },
+    "lyrics": {
+     "help": "Enter the words to sing.",
+     "label": "lyrics",
+     "type": "string"
+    },
+    "min_p": {
+     "label": "minimum choice likelihood",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "prompt": {
+     "help": "Describe what you want to make.",
+     "label": "description",
+     "type": "string"
+    },
+    "sampler": {
+     "label": "generation method",
+     "type": "string"
+    },
+    "scheduler": {
+     "label": "step timing",
+     "type": "string"
+    },
+    "seed": {
+     "help": "Reuse this number and the same settings for a similar result.",
+     "label": "variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "help": "More steps take longer.",
+     "label": "steps",
+     "maximum": 200,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "tags": {
+     "help": "Describe the genre, mood and instruments.",
+     "label": "music style",
+     "type": "string"
+    },
+    "temperature": {
+     "label": "variety",
+     "maximum": 2,
+     "minimum": 0,
+     "type": "number"
+    },
+    "timesignature": {
+     "label": "time signature",
+     "type": "string"
+    },
+    "top_k": {
+     "label": "choice limit",
+     "maximum": 1000,
+     "minimum": 0,
+     "type": "integer"
+    },
+    "top_p": {
+     "label": "choice range",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    }
+   },
+   "intent": "audio.generate",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "audio": {
+     "media_type": "audio/wav"
+    }
+   },
+   "prompt_hint": "Describe the music you want",
+   "purpose": "Songs and instrumentals from a prompt",
+   "schema_version": 1,
+   "source": "local",
+   "technical_description": "Portable audio.generate contract bound to the ACE-Step 1.5 XL Turbo ComfyUI workflow.",
+   "trusted": true,
+   "version": "0.1.0"
+  },
+  "audio.generate.sa3-small-sfx": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "duration": [
+       {
+        "input": "seconds",
+        "node": "5"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "3"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "6"
+       }
+      ]
+     },
+     "selectors": {
+      "audio": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "audio",
+       "node": "8",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/audio/sa3-small-sfx.json"
+    }
+   },
+   "capability": "sfx",
+   "description": "Sound effects from a description",
+   "display_name": "Stable Audio 3 Small SFX",
+   "id": "audio.generate.sa3-small-sfx",
+   "inputs": {
+    "duration": {
+     "default": 10,
+     "maximum": 120,
+     "minimum": 1,
+     "type": "number"
+    },
+    "prompt": {
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "intent": "audio.generate",
+   "license": "Stability AI Community License (commercial registration required; separate license above USD 1M annual revenue; acceptable-use restrictions) with Gemma Terms of Use (prohibited-use policy)",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "audio": {
+     "media_type": "audio/flac"
+    }
+   },
+   "prompt_hint": "Describe the sound you want",
+   "purpose": "Sound effects from a description",
+   "requires": {
+    "models": [
+     {
+      "path": "checkpoints/stable_audio_3_small_sfx.safetensors",
+      "role": "checkpoint"
+     },
+     {
+      "path": "text_encoders/t5gemma_b_b_ul2.safetensors",
+      "role": "text_encoder"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "technical_description": "Stable Audio 3 small-sfx text-to-sound-effect, stereo 44.1 kHz FLAC. Default sfx model. About 1 s warm for 10 s of audio. Output is peak-normalized by the gateway (raw model output is quiet). License: Stable Audio community license.",
+   "trusted": true,
+   "typical_seconds": 1,
+   "version": "0.1.0"
+  },
+  "audio.generate.yue2-song": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "duration": [
+       {
+        "input": "max_duration",
+        "node": "5"
+       }
+      ],
+      "lyrics": [
+       {
+        "input": "value",
+        "node": "3"
+       }
+      ],
+      "seed": [
+       {
+        "input": "value",
+        "node": "30"
+       }
+      ],
+      "tags": [
+       {
+        "input": "value",
+        "node": "2"
+       }
+      ]
+     },
+     "selectors": {
+      "audio": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "audio",
+       "node": "10",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/audio/yue2-song.json"
+    }
+   },
+   "capability": "music",
+   "description": "Make a song with vocals from musical styles and lyrics.",
+   "display_name": "YuE2 Song",
+   "id": "audio.generate.yue2-song",
+   "inputs": {
+    "duration": {
+     "default": 180,
+     "help": "Maximum length in seconds; the song may be shorter.",
+     "label": "Maximum length",
+     "maximum": 360,
+     "minimum": 10,
+     "type": "number"
+    },
+    "lyrics": {
+     "help": "Words to sing.",
+     "label": "Lyrics",
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "tags": {
+     "help": "Describe the genre, instruments, and mood.",
+     "label": "Musical style",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "intent": "audio.generate",
+   "license": "CC BY-NC (non-commercial use only)",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "audio": {
+     "media_type": "audio/mpeg"
+    }
+   },
+   "prompt_hint": "Describe the music you want",
+   "purpose": "Full songs with vocals from lyrics",
+   "requires": {
+    "models": [
+     {
+      "path": "checkpoints/yue2_3b_int8_convrot.safetensors",
+      "role": "checkpoint"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 30,
+   "version": "0.1.0"
+  },
+  "image.edit.qwen-image-2.1-edit": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "cfg": [
+       {
+        "input": "cfg",
+        "node": "8"
+       }
+      ],
+      "negative_prompt": [
+       {
+        "input": "negative_prompt",
+        "node": "7"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "reference_resolution": [
+       {
+        "input": "resolution",
+        "node": "7"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "8"
+       }
+      ],
+      "source_image": [
+       {
+        "input": "image",
+        "node": "4"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "8"
+       }
+      ]
+     },
+     "selectors": {
+      "image": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "10",
+       "take": "all"
+      }
+     },
+     "workflow": "workflows/images/qwen-image-2.1-edit.json"
+    }
+   },
+   "description": "Change a photo by telling it what to do, such as swapping the background or adding an object.",
+   "display_name": "Qwen-Image 2.1 Edit",
+   "id": "image.edit.qwen-image-2.1-edit",
+   "inputs": {
+    "cfg": {
+     "default": 1.0,
+     "help": "Higher follows your words more closely. Try 3 to 5 if colours look too warm.",
+     "label": "prompt strength",
+     "maximum": 10,
+     "minimum": 0,
+     "type": "number"
+    },
+    "negative_prompt": {
+     "default": "",
+     "type": "string"
+    },
+    "prompt": {
+     "required": true,
+     "type": "string"
+    },
+    "reference_resolution": {
+     "default": 1024,
+     "help": "Lower is faster. Large pictures can be much slower above 1024.",
+     "label": "reference size",
+     "maximum": 2048,
+     "minimum": 256,
+     "type": "integer"
+    },
+    "seed": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "source_image": {
+     "help": "The picture you want to change.",
+     "label": "a picture to change",
+     "required": true,
+     "type": "asset"
+    },
+    "steps": {
+     "default": 25,
+     "help": "More steps add detail but take longer.",
+     "label": "steps",
+     "maximum": 60,
+     "minimum": 1,
+     "type": "integer"
+    }
+   },
+   "intent": "image.edit",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "image": {
+     "media_type": "image/png"
+    }
+   },
+   "prompt_hint": "Describe the change you want",
+   "purpose": "Edit a photo from a text instruction",
+   "requires": {
+    "custom_nodes": [
+     "RMBG"
+    ],
+    "models": [
+     {
+      "path": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_8b_w4a8.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+      "role": "vae"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 20,
+   "version": "0.1.0"
+  },
+  "image.edit.seedvr2-upscale": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "color_correction_method": [
+       {
+        "input": "color_correction_method",
+        "node": "10"
+       }
+      ],
+      "scale": [
+       {
+        "input": "resize_type.multiplier",
+        "node": "2"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "8"
+       }
+      ],
+      "source_image": [
+       {
+        "input": "image",
+        "node": "1"
+       }
+      ]
+     },
+     "selectors": {
+      "image": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "11",
+       "take": "all"
+      }
+     },
+     "workflow": "workflows/images/seedvr2-upscale.json"
+    }
+   },
+   "description": "Make a picture larger and sharper, with finer detail.",
+   "display_name": "SeedVR2 7B Sharp Upscale",
+   "id": "image.edit.seedvr2-upscale",
+   "inputs": {
+    "color_correction_method": {
+     "default": "none",
+     "description": "Optional color match back to the original (pre-upscale) image. lab is most faithful, wavelet keeps upscaled high-frequency detail, adain is fastest/roughest, none skips color transfer.",
+     "enum": [
+      "none",
+      "lab",
+      "wavelet",
+      "adain"
+     ],
+     "type": "string"
+    },
+    "scale": {
+     "default": 2,
+     "enum": [
+      2,
+      4
+     ],
+     "type": "number"
+    },
+    "seed": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "source_image": {
+     "help": "The picture to make bigger and sharper.",
+     "label": "a picture to enlarge",
+     "required": true,
+     "type": "asset"
+    }
+   },
+   "intent": "image.edit",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "image": {
+     "media_type": "image/png"
+    }
+   },
+   "purpose": "Upscale and restore an image",
+   "requires": {
+    "custom_nodes": [
+     "RMBG"
+    ],
+    "models": [
+     {
+      "path": "diffusion_models/seedvr2_7b_sharp_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "vae/seedvr2_ema_vae_fp16.safetensors",
+      "role": "vae"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 3,
+   "version": "0.1.0"
+  },
+  "image.generate.krea2-turbo": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "batch_size": [
+       {
+        "input": "batch_size",
+        "node": "6"
+       }
+      ],
+      "height": [
+       {
+        "input": "height",
+        "node": "6"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "4"
+       }
+      ],
+      "seed": [
+       {
+        "input": "seed",
+        "node": "7"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "7"
+       }
+      ],
+      "width": [
+       {
+        "input": "width",
+        "node": "6"
+       }
+      ]
+     },
+     "selectors": {
+      "image": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "9",
+       "take": "all"
+      }
+     },
+     "workflow": "workflows/images/krea2-turbo.json"
+    }
+   },
+   "description": "Make a realistic photo-style picture from a description.",
+   "display_name": "Krea 2 Turbo",
+   "id": "image.generate.krea2-turbo",
+   "inputs": {
+    "batch_size": {
+     "default": 1,
+     "help": "How many pictures to make at once.",
+     "label": "number of pictures",
+     "maximum": 8,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "height": {
+     "default": 1024,
+     "help": "Picture height in pixels.",
+     "label": "height",
+     "maximum": 2048,
+     "minimum": 64,
+     "type": "integer"
+    },
+    "prompt": {
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "default": 8,
+     "help": "More steps add detail but take longer. 8 to 12 works well for this model.",
+     "label": "steps",
+     "maximum": 20,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "width": {
+     "default": 1024,
+     "help": "Picture width in pixels.",
+     "label": "width",
+     "maximum": 2048,
+     "minimum": 64,
+     "type": "integer"
+    }
+   },
+   "intent": "image.generate",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "image": {
+     "media_type": "image/png"
+    }
+   },
+   "prompt_hint": "Describe the picture you want",
+   "purpose": "Photoreal images from a prompt",
+   "requires": {
+    "custom_nodes": [
+     "RMBG"
+    ],
+    "models": [
+     {
+      "path": "diffusion_models/krea2_turbo_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/qwen_image_vae.safetensors",
+      "role": "vae"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 9,
+   "version": "0.1.0"
+  },
+  "video.edit.rife-interpolate": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "multiplier": [
+       {
+        "input": "multiplier",
+        "node": "3"
+       },
+       {
+        "input": "b",
+        "node": "4"
+       }
+      ],
+      "source_video": [
+       {
+        "input": "file",
+        "node": "1"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "6",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/rife-interpolate.json"
+    }
+   },
+   "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+   "display_name": "RIFE 2x Frame Interpolation",
+   "id": "video.edit.rife-interpolate",
+   "inputs": {
+    "multiplier": {
+     "default": 2,
+     "description": "Frame-count/fps multiplier. Only 2x is verified; higher values are supported by the RIFE VFI node but untested here.",
+     "enum": [
+      2,
+      3,
+      4
+     ],
+     "help": "2 doubles the frames. 3 and 4 are less tested.",
+     "label": "frame multiplier",
+     "type": "integer"
+    },
+    "source_video": {
+     "help": "The video to make smoother.",
+     "label": "a video to smooth",
+     "media_type": "video/*",
+     "required": true,
+     "type": "asset"
+    }
+   },
+   "intent": "video.edit",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "purpose": "Double a video's frame rate",
+   "requires": {
+    "custom_nodes": [
+     "RIFE VFI"
+    ],
+    "models": [
+     {
+      "path": "custom_nodes/ComfyUI-Frame-Interpolation/ckpts/rife/rife49.pth",
+      "role": "other"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 4,
+   "version": "0.1.0"
+  },
+  "video.edit.video-mux": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "source_audio": [
+       {
+        "input": "audio",
+        "node": "3"
+       }
+      ],
+      "source_video": [
+       {
+        "input": "file",
+        "node": "1"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "5",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-mux.json"
+    }
+   },
+   "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+   "display_name": "Add a Soundtrack to a Video",
+   "id": "video.edit.video-mux",
+   "inputs": {
+    "source_audio": {
+     "help": "The song or sound to put on the video.",
+     "label": "a sound to add",
+     "media_type": "audio/*",
+     "required": true,
+     "type": "asset"
+    },
+    "source_video": {
+     "help": "The video that gets the new sound.",
+     "label": "a video",
+     "media_type": "video/*",
+     "required": true,
+     "type": "asset"
+    }
+   },
+   "intent": "video.edit",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "purpose": "Put an audio track onto a video",
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 5,
+   "version": "0.1.0"
+  },
+  "video.generate.ltx-2.5-i2v": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "frame_rate": [
+       {
+        "input": "value",
+        "node": "23"
+       },
+       {
+        "input": "value",
+        "node": "24"
+       }
+      ],
+      "image": [
+       {
+        "input": "image",
+        "node": "70"
+       }
+      ],
+      "image_strength": [
+       {
+        "input": "value",
+        "node": "79"
+       }
+      ],
+      "negative_prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "5"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "30"
+       },
+       {
+        "input": "noise_seed",
+        "node": "31"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "60",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-ltx-2.5-i2v.json"
+    }
+   },
+   "description": "Make a video with sound from a starting picture and a description.",
+   "display_name": "LTX 2.5 Distilled I2V",
+   "id": "video.generate.ltx-2.5-i2v",
+   "inputs": {
+    "frame_rate": {
+     "default": 24,
+     "help": "How many frames the video shows each second.",
+     "label": "Frames per second",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "image": {
+     "help": "The picture the video starts from.",
+     "label": "a starting picture",
+     "required": true,
+     "type": "asset"
+    },
+    "image_strength": {
+     "default": 0.7,
+     "help": "Adjust how strongly the starting picture shapes the video.",
+     "label": "Picture influence",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "negative_prompt": {
+     "help": "Describe anything you want left out.",
+     "label": "What to avoid",
+     "type": "string"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe how the picture should move",
+   "purpose": "Animate an image, with sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/ltx-2.5-video-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/ltx-2.5-audio-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+      "role": "upscale_model"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 56,
+   "version": "0.1.0"
+  },
+  "video.generate.ltx-2.5-keyframes": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "frame_rate": [
+       {
+        "input": "value",
+        "node": "23"
+       },
+       {
+        "input": "value",
+        "node": "24"
+       }
+      ],
+      "frames": [
+       {
+        "input": "value",
+        "node": "22"
+       }
+      ],
+      "image": [
+       {
+        "input": "image",
+        "node": "70"
+       }
+      ],
+      "image_strength": [
+       {
+        "input": "value",
+        "node": "79"
+       }
+      ],
+      "img_compression": [
+       {
+        "input": "img_compression",
+        "node": "72"
+       },
+       {
+        "input": "img_compression",
+        "node": "75"
+       },
+       {
+        "input": "img_compression",
+        "node": "103"
+       },
+       {
+        "input": "img_compression",
+        "node": "107"
+       }
+      ],
+      "last_frame": [
+       {
+        "input": "image",
+        "node": "101"
+       }
+      ],
+      "last_frame_strength": [
+       {
+        "input": "value",
+        "node": "100"
+       }
+      ],
+      "negative_prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "5"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "30"
+       },
+       {
+        "input": "noise_seed",
+        "node": "31"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "60",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-ltx-2.5-keyframes.json"
+    }
+   },
+   "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+   "display_name": "LTX 2.5 Distilled Keyframes",
+   "id": "video.generate.ltx-2.5-keyframes",
+   "inputs": {
+    "frame_rate": {
+     "default": 24,
+     "help": "How many frames the video shows each second.",
+     "label": "Frames per second",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "frames": {
+     "help": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+     "label": "Length in frames",
+     "maximum": 241,
+     "minimum": 9,
+     "offset": 1,
+     "step": 8,
+     "type": "integer"
+    },
+    "image": {
+     "help": "The picture the video starts from.",
+     "label": "a starting picture",
+     "required": true,
+     "type": "asset"
+    },
+    "image_strength": {
+     "default": 0.7,
+     "help": "Adjust how strongly the starting picture shapes the video.",
+     "label": "Picture influence",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "img_compression": {
+     "default": 18,
+     "help": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+     "label": "Guide compression",
+     "maximum": 100,
+     "minimum": 0,
+     "type": "integer"
+    },
+    "last_frame": {
+     "help": "The picture the video ends on.",
+     "label": "an ending picture",
+     "required": true,
+     "type": "asset"
+    },
+    "last_frame_strength": {
+     "default": 1,
+     "help": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+     "label": "Ending picture influence",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "negative_prompt": {
+     "help": "Describe anything you want left out.",
+     "label": "What to avoid",
+     "type": "string"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Animate between two pictures, with sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/ltx-2.5-video-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/ltx-2.5-audio-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+      "role": "upscale_model"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 40,
+   "version": "0.1.0"
+  },
+  "video.generate.ltx-2.5-keyframes-mid": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "frame_rate": [
+       {
+        "input": "value",
+        "node": "23"
+       },
+       {
+        "input": "value",
+        "node": "24"
+       }
+      ],
+      "frames": [
+       {
+        "input": "value",
+        "node": "22"
+       }
+      ],
+      "image": [
+       {
+        "input": "image",
+        "node": "70"
+       }
+      ],
+      "image_strength": [
+       {
+        "input": "value",
+        "node": "79"
+       }
+      ],
+      "img_compression": [
+       {
+        "input": "img_compression",
+        "node": "72"
+       },
+       {
+        "input": "img_compression",
+        "node": "75"
+       },
+       {
+        "input": "img_compression",
+        "node": "103"
+       },
+       {
+        "input": "img_compression",
+        "node": "107"
+       },
+       {
+        "input": "img_compression",
+        "node": "122"
+       },
+       {
+        "input": "img_compression",
+        "node": "124"
+       }
+      ],
+      "last_frame": [
+       {
+        "input": "image",
+        "node": "101"
+       }
+      ],
+      "last_frame_strength": [
+       {
+        "input": "value",
+        "node": "100"
+       }
+      ],
+      "mid_frame": [
+       {
+        "input": "image",
+        "node": "120"
+       }
+      ],
+      "mid_frame_index": [
+       {
+        "input": "frame_idx",
+        "node": "110"
+       },
+       {
+        "input": "frame_idx",
+        "node": "111"
+       }
+      ],
+      "mid_frame_strength": [
+       {
+        "input": "value",
+        "node": "125"
+       }
+      ],
+      "negative_prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "5"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "30"
+       },
+       {
+        "input": "noise_seed",
+        "node": "31"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "60",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-ltx-2.5-keyframes-mid.json"
+    }
+   },
+   "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+   "display_name": "LTX 2.5 Distilled Keyframes + Middle",
+   "id": "video.generate.ltx-2.5-keyframes-mid",
+   "inputs": {
+    "frame_rate": {
+     "default": 24,
+     "help": "How many frames the video shows each second.",
+     "label": "Frames per second",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "frames": {
+     "help": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+     "label": "Length in frames",
+     "maximum": 241,
+     "minimum": 9,
+     "offset": 1,
+     "step": 8,
+     "type": "integer"
+    },
+    "image": {
+     "help": "The picture the video starts from.",
+     "label": "a starting picture",
+     "required": true,
+     "type": "asset"
+    },
+    "image_strength": {
+     "default": 0.7,
+     "help": "Adjust how strongly the starting picture shapes the video.",
+     "label": "Picture influence",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "img_compression": {
+     "default": 18,
+     "help": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+     "label": "Guide compression",
+     "maximum": 100,
+     "minimum": 0,
+     "type": "integer"
+    },
+    "last_frame": {
+     "help": "The picture the video ends on.",
+     "label": "an ending picture",
+     "required": true,
+     "type": "asset"
+    },
+    "last_frame_strength": {
+     "default": 1,
+     "help": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+     "label": "Ending picture influence",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "mid_frame": {
+     "help": "The picture the video passes through part-way.",
+     "label": "a middle picture",
+     "required": true,
+     "type": "asset"
+    },
+    "mid_frame_index": {
+     "help": "Which frame the middle picture pins to; defaults to half the frame count.",
+     "label": "Middle picture frame",
+     "maximum": 239,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "mid_frame_strength": {
+     "default": 1,
+     "help": "Adjust how strongly the middle picture shapes its frame; 1 pins it.",
+     "label": "Middle picture influence",
+     "maximum": 1,
+     "minimum": 0,
+     "type": "number"
+    },
+    "negative_prompt": {
+     "help": "Describe anything you want left out.",
+     "label": "What to avoid",
+     "type": "string"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Animate through three pictures, with sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/ltx-2.5-video-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/ltx-2.5-audio-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+      "role": "upscale_model"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 45,
+   "version": "0.1.0"
+  },
+  "video.generate.ltx-2.5-long": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "height": [
+       {
+        "input": "height",
+        "node": "s0_vlat"
+       }
+      ],
+      "negative_prompt": [
+       {
+        "input": "text",
+        "node": "neg"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "s0_text"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "s0_noise"
+       }
+      ],
+      "width": [
+       {
+        "input": "width",
+        "node": "s0_vlat"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "save",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-ltx-2.5-long.json"
+    }
+   },
+   "description": "Make a longer video from a description.",
+   "display_name": "LTX 2.5 Long",
+   "id": "video.generate.ltx-2.5-long",
+   "inputs": {
+    "height": {
+     "help": "Video height in pixels.",
+     "label": "Height",
+     "maximum": 720,
+     "minimum": 64,
+     "type": "integer"
+    },
+    "negative_prompt": {
+     "help": "Describe anything you want left out.",
+     "label": "What to avoid",
+     "type": "string"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "width": {
+     "help": "Video width in pixels.",
+     "label": "Width",
+     "maximum": 1280,
+     "minimum": 64,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Longer videos from a prompt",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/ltx-2.5-video-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/ltx-2.5-audio-vae-bf16.safetensors",
+      "role": "vae"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "version": "0.1.0"
+  },
+  "video.generate.ltx-2.5-t2v": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "frame_rate": [
+       {
+        "input": "value",
+        "node": "23"
+       },
+       {
+        "input": "value",
+        "node": "24"
+       }
+      ],
+      "negative_prompt": [
+       {
+        "input": "text",
+        "node": "6"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "text",
+        "node": "5"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "30"
+       },
+       {
+        "input": "noise_seed",
+        "node": "31"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "60",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-ltx-2.5-t2v.json"
+    }
+   },
+   "description": "Make a video with sound from a description or picture.",
+   "display_name": "LTX 2.5",
+   "id": "video.generate.ltx-2.5-t2v",
+   "inputs": {
+    "frame_rate": {
+     "default": 24,
+     "help": "How many frames the video shows each second.",
+     "label": "Frames per second",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "negative_prompt": {
+     "help": "Describe anything you want left out.",
+     "label": "What to avoid",
+     "type": "string"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Video from a prompt or image",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/ltx-2.5-video-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/ltx-2.5-audio-vae-bf16.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+      "role": "upscale_model"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "technical_description": "LTX-2.5 22B distilled two-stage text-to-video with synchronized audio (int8_convrot). Default video model. Request via POST /v1/videos: size is floored to multiples of 64 (max 1280x704; default 960x512), seconds 1-10 at 24 fps (frames are 8k+1). About 45 s warm for 5 s at 960x512; 1280x704 about 140 s. License: LTX-2.x Community License.",
+   "trusted": true,
+   "typical_seconds": 49,
+   "version": "0.1.0"
+  },
+  "video.generate.minimax-h3-i2v": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "image": [
+       {
+        "input": "image",
+        "node": "20"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "prompt",
+        "node": "9"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "10"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "12"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "18",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-minimax-h3-i2v.json"
+    }
+   },
+   "description": "Make a video with stereo sound from a starting picture and a description.",
+   "display_name": "MiniMax H3 I2V",
+   "id": "video.generate.minimax-h3-i2v",
+   "inputs": {
+    "image": {
+     "help": "The picture the video starts from.",
+     "label": "a starting picture",
+     "required": true,
+     "type": "asset"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "default": 8,
+     "help": "More steps take longer.",
+     "label": "Refinement steps",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe how the picture should move",
+   "purpose": "Animate an image with stereo sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "role": "lora"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 135,
+   "version": "0.1.0"
+  },
+  "video.generate.minimax-h3-keyframes": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "frames": [
+       {
+        "input": "value",
+        "node": "8"
+       }
+      ],
+      "image": [
+       {
+        "input": "image",
+        "node": "20"
+       }
+      ],
+      "last_frame": [
+       {
+        "input": "image",
+        "node": "22"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "prompt",
+        "node": "9"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "10"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "12"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "18",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-minimax-h3-keyframes.json"
+    }
+   },
+   "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+   "display_name": "MiniMax H3 Keyframes",
+   "id": "video.generate.minimax-h3-keyframes",
+   "inputs": {
+    "frames": {
+     "help": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+     "label": "Length in frames",
+     "maximum": 362,
+     "minimum": 22,
+     "offset": 5,
+     "step": 17,
+     "type": "integer"
+    },
+    "image": {
+     "help": "The picture the video starts from.",
+     "label": "a starting picture",
+     "required": true,
+     "type": "asset"
+    },
+    "last_frame": {
+     "help": "The picture the video ends on.",
+     "label": "an ending picture",
+     "required": true,
+     "type": "asset"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "default": 8,
+     "help": "More steps take longer.",
+     "label": "Refinement steps",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Animate between two pictures, with stereo sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "role": "lora"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 120,
+   "version": "0.1.0"
+  },
+  "video.generate.minimax-h3-keyframes-mid": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "frames": [
+       {
+        "input": "value",
+        "node": "8"
+       }
+      ],
+      "image": [
+       {
+        "input": "image",
+        "node": "20"
+       }
+      ],
+      "last_frame": [
+       {
+        "input": "image",
+        "node": "22"
+       }
+      ],
+      "mid_frame_index": [
+       {
+        "input": "frame_idx",
+        "node": "27"
+       }
+      ],
+      "middle_frame": [
+       {
+        "input": "image",
+        "node": "24"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "prompt",
+        "node": "9"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "10"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "12"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "18",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-minimax-h3-keyframes-mid.json"
+    }
+   },
+   "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+   "display_name": "MiniMax H3 Keyframes + Middle",
+   "id": "video.generate.minimax-h3-keyframes-mid",
+   "inputs": {
+    "frames": {
+     "help": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+     "label": "Length in frames",
+     "maximum": 362,
+     "minimum": 22,
+     "offset": 5,
+     "step": 17,
+     "type": "integer"
+    },
+    "image": {
+     "help": "The picture the video starts from.",
+     "label": "a starting picture",
+     "required": true,
+     "type": "asset"
+    },
+    "last_frame": {
+     "help": "The picture the video ends on.",
+     "label": "an ending picture",
+     "required": true,
+     "type": "asset"
+    },
+    "mid_frame_index": {
+     "help": "Which frame the middle picture pins to; defaults to half the frame count.",
+     "label": "Middle picture frame",
+     "maximum": 360,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "middle_frame": {
+     "help": "A picture the video passes through halfway, at half its frame count.",
+     "label": "a middle picture",
+     "required": true,
+     "type": "asset"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "default": 8,
+     "help": "More steps take longer.",
+     "label": "Refinement steps",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Animate through three pictures, with stereo sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "role": "lora"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 120,
+   "version": "0.1.0"
+  },
+  "video.generate.minimax-h3-long": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "height": [
+       {
+        "input": "height",
+        "node": "s0_cond"
+       }
+      ],
+      "prompt": [
+       {
+        "input": "prompt",
+        "node": "s0_cond"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "s0_noise"
+       }
+      ],
+      "width": [
+       {
+        "input": "width",
+        "node": "s0_cond"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "save",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-minimax-h3-long.json"
+    }
+   },
+   "description": "Make a longer video with sound from a description.",
+   "display_name": "MiniMax H3 Long",
+   "id": "video.generate.minimax-h3-long",
+   "inputs": {
+    "height": {
+     "help": "Video height in pixels.",
+     "label": "Height",
+     "maximum": 768,
+     "minimum": 64,
+     "type": "integer"
+    },
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "width": {
+     "help": "Video width in pixels.",
+     "label": "Width",
+     "maximum": 1344,
+     "minimum": 64,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Long videos with sound",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "role": "lora"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "version": "0.1.0"
+  },
+  "video.generate.minimax-h3-t2v": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "prompt": [
+       {
+        "input": "prompt",
+        "node": "9"
+       }
+      ],
+      "seed": [
+       {
+        "input": "noise_seed",
+        "node": "10"
+       }
+      ],
+      "steps": [
+       {
+        "input": "steps",
+        "node": "12"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "18",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-minimax-h3-t2v.json"
+    }
+   },
+   "description": "Make a video with stereo sound from a description.",
+   "display_name": "MiniMax H3 T2V",
+   "id": "video.generate.minimax-h3-t2v",
+   "inputs": {
+    "prompt": {
+     "help": "Describe the scene, action, and mood.",
+     "label": "What to make",
+     "required": true,
+     "type": "string"
+    },
+    "seed": {
+     "help": "Use the same number to repeat a variation with the same settings.",
+     "label": "Variation number",
+     "minimum": 0,
+     "type": "integer"
+    },
+    "steps": {
+     "default": 8,
+     "help": "More steps take longer.",
+     "label": "Refinement steps",
+     "maximum": 50,
+     "minimum": 1,
+     "type": "integer"
+    }
+   },
+   "intent": "video.generate",
+   "license": "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "prompt_hint": "Describe the clip you want",
+   "purpose": "Video with stereo sound from a prompt",
+   "requires": {
+    "models": [
+     {
+      "path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "role": "diffusion_model"
+     },
+     {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "role": "text_encoder"
+     },
+     {
+      "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "role": "vae"
+     },
+     {
+      "path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "role": "lora"
+     }
+    ]
+   },
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 122,
+   "version": "0.1.0"
+  }
+ }
+}

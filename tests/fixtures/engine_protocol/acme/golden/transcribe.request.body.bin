@@ -1,0 +1,10 @@
+--ACMEBOUNDARY
+Content-Disposition: form-data; name="audio"; filename="clip.wav"
+Content-Type: audio/wav
+
+RIFF-clip
+--ACMEBOUNDARY
+Content-Disposition: form-data; name="lang"
+
+en
+--ACMEBOUNDARY--

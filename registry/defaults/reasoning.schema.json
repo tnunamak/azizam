@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/reasoning",
+  "title": "reasoning",
+  "description": "Reasoning-effort policy: a default effort and the thinking budget each effort gives (docs/design/CONFIG_HOMES.md, C7).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "default_effort": {
+      "description": "The effort used when a request names none. null means none.",
+      "enum": [null, "none", "minimal", "low", "medium", "high", "xhigh"]
+    },
+    "effort_budgets": {
+      "description": "Thinking tokens per effort. A number of tokens, or 'unlimited'.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "none": {"$ref": "#/$defs/budget"},
+        "minimal": {"$ref": "#/$defs/budget"},
+        "low": {"$ref": "#/$defs/budget"},
+        "medium": {"$ref": "#/$defs/budget"},
+        "high": {"$ref": "#/$defs/budget"},
+        "xhigh": {"$ref": "#/$defs/budget"}
+      }
+    }
+  },
+  "$defs": {
+    "budget": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {"const": "unlimited"}
+      ]
+    }
+  }
+}

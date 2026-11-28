@@ -1,0 +1,18 @@
+{
+  "protocol": "litellm-admin",
+  "name": "key-list",
+  "description": "One /key/list page request with the master key; the answer status and body are test values.",
+  "provenance": {"source": "hand-written", "reference": "https://docs.litellm.ai/docs/proxy/virtual_keys (GET /key/list, return_full_object) and gateway/backends/litellm_admin.py"},
+  "exchanges": [
+    {
+      "id": "list",
+      "match": {
+        "method": "GET",
+        "path": "/key/list",
+        "query": {"page": "1", "size": "100", "return_full_object": "true"},
+        "headers": {"x-litellm-key": "Bearer {{master_key}}", "authorization": {"$absent": true}}
+      },
+      "response": {"status": "{{status}}", "json": "{{body}}"}
+    }
+  ]
+}

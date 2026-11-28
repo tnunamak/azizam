@@ -1,0 +1,956 @@
+"""Request retention: one contract, one decision, one write path.
+
+``registry/retention.yml`` holds every default of the contract and
+``registry/retention.schema.json`` is its closed schema; this module loads and
+validates them and holds no default of its own (docs/design/REQUEST_RETENTION.md
+sections 3 and 12). It has no dependency on the settings or member stores, so
+the stores can import it.
+
+Slice 1 moved what ``prompt_memory`` and the Responses route decided on their
+own into this module without changing a decision:
+
+* ``decide``: whether a request's words are kept, in a fixed order;
+* ``guard`` and ``write``: the one writer, which holds the household setting's
+  write lock and refuses a write that a later setting forbids;
+* ``conversation_store`` and ``conversation_row_visible``: the Responses rule
+  (when a reply is stored) and the conversation scope rule (who can read it);
+* the validator for the bundled file and for the household setting.
+
+The two kinds that exist today share one member switch, the group ``prompts``.
+The household setting is stored as operator setting ``retention``. The settings
+screens still speak the group's view of it, with the names they always used
+(``default_remember``, ``never_keep``, ``retention_cap``); ``prompts_view`` and
+``apply_prompts_view`` are the two directions of that mapping.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import sqlite3
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Iterator, Mapping
+
+import jsonschema
+import yaml
+
+from gateway.sqlite_startup import connect
+
+_REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
+BUNDLED_PATH = _REGISTRY_DIR / "retention.yml"
+SCHEMA_PATH = _REGISTRY_DIR / "retention.schema.json"
+
+#: The household policy: operator setting ``retention``.
+SETTING_KEY = "retention"
+#: ``put_operator_setting`` accepts the prompts group's view under this key (see ``apply_prompts_view``).
+PROMPTS_VIEW_KEY = "prompt_memory"
+#: The member switch of the group ``prompts`` lives in this table; its rows are that group's rows.
+MEMBER_TABLE = "prompt_memory_preferences"
+ERASURE_CUTOFF_TABLE = "prompt_memory_erasure_cutoffs"
+ERASURE_INTENT_TABLE = "prompt_memory_erasure_intents"
+RETENTION_LOCK_TIMEOUT_SECONDS = 0.25
+
+#: Per-request control: ``extensions["com.azizam.prompts"] = {"mode": "forget"}``.
+NAMESPACE = "com.azizam.prompts"
+
+# Core defines the kinds, because each kind needs a capture point in code. Data gives each its values.
+LIBRARY_PROMPT = "library_prompt"
+CONVERSATION = "conversation"
+REQUEST_HISTORY = "request_history"
+KINDS = (LIBRARY_PROMPT, CONVERSATION, REQUEST_HISTORY)
+#: The group whose view the settings screens speak.
+GROUP_PROMPTS = "prompts"
+GROUP_REQUEST_HISTORY = "request_history"
+#: Core defines which kinds share a member switch, as it defines the kinds themselves.
+GROUP_KINDS = {GROUP_PROMPTS: (LIBRARY_PROMPT, CONVERSATION), GROUP_REQUEST_HISTORY: (REQUEST_HISTORY,)}
+#: What a record of each kind can hold at most: the boundaries the code can capture.
+CAPTURE_POINTS = {
+    LIBRARY_PROMPT: ("accepted",),
+    CONVERSATION: ("accepted", "received"),
+    REQUEST_HISTORY: ("accepted", "received"),
+}
+#: Only reader rules the code enforces belong in the file. Request history is maker-only (DECISIONS.md D51).
+READERS = {LIBRARY_PROMPT: ("maker",), CONVERSATION: ("scope",), REQUEST_HISTORY: ("maker",)}
+
+#: The names of the prompts group's view (the settings screens' wire names).
+PROMPTS_VIEW_FIELDS = frozenset({"default_remember", "never_keep", "retention_cap"})
+
+
+class RetentionDataError(ValueError):
+    """The retention file cannot be used. The message names the file and the rule broken."""
+
+
+class PromptModeError(ValueError):
+    pass
+
+
+# ---------------------------------------------------------------- the bundled file
+
+
+@dataclass(frozen=True)
+class Contract:
+    """The validated bundled file. ``data`` is never mutated; callers get copies."""
+
+    data: Mapping[str, Any]
+    source: str
+
+    def group_of(self, kind: str) -> str:
+        for name, group in self.data["groups"].items():
+            if kind in group["kinds"]:
+                return name
+        raise KeyError(kind)
+
+    def group(self, kind: str) -> Mapping[str, Any]:
+        return self.data["groups"][self.group_of(kind)]
+
+    def seconds_map(self) -> dict[str, int | None]:
+        return dict(self.data["retention_choices"])
+
+    def choices(self, kind: str) -> list[str]:
+        return list(self.group(kind)["choices"])
+
+    def household_defaults(self, kind: str) -> dict[str, Any]:
+        """The household's values before the owner sets any, in the settings screens' names."""
+        group = self.group(kind)
+        return {
+            "default_remember": group["default_keep"],
+            "never_keep": self.data["household"]["never_keep"],
+            "retention_cap": group["default_cap"],
+        }
+
+    def member_defaults(self, kind: str) -> dict[str, Any]:
+        group = self.group(kind)
+        return {"remember": group["default_keep"], "retention": group["default_retention"]}
+
+    def parts(self, kind: str) -> tuple[str, ...]:
+        return tuple(self.data["kinds"][kind]["parts"]["default"])
+
+    def public(self, kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
+        """What the settings screens need to draw one group: its choices (listing order) and every default."""
+        seconds = self.data["retention_choices"]
+        result = {
+            "choices": [{"id": name, "seconds": seconds[name]} for name in self.group(kind)["choices"]],
+            "defaults": {**self.household_defaults(kind), **self.member_defaults(kind)},
+        }
+        # A choice another group offers is not "known but unoffered" for this one: the prompts payload stays as it was.
+        offered_anywhere = {name for group in self.data["groups"].values() for name in group["choices"]}
+        unoffered = [{"id": name, "seconds": duration} for name, duration in seconds.items()
+                     if name not in offered_anywhere]
+        if unoffered:
+            result["known_unoffered"] = unoffered
+        return result
+
+
+def _where(path) -> str:
+    return "/".join(str(part) for part in path) or "the file"
+
+
+def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
+    errors: list[str] = []
+    seconds = data["retention_choices"]
+    if data["household"]["never_keep"]:
+        errors.append("household/never_keep: the bundled file cannot erase content at startup; the owner's setting can")
+    seen_in: dict[str, str] = {}
+    for name in data["groups"]:
+        if name not in GROUP_KINDS:
+            errors.append(f"groups/{name}: the gateway has no group of that name ({', '.join(GROUP_KINDS)})")
+    for name, kinds in GROUP_KINDS.items():
+        if name not in data["groups"]:
+            errors.append(f"groups/{name}: the group is missing")
+        elif set(data["groups"][name]["kinds"]) != set(kinds):
+            errors.append(f"groups/{name}/kinds: the gateway routes {', '.join(kinds)} to this group")
+    for kind in data["kinds"]:
+        if kind not in KINDS:
+            errors.append(f"kinds/{kind}: the kind is not one the gateway can capture ({', '.join(KINDS)})")
+    for kind in KINDS:
+        if kind not in data["kinds"]:
+            errors.append(f"kinds/{kind}: the kind has no values")
+    for name, group in data["groups"].items():
+        for kind in group["kinds"]:
+            if kind not in data["kinds"]:
+                errors.append(f"groups/{name}/kinds: {kind} is not defined under kinds")
+            elif kind in seen_in:
+                errors.append(f"groups/{name}/kinds: {kind} is already in the group {seen_in[kind]}; a kind is in one group")
+            seen_in.setdefault(kind, name)
+        for choice in group["choices"]:
+            if choice not in seconds:
+                errors.append(f"groups/{name}/choices: {choice} is not in retention_choices")
+        for field in ("default_retention", "default_cap"):
+            if group[field] not in group["choices"]:
+                errors.append(f"groups/{name}/{field}: {group[field]} is not one of the group's choices")
+    for kind in KINDS:
+        if kind in data["kinds"] and kind not in seen_in:
+            errors.append(f"kinds/{kind}: the kind is in no group")
+    for kind, values in data["kinds"].items():
+        if kind not in KINDS:
+            continue
+        if values["readers"] not in READERS[kind]:
+            errors.append(f"kinds/{kind}/readers: the gateway enforces only {', '.join(READERS[kind])} for this kind")
+        parts = values["parts"]
+        for part in parts["allowed"]:
+            if part not in CAPTURE_POINTS[kind]:
+                errors.append(f"kinds/{kind}/parts/allowed: {part} is not captured for {kind} (captured: {', '.join(CAPTURE_POINTS[kind])})")
+        for part in parts["default"]:
+            if part not in parts["allowed"]:
+                errors.append(f"kinds/{kind}/parts/default: {part} is not in allowed")
+    return errors
+
+
+def parse_contract(data: Any, *, schema: Mapping[str, Any], source: str = "<memory>") -> Contract:
+    """Validate ``data`` against the schema and the cross-row rules. Raises with every rule broken."""
+    validator = jsonschema.Draft202012Validator(schema)
+    problems = sorted(validator.iter_errors(data), key=lambda error: list(error.absolute_path))
+    if problems:
+        lines = [f"{_where(error.absolute_path)}: {error.message}" for error in problems[:10]]
+        more = f" (and {len(problems) - 10} more)" if len(problems) > 10 else ""
+        raise RetentionDataError(f"{source}: the retention file does not match its schema{more}:\n  " + "\n  ".join(lines))
+    errors = _semantic_errors(data)
+    from gateway.retention_facts import validate_facts
+
+    for group_name in ("system_facts", "provider_fact_catalog"):
+        for target_id, facts in data.get(group_name, {}).items():
+            try:
+                validate_facts(facts["facts"] if group_name == "system_facts" else facts)
+            except ValueError as exc:
+                errors.append(f"{group_name}/{target_id}: {exc}")
+    if errors:
+        raise RetentionDataError(f"{source}: the retention file breaks the contract:\n  " + "\n  ".join(errors))
+    return Contract(data=copy.deepcopy(data), source=source)
+
+
+_MEMO: dict[tuple[Path, Path], Contract] = {}
+
+
+def load_contract(path: Path = BUNDLED_PATH, schema_path: Path = SCHEMA_PATH) -> Contract:
+    """Read and validate the bundled file once per process; edits apply after restart and deadline repair."""
+    cached = _MEMO.get((path, schema_path))
+    if cached is not None:
+        return cached
+    try:
+        path.stat()
+        schema_path.stat()
+    except OSError as exc:
+        raise RetentionDataError(
+            f"{path}: cannot read the retention file ({exc.strerror or exc}); the gateway keeps no default of its own"
+        ) from None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise RetentionDataError(f"{path}: cannot read the retention file ({exc})") from None
+    contract = parse_contract(data, schema=schema, source=str(path))
+    _MEMO[(path, schema_path)] = contract
+    return contract
+
+
+def bundled() -> Contract:
+    return load_contract(BUNDLED_PATH, SCHEMA_PATH)
+
+
+def require_bundled() -> Contract:
+    """Startup check: the file is there and obeys the contract, or the gateway does not start."""
+    return load_contract(BUNDLED_PATH, SCHEMA_PATH)
+
+
+def seconds_map() -> dict[str, int | None]:
+    return bundled().seconds_map()
+
+
+def household_defaults(kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
+    return bundled().household_defaults(kind)
+
+
+def member_defaults(kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
+    return bundled().member_defaults(kind)
+
+
+def public_contract(kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
+    return bundled().public(kind)
+
+
+# ----------------------------------------------------- the household setting and its view
+
+
+def group_of_kind(kind: str) -> str:
+    """The preference group a kind's member switch belongs to; core defines the routing (GROUP_KINDS)."""
+    for group, kinds in GROUP_KINDS.items():
+        if kind in kinds:
+            return group
+    raise KeyError(kind)
+
+
+def household_view(document: Mapping[str, Any] | None, group: str = GROUP_PROMPTS) -> dict[str, Any]:
+    """The household values one group reads: the kill switch (every group) and that group's default and cap."""
+    document = document if isinstance(document, Mapping) else {}
+    view: dict[str, Any] = {}
+    if "never_keep" in document:
+        view["never_keep"] = document["never_keep"]
+    groups = document.get("groups")
+    values = groups.get(group) if isinstance(groups, Mapping) else None
+    if isinstance(values, Mapping):
+        if "default_keep" in values:
+            view["default_remember"] = values["default_keep"]
+        if "retention_cap" in values:
+            view["retention_cap"] = normalize_period(values["retention_cap"], kind=GROUP_KINDS[group][0], owner_cap=True)
+    return view
+
+
+def prompts_view(document: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The prompts group's view of the household setting: only the values it holds, in the screens' names."""
+    return household_view(document, GROUP_PROMPTS)
+
+
+def document_from_prompts_view(view: Mapping[str, Any]) -> dict[str, Any]:
+    """The household setting that holds exactly the values of a prompts view."""
+    document: dict[str, Any] = {}
+    if "never_keep" in view:
+        document["never_keep"] = view["never_keep"]
+    group: dict[str, Any] = {}
+    if "default_remember" in view:
+        group["default_keep"] = view["default_remember"]
+    if "retention_cap" in view:
+        group["retention_cap"] = view["retention_cap"]
+    if group:
+        document["groups"] = {GROUP_PROMPTS: group}
+    return document
+
+
+def apply_prompts_view(document: Mapping[str, Any] | None, view: Mapping[str, Any]) -> dict[str, Any]:
+    """The household setting after the prompts group is set to ``view``: its values replace the group's and
+    ``never_keep``; any other group stays as it was."""
+    document = dict(document) if isinstance(document, Mapping) else {}
+    document.pop("never_keep", None)
+    groups = dict(document.get("groups") or {})
+    groups.pop(GROUP_PROMPTS, None)
+    replacement = document_from_prompts_view(view)
+    if "never_keep" in replacement:
+        document["never_keep"] = replacement["never_keep"]
+    groups.update(replacement.get("groups", {}))
+    if groups:
+        document["groups"] = groups
+    else:
+        document.pop("groups", None)
+    return document
+
+
+def validate_prompts_view(view: Mapping[str, Any], *, existing_cap: str | None = None) -> dict[str, Any]:
+    """The validator for the prompts group's household values. Raises ValueError naming the rule."""
+    contract = bundled()
+    defaults = contract.household_defaults(LIBRARY_PROMPT)
+    default_remember = view.get("default_remember", defaults["default_remember"])
+    never_keep = view.get("never_keep", defaults["never_keep"])
+    retention_cap = view.get("retention_cap", defaults["retention_cap"])
+    if not isinstance(default_remember, bool) or not isinstance(never_keep, bool):
+        raise ValueError("prompt memory switches must be booleans")
+    choices = contract.choices(LIBRARY_PROMPT)
+    if retention_cap not in choices and not (existing_cap is not None and retention_cap == existing_cap):
+        raise ValueError("retention_cap must be " + ", ".join(choices[:-1]) + f", or {choices[-1]}")
+    return {"default_remember": default_remember, "never_keep": never_keep, "retention_cap": retention_cap}
+
+
+def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The prompts group's household values: the owner's, over the bundled defaults."""
+    return {**household_defaults(), **prompts_view(document)}
+
+
+def group_cutoff(admin_path: Path | None, person_id: str, group: str = GROUP_PROMPTS) -> int:
+    """The erasure fence for one person and group: the later of the household's and the person's cutoffs (0: none)."""
+    if admin_path is None:
+        return 0
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,)).fetchone() is None:
+            return 0
+        rows = conn.execute(
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id IN ('*', ?) AND grp=?", (person_id, group),
+        ).fetchall()
+    finally:
+        conn.close()
+    return max((int(row[0]) for row in rows), default=0)
+
+
+def member_choice(admin_path: Path | None, person_id: str, group: str = GROUP_PROMPTS) -> dict[str, Any] | None:
+    """A member's saved choice for one group, read without changing anything. None when the person has no row."""
+    if admin_path is None:
+        return None
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        row = conn.execute(
+            f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+            (person_id, group),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    choice: dict[str, Any] = {"remember": bool(row[0]), "retention": row[1]}
+    if row[2]:
+        choice["parts"] = json.loads(row[2])
+    return choice
+
+
+def unoffered_household_cap(document: Mapping[str, Any] | None) -> str | None:
+    """The saved owner cap, if it is no longer selectable."""
+    groups = document.get("groups") if isinstance(document, Mapping) else None
+    group = groups.get(GROUP_PROMPTS) if isinstance(groups, Mapping) else None
+    return unoffered_period(group.get("retention_cap")) if isinstance(group, Mapping) else None
+
+
+# ---------------------------------------------------------------------- periods
+
+
+def normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
+    """Keep a stored ID that is in ``retention_choices``, offered or not; a deleted ID uses the shortest
+    finite offered period. A file that offers only no-expiry choices has no such period: that is a data error
+    only when a stored ID was deleted."""
+    contract = bundled()
+    seconds = contract.seconds_map()
+    if value in seconds:
+        return value
+    finite = [choice for choice in contract.choices(kind) if seconds[choice] is not None]
+    if not finite:
+        raise RetentionDataError(
+            f"{contract.source}: the stored period {value} is not in retention_choices and the group offers "
+            "no finite choice to replace it; restore the ID or offer a finite choice")
+    return min(finite, key=lambda choice: seconds[choice])
+
+
+def unoffered_period(value: Any, *, kind: str = LIBRARY_PROMPT) -> str | None:
+    """Return a saved ID only when the group no longer offers it for selection."""
+    return value if isinstance(value, str) and value not in bundled().choices(kind) else None
+
+
+def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:
+    """The shorter normalized period; display, decisions, writes, maintenance and startup repair all use it.
+    When neither period expires, the member's own ID stands: it keeps its exact meaning."""
+    seconds = bundled().seconds_map()
+    periods = (normalize_period(member_period, kind=kind, owner_cap=False),
+               normalize_period(cap, kind=kind, owner_cap=True))
+    finite = [value for value in periods if seconds[value] is not None]
+    return min(finite, key=lambda value: seconds[value]) if finite else periods[0]
+
+
+def effective(member: Mapping[str, Any] | None, household_policy: Mapping[str, Any] | None,
+              kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
+    """What a member's choice and the household's policy leave: keep or not, and for how long."""
+    contract = bundled()
+    prefs = {**contract.member_defaults(kind), **(member or {})}
+    policy = {**contract.household_defaults(kind), **(household_policy or {})}
+    keep = bool(prefs["remember"]) and not bool(policy.get("never_keep"))
+    return {
+        "remember": keep,
+        "retention": effective_period(
+            str(prefs.get("retention") or contract.member_defaults(kind)["retention"]),
+            str(policy.get("retention_cap") or contract.household_defaults(kind)["retention_cap"]),
+            kind,
+        ),
+    }
+
+
+# --------------------------------------------------------------------- the decision
+
+
+@dataclass(frozen=True)
+class Decision:
+    person_id: str | None
+    keep: bool
+    reason: str
+    kept_until: int | None = None
+    created_at: int | None = None
+    kind: str = LIBRARY_PROMPT
+    parts: tuple[str, ...] = ()
+    #: Set when a shared App's own setting decided request history (``app_history``); its manager is ``person_id``.
+    app_id: str | None = None
+
+
+@dataclass(frozen=True)
+class WriteOutcome:
+    """The policy-fenced result, observed only after the content writer committed."""
+    kept: bool
+    reason: str
+    kept_until: int | None = None
+    limited_by: str | None = None
+
+
+def requested_mode(body: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(body, Mapping):
+        return None
+    extensions = body.get("extensions")
+    if extensions is None:
+        return None
+    if not isinstance(extensions, Mapping):
+        raise PromptModeError("extensions must be an object")
+    block = extensions.get(NAMESPACE)
+    if block is None:
+        return None
+    if not isinstance(block, Mapping) or set(block) != {"mode"} or block.get("mode") != "forget":
+        raise PromptModeError(f"extensions.{NAMESPACE} must be {{'mode':'forget'}}")
+    return "forget"
+
+
+def prompt_mode_refusal(exc: PromptModeError) -> dict[str, Any]:
+    """The 400 body every route answers an invalid prompt control with (3.4)."""
+    return {"error": {"message": str(exc), "type": "invalid_request_error", "code": "invalid_prompt_mode",
+                      "param": f"extensions.{NAMESPACE}.mode"}}
+
+
+def app_history_choice(admin_path: Path | None, app_id: str | None) -> dict[str, Any] | None:
+    """A shared App's request-history setting, read without changing anything; None for no App and for a personal App.
+
+    ``active`` is False when the App is disabled or its manager is disabled or removed. The write re-reads all of
+    this under the household lock (``guard_groups``).
+    """
+    if admin_path is None or not app_id:
+        return None
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        row = conn.execute(
+            "SELECT owner_user_id, kind, history_keep, history_period, disabled_at FROM apps WHERE id=?", (app_id,),
+        ).fetchone()
+        if row is None or row[1] != "service":
+            return None
+        active = row[4] is None and _person_active(conn, str(row[0]))
+    finally:
+        conn.close()
+    return {"app_id": app_id, "owner_user_id": str(row[0]), "keep": bool(row[2]), "retention": str(row[3]),
+            "active": active}
+
+
+def _person_active(conn: sqlite3.Connection, person_id: str) -> bool:
+    """A person exists and is neither disabled nor removed (the same rule ``guard_groups`` applies)."""
+    if conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is None:
+        return False
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone() is None:
+        return True
+    access = conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,)).fetchone()
+    return access is None or (access[0] is None and access[1] is None)
+
+
+def decide(
+    kind: str, *, person_id: str | None, member: Mapping[str, Any] | None,
+    household_policy: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
+    responses_store: bool | None = None, now: int | None = None, request_forget: bool = False,
+    app_history: Mapping[str, Any] | None = None,
+) -> Decision:
+    """Resolve policy before any payload, media or Responses persistence.
+
+    The order is fixed: the kill switch, the request's own forget (in its body, or in the ``X-Azizam-Prompts``
+    header, which ``request_forget`` carries for every kind), no person, the member's switch, then keep with the
+    shorter of the member's period and the household cap.
+
+    For request history with no person, ``app_history`` (``app_history_choice``) is the shared App's own setting. It
+    takes the place of the member's switch: off keeps nothing, on keeps under the App's manager.
+    """
+    contract = bundled()
+    mode = requested_mode(request_body)
+    policy = {**contract.household_defaults(kind), **(household_policy or {})}
+    if policy["never_keep"]:
+        return Decision(person_id, False, "server_disabled", kind=kind)
+    if mode == "forget" or request_forget or responses_store is False:
+        return Decision(person_id, False, "request_forget", kind=kind)
+    if not person_id:
+        if kind == REQUEST_HISTORY and app_history is not None:
+            return _app_decision(contract, app_history, policy, now)
+        return Decision(None, False, "no_person", kind=kind)
+    preference = {**contract.member_defaults(kind), "remember": policy["default_remember"], **(member or {})}
+    if not preference.get("remember", policy["default_remember"]):
+        return Decision(person_id, False, "member_disabled", kind=kind)
+    started = int(time.time()) if now is None else now
+    period = effective_period(preference.get("retention", contract.member_defaults(kind)["retention"]),
+                              policy.get("retention_cap", contract.household_defaults(kind)["retention_cap"]), kind)
+    seconds = contract.seconds_map()[period]
+    expiry = started + seconds if seconds is not None else None
+    return Decision(person_id, True, "remembered", expiry, started, kind, _parts_for(contract, kind, preference))
+
+
+def _app_decision(contract: Contract, app_history: Mapping[str, Any], policy: Mapping[str, Any],
+                  now: int | None) -> Decision:
+    """Request history for a shared App: its setting decides, under its manager. The App's parts are the kind's
+    default; the manager's own parts choice belongs to the manager's own history and does not apply here."""
+    app_id = str(app_history["app_id"])
+    if not app_history.get("active"):
+        return Decision(None, False, "app_disabled", kind=REQUEST_HISTORY, app_id=app_id)
+    if not app_history.get("keep"):
+        return Decision(None, False, "app_off", kind=REQUEST_HISTORY, app_id=app_id)
+    started = int(time.time()) if now is None else now
+    period = effective_period(str(app_history["retention"]),
+                              policy.get("retention_cap", contract.household_defaults(REQUEST_HISTORY)["retention_cap"]),
+                              REQUEST_HISTORY)
+    seconds = contract.seconds_map()[period]
+    expiry = started + seconds if seconds is not None else None
+    return Decision(str(app_history["owner_user_id"]), True, "remembered", expiry, started, REQUEST_HISTORY,
+                    contract.parts(REQUEST_HISTORY), app_id)
+
+
+def _parts_for(contract: Contract, kind: str, preference: Mapping[str, Any]) -> tuple[str, ...]:
+    """The parts a member chose, within what the kind allows; the kind's default when the member chose none."""
+    allowed = contract.data["kinds"][kind]["parts"]["allowed"]
+    chosen = preference.get("parts")
+    if chosen is None:
+        return contract.parts(kind)
+    return tuple(part for part in allowed if part in chosen)
+
+
+def conversation_store(decision: Decision, requested: Any, *, has_scope: bool) -> bool:
+    """Whether a Responses request is stored: its own ``store``, else whether it has a person; never without a
+    stable App or credential scope; and never against the decision (a no-person request keeps its explicit store)."""
+    store = requested
+    if store is None:
+        store = decision.person_id is not None
+    if not has_scope:
+        store = False
+    # OWNER_VISIBILITY_STEP3: preserve explicit no-person store until retention narrowing is connected to content policy.
+    if not decision.keep and decision.reason != "no_person":
+        store = False
+    return bool(store)
+
+
+def conversation_row_visible(row: Mapping[str, Any] | None, scope: Mapping[str, Any] | None) -> bool:
+    """The conversation scope rule: the creating person and the stable App (or, without an App, the credential).
+
+    ``scope`` is ``{"person_id", "app_id", "owner_key_hash"}``, or None when the caller has no stable scope.
+    A row with no person is visible only through that App or credential scope.
+    """
+    if not row:
+        return False
+    if scope is None or "person_id" not in row or row.get("person_id") != scope["person_id"]:
+        return False
+    # OWNER_VISIBILITY_STEP3: preserve today's App/legacy-key scope even though
+    # the target matrix allows a person's cross-App reads by session or grant.
+    same_scope = (row.get("app_id") == scope["app_id"] if scope["app_id"] else
+                  not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"])
+    if not same_scope:
+        return False
+    if not scope["person_id"]:
+        # OWNER_VISIBILITY_STEP3: the legacy appless null-person/key match is
+        # looser than App-maker access, which requires an exact non-null App.
+        return True
+    from gateway.content_access import ChatRecord, Own, Viewer, decide
+    # OWNER_VISIBILITY_STEP3: this old scope carries no delegation permission.
+    # Preserve its delegated/appless reads until the caller carries creating
+    # connection provenance; same session App must not vouch for an MCP grant.
+    viewer = Viewer(auth_kind="app_key", person_id=scope["person_id"], app_id=scope["app_id"],
+                    privacy_permission=True,
+                    key_hash=scope["owner_key_hash"] if not scope["app_id"] else None)
+    content = ChatRecord(row.get("person_id"), row.get("app_id"), row.get("owner_key_hash"))
+    return isinstance(decide(viewer, content, "read"), Own)
+
+
+# ------------------------------------------------------------------ the one writer
+
+
+def ensure_erasure_cutoff_table(conn: sqlite3.Connection) -> None:
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,),
+    ).fetchone() is None:
+        conn.execute(
+            f"CREATE TABLE {ERASURE_CUTOFF_TABLE} ("
+            "person_id TEXT NOT NULL, grp TEXT NOT NULL, cutoff_at INTEGER NOT NULL, "
+            "PRIMARY KEY(person_id, grp))"
+        )
+
+
+@contextmanager
+def guard(admin_path: Path | None, person_id: str | None = None,
+          group: str = GROUP_PROMPTS, app_id: str | None = None) -> Iterator[dict[str, Any]]:
+    """Hold the admin setting's write lock through a content-bearing write.
+
+    A kill-switch update waits for this write, then purges it. A write that
+    starts after the update sees the new policy and is refused. The lock works
+    across gateway processes because it is a SQLite transaction. The member row
+    and the erasure cutoffs are the ones of ``group`` (section 3.2). ``app_id`` is the shared App a request history
+    decision was made for; its setting, not the member's switch, then decides the group's keep.
+    """
+    with guard_groups(admin_path, person_id, (group,), app_id=app_id) as policies:
+        yield policies[group]
+
+
+@contextmanager
+def guard_groups(
+    admin_path: Path | None, person_id: str | None, groups: tuple[str, ...], app_id: str | None = None,
+) -> Iterator[dict[str, dict[str, Any]]]:
+    """Hold one admin write lock while reading policy for several content groups.
+
+    Media capture uses this to fence its Library prompt and request-history writes together. The groups still have
+    separate choices and erasure cutoffs; they share only the SQLite transaction that keeps policy stable while the
+    media database transaction commits.
+    """
+    if not groups or len(set(groups)) != len(groups) or any(group not in GROUP_KINDS for group in groups):
+        raise ValueError("one or more known retention groups are required")
+    contract = bundled()
+    if admin_path is None:
+        yield {
+            group: {**contract.household_defaults(GROUP_KINDS[group][0]),
+                    **contract.member_defaults(GROUP_KINDS[group][0])}
+            for group in groups
+        }
+        return
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (SETTING_KEY,)).fetchone()
+        household_document = json.loads(row[0]) if row else None
+        ensure_erasure_cutoff_table(conn)
+        policies: dict[str, dict[str, Any]] = {}
+        user_exists = (not person_id or conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone()
+                       is not None)
+        account_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
+        ).fetchone()
+        access = (conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,)).fetchone()
+                  if person_id and user_exists and account_table is not None else None)
+        person_enabled = user_exists and (access is None or (access[0] is None and access[1] is None))
+        for group in groups:
+            kind = GROUP_KINDS[group][0]
+            defaults = contract.household_defaults(kind)
+            member_default = contract.member_defaults(kind)
+            household_policy = {**defaults, **(household_view(household_document, group) if household_document else {})}
+            erased = conn.execute(
+                f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*' AND grp=?", (group,),
+            ).fetchone()
+            forgot_before = int(erased[0]) if erased else 0
+            member = None
+            if person_id:
+                erased = conn.execute(
+                    f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp=?", (person_id, group),
+                ).fetchone()
+                forgot_before = max(forgot_before, int(erased[0]) if erased else 0)
+                member = conn.execute(
+                    f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                    (person_id, group),
+                ).fetchone()
+                if user_exists and member is None:
+                    conn.execute(
+                        f"INSERT OR IGNORE INTO {MEMBER_TABLE}"
+                        "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
+                        "VALUES (?, ?, ?, ?, NULL, ?, NULL)",
+                        (person_id, group, 1 if household_policy["default_remember"] else 0,
+                         member_default["retention"], int(time.time())),
+                    )
+                    member = conn.execute(
+                        f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                        (person_id, group),
+                    ).fetchone()
+            policy = {**household_policy,
+                      "remember": bool(member[0]) if member else household_policy["default_remember"],
+                      "retention": member[1] if member else member_default["retention"],
+                      "forgot_before": forgot_before}
+            if member and member[2]:
+                # A member's chosen parts (request history's "also keep replies"); absent means the kind's default.
+                policy["parts"] = json.loads(member[2])
+            policy["remember"] = bool(policy["remember"]) and person_enabled
+            if app_id is not None and group == GROUP_REQUEST_HISTORY:
+                policy.update(_app_history_policy(conn, app_id, person_enabled, policy["retention"]))
+            policies[group] = policy
+        yield policies
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _app_history_policy(conn: sqlite3.Connection, app_id: str, person_enabled: bool,
+                        member_retention: str) -> dict[str, Any]:
+    """A shared App's request history policy, read under the lock. Its own switch, period and state decide: the
+    manager's switch and parts do not apply to the App's history (``parts`` None: the kind's default)."""
+    row = conn.execute(
+        "SELECT kind, history_keep, history_period, disabled_at, owner_user_id FROM apps WHERE id=?", (app_id,),
+    ).fetchone()
+    active = row is not None and row[0] == "service" and row[3] is None and person_enabled
+    keep = row is not None and bool(row[1])
+    if not active:
+        reason: str | None = "app_disabled"
+    elif not keep:
+        reason = "app_off"
+    else:
+        reason = None
+    return {"remember": bool(active and keep), "retention": str(row[2]) if row is not None else member_retention,
+            "parts": None, "app_reason": reason, "app_owner": str(row[4]) if row is not None else None}
+
+
+def _library_prompt_gate(policy: Mapping[str, Any], started: int, kept_until: int | None) -> tuple[bool, int | None]:
+    if policy["never_keep"] or not policy["remember"] or started <= policy.get("forgot_before", 0):
+        return False, None
+    period = effective_period(policy["retention"], policy["retention_cap"])
+    seconds = seconds_map()[period]
+    limits = [kept_until] if kept_until is not None else []
+    if seconds is not None:
+        limits.append(started + seconds)
+    deadline = min(limits) if limits else None
+    if deadline is not None and deadline <= int(time.time()):
+        return False, deadline
+    return True, deadline
+
+
+def _conversation_gate(policy: Mapping[str, Any], decision: Decision, created_at: int) -> bool:
+    return bool(
+        not policy["never_keep"]
+        and created_at > int(policy.get("forgot_before") or 0)
+        and (decision.person_id is None or (
+            policy["remember"]
+            and int(decision.created_at or 0) > int(policy.get("forgot_before") or 0)
+        ))
+    )
+
+
+def _library_limit_source(policy: Mapping[str, Any], started: int, prior_deadline: int | None,
+                          kind: str = LIBRARY_PROMPT) -> str:
+    seconds = seconds_map()
+    member = seconds[normalize_period(policy["retention"], kind=kind, owner_cap=False)]
+    cap = seconds[normalize_period(policy["retention_cap"], kind=kind, owner_cap=True)]
+    current_limit = min((started + duration for duration in (member, cap) if duration is not None), default=None)
+    if prior_deadline is not None and (current_limit is None or prior_deadline < current_limit):
+        return "prior_policy"
+    return "owner_cap" if cap is not None and (member is None or cap < member) else "member_choice"
+
+
+def _write_denial_reason(
+    policy: Mapping[str, Any], created_at: int, deadline: int | None,
+    decision: Decision | None = None,
+) -> str:
+    if policy["never_keep"]:
+        return "server_disabled"
+    if (created_at <= int(policy.get("forgot_before") or 0)
+            or decision is not None and decision.created_at is not None
+            and decision.created_at <= int(policy.get("forgot_before") or 0)):
+        return "erasure_cutoff"
+    if not policy["remember"]:
+        return "member_disabled"
+    if deadline is not None and deadline <= int(time.time()):
+        return "expired"
+    return "incomplete"
+
+
+def _request_history_outcome(
+    policy: Mapping[str, Any], decision: Decision, started: int, commit: Callable[[int | None, tuple[str, ...]], Any],
+) -> WriteOutcome:
+    """The request history gate, read again under the lock: the order of section 3.3, with the state as it is now.
+
+    The parts kept are the member's choice now, not the choice when the request started, so a reply the member has
+    stopped keeping is not kept (REQUEST_RETENTION.md 12)."""
+    if policy["never_keep"]:
+        return WriteOutcome(False, "server_disabled")
+    if decision.reason == "request_forget":
+        return WriteOutcome(False, "request_forget")
+    if decision.person_id is None:
+        return WriteOutcome(False, "no_person")
+    if decision.app_id is not None and policy.get("app_owner") != decision.person_id:
+        # The App's manager changed after the decision: its history was decided for the previous manager.
+        return WriteOutcome(False, "app_disabled")
+    if not policy["remember"]:
+        return WriteOutcome(False, str(policy.get("app_reason") or "member_disabled"))
+    forgot_before = int(policy.get("forgot_before") or 0)
+    if started <= forgot_before or int(decision.created_at or 0) <= forgot_before:
+        return WriteOutcome(False, "erasure_cutoff")
+    period = effective_period(policy["retention"], policy["retention_cap"], REQUEST_HISTORY)
+    seconds = seconds_map()[period]
+    limits = [decision.kept_until] if decision.kept_until is not None else []
+    if seconds is not None:
+        limits.append(started + seconds)
+    deadline = min(limits) if limits else None
+    if deadline is not None and deadline <= int(time.time()):
+        return WriteOutcome(False, "expired")
+    commit(deadline, _parts_for(bundled(), REQUEST_HISTORY, {"parts": policy.get("parts")}))
+    return WriteOutcome(True, "kept", deadline,
+                        _library_limit_source(policy, started, decision.kept_until, REQUEST_HISTORY))
+
+
+def write(
+    kind: str, *, admin_path: Path | None, person_id: str | None, created_at: int,
+    commit: Callable[..., Any], decision: Decision | None = None, kept_until: int | None = None,
+    on_result: Callable[[WriteOutcome], None] | None = None,
+) -> bool:
+    """Run ``commit(deadline)`` only if the policy in force now still allows the write.
+
+    For request history, ``commit(deadline, parts)`` also gets the parts the member keeps, read under the same lock.
+
+    The policy is read under the household setting's write lock, which is held through ``commit``. A
+    later kill switch, member choice or erasure cutoff therefore refuses the write; a write that wins the
+    lock is purged by the change that waits behind it. Returns whether the write happened.
+    """
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind {kind!r}")
+    outcome: WriteOutcome
+    app_id = decision.app_id if decision is not None else None
+    with guard(admin_path, person_id, group_of_kind(kind), app_id=app_id) as policy:
+        if kind == REQUEST_HISTORY:
+            if decision is None:
+                raise ValueError("a request history write needs the decision made for the request")
+            outcome = _request_history_outcome(policy, decision, created_at, commit)
+        else:
+            if kind == LIBRARY_PROMPT:
+                allowed, deadline = _library_prompt_gate(policy, created_at, kept_until)
+            else:
+                if decision is None:
+                    raise ValueError("a conversation write needs the decision made for the request")
+                allowed, deadline = _conversation_gate(policy, decision, created_at), None
+            if not allowed:
+                outcome = WriteOutcome(False, _write_denial_reason(policy, created_at, deadline, decision))
+            else:
+                commit(deadline)
+                outcome = WriteOutcome(
+                    True, "kept", deadline,
+                    _library_limit_source(policy, created_at, kept_until)
+                    if kind == LIBRARY_PROMPT else "unbounded_store",
+                )
+    if on_result is not None:
+        on_result(outcome)
+    return outcome.kept
+
+
+def write_media_capture(
+    *, admin_path: Path | None, person_id: str | None, created_at: int,
+    decision: Decision | None, prompts: list[Mapping[str, Any]],
+    commit: Callable[[tuple[int | None, tuple[str, ...]] | None, list[dict[str, Any]]], Any],
+) -> tuple[WriteOutcome, list[WriteOutcome]]:
+    """Policy-check a request history row and its Library prompts, then commit them under one admin lock.
+
+    ``commit`` receives only rows allowed by the current policy. The caller writes them in one media database
+    transaction. A prompt can still be kept when request history is disabled or incomplete.
+    """
+    history_values: tuple[int | None, tuple[str, ...]] | None = None
+    history_outcome = WriteOutcome(False, decision.reason if decision is not None else "incomplete")
+    prompt_outcomes: list[WriteOutcome] = []
+    prompt_records: list[dict[str, Any]] = []
+    groups = (GROUP_PROMPTS, GROUP_REQUEST_HISTORY) if decision is not None else (GROUP_PROMPTS,)
+    app_id = decision.app_id if decision is not None else None
+    with guard_groups(admin_path, person_id, groups, app_id=app_id) as policies:
+        if decision is not None:
+            history_values_holder: list[tuple[int | None, tuple[str, ...]]] = []
+            history_outcome = _request_history_outcome(
+                policies[GROUP_REQUEST_HISTORY], decision, created_at,
+                lambda deadline, parts: history_values_holder.append((deadline, parts)),
+            )
+            history_values = history_values_holder[0] if history_values_holder else None
+
+        prompt_policy = policies[GROUP_PROMPTS]
+        for record in prompts:
+            started = int(record["created_at"])
+            kept_until = record.get("kept_until")
+            allowed, deadline = _library_prompt_gate(prompt_policy, started, kept_until)
+            if allowed:
+                prompt_records.append({**record, "kept_until": deadline})
+                prompt_outcomes.append(WriteOutcome(
+                    True, "kept", deadline, _library_limit_source(prompt_policy, started, kept_until),
+                ))
+            else:
+                prompt_outcomes.append(WriteOutcome(
+                    False, _write_denial_reason(prompt_policy, started, deadline),
+                ))
+        if history_values is not None or prompt_records:
+            try:
+                commit(history_values, prompt_records)
+            except Exception:
+                if history_outcome.kept:
+                    history_outcome = WriteOutcome(False, "write_failed")
+                prompt_outcomes = [
+                    WriteOutcome(False, "write_failed") if result.kept else result
+                    for result in prompt_outcomes
+                ]
+    return history_outcome, prompt_outcomes

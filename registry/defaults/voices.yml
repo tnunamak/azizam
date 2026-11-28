@@ -1,0 +1,14 @@
+# Release defaults of the voices section (docs/design/CONFIG_HOMES.md, C8a). Read-only; an owner's value is an
+# override. The values are the code's fallbacks. The voice store directory is a startup setting, not in this section.
+# quality_engine and design_engine name a speech engine of the install, so the release names none: with no
+# design_engine, voice design answers that it is not configured.
+consent_mode: optional
+max_voices_per_key: 20
+max_consents_per_key: 50
+max_bytes_per_key: 209715200
+max_upload_bytes: 10485760
+min_seconds: 5
+max_seconds: 60
+min_speech_seconds: 3.5
+target_seconds: 12
+quality_warn_below: 0.45

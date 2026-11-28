@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/defaults/service_availability.schema.json",
+  "title": "Service availability",
+  "description": "Manual availability marks, keyed by service id. A member is one entry and is replaced whole. The release ships none.",
+  "type": "object",
+  "x-azizam-entry": "collection",
+  "propertyNames": {"minLength": 1},
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["state"],
+    "properties": {
+      "state": {"enum": ["available", "degraded", "draining", "maintenance", "disabled"]},
+      "reason": {"type": ["string", "null"]},
+      "retry_after_seconds": {"type": ["integer", "null"], "minimum": 0}
+    }
+  }
+}

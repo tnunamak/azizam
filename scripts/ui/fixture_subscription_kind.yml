@@ -1,0 +1,33 @@
+# A test-only subscription kind for the browser fixture (web/e2e/subscription-admin.spec.ts). It is data the
+# fixture gateway loads through AZIZAM_SUBSCRIPTION_KINDS_DIR; scripts/ui/serve.py fills in {upstream} (the address of
+# scripts/ui/fake_plan_upstream.py) and {redirect} and writes the result to the run's scratch directory.
+# It never points at a real provider host.
+id: test-plan
+display_name: Test Plan
+mechanism: oauth-pkce-dynamic
+protocol: openai-responses-plan
+billing_mode: plan
+model_prefix: test-plan
+oauth:
+  authorize_url: "{upstream}/authorize"
+  token_url: "{upstream}/oauth/token"
+  discovery_url: "{upstream}/.well-known/openid-configuration"
+  issuer: "{upstream}"
+  resource: "{upstream}/v1"
+  scope: openid profile email offline_access plan.use
+  required_scope: plan.use
+  redirect_uri: "{redirect}/auth/callback"
+  dynamic_client_id: test_plan_client
+  agent_name_hint: Azizam
+  host_id_scheme: urn:uuid
+  refresh_margin_seconds: 300
+upstream:
+  base_url: "{upstream}/v1"
+  models_path: /models
+  models_items_path: models
+  models_id_path: slug
+  models_visibility_path: visibility
+  models_visible_value: list
+  responses_path: /responses
+status_errors:
+  default: {status: 502, code: plan_upstream_error, message: "The upstream plan service could not complete the request."}

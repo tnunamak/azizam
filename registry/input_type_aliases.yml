@@ -1,0 +1,6 @@
+# Compatibility at the value-validation boundary; strict schema 2 loading never applies aliases.
+schema_version: 1
+aliases:
+  image:
+    type: asset
+    accepts: [image/*]

@@ -1,0 +1,299 @@
+"""Resolve explicitly opted-in engine records and run their declared protocol.
+
+This module owns no routing policy or durable jobs. Public handlers apply those
+before invocation. Selection uses the same transaction as other engine paths.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from functools import lru_cache
+from pathlib import Path
+import secrets
+import asyncio
+import time
+from typing import Any, Mapping
+
+from gateway.operation_catalog import Catalog, load as load_catalog, project_dispatch_task_aliases
+from gateway.engine_contract_view import address_for_class, connection_config, observations_config, offerings_config
+from gateway.engine_credentials import CredentialOriginMismatch, CredentialUnavailable, credential_headers
+from gateway.engine_control import EngineControlRuntime
+from gateway.engine_observations import Observation, UNKNOWN
+from gateway.engine_protocol import description
+from gateway.engine_protocol.adapter import AdapterRegistry, connection_from_record
+from gateway.engine_protocol.assets import AssetStore
+from gateway.engine_protocol.errors import ProtocolError, UnknownOperation
+from gateway.engine_protocol.types import AssetRef, CanonicalRequest, Credential, StreamReply
+from gateway.engine_switch import SwitchController, SwitchUnavailable
+
+
+@dataclass(frozen=True)
+class Target:
+    engine_id: str
+    service: Mapping[str, Any]
+    offering: Mapping[str, Any]
+    description: description.ProtocolDescription
+
+    @property
+    def upstream(self) -> str:
+        return str(self.offering.get('upstream') or self.offering['id'])
+
+
+def opted_in(service: Mapping[str, Any]) -> bool:
+    return connection_config(service).get('dispatch') == 'protocol'
+
+
+def offerings_of(engine_id: str, service: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The offerings an opted-in record serves: its declared ones, else its legacy model rows projected."""
+    offerings = offerings_config(service)
+    if not offerings and (service.get("config") or {}).get("models"):
+        # Legacy engine editors store model rows. An explicit protocol opt-in
+        # uses their existing request-field projection without copying state.
+        from gateway.service_registry import normalize_service_record, service_record_v2
+
+        normalized = normalize_service_record(engine_id, service)
+        offerings = service_record_v2(normalized, public=False)["offerings"]
+    return list(offerings)
+
+
+@lru_cache(maxsize=1)
+def _task_catalog() -> Catalog:
+    """Reuse the immutable shipped catalog; explicit catalog bindings stay uncached."""
+    return load_catalog(Path(__file__).resolve().parents[2] / "registry" / "operations.yml")
+
+
+def resolve(
+    registry: Mapping[str, Any], model: Any, op: str, *,
+    catalog: Catalog | str | Path | None = None,
+) -> Target | None:
+    """Resolve an offering id (or engine/id); existing records never enter here."""
+    if not isinstance(model, str):
+        return None
+    matches = []
+    for engine_id, service in (registry.get('services') or {}).items():
+        if not opted_in(service):
+            continue
+        for offering in offerings_of(str(engine_id), service):
+            if model in {offering.get('id'), f"{engine_id}/{offering.get('id')}"}:
+                matches.append((engine_id, service, offering))
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise ProtocolError('The model names more than one offering. Use engine/id.', code='ambiguous_model')
+    engine_id, service, offering = matches[0]
+    if service.get('enabled', True) is False:
+        raise ProtocolError('The selected engine is disabled.', code='engine_disabled')
+    from gateway.service_registry import validate_protocol_dispatch_admission
+    try:
+        validate_protocol_dispatch_admission(service)
+    except ValueError:
+        raise ProtocolError('Protocol dispatch requires a local engine without paid-provider billing.',
+                            code='protocol_dispatch_refused') from None
+    protocol_id = connection_config(service).get('protocol')
+    doc = description.load_registry().get(protocol_id)
+    if doc is None or doc.executor != 'http-v1':
+        raise ProtocolError('Protocol dispatch requires an http-v1 description.', code='unknown_protocol')
+    if op not in doc.operations or doc.operations[op].op_class != 'generate':
+        raise UnknownOperation(f"The description declares no generation operation '{op}'.")
+    # A declared task limits the operation; an absent task list is not a grant.
+    tasks = {row.get('task') for row in offering.get('tasks') or [] if isinstance(row, Mapping)}
+    bound_catalog = (_task_catalog() if catalog is None else
+                     catalog if isinstance(catalog, Catalog) else load_catalog(catalog))
+    aliases = project_dispatch_task_aliases(op, catalog=bound_catalog)
+    if not tasks.intersection(aliases):
+        raise UnknownOperation('The offering does not declare this task.')
+    return Target(str(engine_id), service, offering, doc)
+
+
+class Runtime:
+    _remote_capability = None
+
+    def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None, egress=None,
+                 remote_factory=None, remote_capability=None, files: Mapping[str, AssetRef] | None = None):
+        self.target = target
+        # The files a caller bound to the operation's declared inputs, by name. Core resolved and checked them before this
+        # runtime existed; the executor reads each one from ``assets`` when its multipart part needs it.
+        self._files = dict(files or {})
+        # ``egress`` is called before any request leaves the gateway for the engine (never for a readiness probe).
+        self._egress = egress
+        connection = connection_config(target.service)
+        remote = connection.get('remote_dispatch') or {}
+        if not isinstance(remote, Mapping):
+            raise ProtocolError('The remote engine policy is invalid.', code='protocol_dispatch_refused')
+        if remote_capability is not None or remote.get('enabled') is True:
+            from gateway.remote_engine import refused, factory_from_store, PRODUCTION_READY
+            if remote_factory is None and remote_capability is None and PRODUCTION_READY:
+                remote_factory = factory_from_store()
+                remote_capability = remote_factory.admit(target.engine_id)
+            if remote_factory is None or remote_capability is None or transport is not None:
+                raise refused()
+            remote_factory.check(remote_capability, service_id=target.engine_id, address=connection.get('address'),
+                                 service=target.service)
+            transport = remote_factory.transport(remote_capability)
+        else:
+            from gateway.service_registry import validate_protocol_dispatch_local_only
+            try:
+                validate_protocol_dispatch_local_only(target.service)
+            except ValueError:
+                raise ProtocolError('Protocol dispatch requires a local engine without paid-provider billing.',
+                                    code='protocol_dispatch_refused') from None
+        self._transport = transport
+        self._remote_capability = remote_capability
+        self.connection = connection_from_record({**connection, 'credentials': {}}, lambda ref: None)
+        self.connection = replace(self.connection, remote_capability=remote_capability)
+        # ``class: control`` operations go to the record's control address when it declares one (engine_contract_view).
+        control = address_for_class(connection, 'control')
+        self._control_connection = (self.connection if control == self.connection.address else
+                                    connection_from_record({**connection, 'address': control, 'credentials': {}},
+                                                           lambda ref: None))
+        if self._control_connection is not self.connection:
+            self._control_connection = replace(self._control_connection, remote_capability=remote_capability)
+        self.adapter = AdapterRegistry({target.description.id: target.description}, assets=assets,
+                                       transport=transport, remote_capability=remote_capability).adapter_for(target.description.id)
+
+    def connection_for(self, op: str, *, operation=None, probe: bool = False, engine_address: bool = False):
+        """Resolve only this operation's class; missing probe credentials may be omitted.
+
+        A control operation goes to the control address unless ``engine_address`` keeps it on the engine's own address
+        (a documented HTTP observation). A credential is sent only to the origin it is approved for; a probe to
+        another origin goes without it."""
+        operation = operation or self.target.description.operations[op]
+        cls = 'control' if operation.op_class == 'control' else 'inference'
+        base = self._control_connection if cls == 'control' and not engine_address else self.connection
+        spec = (connection_config(self.target.service).get('credentials') or {}).get(cls) or {}
+        if not spec.get('secret_ref'):
+            return base
+        try:
+            values = credential_headers(self.target.service, cls, address=base.address)
+            if not values:
+                raise CredentialUnavailable('engine credential reference is unavailable')
+        except CredentialUnavailable:
+            if probe or operation.op_class == 'inventory':
+                return base
+            raise ProtocolError('The credential required by this operation is unavailable.',
+                                code='engine_credential_unavailable') from None
+        except CredentialOriginMismatch:
+            if probe:
+                return base  # never sent across origins; the probe goes without it
+            raise ProtocolError('The credential of this operation is not approved for the address it would go to.',
+                                code='engine_credential_origin_mismatch') from None
+        value = next(iter(values.values()))
+        scheme = spec.get('scheme') or ''
+        if scheme:
+            value = value[len(scheme)+1:]
+        return replace(base, credentials={cls: Credential(value, header=spec.get('header'), scheme=spec.get('scheme'))})
+
+    def poll_timing(self, op: str) -> tuple[float, float]:
+        """The (interval_s, max_wait_s) the description declares for a job operation."""
+        job = self.target.description.operations[op].job
+        if job is None:
+            raise ProtocolError(f"'{op}' is not a job operation.", code='unknown_operation')
+        return job.poll.interval_s, job.poll.max_wait_s
+
+    def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
+        if self._remote_capability is not None and any(str(key).lower() in {
+                'headers', 'authorization', 'proxy-authorization', 'cookie', 'x-api-key'} for key in body):
+            raise ProtocolError('Remote authentication must use the service credential reference.', code='protocol_dispatch_refused')
+        return CanonicalRequest(op=op, body={**body, 'model': self.target.upstream}, files=self._files,
+                                params={'model': self.target.upstream, 'offering': self.target.offering['id'],
+                                        'request_id': 'req_' + secrets.token_hex(12), 'created': int(time.time())})
+
+    def require_egress(self) -> None:
+        """Refuse to send when the caller supplied an egress check that fails."""
+        if self._egress is not None:
+            self._egress()
+        if self._remote_capability is not None:
+            self._transport.check()
+
+    async def invoke(self, op: str, body: Mapping[str, Any]):
+        if self._remote_capability is not None:
+            await asyncio.to_thread(self._transport.factory.check, self._remote_capability,
+                                    service_id=self.target.engine_id, address=self.connection.address)
+        self.require_egress()
+        if self._remote_capability is not None:
+            async with self._transport.operation():
+                return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
+        return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
+
+    async def check_request(self, op: str, body: Mapping[str, Any]) -> None:
+        """Map the caller's request as ``invoke`` would, without sending it, so a value the map refuses is refused
+        before a selection call changes the engine. A job operation maps its own submit request; it is not checked here."""
+        if self.target.description.operations[op].job is None:
+            await self.adapter.check_request(self.connection_for(op), op, self.request(op, body))
+
+    async def lease(self, *, drain, lock_for, may_switch: bool = True):
+        if self._remote_capability is not None:
+            async with self._transport.operation():
+                return await self._lease(drain=drain, lock_for=lock_for, may_switch=may_switch)
+        return await self._lease(drain=drain, lock_for=lock_for, may_switch=may_switch)
+
+    async def _lease(self, *, drain, lock_for, may_switch: bool = True):
+        selection = self.target.offering.get('selection') or {}
+        if selection.get('mode', 'request_field') != 'switch':
+            return None
+        service = {**self.target.service, 'id':self.target.engine_id,
+                   'offerings':offerings_config(self.target.service),
+                   'observations':observations_config(self.target.service)}
+
+        async def invoke(name, args):
+            op = self.target.description.operations.get(name)
+            if op is None or op.op_class != 'control' or op.job is not None:
+                raise ValueError('selection needs a declared control operation')
+            # Retain W2's owner-root checks for host file arguments.
+            checker = EngineControlRuntime(service, drain=drain, lock_for=lock_for)
+            checked, identities = checker._check_paths(args, frozenset())
+            checker._recheck_paths(identities)
+            self.require_egress()
+            reply = await self.adapter.invoke(self.connection_for(name), name, CanonicalRequest(name, body=checked))
+            if isinstance(reply, StreamReply):
+                await reply.aclose()
+                raise ValueError('selection control cannot be streamed')
+
+        async def observe(name):
+            spec = service['observations'].get(name) or {}
+            op = spec.get('op')
+            adapter, connection = self.adapter, self.connection
+            if 'http' in spec:
+                http = spec['http']
+                selector = http.get('select', spec.get('select'))
+                if selector is None:
+                    return UNKNOWN
+                # Compile the documented HTTP observation into the same bounded
+                # grammar. No second HTTP client or credential path is needed.
+                observation = description.parse_description({
+                    'id': 'observation', 'protocol_version': 1, 'executor': 'http-v1',
+                    'auth': {cls: {'kind': auth.kind, **({'name': auth.name} if auth.name else {}),
+                                   **({'scheme': auth.scheme} if auth.scheme is not None else {})}
+                             for cls, auth in self.target.description.auth.items()},
+                    'operations': {'observe': {
+                        'class': 'inventory' if spec.get('credential_class') == 'inference' else 'control',
+                        'request': {'method': 'GET', 'path': http['path']},
+                        'response': {'framing': 'json', 'select': {'value': selector}}}},
+                }, source='engine observation', budgets=self.target.description.budgets)
+                adapter = AdapterRegistry({'observation': observation}, transport=self._transport,
+                                          remote_capability=self._remote_capability).adapter_for('observation')
+                seconds = max(0.01, min(float(http.get('timeout_s', 2)), 30))
+                connection = self.connection_for('observe', operation=observation.operations['observe'], probe=True,
+                                                 engine_address=True)
+                connection = replace(connection, timeouts=replace(connection.timeouts, total_s=seconds,
+                                       first_byte_s=min(seconds, connection.timeouts.first_byte_s)))
+                op = 'observe'
+            elif not isinstance(op, str) or op not in self.target.description.operations:
+                return UNKNOWN
+            else:
+                connection = self.connection_for(op, probe=True)
+            try:
+                reply = await adapter.invoke(connection, op, CanonicalRequest(op))
+                if isinstance(reply, StreamReply):
+                    await reply.aclose()
+                    return UNKNOWN
+                if reply.status != (spec.get('http') or {}).get('expect', 200):
+                    return UNKNOWN
+                value = reply.selected.get('value')
+                return Observation(value is not None, value)
+            except ProtocolError:
+                if self._remote_capability is not None:
+                    raise
+                return UNKNOWN
+
+        return await SwitchController(drain=drain, invoke=invoke, observe=observe, lock_for=lock_for).select(
+            service, str(self.target.offering['id']), selection, may_switch=may_switch)

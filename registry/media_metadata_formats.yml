@@ -1,0 +1,106 @@
+# Container aliases for the metadata helpers. Handler names select existing algorithms.
+# Rows with a muxer use their first suffix when processing any listed MIME type.
+# Rows without a muxer intentionally contribute no MIME processing suffix.
+schema_version: 1
+formats:
+  - handler: png
+    suffixes: [.png]
+    mime_types: [image/png]
+  - handler: jpeg
+    suffixes: [.jpg, .jpeg, .jpe, .jfif]
+    mime_types: [image/jpeg, image/jpg]
+  - handler: webp
+    suffixes: [.webp]
+    mime_types: [image/webp]
+  - handler: video
+    suffixes: [.mp4, .m4v]
+    mime_types: [video/mp4]
+    muxer: mp4
+  - handler: video
+    suffixes: [.mov]
+    mime_types: [video/quicktime]
+    muxer: mov
+  - handler: video
+    suffixes: [.webm]
+    mime_types: [video/webm]
+    muxer: webm
+  - handler: video
+    suffixes: [.mkv]
+    mime_types: [video/x-matroska]
+    muxer: matroska
+  - handler: video
+    suffixes: [.avi]
+    mime_types: [video/x-msvideo]
+    muxer: avi
+  - handler: gif
+    suffixes: [.gif]
+    mime_types: [image/gif]
+  - handler: glb
+    suffixes: [.glb]
+    mime_types: [model/gltf-binary]
+  # Headerless samples: the entire file is content, with no metadata channel.
+  - handler: content
+    suffixes: [.pcm]
+    mime_types: [audio/pcm]
+  - handler: audio
+    suffixes: [.wav]
+    mime_types: [audio/wav, audio/x-wav, audio/wave, audio/vnd.wave]
+    muxer: wav
+  - handler: audio
+    suffixes: [.flac]
+    mime_types: [audio/flac, audio/x-flac]
+    muxer: flac
+  - handler: audio
+    suffixes: [.mp3]
+    mime_types: [audio/mpeg, audio/mp3]
+    muxer: mp3
+  - handler: audio
+    suffixes: [.ogg, .oga, .opus]
+    mime_types: [audio/ogg, audio/opus]
+    muxer: ogg
+  - handler: audio
+    suffixes: [.m4a]
+    mime_types: [audio/mp4, audio/x-m4a, audio/m4a]
+    muxer: mp4
+  - handler: audio
+    suffixes: [.aac]
+    mime_types: [audio/aac]
+    muxer: adts
+  - handler: audio
+    suffixes: [.mka]
+    mime_types: [audio/x-matroska]
+    muxer: matroska
+speech_formats:
+  # OpenAI speech response formats. Keep response MIME suffix aliases here
+  # separate from the broader metadata container aliases above.
+  - format: mp3
+    mime_type: audio/mpeg
+    suffix: .mp3
+    suffix_mime_types: [audio/mpeg, audio/mp3]
+    default: true
+    error_order: 2
+  - format: opus
+    mime_type: audio/ogg
+    suffix: .ogg
+    suffix_mime_types: [audio/ogg]
+    error_order: 3
+  - format: aac
+    mime_type: audio/aac
+    suffix: .aac
+    suffix_mime_types: [audio/aac]
+    error_order: 4
+  - format: flac
+    mime_type: audio/flac
+    suffix: .flac
+    suffix_mime_types: [audio/flac, audio/x-flac]
+    error_order: 5
+  - format: wav
+    mime_type: audio/wav
+    suffix: .wav
+    suffix_mime_types: [audio/wav, audio/x-wav, audio/wave]
+    error_order: 1
+  - format: pcm
+    mime_type: audio/pcm
+    suffix: .pcm
+    suffix_mime_types: []
+    error_order: 6

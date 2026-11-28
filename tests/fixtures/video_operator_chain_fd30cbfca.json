@@ -1,0 +1,49 @@
+{
+  "_reference": {
+    "revision": "fd30cbfcaa8e7f079474b4c8e6d221bb5f18a814",
+    "proof_commit": "3cb3bf253",
+    "probe_sha256": "c43eb01c821e302351c67af805659723c31e71bab28a394042771e7ee0de105e",
+    "route": "POST /v1/videos"
+  },
+  "operator-shots": {
+    "request": {
+      "model": "ltx-2.5-t2v",
+      "prompt": "x",
+      "seed": 7,
+      "shots": [
+        {
+          "prompt": "first",
+          "seconds": 4
+        },
+        {
+          "prompt": "second",
+          "seconds": 4
+        }
+      ]
+    },
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "long_video_not_supported",
+        "message": "Model video-ltx-2.5-t2v cannot render shots or clips longer than 10 s; use a long-video model",
+        "param": "shots",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "operator-seconds": {
+    "request": {
+      "model": "ltx-2.5-t2v",
+      "prompt": "x",
+      "seconds": 16,
+      "seed": 7
+    },
+    "status": 400,
+    "body": {
+      "error": {
+        "message": "seconds must be between 1.0 and 10.0 for model video-ltx-2.5-t2v",
+        "type": "invalid_request_error"
+      }
+    }
+  }
+}

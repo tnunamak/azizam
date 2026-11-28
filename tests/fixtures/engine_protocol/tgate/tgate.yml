@@ -1,0 +1,83 @@
+# A fictional engine protocol that declares the operations the reviewed transition profile names.
+# Test data for tests/test_transition_runtime.py (the executor's control calls over the real http-v1 path).
+protocol_version: 1
+id: tgate
+title: Fictional engine with transition operations
+executor: http-v1
+auth:
+  inference:
+    kind: header
+    name: X-Inference
+  control:
+    kind: header
+    name: X-Control
+operations:
+  transition.idle:
+    class: control
+    request:
+      method: POST
+      path: /t/idle
+      body:
+        encoding: json
+        base: passthrough
+    response:
+      framing: json
+      select:
+        idle: /idle
+        incarnation: /incarnation
+  transition.resident:
+    class: control
+    request:
+      method: POST
+      path: /t/resident
+      body:
+        encoding: json
+        base: passthrough
+    response:
+      framing: json
+      select:
+        resident: /resident
+        offering: /offering
+        ready: /ready
+        incarnation: /incarnation
+  transition.release:
+    class: control
+    request:
+      method: POST
+      path: /t/release
+      body:
+        encoding: json
+        base: passthrough
+    response:
+      framing: json
+      select:
+        outcome: /outcome
+        evidence_ref: /evidence_ref
+        incarnation: /incarnation
+  transition.load:
+    class: control
+    request:
+      method: POST
+      path: /t/load
+      body:
+        encoding: json
+        base: passthrough
+    response:
+      framing: json
+      select:
+        outcome: /outcome
+        evidence_ref: /evidence_ref
+        incarnation: /incarnation
+  transition.query:
+    class: control
+    request:
+      method: POST
+      path: /t/query
+      body:
+        encoding: json
+        base: passthrough
+    response:
+      framing: json
+      select:
+        outcome: /outcome
+        evidence_ref: /evidence_ref

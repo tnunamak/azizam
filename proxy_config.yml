@@ -1,0 +1,55 @@
+# Azizam startup file.
+#
+# This file holds only what the gateway needs before it opens its database, or what a running gateway cannot change:
+# the listener, storage roots, login boot rules and secrets. Every other setting lives in the admin database (admin.db)
+# and is edited in the admin UI or through the config API: owner settings as overrides of the release defaults in
+# registry/defaults/, engines and providers as records of the service registry. Start-up refuses a key that is not
+# listed in registry/startup.schema.json, and its message names where the setting lives now.
+#
+# A fresh install starts from the values below: local only, no sign-in provider, and a first-run setup page that
+# claims the first owner account from this machine.
+#
+# An environment variable may override a startup key, and carries the secrets. The variable of each key is in
+# registry/startup.schema.json (x-azizam-env) and in docs/CONFIG.md.
+
+proxy:
+  host: 127.0.0.1            # Bind 127.0.0.1 unless a reverse proxy or a trusted network needs more.
+  port: 5000                 # env: AZIZAM_PORT
+
+admin:
+  # db_path: data/admin.db   # env: AZIZAM_ADMIN_DB. A relative path is inside the repository.
+  # session_signing_key_env: AZIZAM_ADMIN_SESSION_KEY   # Name of the variable that holds the key (32 bytes or more).
+  # brand:
+  #   wordmark: example.org  # env: AZIZAM_WORDMARK. Optional deployment mark; a generic install shows none.
+  # oidc:                    # Sign-in provider for a first boot; the provider in admin.db wins once it has one.
+  #   enabled: true
+  #   issuer: https://idp.example.org/realms/home
+  #   client_id: azizam
+  #   client_secret_env: AZIZAM_OIDC_CLIENT_SECRET
+  #   redirect_uri: https://azizam.example.org/admin/oidc/callback
+  #   admin_emails: [owner@example.org]
+  oidc:
+    cookie:
+      # First run uses localhost HTTP. Keep this false only for local setup.
+      # Set it back to true before exposing the gateway over HTTPS.
+      secure: false
+
+# auth:
+#   public_paths: [/health]
+#   trusted_proxies: []      # Addresses or networks whose X-Forwarded-For the gateway honors.
+#   setup_allowed_cidrs: []  # env: AZIZAM_SETUP_ALLOWED_CIDRS. Networks that may claim the first owner; loopback always may.
+#   cloudflare_mode: false   # env: AZIZAM_CF_MODE
+#   allow_query_param_key: false   # env: AZIZAM_QUERY_PARAM_KEY
+
+# mcp:
+#   allowed_origins: []
+#   oauth: {enabled: false}
+#
+# request_body_limits:
+#   json_bytes: 33554432     # env: AZIZAM_REQUEST_BODY_JSON_BYTES
+#   media_bytes: 537919488   # env: AZIZAM_REQUEST_BODY_MEDIA_BYTES
+
+# Storage roots (a relative path is inside the repository):
+# images: {cache_dir: cache/images, vram_estimates_file: cache/vram_estimates.json, media_jobs: {payload_dir: data/image_media_jobs}}
+# voices: {dir: data/voices}
+# audio: {workflows_dir: workflows/audio}

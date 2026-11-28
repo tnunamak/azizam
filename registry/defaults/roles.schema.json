@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/roles",
+  "title": "roles",
+  "description": "Logical model names that clients send (for example 'default'). Each role is one entry: it names a backend and, for a local model, a file (docs/design/CONFIG_HOMES.md, C7).",
+  "type": "object",
+  "x-azizam-entry": "collection",
+  "additionalProperties": {
+    "x-azizam-entry": "atomic",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "display_name": {"type": "string"},
+      "description": {"type": "string"},
+      "backend": {"type": "string", "minLength": 1},
+      "model": {"type": "string"},
+      "mmproj": {"type": "string"},
+      "path": {"type": "string"},
+      "activation_profile": {"type": "string"},
+      "context_window": {"type": "integer", "minimum": 1},
+      "sampling": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "temperature": {"type": "number", "minimum": 0},
+          "top_p": {"type": "number", "minimum": 0, "maximum": 1},
+          "top_k": {"type": "integer", "minimum": 0},
+          "min_p": {"type": "number", "minimum": 0, "maximum": 1},
+          "presence_penalty": {"type": "number"},
+          "repetition_penalty": {"type": "number", "minimum": 0}
+        }
+      }
+    }
+  }
+}

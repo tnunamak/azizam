@@ -1,0 +1,259 @@
+"""Real SQLite change detection and bounded worker costs at engine I/O."""
+import asyncio
+import sqlite3
+
+import httpx
+import pytest
+
+from gateway import admin_store, engine_egress
+from gateway.engine_protocol.errors import ProtocolError
+from tests.support.remote_protocol import case
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401
+from tests.support.fake_upstream import HandlerTransport
+from tests.test_signin_who_can_enter import gateway  # noqa: F401
+from tests.test_owner_engine_chain_smell import owner, smell_engine, _install_description, _write_headers  # noqa: F401
+
+
+@pytest.mark.parametrize('failed_read', [False, True])
+@pytest.mark.parametrize('remote', [False, True])
+def test_legacy_unchanged_registry_needs_no_worker_and_retains_denials(tmp_path, monkeypatch, failed_read, remote):
+    path = tmp_path / 'registry.db'
+    admin_store.init_db(path)
+    registry, _, _, _, _, _ = case()
+    monkeypatch.setattr(engine_egress, '_live', engine_egress._live)
+    engine_egress.install(engine_egress.project(registry['services'] if remote else {}),
+                          registry_path=path, registry_generation=admin_store.service_registry_generation(path=path))
+    reader = engine_egress._live.registry_reader
+    connection = reader._connection
+    queries, sends = [], []
+    connection.set_trace_callback(queries.append)
+    if failed_read:
+        def fail():
+            raise sqlite3.OperationalError('synthetic generation read failure')
+        monkeypatch.setattr(reader, 'version', fail)
+    def worker(*args, **kwargs):
+        pytest.fail('unchanged or unreadable legacy registry submitted a worker')
+    monkeypatch.setattr(asyncio, 'to_thread', worker)
+    def send(request):
+        sends.append(request.url)
+        return httpx.Response(200, content=b'local result')
+    async def run():
+        async with engine_egress.async_client(transport=HandlerTransport(send)) as client:
+            if remote:
+                with pytest.raises(ProtocolError):
+                    await client.get('https://engine.example/health')
+            else:
+                for _ in range(3):
+                    assert (await client.get('http://localhost:59124/health')).content == b'local result'
+    try:
+        asyncio.run(run())
+        assert len(sends) == (0 if remote else 3)
+        assert reader._connection is connection
+        assert all(query == 'PRAGMA data_version' for query in queries)
+    finally:
+        connection.set_trace_callback(None)
+
+
+def _remote_factory(owner, *, wire_bytes=None, limits=None):
+    from gateway.remote_engine import factory_from_store
+    from tests.support.remote_protocol import add_remote
+    client, _, _, _ = owner
+    assert _install_description(client).status_code == 201
+    assert add_remote(client).status_code == 201
+    assert client.patch('/admin/api/operator/services/smell-box', headers=_write_headers(client),
+                        json={'enabled': True}).status_code == 200
+    limits = {**({'wire_bytes': wire_bytes} if wire_bytes is not None else {}), **(limits or {})}
+    if limits:
+        registry = client.get('/admin/api/operator/service-registry').json()['service_registry']
+        registry['services']['smell-box']['config']['connection']['remote_dispatch']['limits'] = limits
+        assert client.put('/admin/api/operator/service-registry', headers=_write_headers(client), json=registry).status_code == 200
+    return factory_from_store()
+
+
+def _external_generation_commit(path):
+    # A separate connection represents a CLI commit without in-process callbacks.
+    from gateway.sqlite_startup import connect
+    conn = connect(path)
+    try:
+        conn.execute("UPDATE operator_settings_generations SET operator_settings_generation=operator_settings_generation+1 WHERE setting_key='service_registry'")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_remote_64_mib_download_bounds_worker_and_snapshot_reads(owner, gateway, monkeypatch, fake_upstreams, record_property):
+    from collections import Counter
+    from gateway.engine_protocol.transport import WireRequest
+    from gateway.engine_protocol.types import Timeouts
+    from tests.support.remote_protocol import gateway_case
+    size = 64 * 1024 * 1024
+    recorder = gateway_case(gateway, monkeypatch, fake_upstreams)
+    recorder.body_size, recorder.fragment_size = size, 64 * 1024
+    factory = _remote_factory(owner, wire_bytes=size * 2)
+    bound = factory.transport(factory.admit('smell-box'))
+    queries, workers, snapshots = [], [], Counter()
+    factory._registry_version._connection.set_trace_callback(queries.append)
+    real_thread = asyncio.to_thread
+    async def worker(func, *args, **kwargs):
+        workers.append(func.__qualname__)
+        return await real_thread(func, *args, **kwargs)
+    monkeypatch.setattr(asyncio, 'to_thread', worker)
+    for name in ('service_registry_generation', 'get_service_registry_json_with_generation'):
+        original = getattr(admin_store, name)
+        def counted(*args, _name=name, _original=original, **kwargs):
+            snapshots[_name] += 1
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(admin_store, name, counted)
+    async def run():
+        response = await bound.send(WireRequest('GET', 'https://engine.example/download', {}), Timeouts())
+        received, changed = 0, False
+        try:
+            async for chunk in response.chunks():
+                assert chunk == b'x' * len(chunk)
+                received += len(chunk)
+                if received >= size // 2 and not changed:
+                    _external_generation_commit(gateway.path)
+                    changed = True
+                await asyncio.sleep(0)  # also exercise the shared watcher during the transfer
+            assert received == size
+        finally:
+            await response.aclose()
+    try:
+        asyncio.run(run())
+        assert len(recorder.connections) == 1 and recorder.tls == ['engine.example']
+        assert recorder.read_sizes[1:] == [64 * 1024] * 1024
+        assert sum(recorder.read_sizes) > size  # headers count against the wire cap too
+        assert snapshots == {'service_registry_generation': 1, 'get_service_registry_json_with_generation': 1}
+        assert len(workers) <= 6, workers  # setup + one refresh, independent of the 1,024 body reads
+        assert workers.count('ClientFactory.check') == 3  # two send checks + one changed-generation check
+        assert all(query == 'PRAGMA data_version' for query in queries)
+        for name, value in {'download_bytes': size, 'body_reads': len(recorder.read_sizes) - 1,
+                            'worker_hops': len(workers), 'snapshot_queries': sum(snapshots.values()),
+                            'inline_version_queries': len(queries)}.items():
+            record_property(name, value)
+    finally:
+        factory._registry_version._connection.set_trace_callback(None)
+
+
+def test_remote_changed_version_refreshes_once_for_concurrent_checks(owner, gateway, monkeypatch):
+    factory = _remote_factory(owner)
+    cap = factory.admit('smell-box')
+    bindings = [factory.transport(cap) for _ in range(8)]
+    _external_generation_commit(gateway.path)
+    real_thread, workers = asyncio.to_thread, []
+    async def worker(func, *args, **kwargs):
+        workers.append(func)
+        return await real_thread(func, *args, **kwargs)
+    monkeypatch.setattr(asyncio, 'to_thread', worker)
+    async def run():
+        await asyncio.gather(*(bound.check_current() for bound in bindings))
+        await asyncio.gather(*(bound.check_current() for bound in bindings))
+    asyncio.run(run())
+    assert workers == [factory.check]
+    assert not any(bound.revoked for bound in bindings)
+
+
+@pytest.mark.parametrize('io', ['read', 'write'])
+def test_remote_unreadable_version_refuses_next_socket_io(owner, gateway, monkeypatch, io):
+    from gateway.remote_engine_budget import GuardedStream
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    calls = []
+    class Stream:
+        async def read(self, *args, **kwargs):
+            calls.append('read')
+            return b''
+        async def write(self, *args, **kwargs):
+            calls.append('write')
+    def fail():
+        raise sqlite3.OperationalError('synthetic version read failure')
+    monkeypatch.setattr(factory._registry_version, 'version', fail)
+    async def run():
+        stream = GuardedStream(Stream(), bound)
+        with pytest.raises(asyncio.CancelledError):
+            await (stream.read(1024) if io == 'read' else stream.write(b'synthetic'))
+    asyncio.run(run())
+    assert bound.revoked and not calls
+
+
+def _commit_during_refresh(factory, monkeypatch, path, times):
+    """Each of the first ``times`` refreshes reads the registry, then an unrelated commit lands before the recheck."""
+    real_check, calls = factory.check, []
+    def check(*args, **kwargs):
+        calls.append(1)
+        real_check(*args, **kwargs)
+        if len(calls) <= times:
+            _external_generation_commit(path)
+    monkeypatch.setattr(factory, 'check', check)
+    return calls
+
+
+def test_remote_commit_during_refresh_reads_again_and_keeps_unchanged_authority(owner, gateway, monkeypatch):
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    _external_generation_commit(gateway.path)
+    calls = _commit_during_refresh(factory, monkeypatch, gateway.path, times=1)
+    asyncio.run(bound.check_current())
+    assert len(calls) == 2 and not bound.revoked
+
+
+def test_remote_registry_that_never_settles_refuses_after_bounded_reads(owner, gateway, monkeypatch):
+    from gateway.remote_engine import limit_catalog
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    _external_generation_commit(gateway.path)
+    calls = _commit_during_refresh(factory, monkeypatch, gateway.path, times=100)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bound.check_current())
+    assert len(calls) == limit_catalog()['authority_refreshes']['default'] == 3 and bound.revoked
+
+
+@pytest.mark.parametrize('budget', [1, 5])
+def test_remote_refresh_budget_follows_the_service_limit(owner, gateway, monkeypatch, budget):
+    factory = _remote_factory(owner, limits={'authority_refreshes': budget})
+    bound = factory.transport(factory.admit('smell-box'))
+    _external_generation_commit(gateway.path)
+    calls = _commit_during_refresh(factory, monkeypatch, gateway.path, times=100)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bound.check_current())
+    assert len(calls) == budget and bound.revoked
+
+
+def test_remote_database_replaced_during_refresh_with_the_same_revision_is_read_again(owner, gateway, monkeypatch, tmp_path):
+    """A restored or swapped admin.db can carry the same registry revision with other authority: its file is new, so
+    no snapshot of the old file may stand for it."""
+    import json
+    import os
+    from gateway.sqlite_startup import connect
+    factory = _remote_factory(owner)
+    bound = factory.transport(factory.admit('smell-box'))
+    # Make the cached authority stale first, so the check refreshes; the copy then has the same revision.
+    _external_generation_commit(gateway.path)
+    replacement = tmp_path / 'replacement.db'
+    source, copy = connect(gateway.path), connect(replacement)
+    try:
+        source.backup(copy)
+        (value_json,) = copy.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()
+        registry = json.loads(value_json)
+        registry.setdefault('services', {}).setdefault('smell-box', {})['enabled'] = False
+        copy.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(registry),))
+        copy.commit()
+    finally:
+        source.close()
+        copy.close()
+    real_check, calls = factory.check, []
+    def check(*args, **kwargs):
+        calls.append(1)
+        real_check(*args, **kwargs)
+        if len(calls) == 1:
+            # Empty the old file's write-ahead log first, or SQLite would replay its pages over the new file.
+            wal = connect(gateway.path)
+            try:
+                wal.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            finally:
+                wal.close()
+            os.replace(replacement, gateway.path)
+    monkeypatch.setattr(factory, 'check', check)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bound.check_current())
+    assert len(calls) == 2 and bound.revoked

@@ -1,0 +1,57 @@
+# The smell fixture with a second operation that takes named files. smell.infer is the JSON job of d0-smell, unchanged.
+# smell.refine declares two file inputs: `image` takes the listed picture types and must be bound; `reference` takes any
+# audio and may be left out. Each is read by a multipart `file` part, so what a caller binds is what the engine receives.
+protocol_version: 1
+id: d0-smell-file
+title: Smell inference with file inputs (test fixture)
+executor: http-v1
+
+operations:
+  smell.infer:
+    class: generate
+    job:
+      submit:
+        request:
+          method: POST
+          path: /v1/infer
+          body:
+            encoding: json
+            base: empty
+            map:
+              - copy: {from: /body/vector, to: /input/vector}
+        id: /job/id
+      poll:
+        request: {method: GET, path: "/v1/infer/{id}"}
+        status:
+          path: /state
+          states: {queued: pending, working: running, ready: succeeded, failed: failed}
+        interval_s: 0.5
+        max_wait_s: 5
+      fetch:
+        request: {method: GET, path: "/v1/infer/{id}/molecule"}
+  smell.refine:
+    class: generate
+    files:
+      image: {accepts: [image/png, image/jpeg], required: true}
+      reference: {accepts: ["audio/*"]}
+    job:
+      submit:
+        request:
+          method: POST
+          path: /v1/refine
+          body:
+            encoding: multipart
+            parts:
+              - {name: vector, kind: json, from: /body/vector}
+              - {name: image, kind: file, from: /files/image, required: true}
+              - {name: reference, kind: file, from: /files/reference}
+        id: /job/id
+      poll:
+        request: {method: GET, path: "/v1/infer/{id}"}
+        status:
+          path: /state
+          states: {queued: pending, working: running, ready: succeeded, failed: failed}
+        interval_s: 0.5
+        max_wait_s: 5
+      fetch:
+        request: {method: GET, path: "/v1/infer/{id}/molecule"}

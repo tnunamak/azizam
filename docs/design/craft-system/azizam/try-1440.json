@@ -1,0 +1,787 @@
+{
+ "scope": "main",
+ "url": "/ui/try/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 1440,
+   "h": 900
+  },
+  "pageHeight": 900,
+  "sidebarWidth": 232,
+  "main": {
+   "x": 236,
+   "w": 1200,
+   "padding": "40px 48px 48px 48px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "1200px",
+  "contentMaxWidthEl": "main.shell-content pb-28 sm:pb-12",
+  "contentLeftFromViewport": 284,
+  "contentRightFromViewport": 52,
+  "contentLeftFromMainEdge": 48,
+  "contentRightFromMainEdge": 48,
+  "titleTop": 45,
+  "titleTopFromMain": 45,
+  "title": {
+   "text": "Try",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.space-y-8",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-8",
+    "top": 40,
+    "height": 40,
+    "sample": "Try"
+   },
+   {
+    "tag": "div",
+    "classes": "group/tabs flex gap-2 data-[orientation=horizontal]:flex-col",
+    "top": 144,
+    "height": 374,
+    "sample": "Chat Make a picture Read text aloud Turn"
+   }
+  ],
+  "sectionGaps": [
+   64
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.space-y-8",
+    "gap": 64,
+    "from": "Try",
+    "to": "Chat Make a picture Read text "
+   }
+  ],
+  "headingGaps": []
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "Try",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 45,
+    "w": 33.9,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Chat",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 600,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(11, 74, 87)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 287,
+    "y": 148,
+    "w": 71,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Make a picture",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 362,
+    "y": 148,
+    "w": 137,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Read text aloud",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 503,
+    "y": 148,
+    "w": 141,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Turn a recording into text",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 648,
+    "y": 148,
+    "w": 203,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Choose an option",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 855,
+    "y": 148,
+    "w": 153,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Turn text into numbers",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1012,
+    "y": 148,
+    "w": 187,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Workflow",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1203,
+    "y": 148,
+    "w": 102,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Send a message and get a reply.",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 305,
+    "y": 237,
+    "w": 445.8,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Model name",
+   "role": "label",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 305,
+    "y": 275,
+    "w": 80,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Default",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 318,
+    "y": 307,
+    "w": 48,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Prompt",
+   "role": "label",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 305,
+    "y": 357,
+    "w": 47,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "textarea",
+   "text": "Reply with one short sentence.",
+   "role": "label",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 305,
+    "y": 377,
+    "w": 445.8,
+    "h": 64,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Run",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 305,
+    "y": 457,
+    "w": 76,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Run chat",
+   "role": "p",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 870,
+    "y": 258,
+    "w": 476.2,
+    "h": 22,
+    "inViewport": true
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Chat",
+   "height": 37,
+   "width": 71,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(220, 240, 242)",
+   "fontSize": 14,
+   "fontWeight": 600,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 287,
+    "y": 148,
+    "w": 71,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Make a picture",
+   "height": 37,
+   "width": 137,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 362,
+    "y": 148,
+    "w": 137,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Read text aloud",
+   "height": 37,
+   "width": 141,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 503,
+    "y": 148,
+    "w": 141,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Turn a recording into text",
+   "height": 37,
+   "width": 203,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 648,
+    "y": 148,
+    "w": 203,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Choose an option",
+   "height": 37,
+   "width": 153,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 855,
+    "y": 148,
+    "w": 153,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Turn text into numbers",
+   "height": 37,
+   "width": 187,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 1012,
+    "y": 148,
+    "w": 187,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Workflow",
+   "height": 37,
+   "width": 102,
+   "borderRadius": "6px",
+   "padding": "4px 8px 4px 8px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 1203,
+    "y": 148,
+    "w": 102,
+    "h": 37,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "select",
+   "variant": null,
+   "size": "default",
+   "tag": "button",
+   "role": "combobox",
+   "text": "Model",
+   "height": 44,
+   "width": 445.8,
+   "borderRadius": "6px",
+   "padding": "8px 12px 8px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(123, 142, 147)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "border-input focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])",
+   "box": {
+    "x": 305,
+    "y": 295,
+    "w": 445.8,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "textarea",
+   "variant": null,
+   "size": null,
+   "tag": "textarea",
+   "role": null,
+   "text": "Reply with one short sentence.",
+   "height": 64,
+   "width": 445.8,
+   "borderRadius": "6px",
+   "padding": "8px 12px 8px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(123, 142, 147)",
+   "borderStyle": "solid",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 flex field-sizing-content min-h-16 ",
+   "box": {
+    "x": 305,
+    "y": 377,
+    "w": 445.8,
+    "h": 64,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Run",
+   "height": 40,
+   "width": 76,
+   "borderRadius": "6px",
+   "padding": "0px 14px 0px 14px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 305,
+    "y": 457,
+    "w": 76,
+    "h": 40,
+    "inViewport": true
+   }
+  }
+ ],
+ "controlGroups": [
+  {
+   "role": "tablist",
+   "height": 44,
+   "width": 1024,
+   "borderRadius": "10px",
+   "padding": "3px",
+   "background": "rgba(0, 0, 0, 0)",
+   "border": "0px solid rgb(215, 224, 226)",
+   "items": 7,
+   "box": {
+    "x": 284,
+    "y": 144,
+    "w": 1024,
+    "h": 44,
+    "inViewport": true
+   }
+  }
+ ],
+ "cards": [
+  {
+   "tag": "form",
+   "slot": null,
+   "classes": "bg-card min-w-0 space-y-4 rounded-xl border p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 284,
+    "y": 216,
+    "w": 487.8,
+    "h": 302,
+    "inViewport": true
+   },
+   "firstText": "Send a message and get a reply. Model na"
+  },
+  {
+   "tag": "section",
+   "slot": null,
+   "classes": "bg-card min-w-0 rounded-xl border p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 792,
+    "y": 216,
+    "w": 596.2,
+    "h": 302,
+    "inViewport": true
+   },
+   "firstText": "Run chat"
+  },
+  {
+   "tag": "div",
+   "slot": null,
+   "classes": "flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 rounded-panel border border-dashed p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px dashed rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "hasBorder": true,
+   "hasBg": false,
+   "hasShadow": false,
+   "box": {
+    "x": 813,
+    "y": 237,
+    "w": 554.2,
+    "h": 64,
+    "inViewport": true
+   },
+   "firstText": "Run chat"
+  }
+ ],
+ "rowLists": [
+  {
+   "kind": "sibling-group",
+   "parent": "div.group/tabs-list.inline-flex.w-fit.items-center",
+   "count": 7,
+   "visualRows": 1,
+   "perRow": 7,
+   "itemHeights": [
+    37,
+    37,
+    37,
+    37,
+    37,
+    37,
+    37
+   ],
+   "heights": [
+    37
+   ],
+   "gaps": [],
+   "columnGaps": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "layout": "horizontal",
+   "inTablist": true,
+   "spanPx": 37,
+   "sample": "Chat",
+   "box": {
+    "x": 284,
+    "y": 144,
+    "w": 1024,
+    "h": 44,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "16x16": 9,
+  "20x20": 1
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 6,
+  "rgb(11, 74, 87)": 1,
+  "rgb(61, 79, 85)": 7,
+  "rgb(255, 255, 255)": 1
+ },
+ "bgColors": {
+  "rgb(220, 240, 242)": 1,
+  "rgb(255, 255, 255)": 2,
+  "rgb(13, 69, 82)": 1
+ },
+ "surface": "try",
+ "width": 1440,
+ "actualRoute": "/ui/try/",
+ "bodyTextLength": 279
+}

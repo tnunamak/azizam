@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/transport_budgets.schema.json",
+  "title": "Transport budgets",
+  "description": "Size and time budgets of the plan runners, plan translators and small transport guards. Closed: every budget is required and none may be added without a reader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "plan_runner", "plan_translator", "plan_usage_bounds", "mcp_park", "turn_state", "browser_people"],
+  "properties": {
+    "version": {"const": 1},
+    "plan_runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_limit_bytes", "kill_grace_seconds", "exit_wait_seconds", "discovery_timeout_seconds", "park_ttl_seconds", "session_limit"],
+      "properties": {
+        "line_limit_bytes": {"type": "integer", "minimum": 1},
+        "kill_grace_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "exit_wait_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "discovery_timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "park_ttl_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "session_limit": {"type": "integer", "minimum": 1}
+      }
+    },
+    "plan_translator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stream_buffer_bytes", "max_items", "least_effort"],
+      "properties": {
+        "stream_buffer_bytes": {"type": "integer", "minimum": 1},
+        "max_items": {"type": "integer", "minimum": 1},
+        "least_effort": {"type": "string", "minLength": 1}
+      }
+    },
+    "plan_usage_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_percent", "max_window_minutes", "max_reset_seconds"],
+      "properties": {
+        "max_percent": {"type": "number", "exclusiveMinimum": 0},
+        "max_window_minutes": {"type": "integer", "minimum": 1},
+        "max_reset_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "mcp_park": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_body_bytes"],
+      "properties": {"max_body_bytes": {"type": "integer", "minimum": 1}}
+    },
+    "turn_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_value_length"],
+      "properties": {"max_value_length": {"type": "integer", "minimum": 1}}
+    },
+    "browser_people": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signed_in_max", "remembered_max"],
+      "properties": {
+        "signed_in_max": {"type": "integer", "minimum": 1},
+        "remembered_max": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

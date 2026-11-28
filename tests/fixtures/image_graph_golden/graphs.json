@@ -1,0 +1,1927 @@
+{
+ "edit-n2/qwen-image-2.1-edit": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "qwen-image-2.1-edit",
+      "images": [
+       "9",
+       0
+      ]
+     }
+    },
+    "11": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "9",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_8b_w4a8.safetensors",
+      "device": "default",
+      "type": "qwen_image"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "LoadImage",
+     "inputs": {
+      "image": "uploaded.png"
+     }
+    },
+    "5": {
+     "class_type": "QwenImage21Cache",
+     "inputs": {
+      "device": "auto",
+      "dtype": "default",
+      "model": [
+       "1",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "JWString",
+     "inputs": {
+      "text": "a red fox in snow"
+     }
+    },
+    "7": {
+     "class_type": "TextEncodeQwenImage21",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "images.image_1": [
+       "4",
+       0
+      ],
+      "negative_prompt": "",
+      "prompt": [
+       "6",
+       0
+      ],
+      "resolution": 1024,
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "7",
+       2
+      ],
+      "model": [
+       "5",
+       0
+      ],
+      "negative": [
+       "7",
+       1
+      ],
+      "positive": [
+       "7",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 25
+     }
+    },
+    "9": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "qwen-image-2.1-edit",
+      "images": [
+       "9",
+       0
+      ]
+     }
+    },
+    "11": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "9",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_8b_w4a8.safetensors",
+      "device": "default",
+      "type": "qwen_image"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "LoadImage",
+     "inputs": {
+      "image": "uploaded.png"
+     }
+    },
+    "5": {
+     "class_type": "QwenImage21Cache",
+     "inputs": {
+      "device": "auto",
+      "dtype": "default",
+      "model": [
+       "1",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "JWString",
+     "inputs": {
+      "text": "a red fox in snow"
+     }
+    },
+    "7": {
+     "class_type": "TextEncodeQwenImage21",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "images.image_1": [
+       "4",
+       0
+      ],
+      "negative_prompt": "",
+      "prompt": [
+       "6",
+       0
+      ],
+      "resolution": 1024,
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "7",
+       2
+      ],
+      "model": [
+       "5",
+       0
+      ],
+      "negative": [
+       "7",
+       1
+      ],
+      "positive": [
+       "7",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 25
+     }
+    },
+    "9": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "qwen-image-2.1-edit"
+  ],
+  "resolved_workflow": [
+   "qwen-image-2.1-edit"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "qwen-image-2.1-edit",
+    64,
+    48
+   ]
+  ]
+ },
+ "edit-transparent/qwen-image-2.1-edit": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "qwen-image-2.1-edit",
+      "images": [
+       "11",
+       0
+      ]
+     }
+    },
+    "11": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "9",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_8b_w4a8.safetensors",
+      "device": "default",
+      "type": "qwen_image"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "LoadImage",
+     "inputs": {
+      "image": "uploaded.png"
+     }
+    },
+    "5": {
+     "class_type": "QwenImage21Cache",
+     "inputs": {
+      "device": "auto",
+      "dtype": "default",
+      "model": [
+       "1",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "JWString",
+     "inputs": {
+      "text": "a red fox in snow"
+     }
+    },
+    "7": {
+     "class_type": "TextEncodeQwenImage21",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "images.image_1": [
+       "4",
+       0
+      ],
+      "negative_prompt": "",
+      "prompt": [
+       "6",
+       0
+      ],
+      "resolution": 1024,
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "7",
+       2
+      ],
+      "model": [
+       "5",
+       0
+      ],
+      "negative": [
+       "7",
+       1
+      ],
+      "positive": [
+       "7",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 25
+     }
+    },
+    "9": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "qwen-image-2.1-edit"
+  ],
+  "resolved_workflow": [
+   "qwen-image-2.1-edit"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "qwen-image-2.1-edit+rmbg",
+    64,
+    48
+   ],
+   [
+    "qwen-image-2.1-edit+rmbg",
+    64,
+    48
+   ]
+  ]
+ },
+ "edit-transparent/seedvr2-upscale": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "LoadImage",
+     "inputs": {
+      "image": "uploaded.png"
+     }
+    },
+    "10": {
+     "class_type": "SeedVR2PostProcessing",
+     "inputs": {
+      "color_correction_method": "none",
+      "images": [
+       "9",
+       0
+      ],
+      "original_resized_images": [
+       "2",
+       0
+      ]
+     }
+    },
+    "11": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "seedvr2-upscale",
+      "images": [
+       "99",
+       0
+      ]
+     }
+    },
+    "2": {
+     "class_type": "ResizeImageMaskNode",
+     "inputs": {
+      "input": [
+       "1",
+       0
+      ],
+      "resize_type": "scale by multiplier",
+      "resize_type.multiplier": 2.0,
+      "scale_method": "lanczos"
+     }
+    },
+    "3": {
+     "class_type": "SeedVR2Preprocess",
+     "inputs": {
+      "resized_images": [
+       "2",
+       0
+      ]
+     }
+    },
+    "4": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+     }
+    },
+    "5": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "seedvr2_7b_sharp_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "6": {
+     "class_type": "VAEEncodeTiled",
+     "inputs": {
+      "overlap": 128,
+      "pixels": [
+       "3",
+       0
+      ],
+      "temporal_overlap": 8,
+      "temporal_size": 4096,
+      "tile_size": 512,
+      "vae": [
+       "4",
+       0
+      ]
+     }
+    },
+    "7": {
+     "class_type": "SeedVR2Conditioning",
+     "inputs": {
+      "model": [
+       "5",
+       0
+      ],
+      "vae_conditioning": [
+       "6",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "5",
+       0
+      ],
+      "negative": [
+       "7",
+       1
+      ],
+      "positive": [
+       "7",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 1
+     }
+    },
+    "9": {
+     "class_type": "VAEDecodeTiled",
+     "inputs": {
+      "overlap": 128,
+      "samples": [
+       "8",
+       0
+      ],
+      "temporal_overlap": 8,
+      "temporal_size": 4096,
+      "tile_size": 512,
+      "vae": [
+       "4",
+       0
+      ]
+     }
+    },
+    "99": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "10",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "seedvr2-upscale"
+  ],
+  "resolved_workflow": [
+   "seedvr2-upscale"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "seedvr2-upscale+rmbg",
+    64,
+    48
+   ],
+   [
+    "seedvr2-upscale+rmbg",
+    64,
+    48
+   ]
+  ]
+ },
+ "edit/qwen-image-2.1-edit": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "qwen-image-2.1-edit",
+      "images": [
+       "9",
+       0
+      ]
+     }
+    },
+    "11": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "9",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_8b_w4a8.safetensors",
+      "device": "default",
+      "type": "qwen_image"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "LoadImage",
+     "inputs": {
+      "image": "uploaded.png"
+     }
+    },
+    "5": {
+     "class_type": "QwenImage21Cache",
+     "inputs": {
+      "device": "auto",
+      "dtype": "default",
+      "model": [
+       "1",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "JWString",
+     "inputs": {
+      "text": "a red fox in snow"
+     }
+    },
+    "7": {
+     "class_type": "TextEncodeQwenImage21",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "images.image_1": [
+       "4",
+       0
+      ],
+      "negative_prompt": "",
+      "prompt": [
+       "6",
+       0
+      ],
+      "resolution": 1024,
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "7",
+       2
+      ],
+      "model": [
+       "5",
+       0
+      ],
+      "negative": [
+       "7",
+       1
+      ],
+      "positive": [
+       "7",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 25
+     }
+    },
+    "9": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "qwen-image-2.1-edit"
+  ],
+  "resolved_workflow": [
+   "qwen-image-2.1-edit"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "qwen-image-2.1-edit",
+    64,
+    48
+   ],
+   [
+    "qwen-image-2.1-edit",
+    64,
+    48
+   ]
+  ]
+ },
+ "edit/seedvr2-upscale": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "LoadImage",
+     "inputs": {
+      "image": "uploaded.png"
+     }
+    },
+    "10": {
+     "class_type": "SeedVR2PostProcessing",
+     "inputs": {
+      "color_correction_method": "none",
+      "images": [
+       "9",
+       0
+      ],
+      "original_resized_images": [
+       "2",
+       0
+      ]
+     }
+    },
+    "11": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "seedvr2-upscale",
+      "images": [
+       "10",
+       0
+      ]
+     }
+    },
+    "2": {
+     "class_type": "ResizeImageMaskNode",
+     "inputs": {
+      "input": [
+       "1",
+       0
+      ],
+      "resize_type": "scale by multiplier",
+      "resize_type.multiplier": 2.0,
+      "scale_method": "lanczos"
+     }
+    },
+    "3": {
+     "class_type": "SeedVR2Preprocess",
+     "inputs": {
+      "resized_images": [
+       "2",
+       0
+      ]
+     }
+    },
+    "4": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+     }
+    },
+    "5": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "seedvr2_7b_sharp_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "6": {
+     "class_type": "VAEEncodeTiled",
+     "inputs": {
+      "overlap": 128,
+      "pixels": [
+       "3",
+       0
+      ],
+      "temporal_overlap": 8,
+      "temporal_size": 4096,
+      "tile_size": 512,
+      "vae": [
+       "4",
+       0
+      ]
+     }
+    },
+    "7": {
+     "class_type": "SeedVR2Conditioning",
+     "inputs": {
+      "model": [
+       "5",
+       0
+      ],
+      "vae_conditioning": [
+       "6",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "5",
+       0
+      ],
+      "negative": [
+       "7",
+       1
+      ],
+      "positive": [
+       "7",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 1
+     }
+    },
+    "9": {
+     "class_type": "VAEDecodeTiled",
+     "inputs": {
+      "overlap": 128,
+      "samples": [
+       "8",
+       0
+      ],
+      "temporal_overlap": 8,
+      "temporal_size": 4096,
+      "tile_size": 512,
+      "vae": [
+       "4",
+       0
+      ]
+     }
+    },
+    "99": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "10",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "seedvr2-upscale"
+  ],
+  "resolved_workflow": [
+   "seedvr2-upscale"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "seedvr2-upscale",
+    64,
+    48
+   ],
+   [
+    "seedvr2-upscale",
+    64,
+    48
+   ]
+  ]
+ },
+ "generate-batch-input/krea2-turbo": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 2,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "krea2-turbo"
+  ],
+  "resolved_workflow": [
+   "krea2-turbo"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "krea2-turbo",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate-n2/krea2-turbo": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 2,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    }
+   },
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 42,
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "krea2-turbo"
+  ],
+  "resolved_workflow": [
+   "krea2-turbo"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "krea2-turbo",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate-noseed/krea2-turbo": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": "<random-seed>",
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "krea2-turbo"
+  ],
+  "resolved_workflow": [
+   "krea2-turbo"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "krea2-turbo",
+    1024,
+    1024
+   ],
+   [
+    "krea2-turbo",
+    1024,
+    1024
+   ]
+  ]
+ },
+ "generate-transparent/krea2-turbo": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "10",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "krea2-turbo"
+  ],
+  "resolved_workflow": [
+   "krea2-turbo"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "krea2-turbo+rmbg",
+    512,
+    768
+   ],
+   [
+    "krea2-turbo+rmbg",
+    512,
+    768
+   ]
+  ]
+ },
+ "generate/krea2-turbo": {
+  "graphs": [
+   {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "RMBG",
+     "inputs": {
+      "background": "Alpha",
+      "background_color": "#00000000",
+      "image": [
+       "8",
+       0
+      ],
+      "invert_output": false,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "model": "RMBG-2.0",
+      "process_res": 1024,
+      "refine_foreground": true,
+      "sensitivity": 1.0
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "krea2"
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a red fox in snow"
+     }
+    },
+    "5": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "4",
+       0
+      ]
+     }
+    },
+    "6": {
+     "class_type": "EmptyLatentImage",
+     "inputs": {
+      "batch_size": 1,
+      "height": 768,
+      "width": 512
+     }
+    },
+    "7": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "5",
+       0
+      ],
+      "positive": [
+       "4",
+       0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 41,
+      "steps": 8
+     }
+    },
+    "8": {
+     "class_type": "VAEDecode",
+     "inputs": {
+      "samples": [
+       "7",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "9": {
+     "class_type": "SaveImage",
+     "inputs": {
+      "filename_prefix": "krea2-turbo",
+      "images": [
+       "8",
+       0
+      ]
+     }
+    }
+   }
+  ],
+  "requested_workflow": [
+   "krea2-turbo"
+  ],
+  "resolved_workflow": [
+   "krea2-turbo"
+  ],
+  "status": [
+   200
+  ],
+  "vram_keys": [
+   [
+    "krea2-turbo",
+    512,
+    768
+   ],
+   [
+    "krea2-turbo",
+    512,
+    768
+   ]
+  ]
+ }
+}

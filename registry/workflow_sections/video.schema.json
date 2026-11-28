@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam/workflow/2/section/video",
+  "title": "The section a video workflow document keeps for its own capability",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "Facts a video request is checked and sized against (CODE_TO_DATA S7, section 2); read by gateway/video_grid.py. A document keeps this under a key named after its capability; the contract loads the schema file with the capability's name from this directory. Cross-field rules (a role names a declared, bound input; ranges are not empty) are the semantic layer's.",
+  "required": [
+    "size",
+    "length",
+    "grid"
+  ],
+  "properties": {
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Role name to the input that plays it.",
+      "properties": {
+        "width": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "height": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "length": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "frame_rate": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "image_strength": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "last_image": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        }
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default",
+        "max"
+      ],
+      "properties": {
+        "default": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$"
+        },
+        "max": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$"
+        },
+        "multiple": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        }
+      }
+    },
+    "length": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_seconds",
+        "max_seconds"
+      ],
+      "properties": {
+        "min_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 86400
+        },
+        "max_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 86400
+        },
+        "default_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 86400
+        }
+      }
+    },
+    "grid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fps",
+        "step",
+        "offset"
+      ],
+      "properties": {
+        "fps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "min_frames": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_frames": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        }
+      }
+    },
+    "variants": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Selection: a workflow id that takes over.",
+      "properties": {
+        "image": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "long": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        }
+      }
+    },
+    "requires": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 3,
+      "items": {
+        "enum": [
+          "image",
+          "source",
+          "extensions"
+        ]
+      }
+    },
+    "select_subject": {
+      "type": "boolean"
+    },
+    "chain": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "chain": {
+              "const": true
+            }
+          },
+          "required": [
+            "chain"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "roles"
+        ],
+        "properties": {
+          "roles": {
+            "required": [
+              "width",
+              "height",
+              "length"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "chain": {
+            "const": true
+          }
+        },
+        "required": [
+          "chain"
+        ]
+      },
+      "then": {
+        "properties": {
+          "roles": {
+            "required": [
+              "width",
+              "height"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

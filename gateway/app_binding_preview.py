@@ -1,0 +1,294 @@
+"""Read-only preview of the App-binding cut-over (owner visibility step 2, design §8.1 step 1).
+
+It opens one admin.db read-only and prints what the cut-over would do: every App with its accountable
+person, every live key and trusted address with its recorded creator and whether that creator is proven,
+the revocations and removals that would follow, and the Apps that apply would refuse to stop while in use.
+It writes nothing. The owner accepts the digest it prints, and gateway/app_binding_cutover.py applies it
+(docs/ops/OWNER_BINDINGS.md).
+
+    python -m gateway.app_binding_preview --admin-db COPY_OF_ADMIN_DB [--json] [--as-of EPOCH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from gateway import admin_store, app_binding_guard
+
+# Schema 7 is the access-plan migration; a database below it has not reached the App rows this reads.
+ACCESS_PLANS_SCHEMA = 7
+RECENT_SECONDS = 30 * 24 * 3600
+UNAVAILABLE = "unavailable"
+NOT_EVALUATED = (
+    "Creations with no recorded person or App (design §10.2 Q2) are not classified here: "
+    "they live in media sidecars, outside admin.db."
+)
+
+
+class PreviewError(RuntimeError):
+    """The database cannot be previewed; the message says why."""
+
+
+def connect_read_only(path: Path) -> sqlite3.Connection:
+    if not path.is_file():
+        raise PreviewError(f"no database at {path}")
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
+def _rows(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+    return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def _key_app_id(row: dict[str, Any]) -> str:
+    return row["app_id"] or row["subject_id"]
+
+
+def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
+    """The preview as data. Every field is derived from the rows; nothing is read from a receipt or a sidecar."""
+    schema = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    if schema is None or int(schema[0]) < ACCESS_PLANS_SCHEMA:
+        raise PreviewError(
+            "this database has not reached the access-plan migration (schema 7); "
+            "start the gateway once on a copy so that migration runs, then preview again"
+        )
+    guards = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    receipt = conn.execute(
+        "SELECT COUNT(*) FROM schema_migration_steps WHERE name = ?", (app_binding_guard.RECEIPT,),
+    ).fetchone()[0] if _table_exists(conn, "schema_migration_steps") else 0
+
+    session_app_ids = {row["app_id"] for row in _rows(conn, "SELECT app_id FROM session_apps")}
+    keys = _rows(conn, "SELECT id, subject_id, app_id, prefix, display_name, created_by, expires_at, last_used_at "
+                       "FROM credentials WHERE subject_kind = 'app' AND revoked_at IS NULL ORDER BY id")
+    addresses = _rows(conn, "SELECT id, app_id, address, created_by FROM app_trusted_addresses ORDER BY id")
+    apps = _rows(conn, "SELECT id, kind, name, owner_user_id, access_plan, disabled_at FROM apps ORDER BY id")
+    created_by_audit = {
+        row["target_id"]: row["actor_id"] for row in _rows(
+            conn, "SELECT target_id, actor_id FROM audit_events WHERE action = 'app.create' AND target_kind = 'app' "
+                  "ORDER BY created_at, id")
+    }
+
+    recent_from = as_of - RECENT_SECONDS
+    previewed = []
+    for app in apps:
+        owner = app["owner_user_id"]
+        app_keys = [k for k in keys if _key_app_id(k) == app["id"]]
+        app_addresses = [a for a in addresses if a["app_id"] == app["id"]]
+        keep_keys = [k for k in app_keys if k["created_by"] is not None and k["created_by"] == owner]
+        keep_addresses = [a for a in app_addresses if a["created_by"] is not None and a["created_by"] == owner]
+        had_bindings = bool(app_keys or app_addresses)
+        survivors = len(keep_keys) + len(keep_addresses)
+        loses_all = had_bindings and survivors == 0
+        recent_key_use = any(k["last_used_at"] is not None and k["last_used_at"] >= recent_from for k in app_keys)
+        blocks = []
+        # A disabled App is already stopped: the owner's disabling is the explicit stop, so it never blocks.
+        if loses_all and app["disabled_at"] is None:
+            if recent_key_use:
+                blocks.append("used in the last 30 days and would keep no binding: a replacement or an explicit owner stop is required")
+            if app_addresses:
+                blocks.append("trusted-address use history is unavailable on admin.db: cannot show these addresses unused")
+        previewed.append({
+            "app_id": app["id"],
+            "name": app["name"],
+            "kind": app["kind"],
+            "session_app": app["id"] in session_app_ids,
+            "accountable_person_id": owner,
+            "access_plan": app["access_plan"],
+            "disabled": app["disabled_at"] is not None,
+            "missing_app": False,
+            "created_by_audit": created_by_audit.get(app["id"]),
+            "keys": [
+                {
+                    "id": k["id"], "prefix": k["prefix"], "display_name": k["display_name"],
+                    "created_by": k["created_by"], "last_used_at": k["last_used_at"],
+                    "proven": k in keep_keys, "action": "keep" if k in keep_keys else "revoke",
+                    **admin_store.binding_cutover_remedy(conn, kind="key", binding=k, app_id=app["id"], person_id=owner),
+                }
+                for k in app_keys
+            ],
+            "trusted_addresses": [
+                {
+                    "id": a["id"], "address": a["address"], "created_by": a["created_by"],
+                    "proven": a in keep_addresses, "action": "keep" if a in keep_addresses else "remove",
+                    "use_history": UNAVAILABLE,
+                    **admin_store.binding_cutover_remedy(conn, kind="address", binding=a, app_id=app["id"], person_id=owner),
+                }
+                for a in app_addresses
+            ],
+            "surviving_bindings": survivors,
+            "would_lose_all_bindings": loses_all,
+            "blocks_apply": blocks,
+        })
+
+    # A key or address whose App row is gone authenticates nothing (the runtime joins the App), so it stops no App:
+    # the cut-over revokes or removes it and blocks nothing. The guards and the apply's check find it the same way.
+    known = {app["id"] for app in apps}
+    orphan_keys = [k for k in keys if _key_app_id(k) not in known]
+    orphan_addresses = [a for a in addresses if a["app_id"] not in known]
+    for app_id in sorted({_key_app_id(k) for k in orphan_keys} | {a["app_id"] for a in orphan_addresses}):
+        previewed.append({
+            "app_id": app_id,
+            "name": None,
+            "kind": None,
+            "session_app": False,
+            "accountable_person_id": None,
+            "access_plan": None,
+            "disabled": False,
+            "missing_app": True,
+            "created_by_audit": None,
+            "keys": [
+                {
+                    "id": k["id"], "prefix": k["prefix"], "display_name": k["display_name"],
+                    "created_by": k["created_by"], "last_used_at": k["last_used_at"], "proven": False, "action": "revoke",
+                    **admin_store.binding_cutover_remedy(conn, kind="key", binding=k, app_id=app_id, person_id=None),
+                }
+                for k in orphan_keys if _key_app_id(k) == app_id
+            ],
+            "trusted_addresses": [
+                {
+                    "id": a["id"], "address": a["address"], "created_by": a["created_by"],
+                    "proven": False, "action": "remove", "use_history": UNAVAILABLE,
+                    **admin_store.binding_cutover_remedy(conn, kind="address", binding=a, app_id=app_id, person_id=None),
+                }
+                for a in orphan_addresses if a["app_id"] == app_id
+            ],
+            "surviving_bindings": 0,
+            "would_lose_all_bindings": False,
+            "blocks_apply": [],
+        })
+
+    blocked = sorted({app["app_id"] for app in previewed if app["blocks_apply"]})
+    summary = {
+        "apps": sum(1 for app in previewed if not app["missing_app"]),
+        "session_apps": sum(1 for app in previewed if app["session_app"]),
+        "keys_to_revoke": sum(1 for a in previewed for k in a["keys"] if k["action"] == "revoke"),
+        "addresses_to_remove": sum(1 for a in previewed for t in a["trusted_addresses"] if t["action"] == "remove"),
+        "apps_blocking_apply": blocked,
+    }
+    return {
+        "as_of": as_of,
+        "schema_version": int(schema[0]),
+        "guards_installed": sorted(name for name, _ in app_binding_guard.GUARDS if name in guards),
+        "guards_expected": len(app_binding_guard.GUARDS),
+        "ownership_version_recorded": bool(receipt),
+        "apps": previewed,
+        "summary": summary,
+        "not_evaluated": [NOT_EVALUATED],
+    }
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone() is not None
+
+
+def digest(body: dict[str, Any]) -> str:
+    """The digest an acceptance cites. It covers what the cut-over decides, so the clock and the times of last use do not move it.
+
+    A last use that changes whether an App would stop while in use still moves it: that is the ``blocks_apply`` list.
+    """
+    canonical = json.dumps(_decision_view(body), sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _decision_view(body: dict[str, Any]) -> dict[str, Any]:
+    view = {name: value for name, value in body.items() if name != "as_of"}
+    view["apps"] = [
+        {**app, "keys": [{name: value for name, value in key.items() if name != "last_used_at"} for key in app["keys"]]}
+        for app in body["apps"]
+    ]
+    return view
+
+
+def render(body: dict[str, Any], preview_digest: str) -> str:
+    lines = [
+        f"App binding preview (read-only)  as of {body['as_of']}  digest {preview_digest}",
+        f"schema {body['schema_version']}; guards installed {len(body['guards_installed'])} of {body['guards_expected']}; "
+        f"ownership version recorded: {'yes' if body['ownership_version_recorded'] else 'no'}",
+        "",
+    ]
+    for app in body["apps"]:
+        if app["missing_app"]:
+            lines.append(f"App {app['app_id']} has no App row: its bindings are removed and it stops nothing")
+        else:
+            lines.append(f"App {app['app_id']} \"{app['name']}\" kind={app['kind']}{' (session App)' if app['session_app'] else ''} "
+                         f"accountable={app['accountable_person_id']} plan={app['access_plan']}"
+                         f"{' disabled' if app['disabled'] else ''}")
+        if not app["missing_app"] and app["kind"] == "personal":
+            maker = app["created_by_audit"]
+            if maker is None:
+                lines.append("  creator not recorded in audit")
+            elif maker != app["accountable_person_id"]:
+                lines.append(f"  created by {maker} (audit): kept personal by default")
+        for key in app["keys"]:
+            lines.append(f"  key {key['prefix']} created_by={_show(key['created_by'])} "
+                         f"proven={'yes' if key['proven'] else 'no'} last_used={key['last_used_at'] or 'never'} "
+                         f"-> {key['action']} (remedy: {key['remedy']})")
+            lines += _confirmation_lines(key)
+        for entry in app["trusted_addresses"]:
+            lines.append(f"  address {entry['address']} created_by={_show(entry['created_by'])} "
+                         f"proven={'yes' if entry['proven'] else 'no'} use_history={entry['use_history']} "
+                         f"-> {entry['action']} (remedy: {entry['remedy']})")
+            lines += _confirmation_lines(entry)
+        if not app["keys"] and not app["trusted_addresses"]:
+            lines.append("  no keys or trusted addresses")
+        for reason in app["blocks_apply"]:
+            lines.append(f"  BLOCKS APPLY: {reason}")
+    s = body["summary"]
+    lines += [
+        "",
+        f"summary: apps={s['apps']} session_apps={s['session_apps']} "
+        f"keys_to_revoke={s['keys_to_revoke']} addresses_to_remove={s['addresses_to_remove']} "
+        f"apps_blocking_apply={len(s['apps_blocking_apply'])}",
+    ]
+    lines += [f"not evaluated: {note}" for note in body["not_evaluated"]]
+    return "\n".join(lines)
+
+
+def _confirmation_lines(binding: dict[str, Any]) -> list[str]:
+    """Keeping an unproven binding needs the owner to confirm these administrators (D55 amendment)."""
+    if not admin_store.administrators_to_confirm(binding["administrators"]):
+        return []
+    return [f"    keep needs the owner's confirmation: administrators at the time could also have made it: "
+            f"{admin_store.administrators_sentence(binding['administrators'])}"]
+
+
+def _show(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    return repr(value) if value == "" else str(value)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m gateway.app_binding_preview", description=__doc__.splitlines()[0])
+    parser.add_argument("--admin-db", required=True, type=Path, help="a copy of admin.db; it is opened read-only")
+    parser.add_argument("--json", action="store_true", help="print the preview as JSON")
+    parser.add_argument("--as-of", type=int, default=None, help="epoch seconds for the recent-use window (default: now)")
+    args = parser.parse_args(argv)
+    try:
+        conn = connect_read_only(args.admin_db)
+        try:
+            body = build(conn, as_of=args.as_of if args.as_of is not None else int(time.time()))
+        finally:
+            conn.close()
+    except (PreviewError, sqlite3.Error) as exc:
+        print(f"preview failed: {exc}", file=sys.stderr)
+        return 1
+    preview_digest = digest(body)
+    if args.json:
+        print(json.dumps({"digest": preview_digest, **body}, indent=2, sort_keys=True))
+    else:
+        print(render(body, preview_digest))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

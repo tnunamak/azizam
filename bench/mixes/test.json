@@ -1,0 +1,122 @@
+{
+  "description": "Frozen test request shapes; use train for diagnosis, test only for validation.",
+  "cases": [
+    {
+      "id": "chat",
+      "kind": "chat",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat-heldout",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. "
+          }
+        ],
+        "stream": false,
+        "max_tokens": 256
+      }
+    },
+    {
+      "id": "chat_stream",
+      "kind": "chat",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat-heldout",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. "
+          }
+        ],
+        "stream": true,
+        "max_tokens": 256,
+        "stream_options": {
+          "include_usage": true
+        }
+      }
+    },
+    {
+      "id": "models",
+      "kind": "models",
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "id": "responses",
+      "kind": "responses",
+      "path": "/v1/responses",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat-heldout",
+        "input": "Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. ",
+        "stream": false,
+        "store": true,
+        "max_output_tokens": 256
+      }
+    },
+    {
+      "id": "responses_stream",
+      "kind": "responses",
+      "path": "/v1/responses",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat-heldout",
+        "input": "Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. ",
+        "stream": true,
+        "store": true,
+        "max_output_tokens": 256
+      }
+    },
+    {
+      "id": "image",
+      "kind": "image",
+      "path": "/v1/images/generations",
+      "method": "POST",
+      "body": {
+        "model": "bench-image-heldout",
+        "prompt": "A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. A detailed diagram with many labeled objects and a bright background. ",
+        "size": "512x512",
+        "n": 1,
+        "background": "opaque",
+        "response_format": "b64_json"
+      }
+    },
+    {
+      "id": "tts",
+      "kind": "tts",
+      "path": "/v1/audio/speech",
+      "method": "POST",
+      "body": {
+        "model": "bench-tts",
+        "input": "Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. Summarize this conversation and return a clear explanation. ",
+        "voice": "nova",
+        "response_format": "wav"
+      }
+    },
+    {
+      "id": "stt",
+      "kind": "stt",
+      "path": "/v1/audio/transcriptions",
+      "method": "POST",
+      "body": {
+        "model": "bench-stt"
+      },
+      "audio_frames": 16000
+    },
+    {
+      "id": "status",
+      "kind": "status",
+      "path": "/status/raw",
+      "method": "GET"
+    },
+    {
+      "id": "health",
+      "kind": "health",
+      "path": "/health",
+      "method": "GET"
+    }
+  ]
+}

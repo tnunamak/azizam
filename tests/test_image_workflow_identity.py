@@ -1,0 +1,208 @@
+"""An image model name finds its workflow record by data (the manifest's binding file stem), not by spelling.
+
+``/v1/models`` names a model by its graph file stem; the record id is the manifest id. An edit workflow differs (a stem differs from the id for an owner graph), so a job and a plan check must use the record's id.
+"""
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+import proxy
+from gateway.workflow_identity import AmbiguousWorkflowStem, find_workflow_record
+from tests.support.access import authenticated, identity, plan_for
+from tests.support.s7_parity_images_rig import observe
+from tests import test_adapter_differential as base
+from tests.support.adapter_differential_rig import comfy_exchanges, history_done
+from tests.support.s7_parity_images_facts import receipt_row
+from tests.test_s7_parity_images import EDIT, GEN, JOB, body, form, job_body, job_setup, media_jobs, ok
+
+GEN_INTENT, EDIT_INTENT = "image.generate", "image.edit"
+
+# (intent, name) -> record id, written by hand from the shipped manifests: every graph file stem and every short id.
+TABLE = [
+    (GEN_INTENT, "krea2-turbo", "image.generate.krea2-turbo"),
+    (EDIT_INTENT, "qwen-image-2.1-edit", "image.edit.qwen-image-2.1-edit"),
+    (EDIT_INTENT, "seedvr2-upscale", "image.edit.seedvr2-upscale"),
+    # An edit workflow's stem names no generate workflow, and the reverse; the old guess matched the first two.
+    (GEN_INTENT, "qwen-image-2.1-edit", None),
+    (EDIT_INTENT, "no-such-model", None),
+]
+
+
+@pytest.mark.parametrize(("intent", "name", "expected"), TABLE, ids=[f"{i}:{n}" for i, n, _ in TABLE])
+def test_shipped_stem_or_short_id_finds_its_record(intent, name, expected):
+    record = proxy._image_workflow_record(intent, name)
+    assert (str(record.manifest["id"]) if record is not None else None) == expected
+
+
+def _record(manifest_id, intent, stem=None):
+    bindings = {"comfyui": {"workflow": f"workflows/images/{stem}.json"}} if stem else {}
+    return SimpleNamespace(manifest={"id": manifest_id, "intent": intent, "bindings": bindings})
+
+
+def test_exact_id_is_used_only_when_no_stem_matches():
+    by_stem, by_id = _record("image.edit.a", EDIT_INTENT, "b"), _record("image.edit.b", EDIT_INTENT, "other")
+    assert find_workflow_record([by_id, by_stem], EDIT_INTENT, "b") is by_stem
+    assert find_workflow_record([by_id, by_stem], EDIT_INTENT, "nothing") is None
+
+
+def test_a_record_of_another_intent_is_never_chosen():
+    assert find_workflow_record([_record("image.edit.a", EDIT_INTENT, "a")], GEN_INTENT, "a") is None
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_two_records_of_one_intent_sharing_a_stem_raise(order):
+    records = [_record("image.edit.one", EDIT_INTENT, "shared"), _record("image.edit.two", EDIT_INTENT, "shared")]
+    with pytest.raises(AmbiguousWorkflowStem, match="image.edit.one.*image.edit.two"):
+        find_workflow_record(records[::1 - 2 * order], EDIT_INTENT, "shared")
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_a_shared_stem_names_the_record_whose_id_is_the_name(order):
+    records = [_record("image.generate.alpha", GEN_INTENT, "shadowed"), _record("image.generate.shadowed", GEN_INTENT, "shadowed")]
+    assert find_workflow_record(records[::1 - 2 * order], GEN_INTENT, "shadowed").manifest["id"] == "image.generate.shadowed"
+
+
+def test_the_same_stem_under_two_intents_is_not_ambiguous():
+    records = [_record("image.edit.x", EDIT_INTENT, "shared"), _record("image.generate.x", GEN_INTENT, "shared")]
+    assert find_workflow_record(records, GEN_INTENT, "shared") is records[1]
+
+
+def test_shipped_registry_has_no_shared_stem_within_an_intent():
+    """The lookup raises on a shared stem, so the shipped records must not have one."""
+    for intent, name, _ in TABLE:
+        proxy._image_workflow_record(intent, name)
+
+
+def test_job_workflow_is_the_record_id_and_keeps_the_guess_without_a_record():
+    assert proxy._image_job_workflow_id(EDIT_INTENT, "qwen-image-2.1-edit") == "image.edit.qwen-image-2.1-edit"
+    assert proxy._image_job_workflow_id(GEN_INTENT, "krea2-turbo") == "image.generate.krea2-turbo"
+    # An owner graph with no manifest keeps today's spelling.
+    assert proxy._image_job_workflow_id(GEN_INTENT, "my-own-graph") == "image.generate.my-own-graph"
+    assert proxy._SESSION_MAKE_RUNTIME.workflow_id(EDIT_INTENT, "qwen-image-2.1-edit") == "image.edit.qwen-image-2.1-edit"
+
+
+def _plan_setup(workflow):
+    def setup(rig):
+        # The qwen-image-2.1-edit graph publishes its image from node 10.
+        base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="10"), strict=False))
+        rig._exit.enter_context(authenticated(identity(plan_for(caps=("image",), workflows=[workflow]))))
+    return setup
+
+
+def _edit(tmp_path, workflow):
+    return observe(tmp_path, EDIT, form(model="qwen-image-2.1-edit"), _plan_setup(workflow), row=False, name="plan")
+
+
+def test_a_plan_listing_the_record_id_admits_the_edit_model(tmp_path):
+    obs = _edit(tmp_path, "image.edit.qwen-image-2.1-edit")
+    assert obs.status == 200, obs.body
+
+
+def test_a_plan_listing_a_different_workflow_refuses_the_edit_model(tmp_path):
+    obs = _edit(tmp_path, "image.edit.qwen-image-2.1-wrong")
+    assert obs.status == 403, obs.body
+    assert obs.engine == []
+
+
+@pytest.mark.parametrize("model", ["qwen-image-2.1-edit"])
+def test_generating_with_an_edit_model_is_a_clean_refusal(tmp_path, model):
+    """Before the join this was a 500 with no engine call: the generate guess picked a record whose role map did not fit
+    the edit graph. Now the model is not a generate workflow: a 404 ``model_not_found``, and the engine is never called."""
+    obs = observe(tmp_path, GEN, body(model=model), ok, row=False, name="refuse")
+    assert obs.status == 404, obs.body
+    assert '"code": "model_not_found"' in obs.body["text"]
+    assert "not available for image generation" in obs.body["text"]
+    assert not [e for e in obs.engine if e[1] == "/prompt"]
+
+
+@pytest.mark.parametrize("model", ["qwen-image-2.1-edit"])
+def test_an_image_job_naming_an_edit_model_is_refused_at_submit(tmp_path, model):
+    """The async job route used to accept an edit model, store a made-up generate workflow and fail later when the job
+    ran. It now refuses at submit like the sync route: 404 ``model_not_found``, no job row, no engine call."""
+    obs = observe(tmp_path, JOB, job_body(model=model), job_setup(), row=False, name="refuse-job")
+    assert obs.status == 404, obs.body
+    assert '"code": "model_not_found"' in obs.body["text"]
+    assert not [e for e in obs.engine if e[1] == "/prompt"]
+    assert not media_jobs(obs)
+
+
+def test_an_image_job_naming_a_generate_model_is_still_accepted(tmp_path):
+    obs = observe(tmp_path, JOB, job_body(model="krea2-turbo"), job_setup(), row=False, name="accept-job")
+    assert obs.status == 202, obs.body
+
+
+def test_unknown_image_job_refusal_is_recorded_like_wrong_kind(tmp_path):
+    unknown = observe(tmp_path / "unknown", JOB, job_body(model="no-such-image-model-probe"), job_setup(), row=False)
+    wrong_kind = observe(tmp_path / "wrong-kind", JOB, job_body(model="qwen-image-2.1-edit"), job_setup(), row=False)
+    for obs in (unknown, wrong_kind):
+        assert obs.status == 404, obs.body
+        assert '"code": "model_not_found"' in obs.body["text"]
+        assert not media_jobs(obs)
+        receipt = receipt_row(obs)
+        assert receipt["status"] == "rejected"
+        assert receipt["receipt_json"]["rejected_inputs"]["model"] == "model_incompatible"
+
+
+def _closed_route_setup(rig):
+    from tests.support.fake_upstream import StreamingASGITransport
+    ok(rig)
+    rig._client._transport = StreamingASGITransport(proxy.app, client=("203.0.113.13", 1234))
+
+
+def test_disabled_exposure_image_is_refused_before_engine(tmp_path):
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        workflow_id = "image.generate.krea2-turbo"
+        entry = current.get(workflow_id)
+        closed = replace(entry, facts=replace(entry.facts, exposure="disabled"))
+        snapshot = replace(current, workflows={**current.workflows, workflow_id: closed})
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+
+    obs = observe(tmp_path, GEN, body(model="krea2-turbo"), setup, row=False, name="closed")
+    assert obs.status == 409, obs.body
+    assert '"code": "workflow_disabled"' in obs.body["text"]
+    assert "workflow image.generate.krea2-turbo is disabled" in obs.body["text"]
+    assert obs.engine == []
+
+
+def test_disabled_run_state_image_is_refused_before_engine(tmp_path):
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        workflow_id = "image.generate.krea2-turbo"
+        updated = {**current.workflows, workflow_id: replace(current.get(workflow_id), state="disabled")}
+        snapshot = replace(current, workflows=updated)
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+
+    obs = observe(tmp_path, GEN, body(model="krea2-turbo"), setup, row=False, name="disabled-state")
+    assert obs.status == 409, obs.body
+    assert '"code": "workflow_disabled"' in obs.body["text"]
+    assert "workflow image.generate.krea2-turbo is disabled" in obs.body["text"]
+    assert obs.engine == []
+
+
+def test_active_default_image_reaches_engine(tmp_path):
+    from dataclasses import replace
+
+    def setup(rig):
+        _closed_route_setup(rig)
+        current = proxy.GATEWAY_REGISTRY_PROVIDER.current()
+        workflow_id = "image.generate.krea2-turbo"
+        original = current.get(workflow_id)
+        enabled = replace(original, state="active", facts=replace(original.facts, exposure="default"))
+        snapshot = replace(current, workflows={**current.workflows, workflow_id: enabled})
+        rig.monkeypatch.setattr(type(proxy.GATEWAY_REGISTRY_PROVIDER), "current", lambda self: snapshot)
+        rig.set(proxy, "WORKFLOW_SNAPSHOTS", proxy.GATEWAY_REGISTRY_PROVIDER)
+
+    obs = observe(tmp_path, GEN, body(model="krea2-turbo"), setup, row=False, name="active-control")
+    assert obs.status == 200, obs.body
+    assert any(path == "/prompt" for _, path in obs.engine)

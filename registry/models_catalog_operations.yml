@@ -1,0 +1,105 @@
+# Catalog operation vocabulary and exact request examples. Order is significant.
+# Replace only whole body values equal to row_id_placeholder, never substrings.
+schema_version: 1
+row_id_placeholder: "$row_id"
+operations:
+  - id: chat
+    words: ["chat","chat.completions"]
+    intent_prefixes: ["chat."]
+    examples:
+      - intent: chat.completions
+        kind: chat
+        body: {"model":"$row_id","messages":[{"role":"user","content":"Hello"}]}
+        path: /v1/chat/completions
+  - id: completions
+    words: ["completions","completion","text","text.completions"]
+    intent_prefixes: ["text.completions"]
+    examples:
+      - intent: text.completions
+        kind: completion
+        body: {"model":"$row_id","prompt":"Hello"}
+        path: /v1/completions
+  - id: embeddings
+    words: ["embeddings","embedding","text.embeddings"]
+    intent_prefixes: ["text.embeddings"]
+    examples:
+      - intent: text.embeddings
+        kind: embeddings
+        body: {"model":"$row_id","input":"Hello"}
+        path: /v1/embeddings
+  - id: images
+    words: ["images","image","image.generate","image.generations"]
+    intent_prefixes: ["image.generate"]
+    examples:
+      - intent: image.generate
+        kind: image
+        body: {"model":"$row_id","prompt":"A small red cabin"}
+        path: /v1/images/generations
+  - id: image_edits
+    words: ["image.edit","image.edits","images.edit","edits"]
+    intent_prefixes: ["image.edit"]
+    examples:
+      - intent: image.edit
+        kind: image_edit
+        body: {"model":"$row_id","prompt":"Replace the sky"}
+        files: ["image"]
+        path: /v1/images/edits
+  - id: audio_generate
+    words: ["audio","audio.generate"]
+    intent_prefixes: ["audio.generate"]
+    examples:
+      - intent: audio.generate
+        kind: audio
+        body: {"model":"$row_id","prompt":"Gentle piano loop"}
+        path: /v1/audio/generate
+  - id: speech
+    words: ["speech","speech.synthesis","tts"]
+    intent_prefixes: ["speech.synthesis"]
+    examples:
+      - intent: speech.synthesis
+        kind: speech
+        body: {"model":"$row_id","input":"Hello","voice":"alloy"}
+        path: /v1/audio/speech
+  - id: transcriptions
+    words: ["transcription","transcriptions","speech.transcription","stt"]
+    intent_prefixes: ["speech.transcription"]
+    examples:
+      - intent: speech.transcription
+        kind: transcription
+        body: {"model":"$row_id"}
+        files: ["file"]
+        path: /v1/audio/transcriptions
+  - id: translations
+    words: ["translation","translations","speech.translation"]
+    intent_prefixes: ["speech.translation"]
+    examples:
+      - intent: speech.translation
+        kind: translation
+        body: {"model":"$row_id"}
+        files: ["file"]
+        path: /v1/audio/translations
+  - id: videos
+    words: ["video","videos"]
+    intent_prefixes: ["video.generate","video.edit"]
+  - id: video_generate
+    words: ["video.generate"]
+    intent_prefixes: ["video.generate"]
+    examples:
+      - intent: video.generate
+        kind: video
+        body: {"model":"$row_id","prompt":"A kite above a beach"}
+        path: /v1/videos
+  - id: video_edit
+    words: ["video.edit","videos.edit"]
+    intent_prefixes: ["video.edit"]
+  - id: rerank
+    words: ["rerank","reranking","text.rerank"]
+    intent_prefixes: ["text.rerank"]
+    examples:
+      - intent: text.rerank
+        kind: rerank
+        body: {"model":"$row_id","query":"capital of France","documents":["Paris is the capital of France.","Berlin is in Germany."]}
+        path: /v1/rerank
+  - id: decisions
+    words: ["decision","decisions"]
+    intent_prefixes: ["decision."]

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/catalog_names.schema.json",
+  "title": "Catalog attribution and loaded-model alias names",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "catalog_owner", "loaded_model_aliases"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_owner": {"type": "string", "minLength": 1},
+    "loaded_model_aliases": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "fast"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "fast": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

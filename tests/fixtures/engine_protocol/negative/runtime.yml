@@ -1,0 +1,13 @@
+# Operations for the runtime negatives (budget exceeded, cross-origin redirect). These files are valid descriptions;
+# the failure is in what the fake upstream answers.
+protocol_version: 1
+id: runtime
+executor: http-v1
+auth:
+  inference: {kind: header, name: X-Acme-Key}
+operations:
+  huge: {class: generate, request: {method: GET, path: /huge}, response: {framing: json}}
+  deep: {class: generate, request: {method: GET, path: /deep}, response: {framing: json}}
+  fat_event: {class: generate, request: {method: GET, path: /fat}, response: {framing: sse}}
+  endless: {class: generate, request: {method: GET, path: /endless}, response: {framing: sse}}
+  hop: {class: generate, request: {method: GET, path: /hop}, response: {framing: json}}

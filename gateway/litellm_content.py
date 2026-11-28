@@ -1,0 +1,402 @@
+"""No-content precondition for the pinned, gateway-managed execution substrate.
+
+Only structural results leave the check. No database rows, URLs or exceptions
+are logged. Management calls remain available while execution is refused.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import time
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Mapping
+from urllib.parse import urlsplit
+
+import yaml
+from gateway import engine_egress
+
+
+PROFILE_PATH = Path(__file__).resolve().parent.parent / "registry/litellm_no_content.yml"
+_SETTING_SECTIONS = ("general_settings", "litellm_settings", "router_settings")
+
+
+def load_profile(path: Path = PROFILE_PATH) -> dict[str, Any]:
+    """Read the no-content profile; a repeated key, a blank name or a wrong shape fails here, naming the field."""
+    from gateway.strict_yaml import safe_load_strict
+
+    def fail(where: str, message: str) -> None:
+        raise ValueError(f"{path}: {where}: {message}")
+
+    def word(value: object) -> bool:
+        return isinstance(value, str) and bool(value) and not any(char.isspace() for char in value)
+
+    try:
+        document = safe_load_strict(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{path}: could not read the profile: {error}") from error
+    if not isinstance(document, dict):
+        fail("document", "must be a mapping")
+    required = {*_SETTING_SECTIONS, "environment"}
+    if missing := required - document.keys():
+        fail("document", f"missing sections: {', '.join(sorted(missing))}")
+    if unknown := document.keys() - required - {"legacy_spend_cleanup_proposal"}:
+        fail("document", f"unknown sections: {', '.join(sorted(map(str, unknown)))}")
+    for section in _SETTING_SECTIONS:
+        settings = document[section]
+        if not isinstance(settings, dict) or not settings:
+            fail(section, "must be a nonempty mapping")
+        for key, value in settings.items():
+            if not word(key):
+                fail(section, f"setting name must be a word without whitespace: {key!r}")
+            if not isinstance(value, (bool, int, str, list)) or (isinstance(value, str) and not value.strip()):
+                fail(f"{section}.{key}", "must be a boolean, number, nonblank string or list")
+    environment = document["environment"]
+    if not isinstance(environment, dict) or not environment:
+        fail("environment", "must be a nonempty mapping")
+    for name, value in environment.items():
+        if not word(name) or name != name.upper():
+            fail("environment", f"variable name must be an upper-case word: {name!r}")
+        if not isinstance(value, str) or not value.strip():
+            fail(f"environment.{name}", "must be a nonblank string")
+    return document
+
+
+@lru_cache(maxsize=1)
+def profile() -> dict[str, Any]:
+    return load_profile()
+
+
+def config_problem(config: Mapping[str, Any]) -> str | None:
+    for section in ("general_settings", "litellm_settings", "router_settings"):
+        actual = config.get(section)
+        if not isinstance(actual, Mapping):
+            return section
+        for key, expected in profile()[section].items():
+            value = actual.get(key)
+            if type(value) is not type(expected) or value != expected:
+                return f"{section}.{key}"
+    if "cache_params" in config.get("litellm_settings", {}):
+        return "litellm_settings.cache_params"
+    allowed = {
+        "general_settings": set(profile()["general_settings"]) | {"litellm_key_header_name", "forward_client_headers_to_llm_api"},
+        "litellm_settings": set(profile()["litellm_settings"]) | {"drop_params"},
+        "router_settings": set(profile()["router_settings"]) | {"num_retries"},
+    }
+    for section, keys in allowed.items():
+        if set(config[section]) - keys:
+            return section + ".unexpected_setting"
+    if set(config) - {"model_list", *allowed}:
+        return "unexpected_section"
+    return None
+
+
+def child_environment(base: Mapping[str, str], *, declared: set[str]) -> dict[str, str]:
+    basics = {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DATABASE_URL",
+              "LITELLM_MASTER_KEY", "AZIZAM_INTERNAL_LITELLM_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+              "LITELLM_LOCAL_MODEL_COST_MAP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "no_proxy", "all_proxy", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"}
+    # Never let a record turn a runtime control back on through an env reference.
+    blocked = {"STORE_MODEL_IN_DB", "STORE_PROMPTS_IN_SPEND_LOGS", "DEBUG", "DETAILED_DEBUG"}
+    allowed = basics | {name for name in declared if name not in blocked and not name.startswith(("LITELLM_", "OTEL_", "LANGFUSE_"))}
+    result = {name: base[name] for name in allowed if name in base}
+    result.update(profile()["environment"])
+    return result
+
+
+def process_generation(pid: int) -> tuple[int, str, int]:
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    if fields[0] == "Z":
+        raise ValueError("process exited")
+    return pid, fields[19], int(fields[2])
+
+
+def write_launch_proof(path: Path, config_path: Path, env: Mapping[str, str]) -> None:
+    if config_problem(yaml.safe_load(config_path.read_text())):
+        raise ValueError("LiteLLM no-content configuration is incomplete")
+    if any(env.get(key) != value for key, value in profile()["environment"].items()):
+        raise ValueError("LiteLLM no-content environment is incomplete")
+    payload = {"generation": process_generation(os.getpid()), "config": str(config_path.resolve()),
+               "sha256": hashlib.sha256(config_path.read_bytes()).hexdigest()}
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        json.dump(payload, handle)
+
+
+# Select only booleans. Identity metadata, credentials and request text never
+# leave PostgreSQL. Missing tables/columns or unreadable rows fail closed.
+DB_CHECK_SQL = '''
+SELECT
+ EXISTS (SELECT 1 FROM "LiteLLM_Config" WHERE param_name IN ('general_settings', 'litellm_settings') AND (
+   coalesce(jsonb_typeof(param_value), 'null') <> 'object' OR
+   lower(coalesce(param_value->>'store_model_in_db', 'false')) <> 'false' OR
+   lower(coalesce(param_value->>'store_prompts_in_spend_logs', 'false')) <> 'false' OR
+   param_value ?| ARRAY['callbacks','success_callback','failure_callback','cache','cache_params'] OR
+   (param_value ? 'disable_spend_logs' AND param_value->>'disable_spend_logs' <> 'true') OR
+   (param_value ? 'disable_error_logs' AND param_value->>'disable_error_logs' <> 'true')
+ )) AS config_unsafe,
+ EXISTS (SELECT 1 FROM "LiteLLM_VerificationToken" WHERE
+   coalesce(metadata->'logging', 'null'::jsonb) NOT IN ('null'::jsonb, '[]'::jsonb, '{}'::jsonb, 'false'::jsonb, '""'::jsonb)) AS key_unsafe,
+ EXISTS (SELECT 1 FROM "LiteLLM_TeamTable" WHERE
+   coalesce(metadata->'logging', 'null'::jsonb) NOT IN ('null'::jsonb, '[]'::jsonb, '{}'::jsonb, 'false'::jsonb, '""'::jsonb)
+   OR coalesce(metadata->'callback_settings', 'null'::jsonb) NOT IN ('null'::jsonb, '[]'::jsonb, '{}'::jsonb, 'false'::jsonb, '""'::jsonb)) AS team_unsafe
+'''
+
+
+CHECK_TIMEOUT_SECONDS = 10
+# The launcher writes its proof before LiteLLM binds its port, and LiteLLM then takes about 25 s to start.
+# A request that finds the verified child still starting waits this long for the port, then goes on.
+LISTEN_WAIT_SECONDS = 60
+LISTEN_POLL_SECONDS = 0.5
+
+
+async def _database_check(database_url: str) -> str | None:
+    from prisma import Prisma
+
+    client = Prisma(datasource={"url": database_url})
+    try:
+        await client.connect()
+        async with client.tx() as transaction:
+            await transaction.execute_raw("SET TRANSACTION READ ONLY")
+            await transaction.execute_raw("SET LOCAL statement_timeout = '5000ms'")
+            rows = await transaction.query_raw(DB_CHECK_SQL)
+        if len(rows) != 1 or set(rows[0]) != {"config_unsafe", "key_unsafe", "team_unsafe"}:
+            return "database_check_unavailable"
+        for key, value in rows[0].items():
+            if value is not False:
+                return f"database_{key}"
+        return None
+    finally:
+        await client.disconnect()
+
+
+def _run_database_check(database_url: str) -> str | None:
+    return asyncio.run(asyncio.wait_for(_database_check(database_url), timeout=CHECK_TIMEOUT_SECONDS))
+
+
+async def database_problem(database_url: str) -> str | None:
+    """Check the database in a worker thread with its own event loop.
+
+    The first Prisma import takes seconds, and ``Prisma.connect`` starts the
+    query-engine process with a blocking ``Popen``. Both would stall every
+    request on the gateway loop. The client is async-only, so a short-lived
+    loop in a worker thread keeps the import, the spawn and the queries off
+    the gateway loop without changing the check itself.
+    """
+    if not database_url:
+        return None
+    return await asyncio.to_thread(_run_database_check, database_url)
+
+
+async def compose_database_unseen(base_url: str) -> bool:
+    import httpx
+    from gateway.backends.llm_execution import litellm_headers
+    from gateway.log_scrub import env_secret
+
+    async with engine_egress.async_client(timeout=5, trust_env=False) as client:
+        response = await client.get(base_url.rstrip("/") + "/health/readiness/details",
+            headers=litellm_headers({}, api_key=env_secret("AZIZAM_LITELLM_API_KEY")))
+        response.raise_for_status()
+        details = response.json()
+    # The pinned readiness endpoint distinguishes absent Prisma from an
+    # unreachable configured DB. Missing diagnostics are not proof of absence.
+    if details.get("db") != "Not connected":
+        return True
+    if details.get("log_level") != "CRITICAL" or details.get("cache") is not None or details.get("success_callbacks") not in ([], ["sync_deployment_callback_on_success"]):
+        raise ValueError("Compose effective runtime differs from profile")
+    return False
+
+
+# Fixed vocabulary: never interpolate exception text, URLs or database values.
+PROBLEM_FIXES = {
+    "not_checked": "Run the pinned no-content launcher and wait for the profile check.",
+    "profile_check_unavailable": "Check the pinned no-content launcher, generated config and DATABASE_URL connectivity, then retry.",
+    "database_check_unavailable": "Check DATABASE_URL permissions and the pinned database schema, then retry.",
+    "database_config_unsafe": "In LiteLLM_Config, disable store_model_in_db and store_prompts_in_spend_logs, enable disable_spend_logs and disable_error_logs, and remove callback and cache overrides.",
+    "database_key_unsafe": "Remove metadata.logging overrides from LiteLLM_VerificationToken rows, then retry.",
+    "database_team_unsafe": "Remove metadata.logging and metadata.callback_settings overrides from LiteLLM_TeamTable rows, then retry.",
+}
+logger = logging.getLogger(__name__)
+
+
+class ContentGate:
+    def __init__(self) -> None:
+        self.checked: tuple[Any, ...] | None = None
+        self.checked_at = 0.0
+        self.problem: str | None = "not_checked"
+        self.lock = asyncio.Lock()
+        self.unseen_database = False
+        self.retry_seconds = 30
+        self.next_check_at = 0.0
+        # The process generation the last failed check read, or None when it could not read one.
+        self.failed_generation: tuple[Any, ...] | None = None
+        # Set while the start-up check runs; a request that finds no verdict waits for it.
+        self.warm_settled: asyncio.Event | None = None
+        # The verified managed generation that has accepted a connection.
+        self.listening: tuple[Any, ...] | None = None
+
+    def start_warming(self, base_url: str, *, window_seconds: float = 120, poll_seconds: float = 2) -> asyncio.Task:
+        """Run the first check in the background, so a request after start finds a verdict.
+
+        The launcher starts LiteLLM beside the gateway, so its process proof may not exist yet.
+        The task keeps checking until it reaches a definite verdict or the window ends. The gateway calls it
+        once per start; a second call while the first still runs is an error.
+        """
+        if self.warm_settled is not None and not self.warm_settled.is_set():
+            raise RuntimeError("the content gate is already warming")
+        settled = self.warm_settled = asyncio.Event()
+        return asyncio.create_task(self._warm(base_url, settled, window_seconds, poll_seconds), name="litellm-content-warm")
+
+    async def _warm(self, base_url: str, settled: asyncio.Event, window_seconds: float, poll_seconds: float) -> None:
+        end = time.monotonic() + window_seconds
+        try:
+            # Retry only an unknown: missing process proof or a database that could not be read yet.
+            while await self.check(base_url, force=True) in {"not_checked", "profile_check_unavailable",
+                                                             "database_check_unavailable"}:
+                if time.monotonic() >= end:
+                    return
+                await asyncio.sleep(poll_seconds)
+        finally:
+            settled.set()
+
+    def mode(self, base_url: str) -> str:
+        endpoint = urlsplit(base_url)
+        if os.environ.get("AZIZAM_MANAGE_LITELLM") == "true" and endpoint.hostname in {"localhost", "127.0.0.1", "::1"} and endpoint.port == 4011:
+            return "managed"
+        if os.environ.get("AZIZAM_LITELLM_COMPOSE_PROFILE") == "true" and endpoint.hostname == "litellm" and endpoint.port == 4000:
+            return "compose"
+        return "unmanaged"
+
+    def generation(self, base_url: str) -> tuple[Any, ...]:
+        if self.mode(base_url) == "compose":
+            return ("compose", base_url)
+        pid_path = Path(os.environ.get("AZIZAM_LITELLM_PID_FILE", "data/litellm.pid"))
+        generation = process_generation(int(pid_path.read_text().strip()))
+        proof = json.loads(Path(str(pid_path) + ".retention.json").read_text())
+        if tuple(proof["generation"]) != generation:
+            raise ValueError("stale launch proof")
+        argv = Path(f"/proc/{generation[0]}/cmdline").read_bytes().decode().split("\0")
+        config_path = Path(proof["config"])
+        if "--config" not in argv or Path(argv[argv.index("--config") + 1]).resolve() != config_path:
+            raise ValueError("different process command")
+        if not any(Path(arg).resolve() == Path(__file__).resolve().with_name("litellm_launcher.py") for arg in argv if arg):
+            raise ValueError("different process command")
+        if generation == self.checked:
+            return generation
+        data = config_path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != proof["sha256"] or config_problem(yaml.safe_load(data)):
+            raise ValueError("changed launch configuration")
+        return generation
+
+    async def check(self, base_url: str, *, force: bool = False) -> str | None:
+        if self.mode(base_url) == "unmanaged":
+            return None
+        settled = self.warm_settled
+        if not force and self.checked is None and settled is not None and not settled.is_set():
+            # No verdict yet and the start-up check is running: wait for it, bounded. Still unknown means refused.
+            try:
+                await asyncio.wait_for(settled.wait(), timeout=CHECK_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                return self.problem
+        async with self.lock:
+            previous = self.problem
+            generation = None
+            try:
+                # Unavailable process evidence also backs off; no content is admitted. A new process
+                # generation ends the backoff: a child restarted after a config edit is checked at once.
+                if not force and self.checked is None and time.monotonic() < self.next_check_at:
+                    try:
+                        current = self.generation(base_url)
+                    except Exception:
+                        current = None
+                    if current is None or current == self.failed_generation:
+                        return self.problem
+                generation = self.generation(base_url)
+                if not force and generation == self.checked and time.monotonic() < self.next_check_at:
+                    return self.problem
+                self.unseen_database = False
+                database_url = os.environ.get("DATABASE_URL", "")
+                if self.mode(base_url) == "compose" and not database_url:
+                    self.unseen_database = await compose_database_unseen(base_url)
+                problem = await asyncio.wait_for(database_problem(database_url), timeout=CHECK_TIMEOUT_SECONDS)
+                if generation != self.generation(base_url):
+                    raise ValueError("process restarted during check")
+                self.checked, self.checked_at, self.problem = generation, time.monotonic(), problem
+            except Exception:
+                self.checked = None
+                self.failed_generation = generation
+                self.problem = "profile_check_unavailable"
+                self.checked_at = time.monotonic()
+            if self.problem not in PROBLEM_FIXES and self.problem is not None:
+                self.problem = "profile_check_unavailable"
+            if self.problem != previous:
+                logger.warning("litellm_content_state=%s", self.problem or "verified")
+                self.retry_seconds = 30
+            self.next_check_at = self.checked_at + (3600 if self.problem is None else self.retry_seconds)
+            self.retry_seconds = min(60, self.retry_seconds * 2) if self.problem else 30
+            return self.problem
+
+    async def wait_listening(self, base_url: str) -> None:
+        """Wait, bounded, until the verified managed child accepts connections on its port.
+
+        A verified generation can still be starting: its proof exists before its port is open. Only a refused
+        connection waits; any other answer or error ends the wait, so the request itself meets it. At the bound
+        the request goes on, and the connect error answers 503 backend_unavailable with Retry-After.
+        """
+        generation = self.checked
+        if self.mode(base_url) != "managed" or generation is None or generation == self.listening:
+            return
+        endpoint = urlsplit(base_url)
+        end = time.monotonic() + LISTEN_WAIT_SECONDS
+        while True:
+            try:
+                _reader, writer = await asyncio.wait_for(asyncio.open_connection(endpoint.hostname, endpoint.port),
+                                                         timeout=CHECK_TIMEOUT_SECONDS)
+            except ConnectionRefusedError:
+                if time.monotonic() >= end:
+                    return
+                await asyncio.sleep(LISTEN_POLL_SECONDS)
+                continue
+            except OSError:
+                return
+            writer.close()
+            self.listening = generation
+            return
+
+    def status(self, base_url: str) -> dict[str, Any]:
+        mode = self.mode(base_url)
+        if mode == "compose" and self.unseen_database:
+            return {"status": "unmanaged", "detail": "Azizam cannot check the database settings of the LiteLLM that runs chat for it."}
+        if mode == "unmanaged":
+            return {"status": mode, "detail": "LiteLLM, which runs chat for Azizam, is run outside Azizam. Azizam cannot confirm that it keeps nothing."}
+        problem = self.problem if self.problem in PROBLEM_FIXES else "profile_check_unavailable"
+        fix = PROBLEM_FIXES[problem] if self.problem else ""
+        return {"status": "verified" if self.problem is None else "litellm_content_unverified",
+                "problem": problem if self.problem else None, "fix": fix,
+                "detail": "LiteLLM content capture is disabled." if self.problem is None else
+                    f"LiteLLM content capture could not be ruled out ({problem}). {fix}"}
+
+
+gate = ContentGate()
+
+
+async def execution_refusal(base_url: str):
+    if await gate.check(base_url) is None:
+        return None
+    from gateway.egress import safe_error_response
+    return safe_error_response(503, "litellm_content_unverified", gate.status(base_url)["detail"])
+
+
+async def wait_while_starting(base_url: str) -> None:
+    """Call after ``execution_refusal`` admits a request: waits, bounded, while the gateway's own child starts."""
+    await gate.wait_listening(base_url)
+
+
+def deployment_status(registry: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    from gateway.backends.llm_execution import litellm_runtime_from_registry
+
+    return gate.status(litellm_runtime_from_registry(registry, env=os.environ).base_url)

@@ -1,0 +1,280 @@
+"""Frozen slice-0 observations. Update a digest only with a named contract change.
+
+The live-record fixture records keys and value types, never values. It was
+captured from the 20 owner records with SQLite read-only before schema v2.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from gateway import engine_admin, service_registry
+from gateway.api import create_gateway_router
+from gateway.engine_definitions import load_engine_catalog
+from gateway.litellm_substrate import compile_litellm_config_from_registry
+from gateway.receipts import RouteReceipt
+from gateway.runtime_auth import evaluate_and_apply, make_policy_request
+from tests.support.access import identity, plan_for
+from tests.test_engine_contract_v2 import _service
+from gateway.discovery import WorkflowRegistry
+from gateway.manifests import Provenance
+from tests.support.workflow_docs import STANDARD_FACTS, facts
+from tests.test_gateway_api import _sample_capabilities
+from tests.support.registry_provider import provider_of
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "engine_contract_live_shapes.json"
+LIVE_KIND_SOURCE = {
+    "azizam": ("provider", "provisioned"), "comfyui": ("provider", "provisioned"),
+    "decisions": ("provider", "ui"), "decisions-quality": ("provider", "ui"),
+    "embeddings": ("provider", "provisioned"), "kobold": ("provider", "provisioned"),
+    "litellm": ("llm-substrate", "builtin"), "openrouter": ("provider", "ui"),
+    "realtime": ("provider", "ui"), "rerank": ("provider", "ui"),
+    "stt": ("provider", "provisioned"), "stt-canary": ("provider", "ui"),
+    "stt-diarize": ("provider", "ui"), "stt-nemotron": ("provider", "ui"),
+    "stt-parakeet-gpu": ("provider", "ui"), "tts": ("provider", "provisioned"),
+    "tts-chatterbox": ("provider", "ui"), "tts-kokoro": ("provider", "ui"),
+    "tts-supertonic": ("provider", "ui"), "typesafe": ("provider", "ui"),
+}
+
+
+def _digest(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def test_live_registry_shapes_are_redacted_and_complete() -> None:
+    shapes = json.loads(FIXTURE.read_text())
+    assert len(shapes) == 20
+    assert set(shapes) == set(LIVE_KIND_SOURCE)
+    assert [source for _, source in LIVE_KIND_SOURCE.values()].count("ui") == 13
+    assert [source for _, source in LIVE_KIND_SOURCE.values()].count("provisioned") == 6
+    assert {row["kind"] for row in shapes.values()} == {"<string>"}
+    assert all("config" in row and "lifecycle" in row for row in shapes.values())
+    assert sum("lifecycle" in row["config"] for row in shapes.values()) == 13
+    assert "http://" not in FIXTURE.read_text()
+    assert "home/" not in FIXTURE.read_text()
+    assert "opk_" not in FIXTURE.read_text()
+    assert "oak_" not in FIXTURE.read_text()
+    assert _digest(shapes) == "b93eb7b8d52bc3e40e80fadd719d761e48147042ec18f1a3b27ea2db6ecd54d8"
+
+
+def test_runtime_backend_projection_is_frozen() -> None:
+    service = _service()
+    projected = service_registry.runtime_backend_from_service(service)
+    assert _digest(projected) == "b8671053c0d25c24753abf0b10d0bc9a35512398cdea0a029a3b54cb64fe4bd3"
+    # Contract v2 collapses lifecycle storage; it does not change the runtime
+    # backend consumed by the existing gateway and LiteLLM compiler.
+    registry = {"schema_version": 1, "services": {"engine-a": service}}
+    service_registry.migrate_engine_records_v2(registry)
+    after = service_registry.runtime_backend_from_service(registry["services"]["engine-a"])
+    assert _digest(after) == _digest(projected)
+
+
+def test_frontend_route_graph_is_frozen() -> None:
+    import proxy
+
+    graph = sorted((path, method) for route in proxy.app.routes
+                   for path in [getattr(route, "path", "")]
+                   for method in (getattr(route, "methods", None) or {"WEBSOCKET"})
+                   if path.startswith(("/v1/", "/openai/", "/anthropic/", "/ollama/", "/sdapi/", "/mcp")))
+    assert graph
+    # Only addition since the freeze: POST /v1/meshes/generate (source-defined mesh frontend). Without that one row
+    # the digest is still 5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca.
+    # Then DELETE /v1/assets/{asset_id} and its /openai alias (App keys delete assets they made); before them the digest was
+    # 963290051e2e622bd481c6a0c380f91e93878d051c9301d4006d41c2a1926162.
+    # S7 (builder D4): POST /v1/meshes/generate left and POST /v1/3d/generations and POST /v1/3d/generations/glb arrived;
+    # before that change the digest was f9b65e5b01c09f2cd8a1d8ddb5a5ec0ac38d219013cd3d36a2a69caf95185c58.
+    # Train 101: POST /v1/assets and its /openai alias (upload an image once, send its id in a chat image part); before them the
+    # digest was 8cf497463c537c485a6fbc2bb0404c1edf33e00d15bba4cc4308d3d82a1390e9.
+    assert _digest(graph) == "dd0e9e635e60a905ee4c6671106eb9ff6cb4a442740a41cf8a5dd4b15bd0de75"
+
+
+def _build_registry() -> WorkflowRegistry:
+    """Two schema 2 workflows, one reviewed (stable) and one not (experimental). The frozen digest below holds what the router lists for them, so the
+    registry is built here and cannot move with another test module's fixtures."""
+    registry = WorkflowRegistry()
+    documents = (
+        ("image.edit.controlnet.example", "image.edit", "0.1.0", "workflows/images/example-controlnet.json", True,
+         {"prompt": {"type": "string", "required": True},
+          "denoise": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}},
+         {"prompt": [{"node": "6", "input": "text"}], "denoise": [{"node": "31", "input": "denoise"}]}),
+        ("image.generate.simple.example", "image.generate", "0.2.0", "workflows/images/simple.json", False,
+         {"prompt": {"type": "string", "required": True}}, {"prompt": [{"node": "6", "input": "text"}]}),
+    )
+    for workflow_id, intent, version, template, trusted, inputs, mapping in documents:
+        registry.add_manifest(
+            {"schema_version": 2, "version": version, "id": workflow_id, "intent": intent, "capability": "image",
+             "inputs": inputs, "outputs": {"image": {"media_type": "image/png"}},
+             "bindings": {"comfyui": {"workflow": template, "map": mapping}}},
+            source_path=f"/srv/azizam/manifests/workflows/{workflow_id}.yml",
+            provenance=Provenance(trusted=trusted, source="local"),
+            facts=STANDARD_FACTS if trusted else facts(trust_tier="experimental"))
+    return registry
+
+
+def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
+    from tests.test_model_metadata_endpoints import ModelListEndpointTests
+
+    case = ModelListEndpointTests("test_every_entry_gets_a_type_and_architecture")
+    case.setUp()
+    try:
+        models = case._list()
+        import proxy
+        with patch.object(proxy, "_closed_workflow_reason", return_value=None):
+            before_closure = case._list()
+    finally:
+        case.doCleanups()
+    model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
+    before_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in before_closure["data"]]
+    assert before_surface == model_surface
+    # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
+    text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
+    expected_added = {
+    }
+    keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid",
+                 "video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"}
+    expected_added.update({name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
+                           for name in keyframes})
+    added = set(expected_added)
+    assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
+    model_surface = [row for row in model_surface if row[0] not in added]
+    # The fast aliases now point at open workflows; check them above the frozen older surface.
+    assert {row[0] for row in model_surface} >= {"image-fast", "image-edit-fast"}
+    model_surface = [row for row in model_surface if row[0] not in {"image-fast", "image-edit-fast"}]
+
+    app = FastAPI()
+    app.include_router(create_gateway_router(provider_of(_build_registry()), capabilities_provider=lambda _r: _sample_capabilities()))
+    caps = TestClient(app).get("/gateway/v1/capabilities").json()
+
+    catalog = load_engine_catalog()
+    engine = engine_admin.engine_view(catalog, _service(), db_path=tmp_path / "empty.db")
+    # W5 adds protocol dispatch and configured-key metadata. Verify those additions,
+    # then freeze the pre-existing public catalog separately so another change cannot hide in a new digest.
+    old_engine = {key: engine[key] for key in ("service_id", "definition", "name", "enabled", "locked", "editable", "values", "key", "capabilities", "models")}
+    assert old_engine["values"].pop("dispatch") == ""
+    assert old_engine["values"].pop("protocol_description") == ""
+    assert old_engine["key"].pop("entry_id").startswith("ent_")
+    assert old_engine["key"].pop("availability") == "unavailable"
+    # Re-captured 2026-10-26: ace-step-1.5-2b-base left the catalog; nothing else in this digest moved.
+    # Re-captured 2026-10-28: the video removal (779db850f) dropped video-remix and video-wan-2.2-ti2v-5b-q8; capabilities and engine did not move.
+    # Re-captured 2026-11-06: config homes C3 serves the aliases from the override store, so the entries of one alias
+    # table are listed in name order, not in the startup file's order. The same rows, types and architectures; only the
+    # order of some aliases moved. Capabilities and engine did not move.
+    # Re-captured 2026-11-08 (S5 projections): a workflow's output modalities read from its contract. Nothing else in
+    # this digest moved.
+    # Train 101: POST /v1/assets and its /openai alias (upload an image once, send its id in a chat image part); before them the
+    # digest was 8cf497463c537c485a6fbc2bb0404c1edf33e00d15bba4cc4308d3d82a1390e9.
+    assert _digest(graph) == "dd0e9e635e60a905ee4c6671106eb9ff6cb4a442740a41cf8a5dd4b15bd0de75"
+
+
+def _build_registry() -> WorkflowRegistry:
+    """Two schema 2 workflows, one reviewed (stable) and one not (experimental). The frozen digest below holds what the router lists for them, so the
+    registry is built here and cannot move with another test module's fixtures."""
+    registry = WorkflowRegistry()
+    documents = (
+        ("image.edit.controlnet.example", "image.edit", "0.1.0", "workflows/images/example-controlnet.json", True,
+         {"prompt": {"type": "string", "required": True},
+          "denoise": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}},
+         {"prompt": [{"node": "6", "input": "text"}], "denoise": [{"node": "31", "input": "denoise"}]}),
+        ("image.generate.simple.example", "image.generate", "0.2.0", "workflows/images/simple.json", False,
+         {"prompt": {"type": "string", "required": True}}, {"prompt": [{"node": "6", "input": "text"}]}),
+    )
+    for workflow_id, intent, version, template, trusted, inputs, mapping in documents:
+        registry.add_manifest(
+            {"schema_version": 2, "version": version, "id": workflow_id, "intent": intent, "capability": "image",
+             "inputs": inputs, "outputs": {"image": {"media_type": "image/png"}},
+             "bindings": {"comfyui": {"workflow": template, "map": mapping}}},
+            source_path=f"/srv/azizam/manifests/workflows/{workflow_id}.yml",
+            provenance=Provenance(trusted=trusted, source="local"),
+            facts=STANDARD_FACTS if trusted else facts(trust_tier="experimental"))
+    return registry
+
+
+def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
+    from tests.test_model_metadata_endpoints import ModelListEndpointTests
+
+    case = ModelListEndpointTests("test_every_entry_gets_a_type_and_architecture")
+    case.setUp()
+    try:
+        models = case._list()
+        import proxy
+        with patch.object(proxy, "_closed_workflow_reason", return_value=None):
+            before_closure = case._list()
+    finally:
+        case.doCleanups()
+    model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
+    before_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in before_closure["data"]]
+    assert before_surface == model_surface
+    # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
+    text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
+    expected_added = {
+    }
+    keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid",
+                 "video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"}
+    expected_added.update({name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
+                           for name in keyframes})
+    added = set(expected_added)
+    assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
+    model_surface = [row for row in model_surface if row[0] not in added]
+    # The fast aliases now point at open workflows; check them above the frozen older surface.
+    assert {row[0] for row in model_surface} >= {"image-fast", "image-edit-fast"}
+    model_surface = [row for row in model_surface if row[0] not in {"image-fast", "image-edit-fast"}]
+
+    app = FastAPI()
+    app.include_router(create_gateway_router(provider_of(_build_registry()), capabilities_provider=lambda _r: _sample_capabilities()))
+    caps = TestClient(app).get("/gateway/v1/capabilities").json()
+
+    catalog = load_engine_catalog()
+    engine = engine_admin.engine_view(catalog, _service(), db_path=tmp_path / "empty.db")
+    # W5 adds protocol dispatch and configured-key metadata. Verify those additions,
+    # then freeze the pre-existing public catalog separately so another change cannot hide in a new digest.
+    old_engine = {key: engine[key] for key in ("service_id", "definition", "name", "enabled", "locked", "editable", "values", "key", "capabilities", "models")}
+    assert old_engine["values"].pop("dispatch") == ""
+    assert old_engine["values"].pop("protocol_description") == ""
+    assert old_engine["key"].pop("entry_id").startswith("ent_")
+    assert old_engine["key"].pop("availability") == "unavailable"
+    # Re-captured 2026-10-26: ace-step-1.5-2b-base left the catalog; nothing else in this digest moved.
+    # Re-captured 2026-10-28: the video removal (779db850f) dropped video-remix and video-wan-2.2-ti2v-5b-q8; capabilities and engine did not move.
+    # Re-captured 2026-11-06: config homes C3 serves the aliases from the override store, so the entries of one alias
+    # table are listed in name order, not in the startup file's order. The same rows, types and architectures; only the
+    # order of two image aliases and of stt-diarize/stt-fast/stt-quality moved. Capabilities and engine did not move.
+    # Re-captured 2026-11-08 (S5 projections): an analysis workflow's output modalities read from its contract and now
+    # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
+    # Train 54: the analysis workflow leaves the OpenAI model list because no OpenAI route runs it.
+    # Train 101: the capabilities gain "report_problem" (POST /gateway/v1/problem-reports); models and engine did not move.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "7ea93867ea202c5b99d550755fa37ccd801950078aa294dd42a0ba9ad8aa0cb7"
+
+
+def test_litellm_compiler_and_current_are_frozen() -> None:
+    service = _service()
+    service["config"]["gateway_lifecycle"] = True
+    compiled = compile_litellm_config_from_registry({"services": {"engine-a": service}})
+    names = [row["model_name"] for row in compiled["model_list"]]
+    assert "current" in names and "current-fast" in names
+    from gateway.litellm_content import profile
+    assert compiled.pop('router_settings') == profile()['router_settings']
+    for section in ('general_settings', 'litellm_settings'):
+        for key, value in profile()[section].items():
+            assert compiled[section].pop(key) == value
+    assert _digest(compiled) == "837dc6e043ab9d7cf2dfa0ac0916e662c48db9d73bd25aa0999aade926f77dd7"
+
+
+def test_policy_denial_receipt_is_frozen() -> None:
+    receipt = RouteReceipt(protocol="openai.images", intent="image.generate", request_id="req_contract",
+                           path="/v1/images/generations")
+    decision = evaluate_and_apply(identity(plan_for("chat-only", caps=("chat",))),
+                                  make_policy_request(intent="image.generate", model="example"), receipt)
+    assert decision.decision == "denied"
+    receipt.finish("denied", latency_ms=0, now_ms=1_700_000_000_000)
+    projections = {audience: receipt.to_dict(audience) for audience in ("client", "admin")}
+    # Slice 2 adds the structural field to every receipt, including a denial
+    # that never reached a content writer.
+    assert projections["client"]["retention"] == projections["admin"]["retention"] == []
+    assert _digest(projections) == "c6a8a1cdd6e4eadc58b55ce1661fea292da82aeb1ab5f1fa5ba26136b1b271ab"

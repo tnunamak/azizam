@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/engine_definitions.schema.json",
+  "title": "Azizam engine definitions",
+  "description": "The data file Add engine reads. Each definition says which fields a kind of server needs, how Azizam checks it, what it can do and what to say when something fails. Detection rules name API shapes only. The gateway refuses a file outside this schema at load.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "capabilities", "evidence_text", "metadata_rows", "model_rules", "advice", "real_tests", "definitions"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "format_version": {"const": 1},
+    "notes": {"type": "string"},
+    "model_rules_note": {"type": "string"},
+    "capabilities": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/capability"}
+    },
+    "evidence_text": {
+      "type": "object",
+      "required": ["possible", "possible_why", "against", "against_why", "none", "none_why", "needs_key", "likely_model_field", "likely_metadata", "likely_test", "likely_list"],
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "metadata_rows": {"type": "array", "items": {"$ref": "#/$defs/metadataRow"}},
+    "model_rules": {"type": "array", "items": {"$ref": "#/$defs/modelRule"}},
+    "context_window_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "public_name_rules": {"type": "array", "items": {"$ref": "#/$defs/nameRule"}},
+    "against_body": {"type": "string", "minLength": 1},
+    "real_tests": {"type": "object", "additionalProperties": {"$ref": "#/$defs/realTest"}},
+    "advice": {"type": "array", "items": {"$ref": "#/$defs/advice"}},
+    "definitions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/definition"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path"],
+      "properties": {
+        "method": {"enum": ["GET", "POST"]},
+        "path": {"type": "string", "pattern": "^/"}
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "noun", "record_capabilities"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "noun": {"type": "string", "minLength": 1},
+        "record_capabilities": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "route": {"$ref": "#/$defs/route"},
+        "real_test": {"type": "string"}
+      }
+    },
+    "metadataRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "document", "method", "path", "from", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "document": {"type": "string"},
+        "method": {"const": "GET"},
+        "path": {"type": "string", "pattern": "^/"},
+        "from": {"enum": ["origin", "address"]},
+        "cap_bytes": {"type": "integer", "minimum": 1024, "maximum": 16777216},
+        "kind": {"enum": ["openapi_paths", "capability_document", "model_list"]},
+        "paths": {"type": "object", "additionalProperties": {"type": "string"}},
+        "values": {"type": "object", "additionalProperties": {"type": "string"}},
+        "require_json_key": {"type": "string"},
+        "name_from": {"$ref": "#/$defs/nameFrom"}
+      }
+    },
+    "nameFrom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["json"],
+      "properties": {
+        "json": {"type": "string"},
+        "ignore": {"type": "array", "items": {"type": "string"}},
+        "extract": {"type": "string", "format": "regex"},
+        "suffix": {"type": "string"}
+      }
+    },
+    "modelRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "capability"],
+      "oneOf": [{"required": ["equals"]}, {"required": ["contains"]}, {"required": ["matches"]}],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "equals": {"type": "string"},
+        "contains": {"type": "string"},
+        "matches": {"type": "string", "format": "regex"},
+        "capability": {"$ref": "#/$defs/id"}
+      }
+    },
+    "nameRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "strip": {"type": "string", "format": "regex"},
+        "replace": {"type": "string", "format": "regex"},
+        "with": {"type": "string"},
+        "lower": {"type": "boolean"}
+      }
+    },
+    "realTest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sent", "cost"],
+      "properties": {
+        "kind": {"enum": ["json_post", "binary_post", "multipart_post", "get_probe"], "description": "json_post (the default) reads a JSON reply. binary_post reads bytes: it passes when the reply holds the status, the content type prefix and the number of bytes in expect. multipart_post sends body as form fields with one generated file, and passes when the reply has the status and a JSON string at expect.json_string (an empty string counts). get_probe reads one status path of the engine with GET and queues no work: it passes when the reply has the status and, if expect.json_key is set, that key in its JSON."},
+        "path": {"type": "string", "pattern": "^/", "description": "get_probe only: the server-root path to read."},
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "filename", "content_type", "sample"],
+          "description": "multipart_post only: the one file the form carries. The sample names a clip generated in code (gateway/engine_definitions.py UPLOAD_SAMPLES).",
+          "properties": {
+            "field": {"type": "string", "minLength": 1},
+            "filename": {"type": "string", "minLength": 1},
+            "content_type": {"type": "string", "minLength": 1},
+            "sample": {"type": "string", "minLength": 1}
+          }
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {"type": "integer", "minimum": 100, "maximum": 599},
+            "content_type_prefix": {"type": "string", "minLength": 1},
+            "min_bytes": {"type": "integer", "minimum": 1},
+            "json_string": {"type": "string", "minLength": 1, "description": "multipart_post: the key of a string in the JSON reply, as a dotted path."},
+            "json_key": {"type": "string", "minLength": 1, "description": "get_probe: a key the JSON reply must hold, as a dotted path."}
+          }
+        },
+        "sent": {"type": "string"},
+        "cost": {"type": "string"},
+        "body": {"type": "object"},
+        "pass_json": {"type": "string"},
+        "reply_json": {"type": "string"},
+        "reply_count_json": {"type": "string"},
+        "reply_count_text": {"type": "string"}
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Every key must hold for the row to apply. Rows are tried in order; the first one that applies wins.",
+      "properties": {
+        "transport": {"enum": ["ok", "refused", "dns", "timeout", "tls", "redirect", "blocked", "too_large"]},
+        "transport_in": {"type": "array", "items": {"enum": ["refused", "dns", "timeout", "tls", "redirect", "blocked", "too_large"]}},
+        "status": {"type": "integer"},
+        "status_in": {"type": "array", "items": {"type": "integer"}},
+        "status_class": {"type": "integer", "minimum": 1, "maximum": 5},
+        "key_sent": {"type": "boolean"},
+        "probe": {"type": "string"},
+        "shape": {"enum": ["list", "not_list"]},
+        "address_matches": {"type": "string", "format": "regex"},
+        "body_matches": {"type": "string", "format": "regex"},
+        "recognised": {"type": "boolean"},
+        "models_count": {"type": "integer"},
+        "duplicate": {"type": "boolean"},
+        "local_dispatch_only": {"type": "boolean"}
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {"enum": ["fixpath", "openexisting"]},
+        "label": {"type": "string"},
+        "address_append": {"type": "string"},
+        "address_strip": {"type": "string"}
+      }
+    },
+    "advice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "field", "when", "title", "what", "why", "fix"],
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "severity": {"enum": ["error", "warning"]},
+        "field": {"enum": ["address", "key"]},
+        "when": {"$ref": "#/$defs/condition"},
+        "title": {"type": "string", "minLength": 1},
+        "what": {"type": "string", "minLength": 1},
+        "why": {"type": "string", "minLength": 1},
+        "why_everywhere": {"type": "string"},
+        "fix": {"type": "string", "minLength": 1},
+        "fix_admin": {"type": "string"},
+        "summary_admin": {"type": "string"},
+        "admin_note": {"type": "boolean"},
+        "keep_off": {"type": "boolean"},
+        "with_key": {"type": "boolean"},
+        "raw_label": {"type": "string"},
+        "action": {"$ref": "#/$defs/action"}
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "type"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "label": {"type": "string", "minLength": 1},
+        "help": {"type": "string"},
+        "type": {"enum": ["text", "url", "secret", "number", "boolean", "select", "multiselect", "list", "keyvalue", "duration"]},
+        "required": {"type": "boolean"},
+        "default": {},
+        "placeholder": {"type": "string"},
+        "order": {"type": "integer"},
+        "group": {"type": "string"},
+        "secret": {"type": "boolean"},
+        "writeOnly": {"type": "boolean"},
+        "show_if": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "equals"],
+          "properties": {"field": {"type": "string"}, "equals": {}}
+        },
+        "one_of": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["discriminator", "options"],
+          "properties": {"discriminator": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}
+        },
+        "options": {
+          "type": "array",
+          "items": {"type": "object", "additionalProperties": false, "required": ["value", "label"], "properties": {"value": {"type": "string"}, "label": {"type": "string"}}}
+        },
+        "options_from": {"type": "string"},
+        "custom_value": {"type": "boolean"},
+        "default_from": {"type": "string"},
+        "advanced": {"type": "boolean"},
+        "owner_only": {"type": "boolean"},
+        "secondary_of": {"type": "string"},
+        "unit": {"enum": ["seconds", "tokens"]},
+        "items": {"enum": ["transform", "text"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "secret"}}}, "then": {"required": ["secret", "writeOnly"], "properties": {"secret": {"const": true}, "writeOnly": {"const": true}}}},
+        {"if": {"required": ["secret"], "properties": {"secret": {"const": true}}}, "then": {"required": ["writeOnly"], "properties": {"writeOnly": {"const": true}}}}
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "method", "path", "from", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "method": {"enum": ["GET", "POST"]},
+        "path": {"type": "string", "pattern": "^/"},
+        "from": {"enum": ["origin", "address"]},
+        "kind": {"const": "model_list"},
+        "list_keys": {"type": "array", "items": {"type": "string"}},
+        "id_keys": {"type": "array", "items": {"type": "string"}},
+        "require_json_key": {"type": "string"}
+      }
+    },
+    "listRead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shape"],
+      "description": "How one answer is read as a list of ids. The shapes are a closed set, checked when the file loads (gateway/engine_definitions.py LIST_SHAPES): array_of_strings, array_of_objects, object_keys, tuple_first, nested.",
+      "properties": {
+        "shape": {"type": "string", "minLength": 1},
+        "select": {"type": "string", "description": "A JSON pointer to the list. Empty means the whole answer."},
+        "inner": {"type": "string", "description": "nested: the key of the list inside each entry of the selected list."},
+        "id_keys": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "name_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "default_select": {"type": "string", "description": "A JSON pointer to the id the server names as its default."},
+        "max_entries": {"type": "integer", "minimum": 1, "maximum": 50000, "description": "The most ids kept. The default is 2000. A list that holds more is cut and marked truncated."},
+        "where": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["key", "equals"],
+          "description": "Drop the entries (objects) whose key holds any other value. An entry without the key is kept: a server that names no task for its models lists only what it serves.",
+          "properties": {"key": {"type": "string", "minLength": 1}, "equals": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "listProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "offers", "method", "path", "from", "list"],
+      "description": "One read of a list the server reports. The first probe of an offers kind that finds ids wins. A model list replaces the models the primary probe found; a voice list is stored with the record.",
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "offers": {"enum": ["model", "voice", "node"], "description": "model and voice lists feed the form. node is the engine's inventory of node classes: the check reads it to say which workflows the engine can run."},
+        "method": {"const": "GET"},
+        "path": {"type": "string", "pattern": "^/"},
+        "from": {"enum": ["origin", "address"]},
+        "capability": {"$ref": "#/$defs/id", "description": "The capability a non-empty list shows the server offers. Models read from this list are for this work."},
+        "cap_bytes": {"type": "integer", "minimum": 1024, "maximum": 16777216, "description": "The most bytes read from the answer. A node inventory can be several megabytes."},
+        "list": {"$ref": "#/$defs/listRead"}
+      }
+    },
+    "processSlot": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {"type": {"const": "port"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "kind"],
+          "properties": {
+            "type": {"const": "path"},
+            "kind": {"enum": ["file", "dir"]},
+            "locate": {"type": "array", "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true}
+          }
+        }
+      ]
+    },
+    "processTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "slots", "ready"],
+      "description": "How Azizam starts this kind of engine on this computer. The owner gives slot values (a folder, a port), never a command line. They are resolved once, when the engine is saved, into the literal process block the process driver runs (gateway/process_template.py).",
+      "properties": {
+        "argv": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "program_choices": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 1024}, "description": "Where the program may be, in the order to look: each is a template for argv[0], with the same slots and the same checks. The first that exists and can run replaces argv[0]. When none does, the refusal names every path tried."},
+        "cwd": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "env": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}, "description": "Names of environment variables the engine reads. Never values."},
+        "slots": {"type": "object", "minProperties": 1, "maxProperties": 16, "additionalProperties": {"$ref": "#/$defs/processSlot"}},
+        "ready": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["http"],
+          "properties": {
+            "http": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "expect"],
+              "properties": {
+                "path": {"type": "string", "pattern": "^/"},
+                "expect": {"type": "integer", "minimum": 100, "maximum": 599}
+              }
+            }
+          }
+        },
+        "stop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeout_s"],
+          "properties": {"timeout_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 30}}
+        },
+        "idle_stop_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Seconds for each probe, the whole check and the real-test reply cap. Omitted probe_s and real_test_s preserve 5 and 120 seconds. Omitted check_s preserves the caller's deadline without adding a new one.",
+      "properties": {
+        "probe_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 600, "default": 5},
+        "check_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 600},
+        "real_test_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 600, "default": 120}
+      }
+    },
+    "definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition", "definition_version", "title", "summary", "flow", "steps", "fields", "probes", "capabilities", "default_ticked", "check_rows", "name_fallback", "advice", "record"],
+      "properties": {
+        "definition": {"$ref": "#/$defs/id"},
+        "definition_version": {"type": "integer", "minimum": 1},
+        "retention_facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
+        "title": {"type": "string", "minLength": 1},
+        "example": {"type": "string"},
+        "summary": {"type": "string", "minLength": 1},
+        "badge": {"type": "string"},
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "flow": {"const": "detect"},
+        "steps": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "string"}},
+        "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}},
+        "timeouts": {"$ref": "#/$defs/timeouts"},
+        "probes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary", "metadata", "route_probes"],
+          "properties": {
+            "primary": {"$ref": "#/$defs/probe"},
+            "metadata": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+            "lists": {"type": "array", "items": {"$ref": "#/$defs/listProbe"}},
+            "route_probes": {"type": "boolean"},
+            "route_proves": {"type": "boolean", "description": "A route that answers an empty request as present (level possible) counts as likely. Only for a kind the owner chose because the server serves just these capabilities."},
+            "route_base": {"type": "string", "pattern": "^/"}
+          }
+        },
+        "capabilities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}},
+        "real_test_for": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "The real test this kind of server runs for a capability it lists, by capability id. It overrides the capability's own real_test, and a capability that names neither has no real test. A test written for one kind of server (a read of an engine's status page) belongs here, not on a capability that several kinds share."
+        },
+        "default_ticked": {"const": "likely"},
+        "check_rows": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "name_fallback": {"type": "string"},
+        "models_note": {"type": "string"},
+        "advice": {"type": "array", "items": {"$ref": "#/$defs/advice"}},
+        "process_template": {"$ref": "#/$defs/processTemplate"},
+        "record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "native_passthrough", "base_path"],
+          "properties": {
+            "protocol": {"type": "string"},
+            "native_passthrough": {"type": "boolean"},
+            "transforms": {"type": "array", "items": {"type": "string"}},
+            "base_path": {"type": "string"},
+            "dispatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["protocol", "offering"],
+              "description": "The saved record calls the engine through an installed HTTP protocol description, not a reviewed adapter. Each model the owner ticks becomes one offering of the described task. A string value {upstream} inside the selection or the observations is replaced by that model's name on the server.",
+              "properties": {
+                "protocol": {"$ref": "#/$defs/id", "description": "The id of a description in registry/protocols."},
+                "offering": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["task", "selection"],
+                  "properties": {
+                    "task": {"type": "string", "minLength": 1, "description": "The offering task the description's generate operation serves, for example image."},
+                    "selection": {"type": "object", "description": "The offering's selection block (contract section 3). Checked against the description when the file loads."}
+                  }
+                },
+                "observations": {"type": "object", "description": "The record's observations the selection verifies against, for example selected."}
+              }
+            },
+            "remote": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tasks"],
+              "description": "This kind of server may run on another computer on the owner's network. tasks are the offering tasks it may be used for there. Each must be served by one operation of the description that answers in one buffered piece; chunked answers are refused on the remote path.",
+              "properties": {
+                "tasks": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "limits": {"type": "object", "description": "Resource limits this kind needs on another computer, by the names of registry/remote_egress.yml (for example total_s for work that takes minutes). An owner's own limits on a later save win."}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

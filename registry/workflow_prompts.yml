@@ -1,0 +1,34 @@
+# The generation prompts the gateway sends or injects itself, as reviewed text with a version each. A change to a
+# prompt is a change here: raise its version and update the pin in tests/test_workflow_prompts.py (and
+# tests/test_voices_api.py for the voice sample). `slots` names the {placeholders} the text may hold; the reader
+# checks the two agree and fills them with str.format_map, so write a literal brace as {{ or }}.
+# Folded blocks (>-) join their lines with one space and keep no final newline: the rendered text is one line.
+schema_version: 1
+prompts:
+  image_background_removal_decider:
+    version: 1
+    slots: []
+    text: >-
+      Decide whether an image generation request should have its background removed and returned as a transparent PNG.
+      Use the user's intent, not keyword matching. Return only JSON with keys remove_background boolean, confidence number 0..1, and reason string.
+      Choose true for reusable assets such as logos, stickers, product cutouts, icons, isolated objects for commerce, or explicitly transparent-background intent.
+      Choose false for portraits, landscapes, scenes, paintings, context-rich images, and ordinary photos where the environment is part of the result.
+  image_variations:
+    version: 1
+    slots: []
+    text: >-
+      Create a creative variation of this image: keep the same subject, composition, and overall style, but vary fine detail and texture.
+  tile_seam_repair:
+    version: 1
+    slots: [prompt]
+    text: >-
+      {prompt}. Repair only the masked center seam cross so the texture wraps seamlessly on all edges.
+      Preserve the source material, style, scale, lighting, and brush texture.
+      Do not add borders, text, logos, objects, frames, or directional features.
+  voice_design_sample_script:
+    version: 1
+    slots: []
+    text: >-
+      Hello, and welcome. I'm glad you could join us today. Let me tell you a little about myself:
+      I enjoy clear conversations, good questions, and taking the time to explain things well.
+      If there is anything you would like to know, just ask, and we will work through it together.

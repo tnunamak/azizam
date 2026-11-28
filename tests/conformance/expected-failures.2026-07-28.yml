@@ -1,0 +1,63 @@
+# Expected failures for `conformance server --requirements 2026-07-28`
+# (scripts/ci/mcp_conformance.py). Measured 2026-10-13 with 0.2.0-alpha.12.
+#
+# Only two kinds of entry belong here; any other failure is a bug to fix:
+# 1. Optional features Azizam's MCP server does not offer, so it correctly
+#    answers -32601 Method not found or lacks the tool: prompts, resources,
+#    completion, input-required results (MRTR: elicitation, sampling, roots)
+#    and the tasks extension.
+# 2. Checks that need the suite's own diagnostic tools (test_simple_text,
+#    test_missing_capability, ...), which a product server does not list.
+# A listed scenario that starts passing fails the run (stale entry): remove it.
+server:
+  # 1. features not offered
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  - resources-list
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - completion-complete
+  # SHOULD-level warnings, also about features not offered
+  - sep-2164-resource-not-found
+  - input-required-result-missing-input-response
+  - input-required-result-ignore-extra-params
+  - caching:sep-2549-prompts-list-caching-hints
+  - caching:sep-2549-resources-list-caching-hints
+  - caching:sep-2549-resources-templates-list-caching-hints
+  - input-required-result-basic-elicitation
+  - input-required-result-basic-sampling
+  - input-required-result-basic-list-roots
+  - input-required-result-request-state
+  - input-required-result-multiple-input-requests
+  - input-required-result-multi-round
+  - input-required-result-non-tool-request
+  - input-required-result-result-type
+  - input-required-result-tampered-state
+  - input-required-result-capability-check
+  - tasks-lifecycle
+  - tasks-capability-negotiation
+  - tasks-wire-fields
+  - tasks-request-state-removal
+  - tasks-mrtr-input
+  - tasks-request-headers
+  - tasks-dispatch-and-envelope
+  - tasks-required-task-error
+  - tasks-mrtr-composition
+  # 2. needs the suite's diagnostic tools
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-error
+  - tools-call-with-progress
+  - json-schema-2020-12
+  - http-custom-header-server-validation
+  - server-stateless:sep-2575-server-rejects-undeclared-capability
+  - server-stateless:sep-2575-missing-capability-http-400
+  - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
+  - server-stateless:sep-2575-server-no-log-without-loglevel

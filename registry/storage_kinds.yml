@@ -1,0 +1,3 @@
+# Internal accounting buckets, distinct from MIME families and Library display kinds.
+schema_version: 1
+kinds: [image, video, audio, voice, other]

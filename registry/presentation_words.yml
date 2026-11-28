@@ -1,0 +1,52 @@
+# Cleanup vocabulary is ordered. Algorithms and case rules stay in Python.
+schema_version: 1
+provider_suffixes:
+  - ' (provider)'
+  - ' (Provider)'
+engine_prefixes: [Local, Remote]
+engine_tails: [server, provider, engine]
+capability_engine_suffixes:
+  transcribe: stt
+  speech: tts
+acronyms:
+  Cpu: CPU
+  Gpu: GPU
+  Stt: STT
+  Tts: TTS
+parenthesized_hardware: [CPU, GPU]
+hardware_label_suffixes: [CPU, GPU, STT, TTS]
+bare_titles: [tts, stt]
+technical_patterns:
+  - ':\d{2,5}\b'
+  - '\b(?:port|host|localhost|127\.0\.0\.1)\b'
+  - '\b(?:gguf|safetensors|checkpoint)\b'
+  - '\b(?:contract|workflow|flac|khz)\b'
+  - '\bcontext (?:of|window|length)\b'
+  - '\bvia\s+(?:local|remote|backend|engine|server)\b'
+  - '\b(?:served by|served via|running on)\b'
+  - '[/\\][\w.-]+'
+unclassified:
+  capability: other
+  label: AI
+  icon: chat
+  service_capability: chat
+  summary: Use this configured AI capability.
+primary_chat_names: [default, fast, coder, code, chat]
+chat_profile_descriptions:
+  - words: [default, chat]
+    description: Thinks through questions before answering.
+  - words: [fast, quick]
+    description: Answers quickly for everyday prompts.
+  - words: [coder, code]
+    contains: [coder]
+    description: Helps with coding tasks and technical questions.
+  - words: [rp, roleplay]
+    contains: [roleplay]
+    description: Uses a roleplay-tuned chat profile.
+fallback_chat_description: A chat model.
+admin_surface:
+  fallback_name: Protocol frontend
+  intents_description: "Supports {intents}."
+  protocol_description: "{protocol} protocol frontend."
+  default_protocol: protocol
+  empty_description: Protocol frontend.

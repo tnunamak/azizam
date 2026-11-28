@@ -1,0 +1,29 @@
+{
+  "protocol": "http-load-unload",
+  "name": "load-params-collision",
+  "description": "Extra load params that carry a model_name key must not replace the requested model: the load body names the requested one.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "TabbyAPI model management routes POST /v1/model/load (streamed JSON lines), POST /v1/model/unload, GET /v1/model; the gateway's http-load-unload lifecycle driver reads them (gateway/lifecycle_drivers.py)"
+  },
+  "exchanges": [
+    {
+      "id": "load",
+      "match": {
+        "method": "POST",
+        "path": "/v1/model/load",
+        "json": {
+          "model_name": "wanted",
+          "temperature": 0.25
+        }
+      },
+      "response": {
+        "body": [
+          {
+            "text": "{\"status\":\"finished\"}"
+          }
+        ]
+      }
+    }
+  ]
+}

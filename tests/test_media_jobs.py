@@ -1,0 +1,1108 @@
+"""Tests for gateway.media_jobs — generic media job model and store.
+
+Uses a temporary SQLite file per test.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from gateway import media_jobs, request_source  # noqa: E402
+from gateway.media_jobs import (  # noqa: E402
+    ADMIN_ONLY_FIELDS,
+    ALL_STATUSES,
+    CLIENT_VISIBLE_FIELDS,
+    INTERNAL_ONLY_FIELDS,
+    STATUS_CANCELED,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    STATUS_SUCCEEDED,
+    MediaJob,
+)
+
+
+def test_resource_holds_end_only_at_terminal_states():
+    for status in (STATUS_QUEUED, STATUS_RUNNING):
+        assert not media_jobs.is_terminal(status)
+        assert media_jobs.holds_resources(status)
+    for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+        assert media_jobs.is_terminal(status)
+        assert not media_jobs.holds_resources(status)
+    assert not media_jobs.is_terminal("future_state")
+    assert media_jobs.holds_resources("future_state")
+
+
+def test_typed_failure_facts_keep_optional_upstream_status():
+    failure = {"error_code": "service_unavailable", "error_category": "upstream",
+               "retryable": True}
+    assert media_jobs.validate_error_info(failure) == {
+        **failure, "upstream_http_status": None,
+    }
+    assert media_jobs.validate_error_info({**failure, "upstream_http_status": 503}) == {
+        **failure, "upstream_http_status": 503,
+    }
+
+
+def test_accepted_workflow_ids_are_internal_metadata():
+    from gateway import api, media_jobs
+    job = {"metadata": {"accepted_workflow_ids": ["video.edit.example"], "mode": "async"}}
+    assert media_jobs.for_audience(job, "internal")["metadata"] == job["metadata"]
+    for audience in ("client", "admin"):
+        assert "metadata" not in media_jobs.for_audience(job, audience)
+    assert api._job_body(job)["metadata"] == {"mode": "async"}
+    assert job["metadata"]["accepted_workflow_ids"] == ["video.edit.example"]
+
+
+def test_typed_upstream_failure_keeps_status_and_false_retry_decision():
+    facts = {
+        "error_code": "upstream_busy",
+        "error_category": "upstream",
+        "retryable": False,
+        "upstream_http_status": 503,
+    }
+    result = media_jobs.validate_error_info(facts)
+    assert result == facts
+    assert result["retryable"] is False
+
+
+def test_failure_without_upstream_status_keeps_explicit_unknown():
+    result = media_jobs.validate_error_info({
+        "error_code": "capacity_wait",
+        "error_category": "capacity",
+        "retryable": True,
+    })
+    assert result == {
+        "error_code": "capacity_wait",
+        "error_category": "capacity",
+        "retryable": True,
+        "upstream_http_status": None,
+    }
+
+
+def test_upstream_failure_keeps_both_http_status_boundaries():
+    failure = {"error_code": "upstream_status", "error_category": "upstream",
+               "retryable": False}
+    for status in (100, 599):
+        facts = {**failure, "upstream_http_status": status}
+        assert media_jobs.validate_error_info(facts) == facts
+
+
+def test_failure_code_classifier_agrees_with_typed_failure_at_token_length_boundary():
+    code = "a0_z.foo-" + "x" * 55
+    assert len(code) == 64
+    assert media_jobs.is_error_code(code)
+    assert not media_jobs.is_error_code(code + "x")
+    failure = {"error_code": code, "error_category": "upstream", "retryable": False}
+    assert media_jobs.validate_error_info(failure)["error_code"] == code
+
+
+def _make_job(**overrides: Any) -> MediaJob:
+    defaults: dict[str, Any] = dict(
+        intent="video.generate",
+        workflow="ltx.video.basic",
+        backend="comfyui.local",
+        request_id="req_abc123",
+        app_profile="video-agent",
+        api_key_name="agent-key-1",
+        metadata={"prompt_id": "c_001", "queue_pos": 2},
+    )
+    defaults.update(overrides)
+    return MediaJob(**defaults)
+
+
+def test_new_media_job_default_metadata_and_assets_are_independent():
+    first = MediaJob(intent="video.generate", workflow="fixture", backend="fixture")
+    second = MediaJob(intent="video.generate", workflow="fixture", backend="fixture")
+
+    first.metadata["fixture_label"] = "fixture-only"
+    first.assets.append({"asset_id": "synthetic-asset"})
+
+    assert first.metadata == {"fixture_label": "fixture-only"}
+    assert first.assets == [{"asset_id": "synthetic-asset"}]
+    assert second.metadata == {}
+    assert second.assets == []
+
+
+def test_unknown_job_status_is_not_terminal_for_waiters():
+    assert not media_jobs.is_terminal("unrecognized_status")
+    assert not media_jobs.is_terminal(STATUS_QUEUED)
+    assert not media_jobs.is_terminal(STATUS_RUNNING)
+    assert media_jobs.is_terminal(STATUS_SUCCEEDED)
+    assert media_jobs.is_terminal(STATUS_FAILED)
+    assert media_jobs.is_terminal(STATUS_CANCELED)
+
+
+def test_media_job_progress_accepts_both_endpoints_but_rejects_underflow():
+    assert _make_job(progress=0).progress == 0
+    assert _make_job(progress=100).progress == 100
+    try:
+        _make_job(progress=-1)
+    except ValueError as error:
+        assert "progress must be in [0, 100]" in str(error)
+    else:
+        raise AssertionError("negative media job progress was accepted")
+
+
+def test_serialized_asset_entries_are_independent_snapshots() -> None:
+    job = _make_job(assets=[{"id": "asset-fixture", "kind": "image"}])
+    view = job.to_dict("client")
+    view["assets"][0]["kind"] = "edited"
+    view["assets"].append({"id": "other-fixture", "kind": "text"})
+
+    assert job.to_dict("client")["assets"] == [
+        {"id": "asset-fixture", "kind": "image"},
+    ]
+
+
+def test_nonnumeric_progress_has_a_clear_validation_error() -> None:
+    with unittest.TestCase().assertRaisesRegex(ValueError, r"progress must be an int 0\.\.100"):
+        _make_job(progress="unknown")
+
+
+def test_audience_contract_is_independent_of_implementation_tables():
+    job = _make_job(
+        owner_key_hash="owner-sentinel",
+        owner_scope="scope-sentinel",
+        input_hash="digest-sentinel",
+        creating_receipt_id="receipt-sentinel",
+        app_id="app-sentinel",
+    )
+    client_keys = {
+        "request_id", "job_id", "intent", "status", "progress", "assets", "error",
+        "created_at", "updated_at", "parent_request_id", "accepted_at", "queued_at",
+        "started_at", "first_output_at", "finished_at", "attempt_number",
+        "previous_attempts", "cancel_requested",
+        "error_code", "error_category", "retryable", "upstream_http_status",
+        "queue_position", "last_healthy_at",
+    }
+    admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
+    internal_keys = {
+        "metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id",
+    }
+    client = job.to_dict("client")
+    admin = job.to_dict("admin")
+    internal = job.to_dict("internal")
+    assert set(client) == client_keys
+    assert set(admin) == client_keys | admin_keys
+    assert set(internal) == client_keys | admin_keys | internal_keys
+    assert internal["creating_receipt_id"] == "receipt-sentinel"
+    assert internal["owner_key_hash"] == "owner-sentinel"
+    assert admin["app_id"] == "app-sentinel"
+    assert client["job_id"] == job.job_id
+
+
+def test_replay_window_includes_the_exact_terminal_cutoff(monkeypatch):
+    now = 2_000_000
+    monkeypatch.setattr(media_jobs, "_now", lambda: now)
+    cutoff = now - media_jobs.REPLAY_WINDOW_S
+    for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+        assert media_jobs._replays(status, cutoff)
+
+
+def test_replay_window_rechecks_the_clock_on_each_lookup(monkeypatch):
+    now = 2_000_000
+    monkeypatch.setattr(media_jobs, "_now", lambda: now)
+    finished_at = now - media_jobs.REPLAY_WINDOW_S + 1
+    assert media_jobs._replays(STATUS_SUCCEEDED, finished_at)
+    now += 2
+    assert not media_jobs._replays(STATUS_SUCCEEDED, finished_at)
+
+
+class TestMediaJobModel(unittest.TestCase):
+    def test_defaults_are_filled(self) -> None:
+        job = _make_job()
+        self.assertTrue(job.job_id.startswith("mj_"))
+        self.assertEqual(job.status, STATUS_QUEUED)
+        self.assertEqual(job.progress, 0)
+        self.assertIsInstance(job.created_at, int)
+        self.assertEqual(job.created_at, job.updated_at)
+
+    def test_unrecognized_status_is_not_reported_as_finished(self) -> None:
+        self.assertFalse(media_jobs.is_terminal("future_status"))
+
+    def test_capacity_remains_reserved_until_work_reaches_a_terminal_state(self) -> None:
+        for status in (STATUS_QUEUED, STATUS_RUNNING):
+            with self.subTest(status=status):
+                self.assertTrue(media_jobs.holds_resources(status))
+        for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+            with self.subTest(status=status):
+                self.assertFalse(media_jobs.holds_resources(status))
+
+    def test_missing_intent_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            MediaJob(intent="")
+
+    def test_invalid_status_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _make_job(status="bogus")
+
+    def test_progress_must_be_in_range(self) -> None:
+        with self.assertRaises(ValueError):
+            _make_job(progress=-1)
+        with self.assertRaises(ValueError):
+            _make_job(progress=101)
+
+    def test_progress_accepts_str_int(self) -> None:
+        job = _make_job(progress="42")
+        self.assertEqual(job.progress, 42)
+
+    def test_failure_details_reject_a_non_boolean_retry_flag(self) -> None:
+        with self.assertRaisesRegex(ValueError, "^retryable must be a boolean$"):
+            media_jobs.validate_error_info({
+                "error_code": "example_timeout",
+                "error_category": "timeout",
+                "retryable": "false",
+            })
+
+    def test_failure_details_reject_an_out_of_range_upstream_status(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be an HTTP status"):
+            media_jobs.validate_error_info({
+                "error_code": "example_failed",
+                "error_category": "upstream",
+                "retryable": False,
+                "upstream_http_status": 600,
+            })
+
+
+    def test_metadata_forbidden_keys_rejected(self) -> None:
+        for key in ("prompt", "image_b64", "raw_body", "api_key", "video_bytes"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):
+                    _make_job(metadata={key: "..."})
+
+    def test_metadata_nested_forbidden_keys_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _make_job(metadata={"trace": {"prompt": "hello"}})
+
+    def test_assets_forbidden_keys_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _make_job(assets=[{"id": "a1", "image_b64": "...."}])
+
+    def test_assets_rejects_a_non_mapping_entry(self) -> None:
+        with self.assertRaisesRegex(ValueError, "assets entries must be mappings"):
+            _make_job(assets=["not an asset record"])
+
+    def test_previous_attempt_rejects_invalid_phase_values(self) -> None:
+        for invalid in (-1, True):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "non-negative integers or null"):
+                _make_job(previous_attempts=[{"attempt_number": 1, "started_at": invalid}])
+
+    def test_assets_safe_shape_accepted(self) -> None:
+        job = _make_job(assets=[{"id": "a1", "media_type": "video/mp4", "url": "/v1/assets/a1"}])
+        self.assertEqual(len(job.assets), 1)
+
+
+class TestTypedFailureStatus(unittest.TestCase):
+    def test_local_failure_cannot_keep_an_upstream_http_status(self) -> None:
+        facts = {"error_code": "job_timeout", "error_category": "timeout",
+                 "retryable": True, "upstream_http_status": 504}
+        with self.assertRaisesRegex(ValueError, "must be an HTTP status of an upstream failure"):
+            media_jobs.validate_error_info(facts)
+
+    def test_upstream_failure_rejects_an_out_of_range_http_status(self) -> None:
+        facts = {"error_code": "upstream_unavailable", "error_category": "upstream",
+                 "retryable": True, "upstream_http_status": 600}
+        with self.assertRaisesRegex(ValueError, "must be an HTTP status of an upstream failure"):
+            media_jobs.validate_error_info(facts)
+
+    def test_failure_does_not_coerce_numeric_retry_flag_to_retry(self) -> None:
+        facts = {"error_code": "capacity_wait", "error_category": "capacity", "retryable": 1}
+        with self.assertRaisesRegex(ValueError, "retryable must be a boolean"):
+            media_jobs.validate_error_info(facts)
+
+    def test_upstream_failure_does_not_coerce_a_string_status(self) -> None:
+        facts = {"error_code": "upstream_busy", "error_category": "upstream",
+                 "retryable": False, "upstream_http_status": "503"}
+        with self.assertRaisesRegex(ValueError, "must be an HTTP status of an upstream failure"):
+            media_jobs.validate_error_info(facts)
+
+
+class TestAudienceFiltering(unittest.TestCase):
+    def test_client_view_omits_admin_and_internal_fields(self) -> None:
+        job = _make_job()
+        view = job.to_dict("client")
+        for name in ADMIN_ONLY_FIELDS | INTERNAL_ONLY_FIELDS:
+            self.assertNotIn(name, view, f"client view leaked {name}")
+        for name in ("job_id", "status", "progress", "intent"):
+            self.assertIn(name, view)
+
+    def test_admin_view_includes_admin_fields_excludes_metadata(self) -> None:
+        job = _make_job()
+        view = job.to_dict("admin")
+        for name in ADMIN_ONLY_FIELDS:
+            self.assertIn(name, view)
+        for name in INTERNAL_ONLY_FIELDS:
+            self.assertNotIn(name, view)
+
+    def test_internal_view_includes_everything(self) -> None:
+        job = _make_job()
+        view = job.to_dict("internal")
+        for name in CLIENT_VISIBLE_FIELDS | ADMIN_ONLY_FIELDS | INTERNAL_ONLY_FIELDS:
+            self.assertIn(name, view)
+        self.assertEqual(view["metadata"], {"prompt_id": "c_001", "queue_pos": 2})
+
+    def test_invalid_audience_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            _make_job().to_dict("public")
+    def test_legacy_job_projection_supplies_missing_fields_without_changing_input(self) -> None:
+        row = {"status": STATUS_SUCCEEDED, "intent": "synthetic"}
+        projected = media_jobs.for_audience(row, "client")
+        self.assertEqual(row, {"status": STATUS_SUCCEEDED, "intent": "synthetic"})
+        self.assertIsNone(projected["attempt_number"])
+        self.assertEqual(projected["previous_attempts"], [])
+        projected["previous_attempts"].append({"attempt_number": 1})
+        self.assertEqual(media_jobs.for_audience(row, "client")["previous_attempts"], [])
+
+    def test_job_projection_preserves_explicit_zero_and_false(self) -> None:
+        row = {"status": STATUS_FAILED, "accepted_at": 0, "retryable": False}
+        for audience in ("client", "admin", "internal"):
+            with self.subTest(audience=audience):
+                projected = media_jobs.for_audience(row, audience)
+                self.assertEqual(projected["accepted_at"], 0)
+                self.assertIs(projected["retryable"], False)
+
+
+
+
+def test_only_incomplete_media_jobs_hold_admission_capacity():
+    for status in (STATUS_QUEUED, STATUS_RUNNING):
+        assert media_jobs.holds_resources(status)
+    for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+        assert not media_jobs.holds_resources(status)
+
+
+def test_replay_retention_boundary_keeps_active_jobs_and_expires_finished_jobs(monkeypatch):
+    now = 2_000_000_000
+    cutoff = now - media_jobs.REPLAY_WINDOW_S
+    monkeypatch.setattr(media_jobs, "_now", lambda: now)
+
+    for status in (STATUS_QUEUED, STATUS_RUNNING, "future_state"):
+        assert media_jobs._replays(status, cutoff - 1)
+    for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+        assert media_jobs._replays(status, cutoff)
+        assert not media_jobs._replays(status, cutoff - 1)
+
+
+class _StoreCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.db = Path(self.tmp.name)
+        self.db.unlink(missing_ok=True)
+        media_jobs.init_db(self.db)
+
+    def tearDown(self) -> None:
+        for suffix in ("", "-wal", "-shm"):
+            p = Path(str(self.db) + suffix)
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+
+
+class TestStoreLifecycle(_StoreCase):
+    def test_init_records_schema_version(self) -> None:
+        self.assertEqual(media_jobs.schema_version(self.db), media_jobs.SCHEMA_VERSION)
+
+    def test_existing_database_backfills_indexed_asset_origins(self) -> None:
+        modern_asset = "asset_modern_origin"
+        legacy_asset = "asset_legacy_origin"
+        media_jobs.create(_make_job(
+            job_id="job_modern_origin", request_id="idem_modern",
+            parent_request_id="receipt_modern", status=STATUS_SUCCEEDED,
+            assets=[{"asset_id": modern_asset}],
+        ), path=self.db)
+        media_jobs.create(_make_job(
+            job_id="job_legacy_origin", request_id="idem_legacy",
+            parent_request_id="receipt_legacy", status=STATUS_SUCCEEDED,
+            assets=[{"asset_id": legacy_asset}],
+        ), path=self.db)
+
+        # Recreate the v4 shape and a legacy row written before creating_receipt_id existed.
+        with media_jobs._conn(self.db) as conn:
+            conn.execute(
+                "UPDATE media_jobs SET job_json=json_remove(job_json, '$.creating_receipt_id') "
+                "WHERE job_id='job_legacy_origin'"
+            )
+            conn.execute("DROP TABLE IF EXISTS media_job_asset_origins")
+            conn.execute("UPDATE media_jobs_schema_version SET version=4")
+            conn.commit()
+
+        media_jobs.init_db(self.db)
+
+        with media_jobs._conn(self.db) as conn:
+            self.assertEqual(
+                conn.execute("SELECT version FROM media_jobs_schema_version").fetchone()[0],
+                media_jobs.SCHEMA_VERSION,
+            )
+            index_names = {row[1] for row in conn.execute("PRAGMA index_list(media_job_asset_origins)")}
+            self.assertIn("media_job_asset_origins_asset", index_names)
+            plan = " ".join(str(value) for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT DISTINCT origin_id FROM media_job_asset_origins WHERE asset_id=?",
+                (modern_asset,),
+            ) for value in row)
+            self.assertIn("media_job_asset_origins_asset", plan)
+            self.assertEqual(media_jobs.request_ids_for_assets_in(conn, (modern_asset,)), {"receipt_modern"})
+            self.assertEqual(media_jobs.request_ids_for_assets_in(conn, (legacy_asset,)), {"receipt_legacy"})
+
+    def test_create_and_get_round_trip(self) -> None:
+        job = _make_job()
+        created = media_jobs.create(job, path=self.db)
+        self.assertEqual(created.job_id, job.job_id)
+        loaded = media_jobs.get(job.job_id, path=self.db)
+        self.assertEqual(loaded["job_id"], job.job_id)
+        self.assertEqual(loaded["intent"], "video.generate")
+        self.assertEqual(loaded["status"], STATUS_QUEUED)
+
+    def test_get_hides_tombstones_unless_included(self) -> None:
+        job = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        before = media_jobs.get(job.job_id, path=self.db)
+        media_jobs.tombstone_job(job.job_id, path=self.db)
+        self.assertIsNone(media_jobs.get(job.job_id, path=self.db))
+        self.assertEqual(media_jobs.get(job.job_id, include_deleted=True, path=self.db), before)
+
+    def test_get_many_hides_tombstones_unless_included(self) -> None:
+        live = media_jobs.create(_make_job(request_id="live", status=STATUS_SUCCEEDED), path=self.db)
+        deleted = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        ids = [live.job_id, deleted.job_id, "missing", live.job_id]
+        before = media_jobs.get_many(ids, path=self.db)
+        media_jobs.tombstone_job(deleted.job_id, path=self.db)
+        self.assertEqual(media_jobs.get_many(ids, path=self.db), {live.job_id: before[live.job_id]})
+        self.assertEqual(media_jobs.get_many(ids, include_deleted=True, path=self.db), before)
+
+    def test_get_by_request_id_hides_tombstones_unless_included(self) -> None:
+        job = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        before = media_jobs.get_by_request_id(job.request_id, path=self.db)
+        media_jobs.tombstone_job(job.job_id, path=self.db)
+        self.assertIsNone(media_jobs.get_by_request_id(job.request_id, path=self.db))
+        self.assertEqual(media_jobs.get_by_request_id(job.request_id, include_deleted=True, path=self.db), before)
+
+    def test_deleted_request_id_stays_claimed_until_reaped(self) -> None:
+        first = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        media_jobs.tombstone_job(first.job_id, path=self.db)
+        retry = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        self.assertEqual(retry.job_id, first.job_id)
+        with media_jobs.connection(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0], 1)
+        self.assertEqual(media_jobs.reap_tombstones(before=2**40, path=self.db), 1)
+        self.assertNotEqual(media_jobs.create(_make_job(), path=self.db).job_id, first.job_id)
+
+    def test_get_missing_returns_none(self) -> None:
+        self.assertIsNone(media_jobs.get("mj_does_not_exist", path=self.db))
+
+    def test_create_is_idempotent_on_request_id(self) -> None:
+        first = media_jobs.create(_make_job(request_id="req_dup"), path=self.db)
+        second = media_jobs.create(
+            _make_job(request_id="req_dup"),
+            path=self.db,
+        )
+        self.assertEqual(first.job_id, second.job_id)
+        # The second submission must not overwrite — first wins.
+        loaded = media_jobs.get(first.job_id, path=self.db)
+        self.assertEqual(loaded["workflow"], "ltx.video.basic")
+
+    def _age(self, job_id: str, seconds: int) -> None:
+        with media_jobs._conn(self.db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at = updated_at - ? WHERE job_id = ?",
+                         (seconds, job_id))
+            conn.commit()
+
+    def test_old_finished_request_id_starts_new_work_and_keeps_history(self) -> None:
+        # Kept jobs must not turn a 14-day replay window into a permanent one.
+        for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+            request_id = f"req_old_{status}"
+            first = media_jobs.create(_make_job(request_id=request_id, status=status), path=self.db)
+            media_jobs.append_event(first.job_id, "x", {"progress": 1}, path=self.db)
+            self._age(first.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+            self.assertIsNone(media_jobs.get_by_request_id(request_id, path=self.db))
+            second = media_jobs.create(_make_job(request_id=request_id), path=self.db)
+            self.assertNotEqual(first.job_id, second.job_id)
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], second.job_id)
+            kept = media_jobs.get(first.job_id, audience="internal", path=self.db)
+            self.assertEqual(kept["status"], status)
+            self.assertEqual(kept["request_id"], "")
+            self.assertEqual(len(media_jobs.events(first.job_id, path=self.db)), 1)
+
+    def test_stale_write_of_released_job_keeps_the_new_owner_of_its_request_id(self) -> None:
+        import sqlite3
+        for with_events in (False, True):
+            request_id = f"req_stale_{with_events}"
+            old = media_jobs.create(_make_job(request_id=request_id, status=STATUS_SUCCEEDED), path=self.db)
+            self._age(old.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+            new = media_jobs.create(_make_job(request_id=request_id), path=self.db)
+            if with_events:
+                media_jobs.append_event(new.job_id, "x", {"progress": 1}, path=self.db)
+            old.progress = 100  # a worker still holds the object from before the release
+            media_jobs.upsert(old, path=self.db)
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], new.job_id)
+            self.assertIsNotNone(media_jobs.get(new.job_id, path=self.db))
+            kept = media_jobs.get(old.job_id, audience="internal", path=self.db)
+            self.assertEqual((kept["request_id"], kept["progress"]), ("", 100))
+            other = _make_job(request_id=request_id)  # a different job claiming the same ID
+            with self.assertRaises(sqlite3.IntegrityError):
+                media_jobs.upsert(other, path=self.db)
+            self.assertIsNone(media_jobs.get(other.job_id, path=self.db))
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], new.job_id)
+
+    def test_recent_or_active_request_id_still_replays(self) -> None:
+        recent = media_jobs.create(_make_job(request_id="req_recent", status=STATUS_FAILED), path=self.db)
+        self._age(recent.job_id, media_jobs.REPLAY_WINDOW_S - 60)
+        self.assertEqual(media_jobs.create(_make_job(request_id="req_recent"), path=self.db).job_id, recent.job_id)
+        active = media_jobs.create(_make_job(request_id="req_active", status=STATUS_RUNNING), path=self.db)
+        self._age(active.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+        self.assertEqual(media_jobs.get_by_request_id("req_active", path=self.db)["job_id"], active.job_id)
+        self.assertEqual(media_jobs.create(_make_job(request_id="req_active"), path=self.db).job_id, active.job_id)
+
+    def test_create_without_request_id_makes_separate_jobs(self) -> None:
+        a = media_jobs.create(_make_job(request_id=""), path=self.db)
+        b = media_jobs.create(_make_job(request_id=""), path=self.db)
+        self.assertNotEqual(a.job_id, b.job_id)
+        self.assertEqual(media_jobs.count(self.db), 2)
+
+    def test_upsert_replaces_existing(self) -> None:
+        job = _make_job()
+        media_jobs.upsert(job, path=self.db)
+        job.metadata["queue_pos"] = 5
+        # Mutate-then-upsert ought to leave only one row.
+        media_jobs.upsert(job, path=self.db)
+        self.assertEqual(media_jobs.count(self.db), 1)
+        loaded = media_jobs.get(job.job_id, path=self.db)
+        self.assertEqual(loaded["metadata"]["queue_pos"], 5)
+
+    def test_get_by_request_id(self) -> None:
+        job = media_jobs.create(_make_job(request_id="req_lookup"), path=self.db)
+        found = media_jobs.get_by_request_id("req_lookup", path=self.db)
+        self.assertEqual(found["job_id"], job.job_id)
+        self.assertIsNone(media_jobs.get_by_request_id("nope", path=self.db))
+
+
+class TestStatusTransitions(_StoreCase):
+    def test_queued_to_running_to_succeeded(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        running = media_jobs.update_status(job.job_id, STATUS_RUNNING, progress=10, path=self.db)
+        self.assertEqual(running["status"], STATUS_RUNNING)
+        self.assertEqual(running["progress"], 10)
+        done = media_jobs.update_status(
+            job.job_id,
+            STATUS_SUCCEEDED,
+            add_assets=[{"id": "asset_001", "media_type": "video/mp4"}],
+            path=self.db,
+        )
+        self.assertEqual(done["status"], STATUS_SUCCEEDED)
+        self.assertEqual(done["progress"], 100)
+        self.assertEqual(done["assets"], [{"id": "asset_001", "media_type": "video/mp4"}])
+
+    def test_queued_to_failed_with_error(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        failed = media_jobs.update_status(
+            job.job_id,
+            STATUS_FAILED,
+            error="comfy node 42 raised KSampler OOM",
+            path=self.db,
+        )
+        self.assertEqual(failed["status"], STATUS_FAILED)
+        self.assertIn("OOM", failed["error"])
+
+    def test_running_to_canceled(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.update_status(job.job_id, STATUS_RUNNING, path=self.db)
+        canceled = media_jobs.update_status(job.job_id, STATUS_CANCELED, path=self.db)
+        self.assertEqual(canceled["status"], STATUS_CANCELED)
+
+    def test_illegal_transition_rejected(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        # queued -> succeeded skips the running phase and is not allowed.
+        with self.assertRaises(ValueError):
+            media_jobs.update_status(job.job_id, STATUS_SUCCEEDED, path=self.db)
+        # Drive it through running -> succeeded so we can test terminal locks.
+        media_jobs.update_status(job.job_id, STATUS_RUNNING, path=self.db)
+        media_jobs.update_status(job.job_id, STATUS_SUCCEEDED, path=self.db)
+        with self.assertRaises(ValueError):
+            media_jobs.update_status(job.job_id, STATUS_RUNNING, path=self.db)
+        with self.assertRaises(ValueError):
+            media_jobs.update_status(job.job_id, STATUS_FAILED, path=self.db)
+
+    def test_same_state_progress_update_allowed(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.update_status(job.job_id, STATUS_RUNNING, progress=10, path=self.db)
+        again = media_jobs.update_status(job.job_id, STATUS_RUNNING, progress=42, path=self.db)
+        self.assertEqual(again["progress"], 42)
+
+    def test_out_of_range_running_progress_keeps_the_last_saved_public_result(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.update_status(job.job_id, STATUS_RUNNING, progress=30, path=self.db)
+        before = media_jobs.get(job.job_id, audience="client", path=self.db)
+
+        with self.assertRaisesRegex(ValueError, r"progress must be in \[0, 100\], got 101"):
+            media_jobs.update_status(job.job_id, STATUS_RUNNING, progress=101, path=self.db)
+
+        self.assertEqual(media_jobs.get(job.job_id, audience="client", path=self.db), before)
+
+    def test_an_unknown_failure_category_does_not_record_a_terminal_result(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.update_status(job.job_id, STATUS_RUNNING, progress=30, path=self.db)
+        before = media_jobs.get(job.job_id, audience="client", path=self.db)
+
+        with self.assertRaisesRegex(ValueError, "error_category must be one of"):
+            media_jobs.update_status(
+                job.job_id,
+                STATUS_FAILED,
+                error_info={"error_code": "fixture_failure", "error_category": "unrecognized", "retryable": False},
+                path=self.db,
+            )
+
+        self.assertEqual(media_jobs.get(job.job_id, audience="client", path=self.db), before)
+
+    def test_update_status_on_missing_returns_none(self) -> None:
+        self.assertIsNone(
+            media_jobs.update_status("mj_missing", STATUS_RUNNING, path=self.db)
+        )
+
+    def test_metadata_patch_merges(self) -> None:
+        job = media_jobs.create(_make_job(metadata={"a": 1}), path=self.db)
+        media_jobs.update_status(
+            job.job_id,
+            STATUS_RUNNING,
+            metadata_patch={"b": 2},
+            path=self.db,
+        )
+        loaded = media_jobs.get(job.job_id, path=self.db)
+        self.assertEqual(loaded["metadata"], {"a": 1, "b": 2})
+
+    def test_metadata_patch_rejects_forbidden_keys(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        with self.assertRaises(ValueError):
+            media_jobs.update_status(
+                job.job_id,
+                STATUS_RUNNING,
+                metadata_patch={"prompt": "shh"},
+                path=self.db,
+            )
+
+    def test_add_assets_rejects_forbidden_keys(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        with self.assertRaises(ValueError):
+            media_jobs.update_status(
+                job.job_id,
+                STATUS_RUNNING,
+                add_assets=[{"id": "a1", "video_bytes": "...."}],
+                path=self.db,
+            )
+
+
+class TestEvents(_StoreCase):
+    def test_append_and_read_events(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.append_event(
+            job.job_id,
+            "comfy.executing",
+            {"node": "31", "phase": "sampling", "step": 1, "total": 30, "progress": 3},
+            path=self.db,
+        )
+        media_jobs.append_event(
+            job.job_id,
+            "comfy.executing",
+            {"node": "31", "phase": "sampling", "step": 15, "total": 30, "progress": 50},
+            path=self.db,
+        )
+        evs = media_jobs.events(job.job_id, path=self.db)
+        self.assertEqual(len(evs), 2)
+        self.assertEqual(evs[0]["event_type"], "comfy.executing")
+        self.assertEqual(evs[0]["payload"]["step"], 1)
+        self.assertLess(evs[0]["id"], evs[1]["id"])
+
+    def test_events_after_sequence_pagination(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        first_sequence = media_jobs.append_event(job.job_id, "a", {"progress": 1}, path=self.db)
+        media_jobs.append_event(job.job_id, "b", {"progress": 2}, path=self.db)
+        media_jobs.append_event(job.job_id, "c", {"progress": 3}, path=self.db)
+        tail = media_jobs.events(job.job_id, after_sequence=first_sequence, path=self.db)
+        self.assertEqual([e["event_type"] for e in tail], ["b", "c"])
+
+    def test_events_sequence_cursor_advances_across_limited_pages(self) -> None:
+        selected = media_jobs.create(_make_job(request_id="req_selected"), path=self.db)
+        sibling = media_jobs.create(_make_job(request_id="req_sibling"), path=self.db)
+        media_jobs.append_event(selected.job_id, "first", path=self.db)
+        media_jobs.append_event(sibling.job_id, "other", path=self.db)
+        media_jobs.append_event(selected.job_id, "second", path=self.db)
+
+        first = media_jobs.events(selected.job_id, after_sequence=0, limit=1, path=self.db)
+        self.assertEqual([event["event_type"] for event in first], ["first"])
+        second = media_jobs.events(
+            selected.job_id, after_sequence=first[0]["sequence"], limit=1, path=self.db,
+        )
+        self.assertEqual([event["event_type"] for event in second], ["second"])
+        self.assertEqual(
+            media_jobs.events(selected.job_id, after_sequence=second[0]["sequence"], limit=1, path=self.db),
+            [],
+        )
+
+    def test_events_zero_limit_returns_empty_without_consuming_the_cursor(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        cursor = media_jobs.append_event(job.job_id, "ready", path=self.db)
+        media_jobs.append_event(job.job_id, "running", path=self.db)
+
+        self.assertEqual(media_jobs.events(job.job_id, after_sequence=cursor, limit=0, path=self.db), [])
+        page = media_jobs.events(job.job_id, after_sequence=cursor, limit=1, path=self.db)
+        self.assertEqual([event["event_type"] for event in page], ["running"])
+
+    def test_events_client_audience_filters_payload(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.append_event(
+            job.job_id,
+            "comfy.executing",
+            {
+                "node": "31",
+                "class_type": "KSampler",
+                "phase": "sampling",
+                "step": 5,
+                "total": 30,
+                "progress": 20,
+                "backend_endpoint": "http://internal/comfy",
+            },
+            path=self.db,
+        )
+        client_view = media_jobs.events(job.job_id, audience="client", path=self.db)
+        self.assertEqual(len(client_view), 1)
+        payload = client_view[0].get("payload", {})
+        self.assertIn("progress", payload)
+        self.assertIn("step", payload)
+        self.assertIn("phase", payload)
+        self.assertNotIn("node", payload)
+        self.assertNotIn("backend_endpoint", payload)
+        self.assertNotIn("class_type", payload)
+
+    def test_events_admin_audience_omits_payload(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        media_jobs.append_event(
+            job.job_id,
+            "comfy.executing",
+            {"node": "31", "progress": 5},
+            path=self.db,
+        )
+        admin_view = media_jobs.events(job.job_id, audience="admin", path=self.db)
+        self.assertEqual(len(admin_view), 1)
+        self.assertNotIn("payload", admin_view[0])
+        self.assertEqual(admin_view[0]["event_type"], "comfy.executing")
+
+    def test_event_forbidden_payload_keys_rejected(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        for key in ("prompt", "image_b64", "raw_body", "authorization", "video_bytes", "api_key"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):
+                    media_jobs.append_event(
+                        job.job_id,
+                        "x",
+                        {key: "..."},
+                        path=self.db,
+                    )
+
+    def test_event_unknown_job_raises(self) -> None:
+        with self.assertRaises(LookupError):
+            media_jobs.append_event("mj_missing", "x", {"progress": 1}, path=self.db)
+
+    def test_event_type_must_be_nonempty(self) -> None:
+        job = media_jobs.create(_make_job(), path=self.db)
+        with self.assertRaises(ValueError):
+            media_jobs.append_event(job.job_id, "", {"progress": 1}, path=self.db)
+
+
+def test_client_progress_events_distinguish_fractional_values_and_range():
+    media_jobs.validate_client_event("progress", {"progress": 0})
+    media_jobs.validate_client_event("progress", {"progress": 100})
+    for progress in (50.5, 101):
+        with unittest.TestCase().assertRaisesRegex(
+            ValueError, "^progress must be a non-negative integer up to 100$"
+        ):
+            media_jobs.validate_client_event("progress", {"progress": progress})
+
+
+def test_client_note_reports_the_negative_step_or_total_field():
+    media_jobs.validate_client_event("note", {"step": 0, "total": 1})
+    for field in ("step", "total"):
+        with unittest.TestCase().assertRaisesRegex(
+            ValueError, f"^{field} must be a non-negative integer$"
+        ):
+            media_jobs.validate_client_event("note", {field: -1})
+
+
+class TestRecentAndPrune(_StoreCase):
+    def test_recent_orders_by_updated_at(self) -> None:
+        base = int(time.time())
+        a = media_jobs.create(
+            _make_job(request_id="req_a", created_at=base, updated_at=base),
+            path=self.db,
+        )
+        b = media_jobs.create(
+            _make_job(request_id="req_b", created_at=base + 1, updated_at=base + 1),
+            path=self.db,
+        )
+        # bump A so it becomes newer than B by explicit timestamp
+        media_jobs.update_status(a.job_id, STATUS_RUNNING, now=base + 5, path=self.db)
+        listed = media_jobs.recent(path=self.db)
+        self.assertEqual([j["job_id"] for j in listed[:2]], [a.job_id, b.job_id])
+
+    def test_recent_filters_by_profile_and_status(self) -> None:
+        media_jobs.create(_make_job(request_id="r1", app_profile="alpha"), path=self.db)
+        media_jobs.create(_make_job(request_id="r2", app_profile="beta"), path=self.db)
+        alpha_jobs = media_jobs.recent(app_profile="alpha", path=self.db)
+        self.assertEqual({j["app_profile"] for j in alpha_jobs}, {"alpha"})
+
+        # Now flip one to running and filter by status.
+        first = alpha_jobs[0]
+        media_jobs.update_status(first["job_id"], STATUS_RUNNING, path=self.db)
+        running = media_jobs.recent(status=STATUS_RUNNING, path=self.db)
+        self.assertEqual([j["job_id"] for j in running], [first["job_id"]])
+
+    def test_recent_applies_client_audience(self) -> None:
+        media_jobs.create(_make_job(request_id="rc"), path=self.db)
+        listed = media_jobs.recent(audience="client", path=self.db)
+        self.assertEqual(len(listed), 1)
+        for name in ADMIN_ONLY_FIELDS | INTERNAL_ONLY_FIELDS:
+            self.assertNotIn(name, listed[0])
+
+    def test_recent_zero_limit(self) -> None:
+        media_jobs.create(_make_job(request_id="rz"), path=self.db)
+        self.assertEqual(media_jobs.recent(limit=0, path=self.db), [])
+
+    def test_restart_keeps_old_jobs_and_events_in_every_state(self) -> None:
+        for status in ALL_STATUSES:
+            job = media_jobs.create(_make_job(request_id=status, status=status), path=self.db)
+            media_jobs.append_event(job.job_id, "x", {"progress": 1}, path=self.db)
+        with media_jobs._conn(self.db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at = 1, created_at = 1")
+            conn.commit()
+        media_jobs.init_db(self.db)
+        self.assertEqual(media_jobs.count(self.db), len(ALL_STATUSES))
+        for job in media_jobs.recent(path=self.db, audience="internal"):
+            self.assertEqual(len(media_jobs.events(job["job_id"], path=self.db)), 1)
+
+
+def test_client_view_keeps_current_and_previous_attempt_timelines_separate():
+    job = _make_job(attempt_number=2, started_at=None, previous_attempts=[
+        {"attempt_number": 1, "started_at": 10, "finished_at": 20},
+    ])
+    view = job.to_dict("client")
+    assert view["attempt_number"] == 2
+    assert view["started_at"] is None
+    assert view["previous_attempts"] == [{"attempt_number": 1, "started_at": 10, "finished_at": 20}]
+
+
+def test_serialized_attempt_timeline_does_not_mutate_the_job_when_edited():
+    job = _make_job(previous_attempts=[{"attempt_number": 1, "started_at": 10}])
+    view = job.to_dict("client")
+    view["previous_attempts"][0]["started_at"] = 99
+    assert job.to_dict("client")["previous_attempts"][0]["started_at"] == 10
+
+
+class TestStoreSafety(_StoreCase):
+    def test_invalid_audience_in_get_raises(self) -> None:
+        media_jobs.create(_make_job(request_id="bad_audience"), path=self.db)
+        with self.assertRaises(ValueError):
+            media_jobs.get("any", audience="public", path=self.db)
+
+    def test_invalid_audience_in_events_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            media_jobs.events("any", audience="public", path=self.db)
+
+    def test_invalid_status_filter_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            media_jobs.recent(status="nope", path=self.db)
+
+    def test_status_set_is_complete(self) -> None:
+        self.assertEqual(
+            ALL_STATUSES,
+            frozenset({
+                STATUS_QUEUED,
+                STATUS_RUNNING,
+                STATUS_SUCCEEDED,
+                STATUS_FAILED,
+                STATUS_CANCELED,
+            }),
+        )
+
+
+def test_audience_contract_is_independent_of_implementation_tables():
+    job = _make_job(
+        owner_key_hash="owner-sentinel",
+        owner_scope="scope-sentinel",
+        input_hash="digest-sentinel",
+        creating_receipt_id="receipt-sentinel",
+        app_id="app-sentinel",
+    )
+    client_keys = {
+        "request_id", "job_id", "intent", "status", "progress", "assets",
+        "error", "created_at", "updated_at", "parent_request_id",
+        "accepted_at", "queued_at", "started_at", "first_output_at",
+        "finished_at", "attempt_number", "previous_attempts",
+        "cancel_requested", "error_code", "error_category", "retryable",
+        "upstream_http_status", "queue_position", "last_healthy_at",
+    }
+    admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
+    internal_keys = {
+        "metadata", "owner_key_hash", "owner_scope", "input_hash",
+        "creating_receipt_id", "maker_person_id", "maker_credential_id", "maker_connection_id",
+    }
+
+    assert set(job.to_dict("client")) == client_keys
+    assert set(job.to_dict("admin")) == client_keys | admin_keys
+    assert set(job.to_dict("internal")) == client_keys | admin_keys | internal_keys
+    assert job.to_dict("internal")["owner_key_hash"] == "owner-sentinel"
+    assert job.to_dict("internal")["creating_receipt_id"] == "receipt-sentinel"
+    assert job.to_dict("admin")["app_id"] == "app-sentinel"
+    assert job.to_dict("client")["job_id"] == job.job_id
+
+
+def test_a_version_five_store_gains_the_maker_stamp_and_its_old_jobs_stay_unstamped(tmp_path):
+    """Version 6 adds the stamp columns. A job made before the stamp keeps no maker, so it has no reader."""
+    import sqlite3
+
+    path = tmp_path / "jobs.db"
+    media_jobs.init_db(path)
+    with request_source.acting_as(app_id="app_test", person_id="usr_alice", credential_id="key:alice"):
+        stamped = media_jobs.create(_make_job(request_id="req_new", app_id="app_test"), path=path)
+    old = media_jobs.create(_make_job(request_id="req_old"), path=path)
+    with sqlite3.connect(path) as conn:
+        # Rebuild the version 5 shape: no stamp columns and no maker index, and the job JSON of a row written before the
+        # stamp existed.
+        conn.execute("DROP INDEX IF EXISTS media_jobs_maker_person")
+        for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
+            conn.execute(f"ALTER TABLE media_jobs DROP COLUMN {column}")
+        conn.execute("UPDATE media_jobs SET job_json = json_remove(job_json, '$.maker_person_id', "
+                     "'$.maker_credential_id', '$.maker_connection_id') WHERE job_id = ?", (old.job_id,))
+        conn.execute("UPDATE media_jobs_schema_version SET version = 5")
+        conn.commit()
+
+    media_jobs.init_db(path)
+
+    assert media_jobs.schema_version(path) == media_jobs.SCHEMA_VERSION == 6
+    with sqlite3.connect(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(media_jobs)")}
+    assert {"maker_person_id", "maker_credential_id", "maker_connection_id"} <= columns
+    migrated = media_jobs.get(old.job_id, audience="internal", path=path)
+    assert migrated is not None and migrated.get("maker_person_id") is None and migrated.get("maker_credential_id") is None
+    kept = media_jobs.get(stamped.job_id, audience="internal", path=path)
+    assert kept is not None and kept["maker_person_id"] == "usr_alice"
+
+
+class TestQueuePosition(_StoreCase):
+    """``queue_position``: jobs ahead in the same engine's queue, read from the job table."""
+
+    def _queued(self, request_id: str, backend: str = "engine-a") -> str:
+        return media_jobs.create(_make_job(request_id=request_id, backend=backend), path=self.db).job_id
+
+    def test_queued_jobs_report_their_place_and_others_report_none(self) -> None:
+        first, second = self._queued("req_q1"), self._queued("req_q2")
+        other_engine = self._queued("req_q3", backend="engine-b")
+        for audience in ("client", "admin"):
+            self.assertEqual(media_jobs.get(first, audience=audience, path=self.db)["queue_position"], 0)
+            self.assertEqual(media_jobs.get(second, audience=audience, path=self.db)["queue_position"], 1)
+        self.assertEqual(media_jobs.get(other_engine, audience="client", path=self.db)["queue_position"], 0)
+        self.assertEqual(media_jobs.get(second, audience="internal", path=self.db)["queue_position"], 1)
+
+    def test_position_moves_up_when_the_first_job_starts_and_is_none_once_running(self) -> None:
+        first, second = self._queued("req_q1"), self._queued("req_q2")
+        media_jobs.update_status(first, STATUS_RUNNING, expected_status=STATUS_QUEUED, path=self.db)
+        self.assertIsNone(media_jobs.get(first, audience="client", path=self.db)["queue_position"])
+        self.assertEqual(media_jobs.get(second, audience="client", path=self.db)["queue_position"], 0)
+
+    def test_equal_creation_times_use_insert_order_not_job_id_order(self) -> None:
+        first = media_jobs.create(_make_job(job_id="z-fixture", request_id="rank-z",
+            created_at=100, updated_at=100), path=self.db)
+        second = media_jobs.create(_make_job(job_id="a-fixture", request_id="rank-a",
+            created_at=100, updated_at=100), path=self.db)
+        self.assertEqual(media_jobs.queue_position(first.job_id, path=self.db), 0)
+        self.assertEqual(media_jobs.queue_position(second.job_id, path=self.db), 1)
+
+    def test_created_at_is_primary_even_when_an_older_job_is_inserted_later(self) -> None:
+        newer = media_jobs.create(_make_job(request_id="rank-new",
+            created_at=200, updated_at=200), path=self.db)
+        older = media_jobs.create(_make_job(request_id="rank-old",
+            created_at=100, updated_at=100), path=self.db)
+        self.assertEqual(media_jobs.queue_position(older.job_id, path=self.db), 0)
+        self.assertEqual(media_jobs.queue_position(newer.job_id, path=self.db), 1)
+
+    def test_every_reader_carries_the_position(self) -> None:
+        self._queued("req_q1")
+        second = self._queued("req_q2")
+        self.assertEqual(media_jobs.get_by_request_id("req_q2", audience="client", path=self.db)["queue_position"], 1)
+        self.assertEqual(media_jobs.get_many([second], audience="client", path=self.db)[second]["queue_position"], 1)
+        listed = {row["job_id"]: row for row in media_jobs.recent(10, audience="client", path=self.db)}
+        self.assertEqual(listed[second]["queue_position"], 1)
+
+    def test_a_restarted_process_reads_the_same_positions(self) -> None:
+        first, second = self._queued("req_q1"), self._queued("req_q2")
+        before = [media_jobs.queue_position(job, path=self.db) for job in (first, second)]
+        media_jobs.init_db(self.db)  # a new process opens the same file
+        self.assertEqual([media_jobs.queue_position(job, path=self.db) for job in (first, second)], before)
+        self.assertEqual(before, [0, 1])
+
+
+def test_media_job_retry_history_is_not_shared_between_new_jobs():
+    first = MediaJob(intent="video.generate", job_id="synthetic-first", created_at=1, updated_at=1)
+    second = MediaJob(intent="video.generate", job_id="synthetic-second", created_at=1, updated_at=1)
+
+    first.previous_attempts.append({"attempt_number": 1, "finished_at": 2})
+
+    assert first.to_dict()["previous_attempts"] == [{"attempt_number": 1, "finished_at": 2}]
+    assert second.to_dict()["previous_attempts"] == []
+
+
+def test_media_job_retry_history_snapshot_can_be_edited_without_mutating_job():
+    original = {"attempt_number": 1, "queued_at": 1, "finished_at": 2}
+    job = MediaJob(
+        intent="video.generate", job_id="synthetic", created_at=1, updated_at=1,
+        previous_attempts=[original],
+    )
+    snapshot = job.to_dict()
+
+    snapshot["previous_attempts"][0]["finished_at"] = 99
+    snapshot["previous_attempts"].append({"attempt_number": 2})
+
+    assert job.to_dict()["previous_attempts"] == [
+        {"attempt_number": 1, "queued_at": 1, "finished_at": 2}
+    ]
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+def test_forward_status_is_not_counted_as_complete():
+    assert not media_jobs.is_terminal("waiting_for_review")
+
+
+def test_admission_releases_capacity_only_for_terminal_statuses():
+    for status in ("queued", "running"):
+        assert media_jobs.holds_resources(status)
+    for status in ("succeeded", "failed", "canceled"):
+        assert not media_jobs.holds_resources(status)
+
+
+
+def test_retry_timeline_distinguishes_zero_from_unknown_and_missing():
+    job = _make_job(previous_attempts=[
+        {"attempt_number": 1, "queued_at": 0, "started_at": None},
+    ])
+
+    previous = job.to_dict("client")["previous_attempts"][0]
+    assert previous["queued_at"] == 0
+    assert previous["started_at"] is None
+    assert "finished_at" not in previous
+
+
+def test_numeric_string_progress_is_a_number_in_client_payload():
+    job = _make_job(progress="42")
+
+    progress = job.to_dict("client")["progress"]
+    assert type(progress) is int
+    assert progress == 42

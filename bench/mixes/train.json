@@ -1,0 +1,122 @@
+{
+  "description": "Frozen train request shapes; use train for diagnosis, test only for validation.",
+  "cases": [
+    {
+      "id": "chat",
+      "kind": "chat",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Give a short factual answer."
+          }
+        ],
+        "stream": false,
+        "max_tokens": 64
+      }
+    },
+    {
+      "id": "chat_stream",
+      "kind": "chat",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Give a short factual answer."
+          }
+        ],
+        "stream": true,
+        "max_tokens": 64,
+        "stream_options": {
+          "include_usage": true
+        }
+      }
+    },
+    {
+      "id": "models",
+      "kind": "models",
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "id": "responses",
+      "kind": "responses",
+      "path": "/v1/responses",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat",
+        "input": "Give a short factual answer.",
+        "stream": false,
+        "store": true,
+        "max_output_tokens": 64
+      }
+    },
+    {
+      "id": "responses_stream",
+      "kind": "responses",
+      "path": "/v1/responses",
+      "method": "POST",
+      "body": {
+        "model": "demo-chat",
+        "input": "Give a short factual answer.",
+        "stream": true,
+        "store": true,
+        "max_output_tokens": 64
+      }
+    },
+    {
+      "id": "image",
+      "kind": "image",
+      "path": "/v1/images/generations",
+      "method": "POST",
+      "body": {
+        "model": "bench-image",
+        "prompt": "A green circle.",
+        "size": "256x256",
+        "n": 1,
+        "background": "opaque",
+        "response_format": "b64_json"
+      }
+    },
+    {
+      "id": "tts",
+      "kind": "tts",
+      "path": "/v1/audio/speech",
+      "method": "POST",
+      "body": {
+        "model": "bench-tts",
+        "input": "Give a short factual answer.",
+        "voice": "alloy",
+        "response_format": "wav"
+      }
+    },
+    {
+      "id": "stt",
+      "kind": "stt",
+      "path": "/v1/audio/transcriptions",
+      "method": "POST",
+      "body": {
+        "model": "bench-stt"
+      },
+      "audio_frames": 1600
+    },
+    {
+      "id": "status",
+      "kind": "status",
+      "path": "/status/raw",
+      "method": "GET"
+    },
+    {
+      "id": "health",
+      "kind": "health",
+      "path": "/health",
+      "method": "GET"
+    }
+  ]
+}

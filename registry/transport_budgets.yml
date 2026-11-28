@@ -1,0 +1,31 @@
+# Size and time budgets of the gateway's plan runners, plan translators and small transport guards. Each value was a
+# constant in code; the shipped numbers are the ones the code held. A section is a default: where a record can name
+# the same budget (a subscription kind's `runner:` section for plan_runner), the record's number wins.
+version: 1
+# What a subscription kind's `runner:` section may leave out. session_limit belongs to the runner as a whole, so a record
+# cannot name it.
+plan_runner:
+  line_limit_bytes: 67108864        # the longest single stdout line a run or a model-list read accepts (64 MiB)
+  kill_grace_seconds: 2.0           # SIGTERM to SIGKILL
+  exit_wait_seconds: 2.0            # after the result event: time for the binary to finish its session file and exit by itself
+  discovery_timeout_seconds: 30.0   # the model-list read
+  park_ttl_seconds: 1800            # a parked run waits this long for the caller's tool results
+  session_limit: 4096               # conversations whose sessions the runner remembers
+# The Responses stream translator for plan kinds.
+plan_translator:
+  stream_buffer_bytes: 4194304      # the most unparsed SSE bytes held (4 MiB)
+  max_items: 1024                   # the most finished output items kept to rebuild an empty final response
+  least_effort: minimal             # the effort a chat caller sends for "thinking off"; raised to the model's lowest advertised one
+# The readings of a plan's usage windows outside these bounds are dropped, never raised.
+plan_usage_bounds:
+  max_percent: 1000.0               # a plan can report more than 100% when use runs past a limit
+  max_window_minutes: 527040        # 366 days
+  max_reset_seconds: 31622400       # 366 days
+mcp_park:
+  max_body_bytes: 8388608           # the largest request body of the loopback tool server (8 MiB)
+turn_state:
+  max_value_length: 4096            # the longest turn-state value kept per conversation
+# Two different lists, two different numbers.
+browser_people:
+  signed_in_max: 5                  # people signed in at once in one browser (the people menu)
+  remembered_max: 10                # names a browser remembers for its sign-in list

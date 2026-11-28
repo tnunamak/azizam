@@ -1,0 +1,65 @@
+{
+  "protocol": "comfyui",
+  "name": "audio-history-transient",
+  "description": "The first history check is 503, the second has no record of the job yet, the third says it finished with no output.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway's audio route polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "p1"
+        }
+      }
+    },
+    {
+      "id": "busy",
+      "match": {
+        "method": "GET",
+        "path": "/history/p1"
+      },
+      "response": {
+        "status": 503,
+        "body": [
+          {
+            "text": "busy"
+          }
+        ]
+      }
+    },
+    {
+      "id": "not-yet",
+      "match": {
+        "method": "GET",
+        "path": "/history/p1"
+      },
+      "response": {
+        "json": {}
+      }
+    },
+    {
+      "id": "done",
+      "match": {
+        "method": "GET",
+        "path": "/history/p1"
+      },
+      "response": {
+        "json": {
+          "p1": {
+            "status": {
+              "status_str": "success"
+            },
+            "outputs": {}
+          }
+        }
+      }
+    }
+  ]
+}

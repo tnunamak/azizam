@@ -1,0 +1,73 @@
+{
+    "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+            "file": "input.mp4"
+        }
+    },
+    "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+            "video": [
+                "1",
+                0
+            ]
+        }
+    },
+    "3": {
+        "class_type": "RIFE VFI",
+        "inputs": {
+            "frames": [
+                "2",
+                0
+            ],
+            "ckpt_name": "rife49.pth",
+            "clear_cache_after_n_frames": 10,
+            "multiplier": 2,
+            "fast_mode": true,
+            "ensemble": true,
+            "scale_factor": 1.0,
+            "dtype": "float32",
+            "torch_compile": false,
+            "batch_size": 1
+        }
+    },
+    "4": {
+        "class_type": "JWFloatMul",
+        "inputs": {
+            "a": [
+                "2",
+                2
+            ],
+            "b": 2.0
+        }
+    },
+    "5": {
+        "class_type": "CreateVideo",
+        "inputs": {
+            "images": [
+                "3",
+                0
+            ],
+            "fps": [
+                "4",
+                0
+            ],
+            "audio": [
+                "2",
+                1
+            ]
+        }
+    },
+    "6": {
+        "class_type": "SaveVideo",
+        "inputs": {
+            "video": [
+                "5",
+                0
+            ],
+            "filename_prefix": "rife-interpolate",
+            "format": "auto"
+        }
+    }
+}

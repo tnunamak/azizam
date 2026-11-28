@@ -1,0 +1,1588 @@
+{
+ "scope": "main",
+ "url": "/ui/usage/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 1440,
+   "h": 900
+  },
+  "pageHeight": 1587,
+  "sidebarWidth": 232,
+  "main": {
+   "x": 236,
+   "w": 1200,
+   "padding": "40px 48px 48px 48px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "1200px",
+  "contentMaxWidthEl": "main.shell-content pb-28 sm:pb-12",
+  "contentLeftFromViewport": 284,
+  "contentRightFromViewport": 52,
+  "contentLeftFromMainEdge": 48,
+  "contentRightFromMainEdge": 48,
+  "titleTop": 45,
+  "titleTopFromMain": 45,
+  "title": {
+   "text": "Usage",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.space-y-8 [--usage-decisions:#b45309] dark:[--usage-decisions:#fb923c]",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-8",
+    "top": 40,
+    "height": 68,
+    "sample": "Usage Current month usage Person Everyon"
+   },
+   {
+    "tag": "section",
+    "classes": "grid gap-4 md:grid-cols-3",
+    "top": 140,
+    "height": 192,
+    "sample": "Requests 1,020 This month Remote spend ·"
+   },
+   {
+    "tag": "details",
+    "classes": "text-muted-foreground text-sm",
+    "top": 364,
+    "height": 44,
+    "sample": "Receipt coverage"
+   },
+   {
+    "tag": "div",
+    "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-trans",
+    "top": 440,
+    "height": 435,
+    "sample": "Requests by day Stacked by capability Oc"
+   },
+   {
+    "tag": "div",
+    "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-trans",
+    "top": 907,
+    "height": 632,
+    "sample": "Models Top models by requests Capability"
+   }
+  ],
+  "sectionGaps": [
+   32,
+   32,
+   32,
+   32
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.space-y-8 [--usage-decisions:#b45309] dark:[--usage-decision",
+    "gap": 32,
+    "from": "Usage Current month usage Pers",
+    "to": "Requests 1,020 This month Remo"
+   },
+   {
+    "parent": "div.space-y-8 [--usage-decisions:#b45309] dark:[--usage-decision",
+    "gap": 32,
+    "from": "Requests 1,020 This month Remo",
+    "to": "Receipt coverage"
+   }
+  ],
+  "headingGaps": []
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "Usage",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 45,
+    "w": 138,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Current month usage",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 83,
+    "w": 138,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "label",
+   "text": "Person",
+   "role": "label",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 964,
+    "y": 40,
+    "w": 110,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Everyone",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 977,
+    "y": 76,
+    "w": 60,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "label",
+   "text": "Source",
+   "role": "label",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1086,
+    "y": 40,
+    "w": 122,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "All sources",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1099,
+    "y": 76,
+    "w": 72,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "View recent requests",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1216,
+    "y": 54,
+    "w": 172,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Requests",
+   "role": "description",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 216,
+    "w": 309.3,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "1,020",
+   "role": "heading-class",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 240,
+    "w": 309.3,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "This month",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 288,
+    "w": 357.3,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Remote spend · partial",
+   "role": "description",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 681,
+    "y": 216,
+    "w": 309.3,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "$2.02",
+   "role": "span",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 681,
+    "y": 236,
+    "w": 58,
+    "h": 31,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Cost measured for 996 of 1,020 requests.",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 657,
+    "y": 288,
+    "w": 357.3,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Media made",
+   "role": "description",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1055,
+    "y": 216,
+    "w": 309.3,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "25",
+   "role": "heading-class",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1055,
+    "y": 240,
+    "w": 309.3,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Images, video and audio",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1031,
+    "y": 288,
+    "w": 357.3,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "summary",
+   "text": "Receipt coverage",
+   "role": "summary",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 364,
+    "w": 128,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "li",
+   "text": "Receipts are kept for 31 days.",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 412,
+    "w": 1104,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "li",
+   "text": "Coverage starts Oct 1, 2026.",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 432,
+    "w": 1104,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "li",
+   "text": "Requests cover retained receipts; media ",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 452,
+    "w": 1104,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Requests by day",
+   "role": "heading-class",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 15,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 464,
+    "w": 1056,
+    "h": 15,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Stacked by capability",
+   "role": "description",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 487,
+    "w": 1056,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Chat",
+   "role": "span",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 835,
+    "w": 41,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make a picture",
+   "role": "span",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 361,
+    "y": 835,
+    "w": 94,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make a video",
+   "role": "span",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 467,
+    "y": 835,
+    "w": 85,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make music or sounds",
+   "role": "span",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 564,
+    "y": 835,
+    "w": 137,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Turn a recording into text",
+   "role": "span",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 713,
+    "y": 835,
+    "w": 152,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Turn text into numbers",
+   "role": "span",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 877,
+    "y": 835,
+    "w": 139,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Models",
+   "role": "heading-class",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 15,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 931,
+    "w": 1056,
+    "h": 15,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Top models by requests",
+   "role": "description",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 954,
+    "w": 1056,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "th",
+   "text": "Capability and model",
+   "role": "table-header",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 998,
+    "w": 951,
+    "h": 44.5,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "th",
+   "text": "Requests",
+   "role": "table-header",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1259,
+    "y": 998,
+    "w": 71,
+    "h": 44.5,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "th",
+   "text": "Cost",
+   "role": "table-header",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1330,
+    "y": 998,
+    "w": 34,
+    "h": 44.5,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Chat",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 348,
+    "y": 1061,
+    "w": 31,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Default",
+   "role": "table-cell",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1091,
+    "w": 939,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "td",
+   "text": "182",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1259,
+    "y": 1043,
+    "w": 71,
+    "h": 77,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Local",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1330,
+    "y": 1072,
+    "w": 34,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make music or sounds",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 348,
+    "y": 1138,
+    "w": 145,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Voice",
+   "role": "table-cell",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1168,
+    "w": 939,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "td",
+   "text": "145",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1259,
+    "y": 1120,
+    "w": 71,
+    "h": 77,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Local",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1330,
+    "y": 1149,
+    "w": 34,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Turn a recording into text",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 348,
+    "y": 1215,
+    "w": 163,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Whisper Large v3",
+   "role": "table-cell",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1245,
+    "w": 939,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "td",
+   "text": "124",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1259,
+    "y": 1197,
+    "w": 71,
+    "h": 77,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Local",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1330,
+    "y": 1226,
+    "w": 34,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Make a picture",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 348,
+    "y": 1292,
+    "w": 97,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Krea 2 Turbo",
+   "role": "table-cell",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1322,
+    "w": 939,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "td",
+   "text": "106",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1259,
+    "y": 1274,
+    "w": 71,
+    "h": 77,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Local",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1330,
+    "y": 1303,
+    "w": 34,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Chat",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 348,
+    "y": 1369,
+    "w": 31,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Coder",
+   "role": "table-cell",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1399,
+    "w": 939,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "td",
+   "text": "85",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1259,
+    "y": 1351,
+    "w": 71,
+    "h": 76.5,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Local",
+   "role": "table-cell",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 1330,
+    "y": 1380,
+    "w": 34,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Local: no provider charge.",
+   "role": "p",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1443,
+    "w": 1056,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "button",
+   "text": "View all 14 models",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 308,
+    "y": 1475,
+    "w": 154,
+    "h": 40,
+    "inViewport": false
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "select",
+   "variant": null,
+   "size": "default",
+   "tag": "button",
+   "role": "combobox",
+   "text": "Everyone",
+   "height": 44,
+   "width": 110,
+   "borderRadius": "6px",
+   "padding": "8px 12px 8px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(123, 142, 147)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "border-input focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])",
+   "box": {
+    "x": 964,
+    "y": 64,
+    "w": 110,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "select",
+   "variant": null,
+   "size": "default",
+   "tag": "button",
+   "role": "combobox",
+   "text": "All sources",
+   "height": 44,
+   "width": 122,
+   "borderRadius": "6px",
+   "padding": "8px 12px 8px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(123, 142, 147)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "border-input focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])",
+   "box": {
+    "x": 1086,
+    "y": 64,
+    "w": 122,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "View recent requests",
+   "height": 40,
+   "width": 172,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1216,
+    "y": 54,
+    "w": 172,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "View all 14 models",
+   "height": 40,
+   "width": 154,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 308,
+    "y": 1475,
+    "w": 154,
+    "h": 40,
+    "inViewport": false
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [
+  {
+   "tag": "div",
+   "slot": "card",
+   "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-transparent! shadow-none!",
+   "padding": "24px 0px 24px 0px",
+   "borderRadius": "10px",
+   "border": "none",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "hasBorder": false,
+   "hasBg": false,
+   "hasShadow": true,
+   "box": {
+    "x": 284,
+    "y": 140,
+    "w": 357.3,
+    "h": 192,
+    "inViewport": true
+   },
+   "firstText": "Requests 1,020 This month"
+  },
+  {
+   "tag": "div",
+   "slot": "card",
+   "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-transparent! shadow-none!",
+   "padding": "24px 0px 24px 0px",
+   "borderRadius": "10px",
+   "border": "none",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "hasBorder": false,
+   "hasBg": false,
+   "hasShadow": true,
+   "box": {
+    "x": 657,
+    "y": 140,
+    "w": 357.3,
+    "h": 192,
+    "inViewport": true
+   },
+   "firstText": "Remote spend · partial $2.02 Cost measur"
+  },
+  {
+   "tag": "div",
+   "slot": "card",
+   "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-transparent! shadow-none!",
+   "padding": "24px 0px 24px 0px",
+   "borderRadius": "10px",
+   "border": "none",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "hasBorder": false,
+   "hasBg": false,
+   "hasShadow": true,
+   "box": {
+    "x": 1031,
+    "y": 140,
+    "w": 357.3,
+    "h": 192,
+    "inViewport": true
+   },
+   "firstText": "Media made 25 Images, video and audio"
+  },
+  {
+   "tag": "div",
+   "slot": "card",
+   "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-transparent! shadow-none!",
+   "padding": "24px 0px 24px 0px",
+   "borderRadius": "10px",
+   "border": "none",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "hasBorder": false,
+   "hasBg": false,
+   "hasShadow": true,
+   "box": {
+    "x": 284,
+    "y": 440,
+    "w": 1104,
+    "h": 435,
+    "inViewport": true
+   },
+   "firstText": "Requests by day Stacked by capability Oc"
+  },
+  {
+   "tag": "div",
+   "slot": "card",
+   "classes": "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm border-0! bg-transparent! shadow-none!",
+   "padding": "24px 0px 24px 0px",
+   "borderRadius": "10px",
+   "border": "none",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "hasBorder": false,
+   "hasBg": false,
+   "hasShadow": true,
+   "box": {
+    "x": 284,
+    "y": 907,
+    "w": 1104,
+    "h": 632,
+    "inViewport": false
+   },
+   "firstText": "Models Top models by requests Capability"
+  }
+ ],
+ "rowLists": [
+  {
+   "kind": "list",
+   "parent": "ul.mt-1.list-inside.list-disc",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    20,
+    20,
+    20
+   ],
+   "heights": [
+    20,
+    20,
+    20
+   ],
+   "gaps": [
+    0,
+    0
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 60,
+   "sample": "",
+   "box": {
+    "x": 284,
+    "y": 412,
+    "w": 1104,
+    "h": 60,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "table",
+   "parent": "tbody.divide-y",
+   "count": 5,
+   "visualRows": 5,
+   "perRow": 1,
+   "itemHeights": [
+    77,
+    77,
+    77,
+    77,
+    76.5
+   ],
+   "heights": [
+    77,
+    77,
+    77,
+    77,
+    76.5
+   ],
+   "gaps": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 385,
+   "sample": "Chat Default 182 Local",
+   "box": {
+    "x": 308,
+    "y": 1043,
+    "w": 1056,
+    "h": 384.5,
+    "inViewport": false
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "section.grid.gap-4.md:grid-cols-3",
+   "count": 3,
+   "visualRows": 1,
+   "perRow": 3,
+   "itemHeights": [
+    192,
+    192,
+    192
+   ],
+   "heights": [
+    192
+   ],
+   "gaps": [],
+   "columnGaps": [
+    16,
+    16
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 192,
+   "sample": "Requests 1,020 This month",
+   "box": {
+    "x": 284,
+    "y": 140,
+    "w": 1104,
+    "h": 192,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.mt-4.flex.flex-wrap.gap-3",
+   "count": 6,
+   "visualRows": 1,
+   "perRow": 6,
+   "itemHeights": [
+    16,
+    16,
+    16,
+    16,
+    16,
+    16
+   ],
+   "heights": [
+    16
+   ],
+   "gaps": [],
+   "columnGaps": [
+    12,
+    12,
+    12,
+    12,
+    12
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 16,
+   "sample": "Chat",
+   "box": {
+    "x": 308,
+    "y": 835,
+    "w": 1056,
+    "h": 16,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "16x16": 7,
+  "20x20": 3,
+  "1056x288": 1
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 26,
+  "rgb(61, 79, 85)": 29
+ },
+ "bgColors": {
+  "rgb(255, 255, 255)": 1,
+  "rgb(233, 238, 239)": 3,
+  "rgb(10, 102, 118)": 1,
+  "rgb(109, 79, 168)": 1,
+  "rgb(161, 68, 102)": 1,
+  "rgb(138, 90, 18)": 1,
+  "rgb(42, 94, 158)": 1,
+  "rgb(74, 107, 53)": 1,
+  "oklab(0.47007 -0.0663952 -0.0444822 / 0.1)": 2,
+  "oklab(0.50854 0.033691 0.0968719 / 0.1)": 1,
+  "oklab(0.4798 -0.0300739 -0.113499 / 0.1)": 1,
+  "oklab(0.502207 0.0619754 -0.123303 / 0.1)": 1
+ },
+ "surface": "usage",
+ "width": 1440,
+ "actualRoute": "/ui/usage/",
+ "bodyTextLength": 1735
+}

@@ -1,0 +1,48 @@
+{
+  "_reference": {
+    "revision": "fd30cbfcaa8e7f079474b4c8e6d221bb5f18a814",
+    "proof_commit": "3cb3bf253",
+    "probe_sha256": "c43eb01c821e302351c67af805659723c31e71bab28a394042771e7ee0de105e",
+    "route": "POST /v1/videos"
+  },
+  "row-plain": {
+    "request": {
+      "model": "ltx-2.5-t2v",
+      "prompt": "x",
+      "seed": 7
+    },
+    "status": 200,
+    "body": {
+      "actual_seconds": 5.0417,
+      "azizam_resolved_model": "video-ltx-2.5-t2v",
+      "error": null,
+      "model": "ltx-2.5-t2v",
+      "object": "video",
+      "progress": 0,
+      "prompt": "x",
+      "remixed_from_video_id": null,
+      "seconds": "5",
+      "size": "960x512",
+      "status": "queued"
+    }
+  },
+  "row-resolution": {
+    "request": {
+      "inputs": {
+        "steps": 6
+      },
+      "model": "ltx-2.5-t2v",
+      "prompt": "x",
+      "seed": 7
+    },
+    "status": 404,
+    "body": {
+      "error": {
+        "code": "model_not_found",
+        "message": "Model 'ltx-2.5-t2v' is not available for video generation.",
+        "param": "model",
+        "type": "invalid_request_error"
+      }
+    }
+  }
+}

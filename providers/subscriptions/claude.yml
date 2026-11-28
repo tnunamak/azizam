@@ -1,0 +1,129 @@
+# A subscription connection kind: the owner's Claude plan, used through the unmodified Claude Code binary.
+# The owner signs in once with the binary's own login, in a config home that belongs to the gateway. The gateway runs
+# the binary in print mode with every built-in tool off; it never reads, copies or relays the binary's sign-in. A
+# request with function tools gives the binary only those tools, through a loopback MCP server of the gateway's.
+# Flags and stream shapes checked against Claude Code 2.1.329 (`claude --help`, `claude auth status --help`) on 2026-11-23.
+id: claude
+display_name: Claude
+mechanism: cli-sign-in
+protocol: claude-code-runner
+billing_mode: plan
+model_prefix: claude-plan
+# Shown to the owner beside the grant in the access plan editor.
+grant_note: >-
+  Claude's terms expect each person who uses a Claude plan to sign in and pay for their own plan. Giving this plan to
+  anyone but yourself is at your own risk.
+# Print mode reports usage windows in rate_limit_event.rate_limit_info.unifiedWindows.
+# The owner can also read plan usage in Settings > Usage.
+usage_page_url: https://claude.ai/settings/usage
+# Seconds a running answer may stay silent before the gateway gives up on it.
+read_timeout_seconds: 300
+runner:
+  # Looked up in AZIZAM_PLAN_RUNNER_BIN_DIR, then search_dirs, then PATH. Never a shell command.
+  executable: claude
+  install:
+    name: Claude Code
+    source: Anthropic
+    base_url: https://downloads.claude.ai/claude-code-releases
+    channel: stable
+    manifest_path: "{version}/manifest.json"
+    binary_path: "{version}/{platform}/{binary}"
+  # Where Claude Code's own installer puts it (a service manager's PATH often lacks it).
+  search_dirs: [~/.local/bin]
+  # The binary reads its sign-in from the config home this variable names.
+  home_env: CLAUDE_CONFIG_DIR
+  # The config home is <AZIZAM_PLAN_RUNNER_HOMES>/<home_dir>/<home_slot>.
+  home_dir: claude-code
+  home_slot: owner
+  # The status check: the binary's own command. Only the three named fields are read; the rest (email, organization)
+  # is dropped unread.
+  status_argv: [auth, status, --json]
+  status_fields: {signed_in: loggedIn, method: authMethod, plan: subscriptionType}
+  # A sign-in by any other method (an API key, a cloud provider) is refused: it would not be the plan.
+  expected_method: claude.ai
+  login_argv: [auth, login, --claudeai]
+  login_url_prefix: https://claude.ai/oauth/authorize
+  install_page_url: https://code.claude.com/docs/en/setup
+  missing_binary_message: "Azizam can't find Claude Code on this computer. Install it, then try again. https://code.claude.com/docs/en/setup"
+  # Fixed environment of every run, added to a minimal one built from nothing (no inherited keys reach the binary).
+  env:
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    DISABLE_AUTOUPDATER: "1"
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1"
+  # The most runs at once; one more is refused with plan_runner_busy.
+  max_concurrent: 2
+  # The longest one run may take, start to end.
+  timeout_seconds: 600
+  # How long the gateway remembers which session holds a conversation, so a later turn resumes it (prompt cache).
+  session_ttl_seconds: 3600
+  # A run that asked for tool calls waits (parked) for the caller's results this long, then ends. The next request
+  # with those results then starts a new run from the transcript; the caller's tools are never run again.
+  park_ttl_seconds: 1800
+  # The most parked runs per caller and per connection; a new one over a limit ends the oldest.
+  park_limit_per_principal: 4
+  park_limit_per_connection: 8
+  # The system prompt when the caller sends none (the binary's own default prompt is a coding agent's).
+  default_system_prompt: You are a helpful assistant.
+# Chat and Anthropic callers commonly send these; the binary takes none of them. Dropped and disclosed.
+dropped_fields:
+  - max_tokens
+  - max_completion_tokens
+  - max_output_tokens
+  - temperature
+  - top_p
+  - top_k
+  - stop
+  - user
+  - metadata
+  - presence_penalty
+  - frequency_penalty
+  - seed
+  - service_tier
+  - safety_identifier
+  - truncation
+  - include
+unsupported_fields: []
+# Error classes the binary reports (assistant message `error`, result subtypes) and the runner's own, mapped to the
+# gateway's named refusals.
+errors:
+  rate_limit: {status: 429, code: plan_usage_limit_exceeded, message: "The usage limit of the connected Claude plan was reached. Try again later."}
+  authentication_failed: {status: 503, code: plan_connection_invalid, message: "The gateway's Claude sign-in ended. The owner needs to sign in again."}
+  oauth_org_not_allowed: {status: 403, code: plan_not_eligible, message: "The signed-in Claude account cannot use its plan here."}
+  account_on_hold: {status: 403, code: plan_not_eligible, message: "The signed-in Claude account is on hold."}
+  verification_required: {status: 403, code: plan_not_eligible, message: "The signed-in Claude account needs verification. The owner can check it in Claude."}
+  billing_error: {status: 403, code: plan_not_eligible, message: "The signed-in Claude account has a billing problem."}
+  overloaded: {status: 503, code: plan_upstream_unavailable, message: "Claude is overloaded right now. Try again shortly."}
+  invalid_request: {status: 400, code: plan_request_rejected, message: "Claude rejected this request. Check the model and the input."}
+  model_not_found: {status: 400, code: plan_unsupported_capability, message: "The connected Claude plan does not offer this model."}
+  max_output_tokens: {status: 502, code: plan_output_limit, message: "The answer reached Claude's output limit before it finished."}
+  runner_busy: {status: 429, code: plan_runner_busy, message: "The gateway is already running as many Claude requests as it allows. Try again shortly."}
+  runner_timeout: {status: 504, code: plan_upstream_timeout, message: "The Claude request took too long and was stopped."}
+  runner_unavailable: {status: 503, code: plan_runner_unavailable, message: "The gateway could not start Claude Code. The owner can check that it is installed."}
+  runner_exited: {status: 502, code: plan_upstream_error, message: "Claude Code stopped before it finished the answer."}
+  runner_unsafe: {status: 502, code: plan_runner_unsafe, message: "Claude Code started with tools or a key the gateway does not allow, so the request was stopped."}
+  runner_session_lost: {status: 502, code: plan_upstream_error, message: "Claude Code could not continue this conversation. Send it again."}
+status_errors:
+  400: {status: 400, code: plan_request_rejected, message: "Claude rejected this request. Check the model and the input."}
+  401: {status: 503, code: plan_connection_invalid, message: "The gateway's Claude sign-in ended. The owner needs to sign in again."}
+  403: {status: 403, code: plan_forbidden, message: "Claude refused this request for the plan."}
+  429: {status: 429, code: plan_usage_limit_exceeded, message: "The usage limit of the connected Claude plan was reached. Try again later."}
+  default: {status: 502, code: plan_upstream_error, message: "Claude Code could not complete the request."}
+# The status each error class stands for, when the binary reports one inside a finished run.
+failed_codes:
+  rate_limit: 429
+  authentication_failed: 401
+  oauth_org_not_allowed: 403
+  account_on_hold: 403
+  verification_required: 403
+  billing_error: 403
+  overloaded: 503
+  invalid_request: 400
+  model_not_found: 400
+  max_output_tokens: 502
+  runner_busy: 429
+  runner_timeout: 504
+  runner_unavailable: 503
+  runner_exited: 502
+  runner_unsafe: 502
+  runner_session_lost: 502

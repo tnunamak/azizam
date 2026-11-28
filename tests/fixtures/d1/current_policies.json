@@ -1,0 +1,58 @@
+{
+  "kobold": {
+    "enabled": true,
+    "transforms": [],
+    "policies": [
+      {
+        "base": [
+          {
+            "from": "max_completion_tokens",
+            "kind": "param-map",
+            "only_if_destination_absent": true,
+            "to": "max_tokens"
+          },
+          {
+            "kind": "default-params",
+            "set": {
+              "max_tokens": 16384
+            }
+          }
+        ],
+        "alias": []
+      },
+      {
+        "base": [],
+        "alias": []
+      },
+      {
+        "base": [
+          {
+            "from": "max_completion_tokens",
+            "kind": "param-map",
+            "only_if_destination_absent": true,
+            "to": "max_tokens"
+          },
+          {
+            "kind": "default-params",
+            "set": {
+              "max_tokens": 16384
+            }
+          }
+        ],
+        "alias": [
+          {
+            "kind": "default-params",
+            "set": {
+              "reasoning_effort": "none"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "tabby": {
+    "enabled": false,
+    "transforms": [],
+    "policies": []
+  }
+}

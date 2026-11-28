@@ -1,0 +1,107 @@
+# How Azizam talks to an engine that runs a graph of nodes submitted as one JSON prompt.
+#
+# This file is data. The wire is owned by the reviewed adapter `node-graph`
+# (gateway/engine_protocol/node_graph.py): graph patching, prompt submission,
+# history polling, file reads and the push channel are not expressible in the
+# http-v1 grammar. An adapter description lists operation names only. `label`
+# is how caller-facing messages name this engine; `serves` lists the capability
+# tokens for which this adapter answers when an engine record names no protocol;
+# `binding` is the key under a workflow manifest's `bindings` that holds this
+# engine's graph. `binding_fields` closes that binding block: a field not listed
+# there is refused when the workflow is saved. `inputs_via: map` says inputs reach
+# the engine only through the binding's input map. `result_selectors` is the
+# selector form a binding of this engine accepts: each named result says which node of the graph made it and
+# which file list of that node's history entry holds it (gateway/output_selectors.py). `result_processing` lists,
+# in order, the reviewed stages the adapter runs on a round's files before the result is stored.
+protocol_version: 1
+id: node-graph
+title: Node-graph prompt engine
+label: ComfyUI
+executor: adapter:node-graph
+implementation: graph_submission
+serves: [images, videos, audio.generate]
+binding: comfyui
+check_targets: graph
+inputs_via: map
+binding_fields:
+  workflow: {kind: template, required: true}
+  map: {kind: input_map, required: true}
+  selectors: {kind: selectors}
+  graph_roles: {kind: graph_roles}
+  requires: {kind: requirements}
+  edge_only_inputs: {kind: input_list}
+  route_bound_inputs: {kind: input_list}
+  mask_to_source_alpha: {kind: boolean}
+  adapter_architecture: {kind: text}
+  adapter_lora_folder: {kind: text}
+  result_processing: {kind: enum_list, values: [source_alpha_mask, post_composite_mask, background_fallback, offset_inpaint, strip_audio, attach_provenance]}
+result_selectors:
+  version: 1
+  identity: [node, key, from]
+  template_node: node
+  kind_field: decode
+  fields:
+    node: {type: text, required: true}
+    key: {type: enum, required: true, values: [images, videos, gifs, audios, audio, wav, mp3]}
+    from: {type: enum, required: true, values: [output_dir]}
+    decode: {type: enum, default: none, values: [none, json], kinds: {none: assets, json: json}}
+    take: {type: enum, default: all, values: [all, first, single]}
+retention_facts:
+  - id: graph-history
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: until restart or clear; an oldest entry is dropped after the pre-insert count exceeds 10,000
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/server.py#L1134-L1151
+    checked: '2026-10-19'
+    confidence: documented
+  # L13 exact quote: “MAXIMUM_HISTORY_SIZE = 10000”.
+  # L14 exact quote: “@routes.post("/history")”.
+  - id: graph-history-limit
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: an oldest entry is dropped after the pre-insert count exceeds 10,000; the ordering permits 10,001 entries
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/execution.py#L1303-L1359
+    checked: '2026-10-19'
+    confidence: documented
+  - id: graph-history-clear
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: until history is cleared, an entry is deleted or the process restarts; output files are separate
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/server.py#L1299-L1310
+    checked: '2026-10-19'
+    confidence: documented
+notes: >-
+  Operations: submit a prompt, read its history, read the queue, read an output
+  file, upload an input image, cancel, delete a history entry, read system
+  stats and free memory. A reviewed adapter owns every request.
+operations:
+  graph.submit: {class: generate}
+  graph.history: {class: inventory}
+  graph.history_page: {class: inventory}
+  graph.queue: {class: inventory}
+  graph.view: {class: inventory}
+  graph.upload: {class: generate}
+  graph.cancel: {class: control}
+  graph.delete_history: {class: control}
+  graph.stats: {class: inventory}
+  graph.free: {class: control}
+  # Run operations: the workflow contract's intent names one. `poll` is how the gateway asks whether the run finished:
+  # the `ramp_s` gaps first (0 is an immediate check), then every `interval_s`; `max_polls` null leaves the deployment's
+  # wait budget as the bound. Each operation keeps the cadence its routes have always used.
+  image.generate: {class: generate, run: true, poll: {ramp_s: [0, 0.05, 0.1, 0.2, 0.4], interval_s: 0.5, max_polls: null}}
+  image.edit: {class: generate, run: true, poll: {ramp_s: [0, 0.05, 0.1, 0.2, 0.4], interval_s: 0.5, max_polls: null}}
+  audio.generate: {class: generate, run: true, poll: {ramp_s: [], interval_s: 2.0, max_polls: 600}}
+  video.generate: {class: generate, run: true, poll: {ramp_s: [], interval_s: 5.0, max_polls: null}}
+  video.edit: {class: generate, run: true, poll: {ramp_s: [], interval_s: 5.0, max_polls: null}}

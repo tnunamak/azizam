@@ -1,0 +1,148 @@
+"""The shared harness for the video route tests, plus the remix and edit routes' own input checks.
+
+Drives the real FastAPI routes against a fake ComfyUI, with the shipped
+proxy_config.yml and workflow JSON, and inspects the graph the gateway submits.
+Remix is off in the shipped config, so only its checks that run before a
+workflow is submitted are tested here.
+"""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from anyio.from_thread import start_blocking_portal
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import proxy  # noqa: E402
+from tests.support.config_snapshot import section_key_published  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
+from tests.support.video_row_files import patch_video_row_files_in_a_temporary_tree  # noqa: E402
+from tests.media_test_bytes import png_bytes  # noqa: E402
+from gateway import video_inputs  # noqa: E402
+from _fake_comfy_video import (  # noqa: E402
+    NEW_PROMPT_ID,
+    SOURCE_BYTES,  # noqa: F401 -- imported by test_video_extend.py from this module
+    SOURCE_PROMPT_ID,
+    FakeComfy,
+)
+
+SOURCE_ID = f"video_{SOURCE_PROMPT_ID}"
+NEW_ID = f"video_{NEW_PROMPT_ID}"
+PROBE_24 = video_inputs.VideoProbe(fps=24.0, duration=3.5, frames=84, width=832, height=480)
+NS = "com.azizam.workflow"
+PNG = png_bytes((0, 0, 0))
+# Stand-in for videos.remix_workflow. The shipped config leaves remix off, and
+# the route's checks below its 501 gate need a truthy value. No test in this
+# module lets a request reach submission under this id.
+REMIX_STAND_IN = "video-remix-stand-in"
+
+
+@pytest.mark.usefixtures("isolated_receipts")
+class RemixReplaceBase(unittest.TestCase):
+    probe = PROBE_24
+
+    def setUp(self) -> None:
+        self.comfy = FakeComfy()
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        for p in self.comfy.patches(probe=self.probe):
+            self.stack.enter_context(p)
+        self.stack.enter_context(authenticated())
+        self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
+        patch_video_row_files_in_a_temporary_tree(self.stack)       # a plain create is a row job: it keeps its files here
+        self.stack.enter_context(patch.object(proxy, "_workflow_run_semaphore", None))
+        self.stack.enter_context(patch.object(proxy, "IMAGE_MEDIA_JOB_CONCURRENCY", 20))
+        from gateway.engine_protocol.description import Poll
+        from gateway.engine_protocol.node_graph import NodeGraphAdapter
+        self.stack.enter_context(patch.object(NodeGraphAdapter, "poll_for", return_value=Poll(ramp_s=(), interval_s=0.05, max_polls=None)))
+        for name in ("_video_job_records", "_video_progress", "_video_workflows"):
+            saved = dict(getattr(proxy, name))
+            getattr(proxy, name).clear()
+            self.addCleanup(lambda n=name, s=saved: (getattr(proxy, n).clear(), getattr(proxy, n).update(s)))
+        proxy._video_job_records[SOURCE_PROMPT_ID] = {
+            "model": "ltx-2.5", "resolved_model": "video-ltx-2.5-t2v", "size": "960x512",
+            "seconds": "4", "created_at": 1000, "completed_at": 1100, "owner_key_hash": "sha256:test",
+            "deleted_at": None,
+        }
+        self.client = TestClient(proxy.app)
+        self.client.portal = self.stack.enter_context(start_blocking_portal())
+
+    @property
+    def graph(self) -> dict:
+        self.comfy.wait_for_graphs()
+        self.assertEqual(len(self.comfy.submitted), 1, "expected one submitted graph")
+        return self.comfy.submitted[0]
+
+    def assert_refused(self, response, *, param: str) -> None:
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertTrue(response.json()["error"]["param"].endswith(param), response.json())
+        self.assertEqual(self.comfy.uploads, [], "a refused request must leave no files in ComfyUI")
+        self.assertEqual(self.comfy.submitted, [])
+
+
+class RemixShippedStateTests(RemixReplaceBase):
+    def test_shipped_config_leaves_remix_off(self) -> None:
+        self.assertIsNone(proxy._video_remix_workflow())
+        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
+        self.assertEqual(r.status_code, 501, r.text)
+        self.assertEqual(r.json()["error"]["code"], "video_remix_not_configured")
+        self.assertEqual(self.comfy.submitted, [])
+
+
+class EditRouteTests(RemixReplaceBase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.stack.enter_context(section_key_published("videos", "remix_workflow", REMIX_STAND_IN))
+
+    def test_missing_video_and_prompt_are_rejected(self) -> None:
+        self.assertEqual(self.client.post("/v1/videos/edits", json={"prompt": "x"}).json()["error"]["param"], "video")
+        self.assertEqual(
+            self.client.post("/v1/videos/edits", json={"video": {"id": SOURCE_ID}}).json()["error"]["param"],
+            "prompt",
+        )
+
+
+class VideoInputsUnitTests(unittest.TestCase):
+    def test_bracket_form_rebuilds_nested_mapping(self) -> None:
+        out = video_inputs.parse_bracket_form([
+            ("prompt", "p"),
+            ("extensions[a.b][x][y]", "1"),
+            ("extensions[a.b][z]", "2"),
+        ])
+        self.assertEqual(out, {"prompt": "p", "extensions": {"a.b": {"x": {"y": "1"}, "z": "2"}}})
+
+    def test_bracket_form_rejects_scalar_container_conflicts(self) -> None:
+        with self.assertRaises(ValueError):
+            video_inputs.parse_bracket_form([("a", "1"), ("a[b]", "2")])
+        with self.assertRaises(ValueError):
+            video_inputs.parse_bracket_form([("a[b]", "2"), ("a[b][c]", "3")])
+        with self.assertRaises(ValueError):
+            video_inputs.parse_bracket_form([("a[]", "2")])
+
+    def test_snap_length_down(self) -> None:
+        self.assertEqual(video_inputs.snap_length_down(97, step=4, offset=1, available=84), 81)
+        self.assertEqual(video_inputs.snap_length_down(97, step=4, offset=1, available=None), 97)
+        self.assertEqual(video_inputs.snap_length_down(2, step=4, offset=1, available=2), 1)
+
+    def test_coerce_form_scalars_follows_manifest_types(self) -> None:
+        specs = {"n": {"type": "integer"}, "x": {"type": "number"}, "b": {"type": "boolean"}, "s": {"type": "string"}}
+        out = video_inputs.coerce_form_scalars({"n": "3", "x": "1.5", "b": "true", "s": "7", "n2": "q"}, specs)
+        self.assertEqual(out, {"n": 3, "x": 1.5, "b": True, "s": "7", "n2": "q"})
+
+    def test_suffix_prefers_filename_then_mime(self) -> None:
+        self.assertEqual(video_inputs.suffix_for_video("a.MOV"), ".mov")
+        self.assertEqual(video_inputs.suffix_for_video("a.bin", "video/webm"), ".webm")
+        self.assertEqual(video_inputs.suffix_for_video(None, None), ".mp4")
+
+
+if __name__ == "__main__":
+    unittest.main()

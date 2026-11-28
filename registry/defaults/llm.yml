@@ -1,0 +1,4 @@
+# Release defaults of the llm section (docs/design/CONFIG_HOMES.md, C7). Read-only: an owner's value is an override.
+# Neutral: no host, path or service. The values here are the code's own fallbacks, so an install with no override
+# behaves as it did before this section existed.
+pin_loaded_model: true

@@ -1,0 +1,1449 @@
+{
+  "azizam": {
+    "capabilities": [],
+    "config": {
+      "description": "<string>",
+      "display_name": "<string>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "port": "<number>",
+      "role": "<string>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {
+      "seed": "<string>",
+      "seed_hash": "<string>"
+    },
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "comfyui": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "capabilities": [
+        "<string>"
+      ],
+      "default_model": "<string>",
+      "description": "<string>",
+      "display_name": "<string>",
+      "health_endpoint": "<string>",
+      "health_success_path": "<string>",
+      "host": "<string>",
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "port": "<number>",
+      "role": "<string>",
+      "timeout": "<number>",
+      "video_timeout": "<number>",
+      "video_workflows_dir": "<string>",
+      "vram_budget_key": "<string>",
+      "workflows_dir": "<string>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {
+      "seed": "<string>",
+      "seed_hash": "<string>"
+    },
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "decisions": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "capabilities": [
+        "<string>"
+      ],
+      "default_model": "<string>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "note": "<string>",
+      "placement": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "residency": "<string>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "decisions-quality": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "capabilities": [
+        "<string>"
+      ],
+      "default_model": "<string>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "note": "<string>",
+      "placement": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "residency": "<string>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "embeddings": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "description": "<string>",
+      "display_name": "<string>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "managed": "<bool>",
+      "model_id": "<string>",
+      "models": [
+        {
+          "id": "<string>",
+          "model_group": "<string>",
+          "upstream_model": "<string>"
+        }
+      ],
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "protocol": "<string>",
+      "resources": {
+        "duration_class": "<string>",
+        "gpu_required": "<bool>",
+        "max_parallel": "<number>",
+        "vram_gb_estimate": "<number>"
+      },
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {
+      "seed": "<string>",
+      "seed_hash": "<string>"
+    },
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "kobold": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "aux": {
+        "flag": "<string>",
+        "grants_input_modalities": [
+          "<string>"
+        ],
+        "probe": "<string>",
+        "process": "<string>"
+      },
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "context_window_probe": {
+        "endpoint": "<string>"
+      },
+      "description": "<string>",
+      "display_name": "<string>",
+      "enabled": "<bool>",
+      "gateway_lifecycle": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "activation_env_keys": {
+            "aux": "<string>",
+            "model": "<string>"
+          },
+          "activation_profiles": {
+            "kv-q5-q4": {
+              "LLAMA_BEE_CTK": "<string>",
+              "LLAMA_BEE_CTV": "<string>",
+              "LLAMA_BEE_CTX": "<number>",
+              "LLAMA_BEE_DRAFT_CTK": "<string>",
+              "LLAMA_BEE_DRAFT_CTV": "<string>"
+            },
+            "kv-q5-q4-rp": {
+              "LLAMA_BEE_CTK": "<string>",
+              "LLAMA_BEE_CTV": "<string>",
+              "LLAMA_BEE_CTX": "<number>",
+              "LLAMA_BEE_DRAFT_CTK": "<string>",
+              "LLAMA_BEE_DRAFT_CTV": "<string>"
+            },
+            "kv-q8": {
+              "LLAMA_BEE_CTK": "<string>",
+              "LLAMA_BEE_CTV": "<string>",
+              "LLAMA_BEE_CTX": "<number>"
+            }
+          },
+          "activation_requires_absolute_path": "<bool>",
+          "dropin": "<string>",
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "precheck": "<string>",
+          "scope": "<string>",
+          "swap_strategy": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "loaded_model_identity": "<string>",
+      "managed": "<bool>",
+      "model_policy_schema_version": "<number>",
+      "models": [
+        {
+          "activation_mmproj": "<string>",
+          "activation_model": "<string>",
+          "activation_profile": "<string>",
+          "backend_model": "<string>",
+          "base_model_id": "<string>",
+          "context_window": "<number>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "upstream_model": "<string>"
+        },
+        {
+          "activation_mmproj": "<string>",
+          "activation_model": "<string>",
+          "activation_profile": "<string>",
+          "backend_model": "<string>",
+          "context_window": "<number>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "upstream_model": "<string>"
+        },
+        {
+          "activation_mmproj": "<string>",
+          "activation_model": "<string>",
+          "activation_profile": "<string>",
+          "base_model_id": "<string>",
+          "context_window": "<number>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "policy_overlay": [
+            {
+              "kind": "<string>",
+              "set": {
+                "reasoning_effort": "<string>"
+              }
+            }
+          ],
+          "upstream_model": "<string>"
+        },
+        {
+          "activation_mmproj": "<string>",
+          "activation_model": "<string>",
+          "activation_profile": "<string>",
+          "context_window": "<number>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "transforms": [
+            {
+              "from": "<string>",
+              "kind": "<string>",
+              "only_if_destination_absent": "<bool>",
+              "to": "<string>"
+            },
+            {
+              "kind": "<string>",
+              "set": {
+                "max_tokens": "<number>"
+              }
+            }
+          ],
+          "upstream_model": "<string>"
+        },
+        {
+          "activation_mmproj": "<string>",
+          "activation_model": "<string>",
+          "activation_profile": "<string>",
+          "context_window": "<number>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "upstream_model": "<string>"
+        },
+        {
+          "base_model_id": "<string>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "policy_overlay": [
+            {
+              "kind": "<string>",
+              "set": {
+                "reasoning_effort": "<string>"
+              }
+            }
+          ],
+          "upstream_model": "<string>"
+        },
+        {
+          "base_model_id": "<string>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "model_metadata": {
+            "input_modalities": [
+              "<string>"
+            ],
+            "tags": [
+              "<string>"
+            ]
+          },
+          "upstream_model": "<string>"
+        }
+      ],
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "port": "<number>",
+      "priority": "<number>",
+      "protocol": "<string>",
+      "role": "<string>",
+      "state_type": "<string>",
+      "transforms": [
+        "<string>"
+      ],
+      "vram_budget_key": "<string>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "activation_env_keys": {
+          "aux": "<string>",
+          "model": "<string>"
+        },
+        "activation_profiles": {
+          "kv-q5-q4": {
+            "LLAMA_BEE_CTK": "<string>",
+            "LLAMA_BEE_CTV": "<string>",
+            "LLAMA_BEE_CTX": "<number>",
+            "LLAMA_BEE_DRAFT_CTK": "<string>",
+            "LLAMA_BEE_DRAFT_CTV": "<string>"
+          },
+          "kv-q5-q4-rp": {
+            "LLAMA_BEE_CTK": "<string>",
+            "LLAMA_BEE_CTV": "<string>",
+            "LLAMA_BEE_CTX": "<number>",
+            "LLAMA_BEE_DRAFT_CTK": "<string>",
+            "LLAMA_BEE_DRAFT_CTV": "<string>"
+          },
+          "kv-q8": {
+            "LLAMA_BEE_CTK": "<string>",
+            "LLAMA_BEE_CTV": "<string>",
+            "LLAMA_BEE_CTX": "<number>"
+          }
+        },
+        "activation_requires_absolute_path": "<bool>",
+        "dropin": "<string>",
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "precheck": "<string>",
+        "scope": "<string>",
+        "swap_strategy": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {
+      "seed": "<string>",
+      "seed_hash": "<string>"
+    },
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "litellm": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "api_key_env": "<string>",
+      "base_url_env": "<string>",
+      "config_path": "<string>",
+      "credential_origin": "<string>",
+      "default_base_url": "<string>",
+      "execution_substrate": "<string>",
+      "health_endpoint": "<string>",
+      "protocol": "<string>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "openrouter": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "api_key_secret_id": "<string>",
+      "auth": {
+        "header": "<string>",
+        "prefix": "<string>"
+      },
+      "auth_test": {
+        "method": "<string>",
+        "path": "<string>"
+      },
+      "base_path": "<string>",
+      "base_url": "<string>",
+      "billing_dimensions": [
+        "<string>"
+      ],
+      "capabilities": [
+        "<string>"
+      ],
+      "cost_class": "<string>",
+      "credential_origin": "<string>",
+      "docs_url": "<string>",
+      "enabled": "<bool>",
+      "generation_stats": {
+        "cost_path": [
+          "<string>"
+        ],
+        "id_param": "<string>",
+        "path": "<string>"
+      },
+      "host": "<string>",
+      "id": "<string>",
+      "key_url": "<string>",
+      "kind": "<string>",
+      "litellm_provider": "<string>",
+      "managed": "<bool>",
+      "model_listing": {
+        "id_path": "<string>",
+        "items_path": "<string>",
+        "method": "<string>",
+        "name_path": "<string>",
+        "path": "<string>",
+        "prices": {
+          "cache_read_input_usd_per_million_tokens": {
+            "path": "<string>",
+            "scale": "<string>"
+          },
+          "input_usd_per_million_tokens": {
+            "path": "<string>",
+            "scale": "<string>"
+          },
+          "output_usd_per_million_tokens": {
+            "path": "<string>",
+            "scale": "<string>"
+          }
+        },
+        "pricing_path": "<string>"
+      },
+      "model_policy_schema_version": "<number>",
+      "models": [
+        {
+          "enabled": "<bool>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "name": "<string>",
+          "upstream_model": "<string>"
+        }
+      ],
+      "name": "<string>",
+      "preset_id": "<string>",
+      "price": {
+        "models": {
+          "openrouter/openai/gpt-4.1-nano": {
+            "cache_read_input_usd_per_million_tokens": "<string>",
+            "input_usd_per_million_tokens": "<string>",
+            "output_usd_per_million_tokens": "<string>"
+          }
+        }
+      },
+      "protocol": "<string>",
+      "protocols": [
+        "<string>"
+      ],
+      "provider_id": "<string>",
+      "provider_type": "<string>",
+      "recommendations": [
+        {
+          "id": "<string>",
+          "message": "<string>",
+          "url": "<string>"
+        }
+      ],
+      "remote_provider": "<bool>",
+      "role": "<string>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {
+      "credential_origin": "<string>"
+    },
+    "source": "<string>"
+  },
+  "realtime": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "capabilities": [
+        "<string>"
+      ],
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "rerank": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "capabilities": [
+        "<string>"
+      ],
+      "default_model": "<string>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "stt": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": "<number>",
+        "deadline_seconds": "<number>",
+        "enabled": "<bool>",
+        "global_concurrency": "<number>",
+        "max_channels": "<number>",
+        "max_decoded_bytes": "<number>",
+        "max_duration_seconds": "<number>",
+        "max_field_bytes": "<number>",
+        "max_fields": "<number>",
+        "max_files": "<number>",
+        "max_input_bytes": "<number>",
+        "max_media_output_bytes": "<number>",
+        "max_response_bytes": "<number>",
+        "max_sample_rate": "<number>",
+        "max_segments": "<number>",
+        "min_free_bytes": "<number>",
+        "setup_failure_policy": "<string>",
+        "silence_min_seconds": "<number>",
+        "silence_noise_db": "<string>",
+        "silence_search_seconds": "<number>",
+        "spool_dir": "<string>",
+        "target_seconds": "<number>",
+        "threshold_seconds": "<number>"
+      },
+      "default_model": "<string>",
+      "description": "<string>",
+      "display_name": "<string>",
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>",
+      "transforms": [
+        {
+          "drop": [
+            "<string>"
+          ],
+          "kind": "<string>",
+          "phase": "<string>"
+        }
+      ]
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {
+      "seed": "<string>",
+      "seed_hash": "<string>"
+    },
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "stt-canary": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": "<number>",
+        "deadline_seconds": "<number>",
+        "enabled": "<bool>",
+        "max_duration_seconds": "<number>",
+        "max_segments": "<number>",
+        "silence_search_seconds": "<number>",
+        "spool_dir": "<string>",
+        "target_seconds": "<number>",
+        "threshold_seconds": "<number>"
+      },
+      "default_model": "<string>",
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>",
+      "transforms": [
+        {
+          "drop": [
+            "<string>"
+          ],
+          "kind": "<string>",
+          "phase": "<string>"
+        }
+      ]
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "stt-diarize": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": "<number>",
+        "deadline_seconds": "<number>",
+        "enabled": "<bool>",
+        "max_duration_seconds": "<number>",
+        "max_field_bytes": "<number>",
+        "spool_dir": "<string>"
+      },
+      "default_model": "<string>",
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>",
+      "transforms": [
+        {
+          "drop": [
+            "<string>"
+          ],
+          "kind": "<string>",
+          "phase": "<string>"
+        }
+      ]
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "stt-nemotron": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": "<number>",
+        "deadline_seconds": "<number>",
+        "enabled": "<bool>",
+        "max_duration_seconds": "<number>",
+        "max_segments": "<number>",
+        "silence_search_seconds": "<number>",
+        "spool_dir": "<string>",
+        "target_seconds": "<number>",
+        "threshold_seconds": "<number>"
+      },
+      "default_model": "<string>",
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>",
+      "transforms": [
+        {
+          "drop": [
+            "<string>"
+          ],
+          "kind": "<string>",
+          "phase": "<string>"
+        }
+      ]
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "stt-parakeet-gpu": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": "<number>",
+        "deadline_seconds": "<number>",
+        "enabled": "<bool>",
+        "max_duration_seconds": "<number>",
+        "max_segments": "<number>",
+        "silence_search_seconds": "<number>",
+        "spool_dir": "<string>",
+        "target_seconds": "<number>",
+        "threshold_seconds": "<number>"
+      },
+      "default_model": "<string>",
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>",
+      "transforms": [
+        {
+          "drop": [
+            "<string>"
+          ],
+          "kind": "<string>",
+          "phase": "<string>"
+        }
+      ]
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "tts": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "description": "<string>",
+      "display_name": "<string>",
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {
+      "seed": "<string>",
+      "seed_hash": "<string>"
+    },
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "tts-chatterbox": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "tts-kokoro": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "tts-supertonic": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "base_path": "<string>",
+      "capabilities": [
+        "<string>"
+      ],
+      "enabled": "<bool>",
+      "health_endpoint": "<string>",
+      "host": "<string>",
+      "id": "<string>",
+      "lifecycle": {
+        "driver": "<string>",
+        "driver_config": {
+          "health_endpoint": "<string>",
+          "health_timeout_s": "<number>",
+          "scope": "<string>",
+          "unit": "<string>"
+        }
+      },
+      "managed": "<bool>",
+      "name": "<string>",
+      "native_passthrough": "<bool>",
+      "note": "<string>",
+      "port": "<number>",
+      "priority": "<number>",
+      "role": "<string>",
+      "timeout": "<number>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "driver": "<string>",
+      "driver_config": {
+        "health_endpoint": "<string>",
+        "health_timeout_s": "<number>",
+        "scope": "<string>",
+        "unit": "<string>"
+      },
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  },
+  "typesafe": {
+    "capabilities": [
+      "<string>"
+    ],
+    "config": {
+      "api_key_secret_id": "<string>",
+      "auth": {
+        "header": "<string>",
+        "prefix": "<string>"
+      },
+      "auth_test": {},
+      "base_path": "<string>",
+      "base_url": "<string>",
+      "billing_dimensions": [
+        "<string>"
+      ],
+      "capabilities": [
+        "<string>"
+      ],
+      "cost_class": "<string>",
+      "credential_origin": "<string>",
+      "docs_url": "<string>",
+      "enabled": "<bool>",
+      "host": "<string>",
+      "id": "<string>",
+      "key_url": "<string>",
+      "kind": "<string>",
+      "litellm_provider": "<string>",
+      "managed": "<bool>",
+      "model_listing": {
+        "id_path": "<string>",
+        "items_path": "<string>",
+        "method": "<string>",
+        "name_path": "<string>",
+        "path": "<string>",
+        "prices": {}
+      },
+      "model_policy_schema_version": "<number>",
+      "models": [
+        {
+          "enabled": "<bool>",
+          "id": "<string>",
+          "model_group": "<string>",
+          "upstream_model": "<string>"
+        }
+      ],
+      "name": "<string>",
+      "preset_id": "<string>",
+      "price": {
+        "models": {
+          "jev-1.13.0": {
+            "input_usd_per_million_tokens": "<string>",
+            "output_usd_per_million_tokens": "<string>"
+          },
+          "typesafe/jev-latest": {
+            "input_usd_per_million_tokens": "<string>",
+            "output_usd_per_million_tokens": "<string>"
+          }
+        }
+      },
+      "priority": "<number>",
+      "protocol": "<string>",
+      "protocols": [
+        "<string>"
+      ],
+      "provider_id": "<string>",
+      "provider_type": "<string>",
+      "recommendations": [],
+      "remote_provider": "<bool>",
+      "role": "<string>"
+    },
+    "editable": "<bool>",
+    "enabled": "<bool>",
+    "id": "<string>",
+    "kind": "<string>",
+    "lifecycle": {
+      "managed": "<bool>",
+      "service_name": "<string>",
+      "type": "<string>"
+    },
+    "name": "<string>",
+    "priority": "<number>",
+    "provenance": {},
+    "role": "<string>",
+    "secret_refs": {},
+    "source": "<string>"
+  }
+}

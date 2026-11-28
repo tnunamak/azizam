@@ -1,0 +1,89 @@
+{
+ "_recorded_from": "origin/main 5f9a825f via tests/support/wire_golden_main.py",
+ "command": {
+  "start": [
+   "runner",
+   "--token",
+   "wire-token-5",
+   "--api-key=wire-key-6",
+   "-pwire-pw-7",
+   "--tokenizer",
+   "plain",
+   "--max-tokens",
+   "64",
+   "--upstream",
+   "http://svc:wire-url-8@argv.invalid/x"
+  ],
+  "status": [
+   "checker",
+   "--secret",
+   "wire-secret-10"
+  ],
+  "stop": [
+   "stopper",
+   "--password",
+   "wire-pass-9",
+   "--now"
+  ]
+ },
+ "command_env": {
+  "API_TOKEN": "wire-env-11",
+  "MODE": "prod"
+ },
+ "litellm": {
+  "general_settings": {
+   "forward_client_headers_to_llm_api": true,
+   "litellm_key_header_name": "X-Litellm-Key"
+  },
+  "litellm_settings": {
+   "drop_params": true
+  },
+  "model_list": [
+   {
+    "litellm_params": {
+     "api_base": "http://wireuser:wirepass-1@engine-a.invalid:8080/v1?api-version=wirequery-2",
+     "api_key": "sk-local",
+     "extra_headers": {
+      "X-Region": "wire-region-eu-3",
+      "X-Team": "wire-team-4"
+     },
+     "model": "openai/upstream-a",
+     "timeout": 120.0
+    },
+    "model_name": "first"
+   }
+  ]
+ },
+ "native": {
+  "engine-a": {
+   "base": "http://wireuser:wirepass-1@engine-a.invalid:8080/v1?api-version=wirequery-2",
+   "headers": {
+    "X-Region": "wire-region-eu-3",
+    "X-Team": "wire-team-4"
+   }
+  }
+ },
+ "probe": [
+  {
+   "headers": {},
+   "method": "GET",
+   "url": "http://127.0.0.1:8192/ready?sig=wire-probe-16"
+  }
+ ],
+ "process": {
+  "argv": [
+   "runner",
+   "--api-key",
+   "wire-key-12",
+   "--auth-token=wire-auth-13",
+   "-uadmin:wire-user-14",
+   "--flag",
+   "plain"
+  ],
+  "env": {
+   "LEVEL": "info",
+   "PROC_SECRET": "wire-env-15"
+  },
+  "port": 8192
+ }
+}

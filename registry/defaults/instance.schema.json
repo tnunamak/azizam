@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/defaults/instance.schema.json",
+  "title": "Instance presentation",
+  "description": "The name, public address and default theme this gateway shows. The settings route checks a saved value more strictly (the address must be an HTTP(S) origin); this schema is the structural floor for every layer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "base_url", "theme_default"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 100},
+    "base_url": {"type": "string", "maxLength": 2048},
+    "theme_default": {"enum": ["system", "light", "dark"]}
+  }
+}

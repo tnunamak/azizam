@@ -1,0 +1,9 @@
+{
+  "_comment": "Old service-record state_type values and the loaded_model_probe each one meant (gateway/loaded_model_probe_migration.py). null: the default OpenAI-compatible model list. path_identity: the probe a record with no state_type but loaded_model_identity 'path' was read through.",
+  "state_type": {
+    "llama_cpp": {"endpoint": "/props", "model_key": "model_path"},
+    "vllm": null,
+    "openai_compatible": null
+  },
+  "path_identity": {"endpoint": "/props", "model_key": "model_path"}
+}

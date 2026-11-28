@@ -1,0 +1,23 @@
+{
+  "protocol": "openai-compatible",
+  "name": "engine-record-chat",
+  "description": "An engine saved by Add engine, reached through its compiled LiteLLM entry: the request arrives under the address path with the extra headers the owner typed.",
+  "provenance": {"source": "hand-written", "reference": "add-engine-spec.md section 8 (no control saves a setting the gateway ignores)"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/provider/v1/chat/completions", "headers": {"x-tenant": "{{tenant}}"}, "json": {"model": "{{model}}"}},
+      "response": {
+        "status": 200,
+        "json": {
+          "id": "chatcmpl-fk-engine",
+          "object": "chat.completion",
+          "created": 1767225600,
+          "model": "{{model}}",
+          "choices": [{"index": 0, "message": {"role": "assistant", "content": "reached"}, "finish_reason": "stop"}],
+          "usage": {"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8}
+        }
+      }
+    }
+  ]
+}

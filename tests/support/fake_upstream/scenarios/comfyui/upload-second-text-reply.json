@@ -1,0 +1,38 @@
+{
+  "protocol": "comfyui",
+  "name": "upload-second-text-reply",
+  "description": "The first upload succeeds; the second is answered with a status and a plain-text body.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image (multipart, answers {name, subfolder, type}), POST /prompt, GET /history/{prompt_id}, POST /api/jobs/{id}/cancel (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "first",
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "json": {
+          "name": "first.png"
+        }
+      }
+    },
+    {
+      "id": "second",
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "status": "{{status}}",
+        "body": [
+          {
+            "text": "{{text}}"
+          }
+        ]
+      }
+    }
+  ]
+}

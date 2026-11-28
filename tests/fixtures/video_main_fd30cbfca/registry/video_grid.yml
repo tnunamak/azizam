@@ -1,0 +1,11 @@
+# Published duration-adjustment reasons for the frame-count grid. The step is the
+# workflow's length_step; unlisted steps keep the generic wire reason.
+grid_defaults:
+  length_step: 8
+  length_offset: 1
+  minimum_side: 64
+  size_when_unparsed: [1024, 1024]
+stride_reasons:
+  default: frame_count_stride
+  by_step:
+    8: ltx_latent_8np1_stride

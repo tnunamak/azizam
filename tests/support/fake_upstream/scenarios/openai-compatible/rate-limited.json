@@ -1,0 +1,17 @@
+{
+  "protocol": "openai-compatible",
+  "name": "rate-limited",
+  "description": "The upstream refuses with 429, a Retry-After header and an OpenAI error body.",
+  "provenance": {"source": "hand-written", "reference": "https://platform.openai.com/docs/guides/error-codes (429) and RFC 9110 section 10.2.3 (Retry-After)"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}"}},
+      "response": {
+        "status": 429,
+        "headers": {"retry-after": "7"},
+        "json": {"error": {"message": "Rate limit reached for requests", "type": "requests", "param": null, "code": "rate_limit_exceeded"}}
+      }
+    }
+  ]
+}

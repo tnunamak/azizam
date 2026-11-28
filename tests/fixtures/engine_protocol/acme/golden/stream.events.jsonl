@@ -1,0 +1,3 @@
+{"choices": [{"delta": {"content": "Hel"}, "finish_reason": null, "index": 0}], "object": "chat.completion.chunk"}
+{"choices": [{"delta": {"content": "lo"}, "finish_reason": null, "index": 0}], "object": "chat.completion.chunk"}
+{"choices": [{"delta": {"content": ""}, "finish_reason": "stop", "index": 0}], "object": "chat.completion.chunk", "usage": {"completion_tokens": 2, "prompt_tokens": 5}}

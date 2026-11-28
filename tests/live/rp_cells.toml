@@ -1,0 +1,99 @@
+# RP cells (TEST_STRATEGY 4.2.7, 4.7): one per synthetic request set in request_sets.json.
+# Checked by scripts/ci/policy.py. A recorded cell needs scenarios/<protocol>/rp-<set>.json;
+# a pending cell needs owner, reason and expires_on within 90 days; a not-applicable cell
+# names the registry upstream_protocol and a reason, and is valid only while no shipped
+# local-engine preset speaks that protocol upstream.
+
+[[cell]]
+protocol = "openai-compatible"
+set = "chat-text"
+status = "recorded"
+
+[[cell]]
+protocol = "openai-compatible"
+set = "chat-stream"
+status = "recorded"
+
+[[cell]]
+protocol = "openai-compatible"
+set = "embeddings"
+status = "recorded"
+
+[[cell]]
+protocol = "anthropic"
+set = "messages-text"
+status = "not-applicable"
+upstream_protocol = "anthropic-messages"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "anthropic"
+set = "messages-stream"
+status = "not-applicable"
+upstream_protocol = "anthropic-messages"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "chat-text"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "chat-stream"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "generate-text"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "embed"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "comfyui"
+set = "observe"
+status = "recorded"
+
+[[cell]]
+protocol = "inline-tts"
+set = "speech"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the openai-speech engine definition (train 86) speaks inline-tts upstream; a recording against a local OpenAI-compatible speech server needs a recorder protocol entry for binary audio replies"
+expires_on = 2027-01-08
+
+[[cell]]
+protocol = "chunked-stt"
+set = "transcription"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the openai-transcription engine definition speaks chunked-stt upstream; a recording against a local OpenAI-compatible transcription server needs a recorder step that uploads a multipart audio file, and the recorder sends JSON steps only"
+expires_on = 2027-01-08
+
+[[cell]]
+protocol = "node-graph"
+set = "observe"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the workflow image engine definition speaks node-graph upstream; a recording needs a real node-graph engine on the recording host and the owner's recorder protocol entry for it"
+expires_on = 2027-01-08
+
+[[cell]]
+protocol = "sdapi"
+set = "images"
+status = "pending"
+owner = "azizam maintainers"
+reason = "the sdapi engine definition speaks sdapi upstream; a recording needs a local Stable Diffusion web API server and the operator's choice to queue one generation, which this build did not do"
+expires_on = 2027-01-08

@@ -1,0 +1,3 @@
+# Release defaults of manual service availability: none. A service is available until the owner marks it otherwise
+# (docs/design/CONFIG_HOMES.md, section 3.3).
+{}

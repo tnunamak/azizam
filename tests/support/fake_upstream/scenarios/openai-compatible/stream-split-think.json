@@ -1,0 +1,57 @@
+{
+  "protocol": "openai-compatible",
+  "name": "stream-split-think",
+  "description": "A streamed delta that leaks <think> tags into content, cut across two chunks. The gateway's always-on spec repair must give the same output as for an uncut event.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md (generic spec-repairs: promote leaked <think> into reasoning_content)"
+  },
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "json": {
+          "model": "{{model}}",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "body": [
+          {
+            "text": "data: {\"id\":\"chatcmpl-fk-think\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"{{model}}\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fk-think\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"{{model}}\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<think>plan</thi"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "text": "nk>Answer\"},\"finish_reason\":null}]}\n\n"
+          },
+          {
+            "event": {
+              "id": "chatcmpl-fk-think",
+              "object": "chat.completion.chunk",
+              "created": 1767225600,
+              "model": "{{model}}",
+              "choices": [
+                {
+                  "index": 0,
+                  "delta": {},
+                  "finish_reason": "stop"
+                }
+              ]
+            }
+          },
+          {
+            "done": true
+          }
+        ]
+      }
+    }
+  ]
+}

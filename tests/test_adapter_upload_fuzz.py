@@ -1,0 +1,90 @@
+"""Bounded, in-memory header contracts. No external uploads or providers."""
+from __future__ import annotations
+
+import io
+import json
+import struct
+from unittest.mock import patch
+
+import pytest
+
+from gateway import adapter_upload
+
+
+class RecordedReads(io.BytesIO):
+    def __init__(self, data: bytes, budget: int) -> None:
+        super().__init__(data)
+        self.budget = budget
+        self.read_bytes = 0
+
+    def read(self, size: int = -1) -> bytes:
+        assert 0 <= size <= self.budget - self.read_bytes
+        chunk = super().read(size)
+        self.read_bytes += len(chunk)
+        return chunk
+
+
+def ordinary_file() -> tuple[bytes, int]:
+    header = json.dumps({"tensor": {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]}}).encode()
+    return struct.pack("<Q", len(header)) + header + b"\x00\x00", len(header)
+
+
+def test_valid_file_at_exact_header_budget_does_not_read_tensor_body() -> None:
+    data, length = ordinary_file()
+    stream = RecordedReads(data, 8 + length)
+    result = adapter_upload.read_header(stream, len(data), max_header_bytes=length)
+    assert isinstance(result, adapter_upload.Header)
+    assert result.tensor_count == 1
+    assert stream.read_bytes == 8 + length
+
+
+def test_decoder_capacity_error_is_reported_as_refused() -> None:
+    data, length = ordinary_file()
+    stream = RecordedReads(data, 8 + length)
+    with patch.object(adapter_upload.json, "loads", side_effect=RecursionError("fixture decoder limit")):
+        with pytest.raises(adapter_upload.Refused) as caught:
+            adapter_upload.read_header(stream, len(data), max_header_bytes=length)
+    assert caught.value.code == "adapter_header_invalid"
+    assert stream.read_bytes == 8 + length
+
+
+@pytest.mark.parametrize(
+    ("folder", "accepted"),
+    [
+        ("lora", True),
+        ("LoraV2", True),
+        ("adapter-pack", True),
+        ("adapter_pack", True),
+        ("a" * 64, True),
+        ("a" * 65, False),
+        ("", False),
+    ],
+)
+def test_lora_root_accepts_plain_directories_within_the_folder_name_limit(tmp_path, folder, accepted):
+    if accepted:
+        expected = tmp_path / folder
+        expected.mkdir()
+        assert adapter_upload.lora_root(tmp_path, folder) == expected
+    else:
+        assert adapter_upload.lora_root(tmp_path, folder) is None
+        assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "folder",
+    ["..", ".", "a/b", "a\\b", "a" * 300, "a\x00b", "a.", "a ", "a\n", "\u00e9", "e\u0301", "../outside"],
+)
+def test_lora_root_refuses_hostile_folder_names_before_building_a_path(tmp_path, folder):
+    models = tmp_path / "models"
+    models.mkdir()
+    assert adapter_upload.lora_root(models, folder) is None
+    assert list(models.iterdir()) == []
+
+
+def test_lora_root_refuses_a_symlink_that_points_outside_the_models_folder(tmp_path):
+    models = tmp_path / "models"
+    models.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (models / "lora").symlink_to(outside, target_is_directory=True)
+    assert adapter_upload.lora_root(models, "lora") is None

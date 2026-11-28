@@ -1,0 +1,12 @@
+{
+  "invalid-loop.yml": "unknown rule 'loop'",
+  "invalid-expression.yml": "names code",
+  "invalid-absolute-url.yml": "path",
+  "invalid-executor.yml": "executor",
+  "invalid-unknown-key.yml": "retries",
+  "invalid-credential-header.yml": "credential-like header",
+  "invalid-duplicate-key.yml": "duplicate key",
+  "invalid-poll-without-id.yml": "{id}",
+  "budget-rule-count.yml": "more than 64 rules",
+  "budget-nesting.yml": "conditions nest more than 3 deep"
+}

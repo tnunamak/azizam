@@ -1,0 +1,389 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "http.disconnect during the request",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"intent\": \"audio.generate\", \"request\": {\"prompt\": \"a door creaks\", \"model\": \"sa3-small-sfx\", \"duration\": 4}}"
+        },
+        "headers": {
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/gateway/v1/media/jobs",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+        },
+        "disconnected_by_caller": true,
+        "headers": {
+          "content-length": "<690 after normalisation>",
+          "content-type": "application/json",
+          "location": "/gateway/v1/media/jobs/<job:1>"
+        },
+        "status": 202
+      }
+    },
+    {
+      "label": "reconnect with the same request",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"intent\":\"audio.generate\",\"request\":{\"prompt\":\"a door creaks\",\"model\":\"sa3-small-sfx\",\"duration\":4}}"
+        },
+        "headers": {
+          "content-length": "101",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/gateway/v1/media/jobs",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:3>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:3>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:3>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:4>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:3>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:4>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+        },
+        "headers": {
+          "content-length": "<690 after normalisation>",
+          "content-type": "application/json",
+          "location": "/gateway/v1/media/jobs/<job:3>"
+        },
+        "status": 202
+      }
+    }
+  ],
+  "description": "S7 golden: POST /gateway/v1/media/jobs, outcome disconnect, recorded on the unchanged route",
+  "engine_requests": [],
+  "gateway_sleeps": [],
+  "job_prefixes": [
+    "mj",
+    "audjob",
+    "mj",
+    "audjob"
+  ],
+  "media_jobs": {
+    "definition_blob": [
+      {
+        "body": {
+          "kind": "binary",
+          "len": 573,
+          "magic": "7b226964223a2261",
+          "sha256": "8b842d54fa94e658f35c750831b91ae1bf5370aad86fe377a61450a381e7827c"
+        },
+        "created": "<time>",
+        "sha": "sha256:8b842d54fa94e658f35c750831b91ae1bf5370aad86fe377a61450a381e7827c"
+      },
+      {
+        "body": {
+          "kind": "binary",
+          "len": 456,
+          "magic": "7b226d6170223a7b",
+          "sha256": "c27e1785e0ca0bd10a0c7822e78c8e626ff674ff9c463a407058e18324814815"
+        },
+        "created": "<time>",
+        "sha": "sha256:c27e1785e0ca0bd10a0c7822e78c8e626ff674ff9c463a407058e18324814815"
+      },
+      {
+        "body": {
+          "kind": "binary",
+          "len": 1267,
+          "magic": "7b0a202231223a20",
+          "sha256": "ef498286194584cff0e8de3aa83b3f020391deca261df94c997538164adc0993"
+        },
+        "created": "<time>",
+        "sha": "sha256:ef498286194584cff0e8de3aa83b3f020391deca261df94c997538164adc0993"
+      }
+    ],
+    "definition_ref": [
+      {
+        "blob_sha": "sha256:8b842d54fa94e658f35c750831b91ae1bf5370aad86fe377a61450a381e7827c",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
+      {
+        "blob_sha": "sha256:c27e1785e0ca0bd10a0c7822e78c8e626ff674ff9c463a407058e18324814815",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
+      {
+        "blob_sha": "sha256:ef498286194584cff0e8de3aa83b3f020391deca261df94c997538164adc0993",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
+      {
+        "blob_sha": "sha256:8b842d54fa94e658f35c750831b91ae1bf5370aad86fe377a61450a381e7827c",
+        "holder_kind": "job",
+        "job_id": "<job:3>"
+      },
+      {
+        "blob_sha": "sha256:c27e1785e0ca0bd10a0c7822e78c8e626ff674ff9c463a407058e18324814815",
+        "holder_kind": "job",
+        "job_id": "<job:3>"
+      },
+      {
+        "blob_sha": "sha256:ef498286194584cff0e8de3aa83b3f020391deca261df94c997538164adc0993",
+        "holder_kind": "job",
+        "job_id": "<job:3>"
+      }
+    ],
+    "job_envelope": [
+      {
+        "created": "<time>",
+        "envelope_json": {
+          "definitions": {
+            "binding": "sha256:c27e1785e0ca0bd10a0c7822e78c8e626ff674ff9c463a407058e18324814815",
+            "contract": "sha256:8b842d54fa94e658f35c750831b91ae1bf5370aad86fe377a61450a381e7827c",
+            "protocol": {
+              "id": "node-graph",
+              "revision": "sha256:5a9b2125ecd3fe940050a457ab3707f64ed54bf9c4e9f39eb69464ee1121edd6"
+            },
+            "template": "sha256:ef498286194584cff0e8de3aa83b3f020391deca261df94c997538164adc0993"
+          },
+          "envelope_version": 2,
+          "executor": {
+            "adapter_id": "node-graph",
+            "interface_version": 2
+          },
+          "generated": {
+            "seed": {
+              "generator": "random_integer",
+              "value": 192058881
+            }
+          },
+          "results": {
+            "bundle": null
+          },
+          "source": {
+            "binding_key": "untracked",
+            "id": "audio.generate.sa3-small-sfx",
+            "incarnation": "untracked",
+            "kind": "workflow",
+            "record_revision": null,
+            "revision": "sha256:5f8d4e4a1d893d3a1023e13e3bd9c6cf2e0dbd61d5833738b32884aa99fcbd00"
+          },
+          "upstream": {
+            "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
+            "service_id": "comfyui"
+          }
+        },
+        "job_id": "<job:1>"
+      },
+      {
+        "created": "<time>",
+        "envelope_json": {
+          "definitions": {
+            "binding": "sha256:c27e1785e0ca0bd10a0c7822e78c8e626ff674ff9c463a407058e18324814815",
+            "contract": "sha256:8b842d54fa94e658f35c750831b91ae1bf5370aad86fe377a61450a381e7827c",
+            "protocol": {
+              "id": "node-graph",
+              "revision": "sha256:5a9b2125ecd3fe940050a457ab3707f64ed54bf9c4e9f39eb69464ee1121edd6"
+            },
+            "template": "sha256:ef498286194584cff0e8de3aa83b3f020391deca261df94c997538164adc0993"
+          },
+          "envelope_version": 2,
+          "executor": {
+            "adapter_id": "node-graph",
+            "interface_version": 2
+          },
+          "generated": {
+            "seed": {
+              "generator": "random_integer",
+              "value": 27837429
+            }
+          },
+          "results": {
+            "bundle": null
+          },
+          "source": {
+            "binding_key": "untracked",
+            "id": "audio.generate.sa3-small-sfx",
+            "incarnation": "untracked",
+            "kind": "workflow",
+            "record_revision": null,
+            "revision": "sha256:5f8d4e4a1d893d3a1023e13e3bd9c6cf2e0dbd61d5833738b32884aa99fcbd00"
+          },
+          "upstream": {
+            "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
+            "service_id": "comfyui"
+          }
+        },
+        "job_id": "<job:3>"
+      }
+    ],
+    "media_job_events": [
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "queued",
+        "id": 1,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "phase": "queued",
+          "progress": 0,
+          "status": "queued"
+        },
+        "sequence": 1,
+        "source": "gateway"
+      },
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "queued",
+        "id": 2,
+        "job_id": "<job:3>",
+        "payload_json": {
+          "phase": "queued",
+          "progress": 0,
+          "status": "queued"
+        },
+        "sequence": 1,
+        "source": "gateway"
+      }
+    ],
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "audio.generate",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<job:2>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": null,
+          "first_output_at": null,
+          "input_hash": "<digest>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "last_healthy_at": null,
+          "maker_connection_id": null,
+          "maker_credential_id": "sha256:test",
+          "maker_person_id": null,
+          "metadata": {
+            "duration": 4,
+            "mode": "async_audio_generation",
+            "model": "sa3-small-sfx"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": "<job:2>",
+          "previous_attempts": [],
+          "progress": 0,
+          "queue_position": null,
+          "queued_at": "<time>",
+          "request_id": "<job:2>",
+          "retryable": null,
+          "started_at": null,
+          "status": "queued",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "audio.generate.sa3-small-sfx"
+        },
+        "maker_connection_id": null,
+        "maker_credential_id": "sha256:test",
+        "maker_person_id": null,
+        "parent_request_id": "<job:2>",
+        "progress": 0,
+        "request_id": "<job:2>",
+        "status": "queued",
+        "updated_at": "<time>",
+        "workflow": "audio.generate.sa3-small-sfx"
+      },
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "audio.generate",
+        "job_id": "<job:3>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<job:4>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": null,
+          "first_output_at": null,
+          "input_hash": "<digest>",
+          "intent": "audio.generate",
+          "job_id": "<job:3>",
+          "last_healthy_at": null,
+          "maker_connection_id": null,
+          "maker_credential_id": "sha256:test",
+          "maker_person_id": null,
+          "metadata": {
+            "duration": 4,
+            "mode": "async_audio_generation",
+            "model": "sa3-small-sfx"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": "<job:4>",
+          "previous_attempts": [],
+          "progress": 0,
+          "queue_position": null,
+          "queued_at": "<time>",
+          "request_id": "<job:4>",
+          "retryable": null,
+          "started_at": null,
+          "status": "queued",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "audio.generate.sa3-small-sfx"
+        },
+        "maker_connection_id": null,
+        "maker_credential_id": "sha256:test",
+        "maker_person_id": null,
+        "parent_request_id": "<job:4>",
+        "progress": 0,
+        "request_id": "<job:4>",
+        "status": "queued",
+        "updated_at": "<time>",
+        "workflow": "audio.generate.sa3-small-sfx"
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 6
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "s7_aj_disconnect",
+  "schema": 1
+}

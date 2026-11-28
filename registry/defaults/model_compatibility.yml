@@ -1,0 +1,9 @@
+# Release defaults of the model_compatibility section (docs/design/CONFIG_HOMES.md, C8c). Read-only; an owner's value
+# is an override. Neutral: it names no model id. With an empty `defaults` table each operation falls back to the
+# engine's own default model, as before this section existed. The OpenAI model-name list the gateway recognises is a
+# release data file (registry/openai_model_aliases.generated.yml), not a setting.
+enabled: true
+openai_models_api_url: https://api.openai.com/v1/models
+include_private: false
+defaults: {}
+aliases: {}

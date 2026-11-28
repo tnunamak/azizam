@@ -1,0 +1,16 @@
+schema_version: 1
+markers:
+  - marker: "<tool_call>"
+    family: hermes_or_qwen
+  - marker: "[TOOL_CALLS]"
+    family: mistral
+  - marker: "<|python_tag|>"
+    family: llama3
+  - marker: "```tool_code"
+    family: gemma
+  # Command-R: "Action:" is too generic alone; require the json fence too.
+  # We match on "Action:" here — callers confirm "```json" is also present.
+  - marker: "Action:\n```json"
+    family: command_r
+  - marker: "Action: ```json"
+    family: command_r

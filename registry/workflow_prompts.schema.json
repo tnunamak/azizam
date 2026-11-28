@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/workflow_prompts.schema.json",
+  "title": "Workflow prompts",
+  "description": "The generation prompts the gateway sends or injects itself. Closed: every prompt is required and none may be added without a reader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "prompts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "prompts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image_background_removal_decider",
+        "image_variations",
+        "tile_seam_repair",
+        "voice_design_sample_script"
+      ],
+      "properties": {
+        "image_background_removal_decider": {"$ref": "#/$defs/prompt"},
+        "image_variations": {"$ref": "#/$defs/prompt"},
+        "tile_seam_repair": {"$ref": "#/$defs/prompt"},
+        "voice_design_sample_script": {"$ref": "#/$defs/prompt"}
+      }
+    }
+  },
+  "$defs": {
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "slots", "text"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "slots": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"}},
+        "text": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

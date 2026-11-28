@@ -1,0 +1,254 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import AppsPage from "./page";
+import { accountApi, type AccountSnapshot } from "@/lib/account-api";
+import { adminFetch } from "@/lib/api";
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(""),
+}));
+vi.mock("@/lib/account-api", () => ({
+  accountApi: { session: vi.fn(), discovery: vi.fn() },
+}));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  adminFetch: vi.fn(),
+}));
+
+const app = {
+  id: "display",
+  name: "Living room display",
+  kind: "service",
+  disabled_at: null,
+  created_at: 1800000000,
+  access_plan: null,
+  can_mint_keys: true,
+  credentials: [],
+};
+const snapshot = (role: string): AccountSnapshot => ({
+  authenticated: true,
+  csrf_token: "test",
+  user: { id: "u", email: "o@example.test", name: "Owner", role },
+  apps: [app],
+});
+let entries: {
+  id: string;
+  app_id: string;
+  address: string;
+  note: string | null;
+  created_at: number;
+}[];
+
+beforeEach(() => {
+  entries = [];
+  vi.mocked(accountApi.discovery).mockResolvedValue({ recipes: {} });
+  vi.mocked(adminFetch)
+    .mockReset()
+    .mockImplementation(
+      async (path: string, init?: { method?: string; body?: unknown }) => {
+        if (init?.method === "POST") {
+          const body = init.body as { address: string; note: string };
+          entries = [
+            ...entries,
+            {
+              id: "tad_1",
+              app_id: "display",
+              address: body.address,
+              note: body.note || null,
+              created_at: 1,
+            },
+          ];
+          return { trusted_address: entries[0] };
+        }
+        if (init?.method === "DELETE") {
+          entries = [];
+          return {};
+        }
+        expect(path).toBe("/admin/api/apps/display/trusted-addresses");
+        return { trusted_addresses: entries };
+      },
+    );
+});
+afterEach(cleanup);
+
+function renderApps() {
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <AppsPage />
+    </QueryClientProvider>,
+  );
+}
+
+function openMenu() {
+  const trigger = screen.getByRole("button", {
+    name: "Actions for Living room display",
+  });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "Enter" });
+}
+
+/** The owner's keyless access sits in the App's own menu, which opens the dialog that changes it. */
+async function openTrustedAddresses() {
+  openMenu();
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Allow keyless access…" }));
+}
+
+it("offers keyless access to the owner only", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("none"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  openMenu();
+  await screen.findByRole("menuitem", { name: "Remove app" });
+  expect(screen.queryByRole("menuitem", { name: "Allow keyless access…" })).toBeNull();
+  expect(screen.queryByText("Keyless access from:")).toBeNull();
+});
+
+it("shows the app's keyless addresses as chips on its row, and Allow keyless access… in its menu", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  entries = [
+    {
+      id: "tad_1",
+      app_id: "display",
+      address: "192.168.1.0/24",
+      note: "Hall",
+      created_at: 1,
+    },
+  ];
+  renderApps();
+  expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
+  expect(screen.getByText("Keyless access from:")).toBeVisible();
+  openMenu();
+  expect(await screen.findByRole("menuitem", { name: "Allow keyless access…" })).toBeVisible();
+});
+
+it("drops the keyless row for an app with none, and keeps Allow keyless access… in its menu", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  await waitFor(() => expect(adminFetch).toHaveBeenCalled());
+  expect(screen.queryByText("Keyless access from:")).toBeNull();
+  expect(screen.queryByText("none")).toBeNull();
+  openMenu();
+  expect(await screen.findByRole("menuitem", { name: "Allow keyless access…" })).toBeVisible();
+});
+
+it("shows the keyless hint once, under the App that has addresses", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  entries = [
+    {
+      id: "tad_1",
+      app_id: "display",
+      address: "192.168.1.0/24",
+      note: "Hall",
+      created_at: 1,
+    },
+  ];
+  renderApps();
+  await screen.findByText("192.168.1.0/24");
+  const row = screen.getByRole("group", { name: "Keyless access for Living room display" });
+  expect(within(row).getByText("Requests from these addresses use this app's plan without a key.")).toBeVisible();
+  expect(screen.getAllByText(/Requests from these addresses/)).toHaveLength(1);
+  expect(screen.queryByText(/About trusted addresses/)).toBeNull();
+});
+
+it("starts empty, adds an address with a note, and removes it", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  await openTrustedAddresses();
+  expect(
+    await screen.findByText(/Until you add an address, every request to this app needs a key/),
+  ).toBeVisible();
+
+  fireEvent.change(screen.getByLabelText("IP address or range"), {
+    target: { value: "192.168.1.0/24" },
+  });
+  fireEvent.change(screen.getByLabelText("Note (optional)"), {
+    target: { value: "Display" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Trust address" }));
+  // The App's section lists the same addresses behind the dialog, so the dialog's own list is queried.
+  const dialog = screen.getByRole("dialog", { name: "Keyless access for Living room display" });
+  expect(await within(dialog).findByText("192.168.1.0/24")).toBeVisible();
+  expect(within(dialog).getByText("Display")).toBeVisible();
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Remove 192.168.1.0/24" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByText(/Until you add an address, every request to this app needs a key/),
+    ).toBeVisible(),
+  );
+});
+
+it("shows the gateway's sentence when an address is refused", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  await openTrustedAddresses();
+  await screen.findByText(/Until you add an address, every request to this app needs a key/);
+  vi.mocked(adminFetch).mockRejectedValueOnce(
+    new Error("A range of every address would trust the whole internet."),
+  );
+  fireEvent.change(screen.getByLabelText("IP address or range"), {
+    target: { value: "0.0.0.0/0" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Trust address" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "would trust the whole internet",
+  );
+});
+
+it("preserves the refused address and note until a successful retry", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  await openTrustedAddresses();
+  await screen.findByText(/Until you add an address, every request to this app needs a key/);
+  const address = screen.getByLabelText("IP address or range");
+  const note = screen.getByLabelText("Note (optional)");
+  const submit = screen.getByRole("button", { name: "Trust address" });
+  fireEvent.change(address, { target: { value: "   " } });
+  expect(submit).toBeDisabled();
+  fireEvent.change(address, { target: { value: "192.168.1.0/24" } });
+  fireEvent.change(note, { target: { value: "Keep my display note" } });
+  let refuse!: (reason: Error) => void;
+  vi.mocked(adminFetch).mockImplementationOnce(() => new Promise((_, reject) => { refuse = reject; }));
+  fireEvent.click(submit);
+  expect(submit).toBeDisabled();
+  expect(address).toBeDisabled();
+  expect(note).toBeDisabled();
+  refuse(new Error("This address could not be saved."));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This address could not be saved.");
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(address).toHaveValue("192.168.1.0/24");
+  expect(note).toHaveValue("Keep my display note");
+  expect(entries).toEqual([]);
+  fireEvent.click(submit);
+  const dialog = screen.getByRole("dialog", { name: "Keyless access for Living room display" });
+  expect(await within(dialog).findByText("192.168.1.0/24")).toBeVisible();
+  expect(within(dialog).getByText("Keep my display note")).toBeVisible();
+  expect(address).toHaveValue("");
+  expect(note).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
+  const posts = vi.mocked(adminFetch).mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(posts).toHaveLength(2);
+  for (const [path, init] of posts) {
+    expect(path).toBe("/admin/api/apps/display/trusted-addresses");
+    expect(init?.body).toEqual({ address: "192.168.1.0/24", note: "Keep my display note" });
+  }
+});
+

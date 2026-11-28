@@ -1,0 +1,19 @@
+id: generic-anthropic
+display_name: Generic Anthropic-compatible
+logo_key: generic-anthropic
+base_url: ""
+protocol: anthropic-messages
+litellm_provider: anthropic
+auth:
+  header: x-api-key
+  prefix: ""
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+docs_url: ""
+key_url: ""
+billing_dimensions:
+  - input_tokens
+  - output_tokens

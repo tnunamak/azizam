@@ -1,0 +1,54 @@
+# Performance budgets for the real-data harness (scripts/perf/run.py, nightly "perf" task).
+#
+# Counts are exact and are also enforced at fixed data sizes in the gate
+# (tests/test_route_work_budget.py, tests/test_work_budget.py). Times are measured
+# on a copy of the live databases on the LAN and only mean something on a quiet
+# host; the nightly skips a run when the 1-minute load is over its limit.
+
+[api]
+p95_ms = 100          # client-side p95 over 9 requests, per route and person
+statements = 100      # SQLite statements for one request
+connections = 20      # SQLite connections opened for one request
+processes = 0         # no request starts a process (ffprobe, systemctl, ...)
+
+# A route may carry its own limits when it cannot meet the default yet. Each needs a
+# reason, and the table may only shrink.
+[api.routes]
+# No route has its own limits. Every route meets the defaults above, including the cold reads of Home and the
+# owner's status page (api_bench.py). The status page and Home read the stored snapshot and never wait for a probe.
+# A read after idle starts a background refresh; its process starts count against the read only if they begin while
+# the read is in flight. test_perf_harness.py fails if a row is added here.
+
+# A cold read must not hold the event loop: api_bench.py measures the largest /health latency while
+# the read runs, less the idle median, and check.py judges it here. Every request waits for the
+# loop, so a stall of this size is felt by every person on the gateway. A fork on the loop costs
+# about 0.05 ms per MB of resident memory, so a probe that spawns on the loop shows up here.
+[loop]
+max_stall_ms = 100
+
+[ui]
+ready_ms = 500        # last change to <main> after navigation, warm HTTP cache, 1440 px wide
+long_task_ms = 200    # total main-thread long-task time while loading
+requests = 100        # HTTP requests for one page load
+kilobytes = 2500      # response bytes for one page load
+
+[ui.pages]
+# "/library" = { ready_ms = 800, reason = "..." }
+
+# Home, the first page, loaded by scripts/perf/home_bench.mjs in a real browser with the HTTP cache empty (cold)
+# and filled (warm). "mobile" is 390 px wide with a 4x slower CPU and 1.6 Mbit/s, 150 ms round trip.
+# content_ms: time until <main> shows text with nothing marked busy.
+[home]
+desktop_cold_ms = 600
+desktop_warm_ms = 500
+mobile_cold_ms = 2500
+mobile_warm_ms = 1200
+js_wire_kb = 300          # first-load JavaScript on the wire, cold
+js_requests = 40
+uncompressed_js = 0       # scripts over 20 KB served without gzip or brotli
+# A member's cold Home, counted by home_bench.mjs (every /me/api and /gateway/v1 call one load makes: session,
+# home, the first media page, the shell's jobs watch, the request history notice's retention read (r103) and the
+# member's own avatar picture, which the browser fetches on each load because it is sent no-store (r107).
+# Measured 2026-10-24 at 6, cold and warm, for a member with a picture; that member is not asked for the automatic
+# picture, so the ask adds nothing here.
+member_api_requests = 6

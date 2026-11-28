@@ -1,0 +1,16 @@
+schema_version: 1
+capabilities:
+  - capability: chat
+    operation: chat
+  - capability: completions
+    operation: chat
+  - capability: embeddings
+    operation: embeddings
+  - capability: rerank
+    operation: rerank
+  - capability: decisions
+    operation: decisions
+augmentation:
+  capability: vision
+  match_type: language
+  input_modalities: [image]

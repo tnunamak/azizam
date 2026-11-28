@@ -1,0 +1,305 @@
+"""Security gate: the unmatched-path catch-all never reaches a backend.
+
+The catch-all route used to accept a ``mapped_route`` handler parameter.
+FastAPI exposes such a parameter as a query parameter, so any authenticated
+caller could append ``?mapped_route=true`` and skip the only guard in front of
+the native passthrough executor. That executor forwards arbitrary paths to the
+local LLM backend with gateway-injected backend credentials, can start a model
+load, and skips access-plan policy and execution receipts.
+
+These tests drive the production app through TestClient. Every backend side
+effect is a tripwire; no network request is made.
+"""
+
+from __future__ import annotations
+
+import shutil
+from tests.support.app_keys import accountable_person
+import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+
+import proxy
+from gateway import accounts, admin_store, receipt_store
+from gateway.admin_oidc import AdminSession
+from gateway.admin_runtime import generate_app_api_key
+from gateway.user_runtime import mint_user_app_key
+from tests.support.access import service_app as make_service_app, store_plan
+
+
+BYPASS_QUERIES = [
+    "mapped_route=true",
+    "mapped%5Froute=true",
+    "mapped_route=1",
+    "mapped_route=yes",
+    "mapped_route=on",
+    "mapped_route=false&mapped_route=true",
+    "mapped_route=junk",
+]
+
+# (method, path): each reached the native executor before the fix.
+UNMATCHED_ROUTES = [
+    ("GET", "/not-a-route"),
+    ("GET", "/v1/model/list"),  # backend admin key was injected for this path
+    ("POST", "/v1/model/load"),
+    ("POST", "/v1/chat/completions/"),  # prefix match started the model loader
+    ("POST", "/v1/completions/extra"),
+    ("PUT", "/v1/model/load"),
+    ("PATCH", "/not-a-route"),
+    ("DELETE", "/v1/model/unload"),
+    ("OPTIONS", "/v1/model/list"),
+]
+
+# Known OpenAI routes behind a prefix that is not a configured path token.
+PREFIXED_KNOWN_ROUTES = [
+    "/foo/v1/chat/completions",
+    "/v1/v1/chat/completions",
+    "/api/v1/completions",
+]
+
+CHAT_BODY = {"model": "test-model", "messages": [{"role": "user", "content": "hi"}]}
+
+
+_STORES = ((admin_store, "admin"), (receipt_store, "receipts"))
+
+
+@pytest.fixture(scope="module")
+def seeded_stores(tmp_path_factory):
+    """Seed the admin and receipt stores once per module.
+
+    Each case gets its own copy of these files (see _case), so cases stay as
+    isolated as when every case built its own stores, without paying for two
+    migrations and a seeded household per case.
+    """
+    root = tmp_path_factory.mktemp("catchall-template")
+    paths = {name: root / f"{name}.db" for _module, name in _STORES}
+    with pytest.MonkeyPatch.context() as patch:
+        for module, name in _STORES:
+            module.init_db(paths[name])
+            connect = module._conn
+            patch.setattr(module, "_conn", lambda _path, fn=connect, db=paths[name]: fn(db))
+        restricted = store_plan("Restricted", path=paths["admin"], caps=("image",))
+        user = admin_store.upsert_oidc_user(
+            "https://catchall.test", "member", email="member@example.test", path=paths["admin"]
+        )
+        accounts.change_person(user["id"], "owner", path=paths["admin"], plan_id=restricted["id"])
+        session = AdminSession(
+            subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000,
+        )
+        member_app = admin_store.create_app(
+            "Phone", kind="personal", owner_user_id=user["id"],
+            access_plan="person", path=paths["admin"],
+        )
+        member_key = mint_user_app_key(session, member_app["id"], path=paths["admin"])["api_key"]
+
+        service_app = make_service_app("Robot app", path=paths["admin"])
+        app_key = generate_app_api_key()
+        admin_store.create_credential_hash(
+            subject_kind="app", subject_id=service_app["id"], app_id=service_app["id"],
+            hash=proxy.hash_api_key(app_key), prefix=app_key[:12], path=paths["admin"], created_by=accountable_person(paths["admin"], service_app["id"]))
+    for path in paths.values():
+        # Fold the WAL into the main file, so copying that one file is a full copy.
+        with sqlite3.connect(path) as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        wal = Path(f"{path}-wal")
+        assert not wal.exists() or wal.stat().st_size == 0, "template WAL not checkpointed"
+    return SimpleNamespace(
+        paths=paths,
+        restricted=restricted,
+        member_app=member_app,
+        service_app=service_app,
+        headers={
+            "member": {"Authorization": f"Bearer {member_key}"},
+            "app": {"Authorization": f"Bearer {app_key}"},
+        },
+    )
+
+
+def _case(seeded, monkeypatch, case_dir):
+    """Install private copies of the seeded stores and the backend tripwires."""
+    paths = {}
+    for module, name in _STORES:
+        path = case_dir / f"{name}.db"
+        shutil.copyfile(seeded.paths[name], path)
+        connect = module._conn
+        monkeypatch.setattr(module, "_conn", lambda _path, fn=connect, db=path: fn(db))
+        monkeypatch.setattr(module, "DB_PATH", path)
+        paths[name] = path
+
+    monkeypatch.setattr(proxy.ADMIN_STORE, "path", paths["admin"])
+    monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
+    monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
+
+    calls: list[str] = []
+
+    def tripwire(name, result=None):
+        async def _called(*_args, **_kwargs):
+            calls.append(name)
+            if isinstance(result, BaseException):
+                raise result
+            return result
+        return _called
+
+    # Health and availability succeed so that, without the guard, the request
+    # proceeds all the way to the backend send.
+    monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
+    monkeypatch.setattr(proxy, "check_service_health", tripwire("check_service_health", True))
+    monkeypatch.setattr(
+        proxy, "send_llm_execution_request",
+        tripwire("send_llm_execution_request", RuntimeError("backend reached")),
+    )
+    monkeypatch.setattr(
+        proxy, "_forward_current_loaded_openai_request",
+        tripwire("_forward_current_loaded_openai_request", RuntimeError("backend reached")),
+    )
+    owner_cls = proxy.ReceiptLifecycleOwner
+
+    def receipt_owner(*args, **kwargs):
+        calls.append("ReceiptLifecycleOwner")
+        return owner_cls(*args, **kwargs)
+
+    monkeypatch.setattr(proxy, "ReceiptLifecycleOwner", receipt_owner)
+
+    return SimpleNamespace(
+        client=TestClient(proxy.app),
+        calls=calls,
+        paths=paths,
+        restricted=seeded.restricted,
+        member_app=seeded.member_app,
+        service_app=seeded.service_app,
+        headers=seeded.headers,
+    )
+
+
+@pytest.fixture
+def gateway(seeded_stores, monkeypatch, tmp_path):
+    return _case(seeded_stores, monkeypatch, tmp_path)
+
+
+def _receipt_count(gateway) -> int:
+    with receipt_store._conn(gateway.paths["receipts"]) as conn:
+        return conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
+
+
+def _send(gateway, method, path, *, headers=None, query=""):
+    url = f"{path}?{query}" if query else path
+    kwargs = {"json": CHAT_BODY} if method in {"POST", "PUT", "PATCH"} else {}
+    return gateway.client.request(method, url, headers=headers or {}, **kwargs)
+
+
+def _assert_not_found_without_dispatch(gateway, response, receipts_before):
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "not_found"
+    assert gateway.calls == []
+    assert _receipt_count(gateway) == receipts_before
+
+
+def test_identities_resolve_to_the_expected_apps_and_plan(gateway):
+    from starlette.requests import Request
+
+    def identity(headers):
+        raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        request = Request({
+            "type": "http", "method": "GET", "path": "/x", "query_string": b"",
+            "headers": raw, "client": ("203.0.113.9", 1), "server": ("t", 80), "scheme": "http",
+        })
+        auth = proxy.authenticate_request(request, "/x")
+        assert isinstance(auth, proxy.AuthContext)
+        return auth.identity
+
+    member = identity(gateway.headers["member"])
+    assert member.app_id == gateway.member_app["id"]
+    assert member.access.plan_ids == (gateway.restricted["id"],)
+    assert identity(gateway.headers["app"]).app_id == gateway.service_app["id"]
+
+
+def test_each_case_gets_fresh_stores_and_tripwires(seeded_stores, tmp_path):
+    """Cases share seeded data but never state: a receipt or a tripwire hit in
+    one case is absent from the next, and the seeded identities still resolve.
+    Each case gets its own MonkeyPatch, as each test does."""
+    with pytest.MonkeyPatch.context() as patch:
+        (tmp_path / "first").mkdir()
+        first = _case(seeded_stores, patch, tmp_path / "first")
+        response = _send(first, "POST", "/gateway/v1/providers/kobold/v1/model/load",
+                         headers=first.headers["member"])
+        assert response.status_code == 403, response.text
+        assert _receipt_count(first) == 1
+        first.calls.append("tripwire hit in the first case")
+
+    with pytest.MonkeyPatch.context() as patch:
+        (tmp_path / "second").mkdir()
+        second = _case(seeded_stores, patch, tmp_path / "second")
+        assert _receipt_count(second) == 0
+        assert second.calls == []
+        response = _send(second, "GET", "/not-a-route", headers=second.headers["member"])
+        assert response.status_code == 404, response.text  # 401 would mean the seed is gone
+        assert second.calls == []
+
+
+def test_restricted_plan_is_denied_on_the_canonical_native_route(gateway):
+    """Control: the plan the bypass skipped really denies native passthrough."""
+    before = _receipt_count(gateway)
+    response = _send(
+        gateway, "POST", "/gateway/v1/providers/kobold/v1/model/load",
+        headers=gateway.headers["member"],
+    )
+    assert response.status_code == 403, response.text
+    assert gateway.calls == []
+    assert _receipt_count(gateway) == before + 1  # the denial is receipted
+
+
+@pytest.mark.parametrize("who", ["member", "app"])
+@pytest.mark.parametrize("method,path", UNMATCHED_ROUTES)
+@pytest.mark.parametrize("query", BYPASS_QUERIES)
+def test_mapped_route_query_cannot_open_the_catch_all(gateway, who, method, path, query):
+    before = _receipt_count(gateway)
+    response = _send(gateway, method, path, headers=gateway.headers[who], query=query)
+    _assert_not_found_without_dispatch(gateway, response, before)
+
+
+@pytest.mark.parametrize("who", ["member", "app"])
+@pytest.mark.parametrize("path", PREFIXED_KNOWN_ROUTES)
+@pytest.mark.parametrize("query", ["", "mapped_route=true"])
+def test_known_route_behind_unknown_prefix_does_not_dispatch(gateway, who, path, query):
+    before = _receipt_count(gateway)
+    response = _send(gateway, "POST", path, headers=gateway.headers[who], query=query)
+    _assert_not_found_without_dispatch(gateway, response, before)
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer oak_not_a_real_key"}])
+@pytest.mark.parametrize("query", ["", *BYPASS_QUERIES])
+def test_unauthenticated_catch_all_requests_get_401(gateway, headers, query):
+    response = _send(gateway, "GET", "/not-a-route", headers=headers, query=query)
+    assert response.status_code == 401, response.text
+    error = response.json()["error"]
+    assert (error["type"], error["code"]) == ("access_error", "key_invalid" if headers else "key_required")
+    assert gateway.calls == []
+
+
+# Per-device path tokens (/<token>/v1/...) are removed: a token-like prefix is
+# an unknown path that needs a key and never dispatches.
+
+@pytest.mark.parametrize("prefix", ["tok_device", "tok_wrong"])
+@pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/models"])
+def test_path_token_prefix_needs_a_key_and_never_dispatches(gateway, monkeypatch, prefix, path):
+    litellm_calls = []
+
+    async def no_litellm(*_args, **_kwargs):
+        litellm_calls.append(1)
+        raise RuntimeError("LiteLLM reached")
+
+    monkeypatch.setattr(proxy, "_handle_openai_litellm_request", no_litellm)
+    response = _send(gateway, "POST", f"/{prefix}{path}", query="mapped_route=true")
+    assert response.status_code == 401, response.text
+    assert response.json()["error"]["code"] == "key_required"
+    assert gateway.calls == [] and litellm_calls == []
+
+
+def test_mapped_route_is_not_a_catch_all_parameter():
+    route = next(
+        r for r in proxy.app.routes if getattr(r, "path", None) == "/{path:path}"
+    )
+    assert [p.name for p in route.dependant.query_params] == []

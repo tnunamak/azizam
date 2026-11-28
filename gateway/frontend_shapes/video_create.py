@@ -1,0 +1,429 @@
+"""Read POST /v1/videos into a declared run using manifest or configured facts.
+
+The checks retain the video wire's refusal order. Deployment hooks resolve media,
+probe sources and capture chain plans; the declared job runner submits the graph.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import math
+import time
+from collections.abc import Mapping
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
+
+from starlette.requests import Request
+from starlette.responses import Response
+
+from gateway import provenance, video_controls, video_grid, video_form, media_delivery
+from gateway.frontend_shapes import _wire
+from gateway.frontend_shapes._base import coerce
+from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE, detect_unknown_top_level_fields
+from gateway.video_extensions import STANDARD_VIDEO_CREATE_FIELDS
+from gateway.workflow_openapi import reference_input
+from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapshot, RequestSpool, RunRequest, WorkflowEntry
+
+if TYPE_CHECKING:
+    from gateway.frontend_shapes.shapes import OpenAIVideoCreate
+
+DEFAULT_SECONDS = 5.0
+FORM_TYPES = ("multipart/form-data", "application/x-www-form-urlencoded")
+MIN_BASE64_BYTES = 64               # a reference that is plain base64 must decode to more than this, as it always had to
+
+
+class _BytesUpload:
+    """A reference sent as text, shown to the spool as the file part it stands for."""
+
+    def __init__(self, data: bytes, filename: str, content_type: str | None) -> None:
+        self.filename, self.content_type, self._data = filename, content_type, data
+
+    async def read(self, size: int = -1) -> bytes:
+        data, self._data = self._data[:size] if size > 0 else self._data, self._data[size:] if size > 0 else b""
+        return data
+
+
+def refuse(status: int, message: str, *, param: str | None = None, code: str | None = None, kind: str = "invalid_request_error") -> Response:
+    """The old route's error object: ``param`` and ``code`` are present only when set."""
+    extra = {"param": param} if param else {}
+    return _wire.error_response(status, message, kind=kind, code=code, **extra)
+
+
+def short_name(entry: WorkflowEntry) -> str:
+    """The name the old route showed for a workflow in its answers and messages: the manifest's own name (its id without the
+    intent) under its capability, kept as a spelling of its own (not read back from the id) so a caller's text does not move."""
+    own = entry.id.removeprefix(f"{entry.contract.get('intent')}.")
+    return entry.contract.get("compatibility_name") or f"{entry.contract.get('capability')}-{own}"
+
+
+def _reference_input(entry: WorkflowEntry) -> str | None:
+    """The contract input carried by the video-create protocol's async request map."""
+    record = SimpleNamespace(id=entry.id, intent=entry.contract["intent"], contract=entry.contract)
+    return reference_input(record, "async")
+
+
+def _reference_bytes(value: Any) -> tuple[bytes, str, str | None] | None:
+    """The bytes of a reference sent as a ``data:`` URI or plain base64; None for any other kind of reference."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.startswith("data:"):
+        header, _, payload = text.partition(",")
+        mime = header[5:].split(";", 1)[0].strip().lower() or None
+        try:
+            return base64.b64decode(payload, validate=False), f"input_reference.{(mime or 'image/png').rpartition('/')[2] or 'png'}", mime
+        except (binascii.Error, ValueError):
+            return None
+    try:
+        data = base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return (data, "input_reference.png", None) if len(data) >= MIN_BASE64_BYTES else None
+
+
+async def read_body(shape: OpenAIVideoCreate, request: Request) -> dict[str, Any] | Response:
+    """Cache the parsed body so an upload stream is consumed once."""
+    cached = getattr(request.state, "video_body", None)
+    if cached is None:
+        cached = request.state.video_body = await _parse_body(request)
+    return cached
+
+
+async def _parse_body(request: Request) -> dict[str, Any] | Response:
+    content_type = request.headers.get("content-type", "")
+    if any(kind in content_type for kind in FORM_TYPES):
+        try:
+            return await video_form.read_video_form_body(request)
+        except video_form.VideoFormParseError as exc:
+            return refuse(400, str(exc), param=exc.param, code="unknown_parameter" if exc.param else None)
+    try:
+        parsed = json.loads(await request.body() or b"")
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return Response(content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
+                        status_code=400, media_type="application/json")
+    return parsed if isinstance(parsed, dict) else _wire.error_response(400, "Request body must be a JSON object")
+
+
+def _workflow_block(body: Mapping[str, Any]) -> Mapping[str, Any]:
+    extensions = body.get("extensions")
+    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else extensions
+    if not isinstance(block, Mapping):
+        return {}
+    return {k: v for k, v in block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS}
+
+
+def _is_asset(entry: WorkflowEntry, name: str) -> bool:
+    return ((entry.contract.get("inputs") or {}).get(name) or {}).get("type") == "asset"
+
+
+def _beyond(seconds: Any, limit: float) -> bool:
+    try:
+        return seconds is not None and float(seconds) > limit
+    except (TypeError, ValueError):
+        return False
+
+
+Picked = tuple[WorkflowEntry, "video_grid.VideoManifest", str, str]
+
+
+def _old_spelling(snapshot: RegistrySnapshot, row: FrontendRow, name: str) -> str:
+    """A caller may still send a workflow under the key the old route knew, its short name with the capability in front
+    (``<capability>-<short id>``). It names the same workflow as the short id, so it resolves there when it names nothing itself."""
+    if not name or snapshot.names.owner("workflow", name) is not None or snapshot.names.owner("workflow_alias", name) is not None:
+        return name
+    for entry in _wire.candidates(snapshot, row, None, include_closed=True):
+        if name == short_name(entry):
+            return entry.id
+    return name
+
+
+def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, snapshot: RegistrySnapshot,
+           hooks: Any) -> Picked | Response:
+    """Select the workflow from the body and registry before a receipt opens."""
+    named = body.get("model") or shape.default_target()
+    if named is not None and not isinstance(named, str):
+        return refuse(400, "model must be a string", param="model")
+    public_model = str(named) if named is not None else ""
+    resolved = hooks.resolve_model(public_model)
+    if isinstance(resolved, Response):
+        return resolved
+    chosen = _wire.choose_workflow(snapshot, row, target=_old_spelling(snapshot, row, resolved) or None, supplied=["prompt"],
+                                   not_found=lambda target: refuse(404, f"Model '{public_model}' is not available for video generation.",
+                                                                   param="model", code="model_not_found"))
+    if isinstance(chosen, Response):
+        return chosen
+    manifest = hooks.facts(chosen)
+    reference = body.get("input_reference")
+    if manifest is None or manifest.length is None:
+        return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
+    if manifest.chain:
+        return chosen, manifest, short_name(chosen), public_model
+    if reference:
+        eligible = video_grid.reference_variants(manifest, snapshot.get, hooks.reference_input, hooks.facts)
+        # Defensive only: a registry that passed check_video_variants cannot reach this branch.
+        if len(eligible) > 1:
+            return refuse(500,
+                          f"{chosen.id}: multiple variants accept the reference: {sorted(entry.id for entry, _ in eligible)!r}",
+                          code="registry_conflict")
+        if eligible:
+            chosen, manifest = eligible[0]
+            closed = _wire.closed_response(chosen)
+            if closed is not None:
+                return closed
+    # Every selected reference variant has passed the same section schema as the
+    # initial workflow: length, grid and size are mandatory registry facts.
+    target = hooks.reference_input(chosen)
+    reference_roles = {
+        role for role in manifest.requires
+        if target is not None and manifest.roles.get(role, role) == target
+    }
+    name = short_name(chosen)
+    if reference_roles and not reference:
+        return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
+    seconds = body.get("seconds")
+    limit = manifest.length.max_seconds
+    shots = body.get("shots") is not None
+    long_id = manifest.variants.get("long")
+    if shots or (_beyond(seconds, limit) and long_id):
+        if long_id:
+            chosen = snapshot.get(long_id)
+            if chosen is None:
+                return refuse(404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found")
+            closed = _wire.closed_response(chosen)
+            if closed is not None:
+                return closed
+            manifest = hooks.facts(chosen)
+            return chosen, manifest, short_name(chosen), public_model
+        return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
+                      param="shots", code="long_video_not_supported")
+    return chosen, manifest, name, public_model
+
+
+def needs_resolution(entry, body, manifest, target):
+    """Inputs that need workflow validation or asset resolution beyond inline bytes."""
+    reference = body.get("input_reference")
+    block = _workflow_block(body)
+    reference_roles = {role for role in manifest.requires if target is not None and manifest.roles.get(role, role) == target}
+    return bool((manifest.requires - reference_roles - {"extensions"}) or manifest.select_subject or body.get("inputs")
+                or ("extensions" in manifest.requires and not block)
+                or (reference is not None and (target is None or _reference_bytes(reference) is None))
+                or any(not _wire.declared(entry, key) or _is_asset(entry, key) for key in block))
+
+
+async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
+                         spool: RequestSpool) -> RunRequest | Response:
+    result = await _to_run_request(shape, request, row, snapshot, spool=spool)
+    if isinstance(result, Response) and result.status_code >= 400:
+        _wire.fact("status_code", result.status_code)      # the old route's receipt keeps the status of every refusal it gave
+    return result
+
+
+async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
+                          spool: RequestSpool) -> RunRequest | Response:
+    from gateway.frontend_shapes import shapes
+    hooks = shapes.VIDEO_HOOKS or shapes.VideoHooks()
+    caller = getattr(request.state, "caller", None)
+    request.state.input_notes = _wire.begin_notes()
+    request.state.receipt_facts = _wire.begin_facts()
+    body = await read_body(shape, request)
+    if isinstance(body, Response):
+        return body
+    unknown = detect_unknown_top_level_fields(body, STANDARD_VIDEO_CREATE_FIELDS)
+    if unknown:
+        name, reason = next(iter(unknown.items()))
+        return refuse(400, reason, param=name, code="unknown_parameter")
+    try:
+        controls = video_controls.parse_video_controls(body)
+    except video_controls.VideoControlError as exc:
+        return refuse(400, str(exc), param=exc.param, code="invalid_video_control")
+    refused = hooks.begin_delivery(caller, body)
+    if refused is not None:
+        return refused
+    raw_prompt = body.get("prompt")
+    if raw_prompt is not None and not isinstance(raw_prompt, str):
+        return refuse(400, "prompt must be a string", param="prompt")
+    prompt = (raw_prompt or "").strip()
+    if not prompt and body.get("shots") is None:
+        return refuse(400, "prompt is required")
+    picked = select(shape, body, row, snapshot, hooks)
+    if isinstance(picked, Response):
+        return picked
+    chosen, manifest, name, public_model = picked
+    if manifest.chain:
+        return await hooks.chain_request(request, body, row, chosen, public_model, snapshot)
+    prepared = await hooks.prepare_inputs(request, body, chosen)
+    if isinstance(prepared, Response):
+        return prepared
+    body = prepared["body"]
+    probe = prepared["probe"]
+    reference, seconds = body.get("input_reference"), body.get("seconds")
+
+    grid, limits = manifest.grid, manifest.length
+    try:
+        if seconds is not None:
+            seconds_value = float(seconds)
+        elif probe is not None:
+            cfg = prepared["config"]
+            seconds_value = min(float(cfg.get("default_seconds", limits.max_seconds)), limits.max_seconds, probe.frames / probe.fps)
+        else:
+            seconds_value = min(limits.default_seconds or DEFAULT_SECONDS, limits.max_seconds)
+    except (TypeError, ValueError):
+        return refuse(400, "seconds must be a number")
+    if not math.isfinite(seconds_value):
+        return refuse(400, "seconds must be a number")
+    if seconds_value < limits.min_seconds or seconds_value > limits.max_seconds:
+        return refuse(400, f"seconds must be between {float(limits.min_seconds)} and {float(limits.max_seconds)} for model {name}")
+    if probe is not None and seconds_value > probe.frames / probe.fps + 0.05:
+        return refuse(400, f"seconds ({seconds_value:g}) is longer than the source video ({probe.frames / probe.fps:.2f} s)", param="seconds")
+    if body.get("size") is not None and not isinstance(body["size"], str):
+        return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
+    width, height = video_grid.resolve_size(body.get("size"), manifest.size)
+    roles = manifest.roles
+    block = _workflow_block(body)
+    unknown_inputs = [key for key in block if not _wire.declared(chosen, key)]
+    if unknown_inputs:
+        return refuse(400, "unknown input", param=unknown_inputs[0], code="invalid_workflow_extension")
+    # The frame rate the run uses is resolved once: the workflow's own, or the typed one the caller sent as an extension. The
+    # frame count, the recorded duration, the engine input, the facts and the options all take this one value.
+    rate_key = roles.get("frame_rate", "frame_rate")
+    frame_rate = float(probe.fps if probe is not None else grid.fps)
+    if block.get(rate_key) is not None:
+        try:
+            frame_rate = float(coerce(chosen, rate_key, block[rate_key]))
+        except (TypeError, ValueError):
+            frame_rate = math.nan
+        if not math.isfinite(frame_rate) or frame_rate <= 0:
+            return refuse(400, f"{rate_key} must be a positive number", param=rate_key)
+    length = video_grid.frame_count(seconds_value, frame_rate, grid)
+    if probe is not None or prepared["config"].get("max_length"):
+        from gateway import video_inputs
+        cap = prepared["config"].get("max_length")
+        length = video_inputs.snap_length_down(length, step=grid.step, offset=grid.offset,
+            available=min([int(value) for value in (cap, probe.frames if probe is not None else None) if value] or [length]))
+    chosen_length = block.get(roles.get("length", "length"))
+    if chosen_length is not None:                    # the manifest's own length input (frames) wins over seconds, as it always did
+        try:
+            length = int(chosen_length)
+        except (TypeError, ValueError):
+            return refuse(400, f"{roles['length']} must be an integer", param=roles["length"])
+    actual_seconds = round(length / frame_rate, 4)
+    # An omitted seed stays out of the request: the core draws it once, inside the claimed transaction, so two requests that
+    # differ only by a missing seed are one request for the idempotency key. The drawn value reaches the facts by a ref.
+    seed: int | None = None
+    if body.get("seed") is not None:
+        try:
+            seed = int(body["seed"])
+        except (TypeError, ValueError):
+            seed = None
+    size = f"{width}x{height}"
+    seconds_text = str(int(seconds_value)) if seconds_value.is_integer() else str(seconds_value)
+
+    media = await hooks.resolve_inputs(request, prepared, chosen, spool)
+    if isinstance(media, Response):
+        return media
+    inputs: dict[str, Any] = {"prompt": prompt}
+    if seed is not None:
+        inputs["seed"] = seed
+
+    def put(role: str, value: Any) -> None:
+        target = roles.get(role, role)
+        if _wire.declared(chosen, target):
+            inputs[target] = value
+
+    put("width", width)
+    put("height", height)
+    put("length", length)
+    put("frame_rate", int(frame_rate) if frame_rate.is_integer() else frame_rate)
+    edge_only = {name for binding in chosen.contract.get("bindings", {}).values() for name in binding.get("edge_only_inputs", ())}
+    for key, value in block.items():
+        if _wire.declared(chosen, key) and key not in edge_only and not _is_asset(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height"), rate_key):
+            inputs[key] = coerce(chosen, key, value)
+    # This wire writes number nodes as floats. Keep that choice out of the
+    # generic compiler and the other frontend shapes, including JSON integers.
+    for key, spec in chosen.contract.get("inputs", {}).items():
+        if spec.get("type") == "number":
+            value = inputs.get(key, spec.get("default"))
+            if type(value) in (int, float):
+                inputs[key] = float(value)
+    if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
+        inputs["negative_prompt"] = body["negative_prompt"]
+    if reference is not None:
+        target = hooks.reference_input(chosen)
+        if target not in media:
+            decoded = _reference_bytes(reference)
+            if target is None or decoded is None:
+                return refuse(400, "input_reference could not be resolved", param="input_reference")
+            refused_reference = hooks.check_reference(caller, decoded[0], chosen.contract, target)
+            if refused_reference is not None:
+                return refused_reference
+            staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
+            if isinstance(staged, Response):
+                return staged
+            media = {**media, **staged}
+        if body.get("image_strength") is not None:
+            try:
+                put("image_strength", max(0.0, min(1.0, float(body["image_strength"]))))
+            except (TypeError, ValueError):
+                put("image_strength", 1.0)
+
+    # Required secondary assets are workflow-extension checks, after seconds, size and the primary reference.
+    for missing in _wire.asset_input_names(chosen):
+        if missing not in media and _wire.entry_required(chosen, missing) is True and missing not in block:
+            return refuse(400, f"{missing} is required for this model", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{missing}")
+
+    audio_off = controls.get(video_controls.AUDIO_CONTROL) is False
+    context = media_delivery.current()
+    now = int(time.time())
+    parameters = {**(context.parameters if context else {}), "size": size, "seconds": seconds_text,
+                  "actual_seconds": actual_seconds, "length_frames": length}
+    _wire.fact("requested_model", public_model)              # the receipt names the model the caller asked for
+    facts: dict[str, Any] = {
+        "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
+        "length_frames": length, "frame_rate": frame_rate,
+        "provenance": provenance.build_provenance_record(
+            receipt=context.receipt if context else None,
+            kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
+            backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
+            seed=seed, parameters=parameters, created_at=now)}
+    if prepared.get("wire_frame_rate"):
+        facts["duration_adjustment_reason"] = video_grid.stride_reason(grid.step)
+    if seed is not None:
+        facts["seed"] = seed
+    refs: list[FactRef] = []
+    if seed is None:
+        refs += [FactRef(("seed",), f"generated:{roles.get('seed', 'seed')}"), FactRef(("provenance", "seed"), f"generated:{roles.get('seed', 'seed')}")]
+    if audio_off:
+        facts[video_controls.AUDIO_CONTROL] = False
+    if context is not None and context.requested_mode:
+        facts["metadata_mode"] = context.requested_mode
+    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate, **hooks.run_options(chosen, frame_rate, prepared)}
+    if prepared.get("wire_frame_rate"):
+        options["record_asset_kind"] = True
+    if prepared.get("preserve_names"):
+        options["input_filenames"] = {name: refs[0].filename for name, refs in media.items() if refs[0].filename}
+        options["input_order"] = list(prepared["assets"])
+    if manifest.select_subject:
+        options["subject_plan"] = {"block": {key: value for key, value in block.items() if not _is_asset(chosen, key)}, "roles": prepared["config"].get("node_roles") or {},
+                                   "width": width, "height": height}
+    if audio_off:
+        options[video_controls.AUDIO_CONTROL] = False
+    request.state.video_facts = facts
+    request.state.video_prompt = prompt
+    extensions = body.get("extensions")
+    if isinstance(extensions, Mapping):
+        extensions = dict(extensions)
+        workflow_inputs = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+        if isinstance(workflow_inputs, Mapping):
+            extensions[WORKFLOW_EXTENSION_NAMESPACE] = {key: value for key, value in workflow_inputs.items() if not _is_asset(chosen, key)}
+    from gateway.frontend_shapes._base import IDEMPOTENCY_HEADER
+    return RunRequest(
+        workflow_id=chosen.id, inputs=inputs, media=media,
+        sources={name: () for name in media},      # the reference is temporary: the Library keeps no note of it, as the old route did
+        options=options, facts=facts,
+        idempotency_key=request.headers.get(IDEMPOTENCY_HEADER) or None, frontend_id=row.id,
+        failure_text=row.job_failure_text, retries=row.job_retries,
+        extensions=dict(extensions) if isinstance(extensions, Mapping) else {},
+        prompt_retention=hooks.prompt_retention(caller, body), fact_refs=tuple(refs),
+        job_record={"metadata": {"keep_engine_prompt": True, "engine_progress": True}})        # a delete later asks the engine to forget this prompt; the status shows the engine's progress

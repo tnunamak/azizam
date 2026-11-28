@@ -1,0 +1,232 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { ViewerContext, type Viewer } from "@/components/shell/session";
+import PeoplePage from "./page";
+
+const owner: Viewer = { authenticated: true, id: "avery", name: "Avery", email: null, role: "owner", admin: true };
+const people = [
+  { id: "avery", name: "Avery", email: "avery@example.test", plan_id: "all", plan_name: "Everything", disabled: false,
+    last_active: null, requests_this_month: null, protected: true, role: "owner" },
+  { id: "sam", name: "Sam", email: "sam@example.test", plan_id: "chat", plan_name: "Chat only", disabled: false,
+    last_active: null, requests_this_month: null, role: "member" },
+  { id: "kim", name: "Kim", email: "kim@example.test", plan_id: null, plan_name: null, disabled: false,
+    last_active: null, requests_this_month: null, role: "member" },
+];
+const app = (over: Record<string, unknown>) => ({
+  kind: "service", owner_user_id: "sam", accountable_person: { id: "sam", name: "Sam" }, access_plan: "person",
+  same_as_person: true, access_plan_name: null, effective_access_plan_id: "chat", created_at: 1, disabled_at: null,
+  ...over,
+});
+
+beforeAll(() => {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.setPointerCapture ??= () => undefined;
+  Element.prototype.releasePointerCapture ??= () => undefined;
+  Element.prototype.scrollIntoView ??= () => undefined;
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+type PlanFixture = { id: string; name: string; summary?: string };
+
+function serve(
+  apps: Array<Record<string, unknown>>,
+  options: { people?: typeof people; plans?: PlanFixture[] } = {},
+) {
+  const shownPeople = options.people ?? people;
+  const plans = options.plans ?? [];
+  const calls: Array<{ method: string; path: string; body: unknown }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      if (method !== "GET") {
+        calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : null });
+        if (method === "PATCH" && path.includes("/admin/api/apps/")) {
+          const moved = apps.find((item) => path.endsWith(String(item.id)));
+          if (moved) moved.owner_user_id = "kim";
+          return Response.json({ app: moved });
+        }
+        return Response.json({ ok: true });
+      }
+      if (path.endsWith("/me/api/session") || path.endsWith("/admin/api/session"))
+        return Response.json({
+          authenticated: true,
+          apps: [],
+          actor: { subject: "avery", email: null, roles: ["owner"], csrf_token: "test-token" },
+        });
+      if (path.endsWith("/admin/api/people")) return Response.json({ people: shownPeople, access_plans: plans });
+      if (path.endsWith("/admin/api/apps")) return Response.json({ apps });
+      if (path.endsWith("/admin/api/invites"))
+        return Response.json({ invites: [], access_plans: [], invite_access_plan: null });
+      if (path.endsWith("/admin/api/access-plans")) return Response.json({ access_plans: plans });
+      return Response.json({});
+    }),
+  );
+  return calls;
+}
+
+function renderPeople(viewer: Viewer = owner) {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ViewerContext.Provider value={viewer}>
+        <PeoplePage />
+      </ViewerContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
+async function openMenu(user: ReturnType<typeof userEvent.setup>, item: string) {
+  await user.click(await screen.findByRole("button", { name: "Actions for Sam" }));
+  await user.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+const replacementPlan = { id: "chat", name: "Chat only", summary: "Chat preview" };
+const oldSam = people.map((person) =>
+  person.id === "sam" ? { ...person, plan_id: "old", plan_name: "Retired plan" } : person,
+);
+
+it("won't save an old plan missing from the displayed choices", async () => {
+  const calls = serve([], { people: oldSam, plans: [replacementPlan] });
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Change access plan");
+  const dialog = within(await screen.findByRole("dialog", { name: "Change access plan" }));
+  const save = dialog.getByRole("button", { name: "Save access plan" });
+  expect(save).toBeDisabled();
+  expect(dialog.queryByText("Chat preview")).not.toBeInTheDocument();
+  await user.click(save);
+  expect(calls).toEqual([]);
+});
+
+it("describes which apps follow the person and saves the selected listed plan", async () => {
+  const calls = serve([], { people: oldSam, plans: [replacementPlan] });
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Change access plan");
+  const dialog = within(await screen.findByRole("dialog", { name: "Change access plan" }));
+  expect(dialog.getByText(/Apps that follow this person use the new plan\. Apps with their own plan keep it\./)).toBeVisible();
+  await user.click(dialog.getByRole("combobox", { name: "Access plan" }));
+  await user.click(await screen.findByRole("option", { name: "Chat only" }));
+  expect(dialog.getByText("Chat preview")).toBeVisible();
+  await user.click(dialog.getByRole("button", { name: "Save access plan" }));
+  await waitFor(() => expect(calls).toEqual([
+    expect.objectContaining({ path: "/admin/api/people/sam", body: { access_plan: "chat" } }),
+  ]));
+});
+
+it("lists the service apps a removal will stop, each with a way to move it first, and not personal apps", async () => {
+  serve([
+    app({ id: "door", name: "Door camera" }),
+    app({ id: "laptop", name: "Laptop", kind: "personal" }),
+    app({ id: "elsewhere", name: "Kim's bot", owner_user_id: "kim" }),
+  ]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Remove person");
+  const dialog = within(await screen.findByRole("dialog", { name: "Remove person?" }));
+  const list = await dialog.findByRole("list", { name: "Service apps that will stop" });
+  expect(within(list).getByText("Door camera")).toBeVisible();
+  expect(within(list).queryByText("Laptop")).toBeNull();
+  expect(within(list).queryByText("Kim's bot")).toBeNull();
+  expect(within(list).getByRole("button", { name: "Move to another person first" })).toBeVisible();
+});
+
+it("names the plan a service app that follows its person has, from the current People list", async () => {
+  serve([app({ id: "door", name: "Door camera" }), app({ id: "gate", name: "Gate", same_as_person: false, access_plan_name: "Cameras" })]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Remove person");
+  const list = within(await within(await screen.findByRole("dialog", { name: "Remove person?" })).findByRole("list", { name: "Service apps that will stop" }));
+  expect(list.getByText("Same as its person: Chat only")).toBeVisible();
+  expect(list.getByText("Cameras")).toBeVisible();
+});
+
+it("names the service apps a suspension stops", async () => {
+  serve([app({ id: "door", name: "Door camera" })]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Disable access");
+  const dialog = within(await screen.findByRole("dialog", { name: "Disable access?" }));
+  expect(await dialog.findByText("Door camera")).toBeVisible();
+});
+
+it("shows no list when the person answers for no service app", async () => {
+  serve([app({ id: "elsewhere", name: "Kim's bot", owner_user_id: "kim" })]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Remove person");
+  const dialog = within(await screen.findByRole("dialog", { name: "Remove person?" }));
+  await waitFor(() => expect(dialog.queryByText("These service apps will stop")).toBeNull());
+});
+
+it("moves a service app to another person after showing the plan it will have, then drops it from the list", async () => {
+  const calls = serve([app({ id: "door", name: "Door camera", live_keys: 2, trusted_addresses: 1 })]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Remove person");
+  const removal = within(await screen.findByRole("dialog", { name: "Remove person?" }));
+  await user.click(await removal.findByRole("button", { name: "Move to another person first" }));
+  const move = within(await screen.findByRole("dialog", { name: "Who does Door camera answer to?" }));
+  // The leaving person and anyone without access are not choices.
+  await user.click(move.getByRole("combobox", { name: "Answers to" }));
+  expect(screen.queryByRole("option", { name: "Sam" })).toBeNull();
+  await user.click(await screen.findByRole("option", { name: "Kim" }));
+  expect(move.getByText(/Kim has no access plan/)).toBeVisible();
+  // The confirmation says plainly what stops now and who makes the new key.
+  expect(
+    await move.findByText("Its 2 keys stop now and its trusted address is removed. Kim makes a new key on Apps & keys."),
+  ).toBeVisible();
+  await user.click(move.getByRole("button", { name: "Move app" }));
+  await waitFor(() =>
+    expect(calls).toContainEqual({ method: "PATCH", path: "/admin/api/apps/door", body: { owner_user_id: "kim" } }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Who does Door camera answer to?" })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("list", { name: "Service apps that will stop" })).toBeNull());
+});
+
+async function pickInMove(counts: Record<string, unknown>, person: string) {
+  serve([app({ id: "door", name: "Door camera", ...counts })]);
+  renderPeople();
+  const user = userEvent.setup();
+  await openMenu(user, "Remove person");
+  const removal = within(await screen.findByRole("dialog", { name: "Remove person?" }));
+  await user.click(await removal.findByRole("button", { name: "Move to another person first" }));
+  const move = within(await screen.findByRole("dialog", { name: "Who does Door camera answer to?" }));
+  await user.click(move.getByRole("combobox", { name: "Answers to" }));
+  await user.click(await screen.findByRole("option", { name: person }));
+  return move;
+}
+
+it("says nothing about stopping when the app has no keys and no trusted addresses", async () => {
+  const move = await pickInMove({ live_keys: 0, trusted_addresses: 0 }, "Kim");
+  expect(await move.findByTestId("handover-stops")).toHaveTextContent(/^Kim makes a new key on Apps & keys\.$/);
+});
+
+it("uses the singular for one key and the plural for several trusted addresses, and says only what applies", async () => {
+  const one = await pickInMove({ live_keys: 1, trusted_addresses: 0 }, "Kim");
+  expect(await one.findByTestId("handover-stops")).toHaveTextContent(/^Its key stops now\. Kim makes a new key/);
+  cleanup();
+  const many = await pickInMove({ live_keys: 0, trusted_addresses: 2 }, "Kim");
+  expect(await many.findByTestId("handover-stops")).toHaveTextContent(
+    /^Its 2 trusted addresses are removed\. Kim makes a new key/,
+  );
+});
+
+it("writes 'You' and 'your plan' when the person picked is the viewer", async () => {
+  const move = await pickInMove({ live_keys: 2, trusted_addresses: 0 }, "Avery");
+  expect(await move.findByTestId("handover-stops")).toHaveTextContent(
+    "Its 2 keys stop now. You make a new key on Apps & keys.",
+  );
+  expect(move.getByText("Door camera will run under your plan: Everything.")).toBeVisible();
+});

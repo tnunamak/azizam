@@ -1,0 +1,7 @@
+{
+  "protocol": "openai-compatible",
+  "name": "no-calls",
+  "description": "An upstream that expects no request at all: any call is a 599 and a latched violation.",
+  "provenance": {"source": "hand-written", "reference": "TEST_STRATEGY 4.6 (fail closed)"},
+  "exchanges": []
+}

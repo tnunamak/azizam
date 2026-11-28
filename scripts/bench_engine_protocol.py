@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""Overhead of the http-v1 mapping against a hand-written mapping of the same request.
+
+Measures, with best-of-N timing (the minimum is the least noisy estimate on a loaded host):
+- request mapping per call: compiled Program.apply vs a hand-written function (and the JSON write that follows both)
+- response mapping per call
+- per streamed event: SSE decode + JSON parse + map, vs hand-written; and the unmapped relay path (decode only)
+- one whole executor.invoke on an in-memory transport vs the same steps written by hand
+
+Run:  ./venv/bin/python scripts/bench_engine_protocol.py [--json]
+The numbers recorded in gateway/engine_protocol/executor.py come from this script.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+import timeit
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from gateway.engine_protocol import description, framing, mapping, pointer  # noqa: E402
+from gateway.engine_protocol.errors import BudgetExceeded  # noqa: E402
+from gateway.engine_protocol.executor import HttpV1Executor  # noqa: E402
+from gateway.engine_protocol.transport import WireRequest  # noqa: E402
+from gateway.engine_protocol.types import CanonicalRequest, Connection  # noqa: E402
+
+ACME = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "engine_protocol" / "acme" / "acme.yml"
+MESSAGES = [{"role": "user" if i % 2 == 0 else "assistant", "content": "Some text of a typical message, about sixty characters long."} for i in range(20)]
+BODY = {"model": "acme-1", "messages": MESSAGES, "temperature": 0.7, "max_tokens": 256, "stream": False, "ignored": True}
+UPSTREAM = {"result": {"id": "cv-1", "model": "acme-1", "output": {"text": "Hello there, this is the answer."}, "why": "eos"}, "meter": {"in": 120, "out": 9}}
+FINISH = {"eos": "stop", "cap": "length", "filter": "content_filter"}
+
+
+def hand_request(body: dict) -> dict:
+    out = {"engine": {"model": body["model"]}, "input": {"turns": body["messages"]}, "delivery": "live" if body.get("stream") is True else "once"}
+    if "temperature" in body:
+        t = body["temperature"]
+        out["sampling"] = {"t": 0 if t < 0 else 2 if t > 2 else t}
+    if "max_tokens" in body:
+        out.setdefault("sampling", {})["max_new"] = body["max_tokens"]
+    return out
+
+
+SMALL_RULES = [
+    {"copy": {"from": "/body/model", "to": "/model"}},
+    {"rename": {"from": "/max_tokens", "to": "/max_new"}},
+    {"default": {"to": "/stream", "value": False}},
+    {"drop": {"path": "/user"}},
+    {"clamp": {"path": "/temperature", "min": 0, "max": 1}},
+]
+SMALL_BODY = {"model": "acme-1", "max_tokens": 64, "temperature": 1.7, "user": "u-1", "messages": [{"role": "user", "content": "hi"}]}
+
+
+def hand_small(body: dict, deep: bool = False) -> dict:
+    """The same five rules, written by hand over a passthrough copy (``deep``: copy every container, as the executor does)."""
+    out = pointer.clone(body) if deep else dict(body)
+    out["model"] = body["model"]
+    if "max_tokens" in out:
+        out["max_new"] = out.pop("max_tokens")
+    if "stream" not in out:
+        out["stream"] = False
+    out.pop("user", None)
+    t = out.get("temperature")
+    if t is not None:
+        out["temperature"] = 0 if t < 0 else 1 if t > 1 else t
+    return out
+
+
+def hand_response(up: dict) -> dict:
+    r = up["result"]
+    out = {"object": "chat.completion", "id": r["id"], "model": r["model"],
+           "choices": [{"index": 0, "message": {"role": "assistant", "content": r["output"]["text"]}, "finish_reason": FINISH[r["why"]]}]}
+    out["usage"] = {"prompt_tokens": up["meter"]["in"], "completion_tokens": up["meter"]["out"]}
+    return out
+
+
+def hand_event(line: bytes) -> dict:
+    d = json.loads(line)
+    out = {"object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"content": d["delta"]}, "finish_reason": None}]}
+    if d.get("done") is True:
+        out["choices"][0]["finish_reason"] = FINISH[d["why"]]
+        out["usage"] = {"prompt_tokens": d["meter"]["in"], "completion_tokens": d["meter"]["out"]}
+    return out
+
+
+def best(fn, number: int, repeat: int = 9, scale: float = 1.0) -> float:
+    """Microseconds per call, best of ``repeat`` runs of ``number`` calls (``scale`` shortens the runs)."""
+    number = max(1, int(number * scale))
+    return min(timeit.repeat(fn, number=number, repeat=repeat)) / number * 1e6
+
+
+class NullTransport:
+    def __init__(self, answer: bytes) -> None:
+        self.answer = answer
+
+    async def send(self, request: WireRequest, timeouts):
+        answer = self.answer
+
+        class Response:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            async def chunks(self_inner):
+                yield answer
+
+            async def aclose(self_inner):
+                return None
+        return Response()
+
+
+def measure(scale: float = 1.0) -> dict[str, dict[str, float]]:
+    """Time every case; ``scale`` below 1 shortens the runs (the tests use it), at the cost of noisier numbers."""
+    desc = description.parse_description_text(ACME.read_text(), source="acme.yml")
+    chat = desc.operations["chat"]
+    req_program = chat.request.body.program
+    resp_program = chat.response.program
+    stream_program = chat.response.stream.program
+    source = {"body": BODY, "params": {}, "files": {}}
+    up_source = {"body": UPSTREAM, "status": 200, "headers": {}, "params": {}, "event": None}
+    dumps = lambda doc: json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode()  # noqa: E731
+    lines = [b'{"delta":"Hel","done":false}', b'{"delta":"lo","done":false}', b'{"delta":"","done":true,"why":"eos","meter":{"in":5,"out":2}}']
+    wire = b"".join(b"data: " + line + b"\n\n" for line in lines)
+    event_source = {"body": None, "status": 200, "headers": {}, "params": {}, "event": None}
+
+    def mapped_events() -> None:
+        decoder = framing.SseDecoder(1 << 20)
+        for ev in decoder.feed(wire):
+            event_source["body"] = json.loads(ev.data)
+            stream_program.apply(event_source)
+
+    def hand_events() -> None:
+        for chunk in wire.split(b"\n\n")[:-1]:
+            hand_event(chunk[6:])
+
+    def relay_events() -> None:
+        for ev in framing.SseDecoder(1 << 20).feed(wire):
+            _ = ev.data
+
+    def relay_hand() -> None:
+        for chunk in wire.split(b"\n\n")[:-1]:
+            chunk[6:]
+
+    small = mapping.build(SMALL_RULES, base="passthrough", roots=mapping.REQUEST_ROOTS)
+    small_source = {"body": SMALL_BODY, "params": {}, "files": {}}
+    bare = mapping.build([], base="passthrough", roots=mapping.REQUEST_ROOTS)
+    n_events = len(lines)
+    conn = Connection(address="http://engine.test:9100")
+    executor = HttpV1Executor(desc, transport=NullTransport(json.dumps(UPSTREAM).encode()))
+
+    def whole_executor() -> None:
+        asyncio.run(executor.invoke(conn, CanonicalRequest(op="chat", body=BODY)))
+
+    async def hand_whole_async() -> None:
+        request = dumps(hand_request(BODY))
+        reply = hand_response(json.loads(json.dumps(UPSTREAM).encode()))
+        del request, reply
+
+    def hand_whole() -> None:
+        asyncio.run(hand_whole_async())
+
+    from gateway.engine_protocol.dispatch import Runtime, Target
+    offering = {"id": "benchmark-chat", "upstream": BODY["model"]}
+    service = {"config": {"connection": {"address": conn.address, "protocol": desc.id}, "offerings": [offering]}}
+    target = Target("benchmark", service, offering, desc)
+
+    def whole_record_runtime() -> None:
+        runtime = Runtime(target, transport=NullTransport(json.dumps(UPSTREAM).encode()))
+        asyncio.run(runtime.invoke("chat", BODY))
+
+    rows = {
+        "passthrough, no rules": (best(lambda: bare.apply(small_source), 100000, scale=scale), best(lambda: SMALL_BODY, 100000, scale=scale)),
+        "5 rules, hand-written shares containers": (best(lambda: small.apply(small_source), 50000, scale=scale), best(lambda: hand_small(SMALL_BODY), 50000, scale=scale)),
+        "5 rules, hand-written copies as it does": (best(lambda: small.apply(small_source), 50000, scale=scale), best(lambda: hand_small(SMALL_BODY, True), 50000, scale=scale)),
+        "request map (20 messages)": (best(lambda: req_program.apply(source), 20000, scale=scale), best(lambda: hand_request(BODY), 20000, scale=scale)),
+        "request map + JSON write": (best(lambda: dumps(req_program.apply(source)), 10000, scale=scale), best(lambda: dumps(hand_request(BODY)), 10000, scale=scale)),
+        "response map": (best(lambda: resp_program.apply(up_source), 50000, scale=scale), best(lambda: hand_response(UPSTREAM), 50000, scale=scale)),
+        "SSE event, parsed and mapped": (best(mapped_events, 20000, scale=scale) / n_events, best(hand_events, 20000, scale=scale) / n_events),
+        "SSE event, relayed unparsed": (best(relay_events, 50000, scale=scale) / n_events, best(relay_hand, 50000, scale=scale) / n_events),
+        "whole invoke (loop + stub transport)": (best(whole_executor, 500, 7, scale=scale), best(hand_whole, 500, 7, scale=scale)),
+        "record connection + whole invoke": (best(whole_record_runtime, 500, 7, scale=scale), best(hand_whole, 500, 7, scale=scale)),
+    }
+    return {name: {"executor_us": round(a, 3), "hand_written_us": round(b, 3), "ratio": round(a / b, 2)} for name, (a, b) in rows.items()}
+
+
+def measure_each(scale: float = 1.0) -> dict[str, dict[str, float]]:
+    """Array maps + JSON writes; both paths enforce the same safety/ownership contract.
+
+    The hand implementation uses direct field access, with independent deadline
+    and cumulative selection accounting. Both include input/output depth checks,
+    incremental element bytes, final envelope bytes, and the identical JSON write.
+    Best of five; compile/build and fixtures are outside the timed region.
+    """
+    from gateway.engine_protocol.budgets import DEFAULT_BUDGETS as budgets
+    from gateway.engine_protocol.errors import BudgetExceeded, MappingError
+
+    def dumps(value):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    rows = {}
+    for count, mutable in ((1, False), (32, False), (256, False), (32, True), (256, True)):
+        body = {"models": [{"name": f"model-{i}", "opts": {"tags": ["a", "é"], "n": i}}
+                           for i in range(count)]}
+        source = {"body": body, "params": {}, "files": {}}
+        children = [{"copy": {"from": "/item/name", "to": "/id"}},
+                    {"copy": {"from": "/index", "to": "/index"}}]
+        if mutable:
+            children.append({"copy": {"from": "/item/opts", "to": "/opts"}})
+        program = mapping.build([{"each": {"from": "/body/models", "to": "/data", "map": children}}],
+                                base="empty", roots=mapping.REQUEST_ROOTS)
+
+        def hand():
+            deadline = mapping.time.perf_counter() + budgets.mapping_s
+
+            def check_time():
+                if mapping.time.perf_counter() > deadline:
+                    raise BudgetExceeded("mapping_s", "Mapping deadline exceeded.")
+
+            for value in source.values():
+                mapping._check_depth(value, budgets)
+            values = body.get("models", pointer.MISSING)
+            out = {}
+            if values is not pointer.MISSING:
+                if type(values) is not list:
+                    raise MappingError("The source of each must be an array.")
+                selected = len(values)
+                if selected > budgets.max_selected:
+                    raise BudgetExceeded("max_selected", "Too many items.")
+                result = []
+                size = 2
+                mapping._check_size(size, budgets, "max_request_bytes")
+                for index, item in enumerate(values):
+                    check_time()
+                    mapped = {}
+                    if "name" in item:
+                        mapped["id"] = item["name"]
+                    check_time()
+                    mapped["index"] = index
+                    check_time()
+                    if mutable:
+                        if "opts" in item:
+                            mapped["opts"] = pointer.clone(item["opts"])
+                        check_time()
+                    mapping._check_depth(mapped, budgets)
+                    size += len(dumps(mapped)) + bool(index)
+                    mapping._check_size(size, budgets, "max_request_bytes")
+                    result.append(mapped)
+                out["data"] = result
+            check_time()
+            mapping._check_depth(out, budgets)
+            mapping._check_size(len(dumps(out)), budgets, "max_request_bytes")
+            check_time()
+            return dumps(out)
+
+        def compiled():
+            return dumps(program.apply(source))
+
+        assert compiled() == hand()
+        n = max(20, 4000 // count)
+        mapped_us = best(compiled, n, repeat=5, scale=scale)
+        hand_us = best(hand, n, repeat=5, scale=scale)
+        rows[f"each {count} {'mutable' if mutable else 'scalar'} + safety + JSON"] = {
+            "executor_us": round(mapped_us, 3), "hand_written_us": round(hand_us, 3),
+            "ratio": round(mapped_us / hand_us, 2)}
+    return rows
+
+
+def measure_each_absolute(scale: float = 1.0) -> dict[str, dict[str, object]]:
+    """Absolute milliseconds for `each` against a bare comprehension that shares no helpers.
+
+    Embeddings are lists of 768-float vectors; model lists are small objects. The timed
+    applies run with the budgets raised, so the time is the mapping's own. ``default_budgets``
+    records what the default budgets do with the same input. Best of five; the 10,000-item
+    embedding case is slow, so it runs fewer repetitions.
+    """
+    from gateway.engine_protocol.budgets import Budgets
+
+    roots = frozenset({"body", "status", "headers"})
+    embedding_rules = [{"each": {"from": "/body/embeddings", "to": "/data", "map": [
+        {"set": {"to": "/object", "value": "embedding"}},
+        {"copy": {"from": "/index", "to": "/index"}},
+        {"copy": {"from": "/item", "to": "/embedding"}}]}}]
+    model_rules = [{"each": {"from": "/body/models", "to": "/data", "map": [
+        {"copy": {"from": "/item/name", "to": "/id"}},
+        {"set": {"to": "/object", "value": "model"}},
+        {"set": {"to": "/created", "value": 0}},
+        {"set": {"to": "/owned_by", "value": "engine"}}]}}]
+    raised = Budgets(mapping_s=600.0, max_selected=10 ** 7, max_response_bytes=10 ** 10, max_request_bytes=10 ** 10)
+
+    def embeddings(count: int) -> dict:
+        return {"body": {"embeddings": [[((i * 768 + j) % 997) / 997 for j in range(768)] for i in range(count)]},
+                "status": 200, "headers": {}}
+
+    def models(count: int) -> dict:
+        return {"body": {"models": [{"name": f"model-{i}", "size": i * 1000, "digest": "d" * 64}
+                                    for i in range(count)]}, "status": 200, "headers": {}}
+
+    def bare_embeddings(source: dict) -> list:
+        return [{"object": "embedding", "index": i, "embedding": v} for i, v in enumerate(source["body"]["embeddings"])]
+
+    def bare_models(source: dict) -> list:
+        return [{"id": m["name"], "object": "model", "created": 0, "owned_by": "engine"} for m in source["body"]["models"]]
+
+    def default_outcome(program, source: dict) -> str:
+        try:
+            program.apply(source)
+            return "ok"
+        except BudgetExceeded as error:
+            return f"refused: {error.budget}"
+
+    out: dict[str, dict[str, object]] = {}
+    cases = [
+        ("embeddings 768 floats", embedding_rules, embeddings, bare_embeddings),
+        ("model list", model_rules, models, bare_models),
+    ]
+    for label, rules, make, bare in cases:
+        program = mapping.build(rules, base="empty", roots=roots, budgets=raised)
+        default = mapping.build(rules, base="empty", roots=roots)
+        for count in (1000, 10000):
+            source = make(count)
+            number = 5 if count <= 1000 else 1
+            each_us = best(lambda: program.apply(source), number, repeat=5, scale=scale)
+            bare_us = best(lambda: bare(source), 20 if count <= 1000 else 5, repeat=5, scale=scale)
+            out[f"{label}, {count} items"] = {
+                "bare_ms": round(bare_us / 1000, 3),
+                "each_ms": round(each_us / 1000, 3),
+                "added_ms": round((each_us - bare_us) / 1000, 3),
+                "ratio": round(each_us / bare_us, 2),
+                "default_budgets": default_outcome(default, source),
+            }
+    return out
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--each", action="store_true", help="Run only bounded array mapping cases")
+    parser.add_argument("--each-absolute", action="store_true",
+                        help="Run `each` against a bare comprehension in absolute milliseconds")
+    args = parser.parse_args()
+    if args.each_absolute:
+        out = measure_each_absolute()
+        if args.json:
+            print(json.dumps(out, indent=2))
+            return
+        print(f"{'case':30} {'bare ms':>10} {'each ms':>10} {'added ms':>10} {'ratio':>7}  default budgets")
+        for name, row in out.items():
+            print(f"{name:30} {row['bare_ms']:10.3f} {row['each_ms']:10.3f} {row['added_ms']:10.3f} {row['ratio']:7.2f}  {row['default_budgets']}")
+        return
+    out = measure_each() if args.each else measure()
+    if args.json:
+        print(json.dumps(out, indent=2))
+        return
+    print(f"{'case':44} {'executor µs':>12} {'hand µs':>10} {'ratio':>7}")
+    for name, row in out.items():
+        print(f"{name:44} {row['executor_us']:12.3f} {row['hand_written_us']:10.3f} {row['ratio']:7.2f}")
+
+
+if __name__ == "__main__":
+    main()

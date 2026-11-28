@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/workflow_execution",
+  "title": "workflow_execution",
+  "description": "How workflow jobs run (docs/design/CONFIG_HOMES.md, C10; docs/design/CODE_TO_DATA_S4_S8.md, I7): the longest a run request may hold its answer, how much history a workflow keeps, the bounds a saved workflow template must meet, and the limits on what a job's result may hold. The code holds the ceiling of each key; a value above it is cut to it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_wait_s": {
+      "description": "Longest `Prefer: wait=N` a run request may ask for, in seconds (gateway/workflow_run.py, RUN_CEILINGS).",
+      "type": "integer", "minimum": 1
+    },
+    "history_depth": {
+      "description": "How many saved revisions of one workflow the registry keeps and lists (gateway/workflow_run.py, RUN_CEILINGS).",
+      "type": "integer", "minimum": 1
+    },
+    "max_images_per_request": {
+      "description": "Maximum images one request may ask the gateway to produce across image generation and compatible frontends.",
+      "type": "integer", "minimum": 1
+    },
+    "bounds": {
+      "description": "What a saved workflow's template may hold (gateway/workflow_run.py, RUN_CEILINGS). A key left out keeps the code's ceiling.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_template_bytes": {"type": "integer", "minimum": 1},
+        "max_nodes": {"type": "integer", "minimum": 1},
+        "max_depth": {"type": "integer", "minimum": 1}
+      }
+    },
+    "legacy_output_collection": {
+      "description": "Whether a route that declares no output selector may still collect its outputs the old way (docs/design/CODE_TO_DATA_S2.md, D5). Only a literal false turns it off.",
+      "type": "boolean"
+    },
+    "result_limits": {
+      "description": "Limits on a job's result (gateway/result_bundle.py, ResultLimits). A key left out keeps the code's ceiling.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_assets": {"type": "integer", "minimum": 1},
+        "max_asset_bytes": {"type": "integer", "minimum": 1},
+        "max_total_bytes": {"type": "integer", "minimum": 1},
+        "json_max_bytes": {"type": "integer", "minimum": 1},
+        "json_max_depth": {"type": "integer", "minimum": 1},
+        "json_max_items": {"type": "integer", "minimum": 1},
+        "json_max_string_length": {"type": "integer", "minimum": 1},
+        "max_selectors": {"type": "integer", "minimum": 1},
+        "max_history_bytes": {"type": "integer", "minimum": 1},
+        "fetch_timeout_s": {"type": "integer", "minimum": 1},
+        "max_concurrent_fetches": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

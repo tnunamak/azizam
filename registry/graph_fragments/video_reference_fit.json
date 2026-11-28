@@ -1,0 +1,239 @@
+{
+  "point": {
+    "${point_detect_node}": {
+      "class_type": "SAM3_Detect",
+      "inputs": {
+        "model": [
+          "${sam_model_node}",
+          0
+        ],
+        "image": [
+          "${first_frame_node}",
+          0
+        ],
+        "threshold": 0.5,
+        "refine_iterations": 2,
+        "individual_masks": false,
+        "positive_coords": "${positive_coords}"
+      }
+    }
+  },
+  "fit": {
+    "90": {
+      "class_type": "SAM3_Detect",
+      "inputs": {
+        "model": [
+          "${sam_model_node}",
+          0
+        ],
+        "image": [
+          "${reference_raw_node}",
+          0
+        ],
+        "threshold": 0.5,
+        "refine_iterations": 2,
+        "individual_masks": false,
+        "conditioning": [
+          "${reference_text_node}",
+          0
+        ]
+      }
+    },
+    "91": {
+      "class_type": "MaskToImage",
+      "inputs": {
+        "mask": [
+          "90",
+          0
+        ]
+      }
+    },
+    "92": {
+      "class_type": "ImageCropByMask",
+      "inputs": {
+        "image": [
+          "${reference_raw_node}",
+          0
+        ],
+        "mask": [
+          "90",
+          0
+        ]
+      }
+    },
+    "93": {
+      "class_type": "ImageCropByMask",
+      "inputs": {
+        "image": [
+          "91",
+          0
+        ],
+        "mask": [
+          "90",
+          0
+        ]
+      }
+    },
+    "95": {
+      "class_type": "SCAIL2ColoredMask",
+      "inputs": {
+        "driving_track_data": [
+          "${track_node}",
+          0
+        ],
+        "object_indices": "${object_indices}",
+        "sort_by": "${sort_by}",
+        "replacement_mode": true
+      }
+    },
+    "96": {
+      "class_type": "ImageFromBatch",
+      "inputs": {
+        "image": [
+          "95",
+          0
+        ],
+        "batch_index": 0,
+        "length": 1
+      }
+    },
+    "97": {
+      "class_type": "ImageToMask",
+      "inputs": {
+        "image": [
+          "96",
+          0
+        ],
+        "channel": "red"
+      }
+    },
+    "98": {
+      "class_type": "InvertMask",
+      "inputs": {
+        "mask": [
+          "97",
+          0
+        ]
+      }
+    },
+    "99": {
+      "class_type": "INPAINT_MaskBoundingBox",
+      "inputs": {
+        "mask": [
+          "98",
+          0
+        ]
+      }
+    },
+    "101": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": [
+          "92",
+          0
+        ],
+        "upscale_method": "lanczos",
+        "width": 0,
+        "height": [
+          "99",
+          3
+        ],
+        "crop": "disabled"
+      }
+    },
+    "102": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": [
+          "93",
+          0
+        ],
+        "upscale_method": "lanczos",
+        "width": 0,
+        "height": [
+          "99",
+          3
+        ],
+        "crop": "disabled"
+      }
+    },
+    "104": {
+      "class_type": "ImageToMask",
+      "inputs": {
+        "image": [
+          "102",
+          0
+        ],
+        "channel": "red"
+      }
+    },
+    "105": {
+      "class_type": "GetImageSize",
+      "inputs": {
+        "image": [
+          "101",
+          0
+        ]
+      }
+    },
+    "106": {
+      "class_type": "ComfyMathExpression",
+      "inputs": {
+        "expression": "a + b / 2 - c / 2",
+        "values.a": [
+          "99",
+          0
+        ],
+        "values.b": [
+          "99",
+          2
+        ],
+        "values.c": [
+          "105",
+          0
+        ]
+      }
+    },
+    "107": {
+      "class_type": "EmptyImage",
+      "inputs": {
+        "width": [
+          "${width_node}",
+          0
+        ],
+        "height": [
+          "${height_node}",
+          0
+        ],
+        "batch_size": 1,
+        "color": 8421504
+      }
+    },
+    "${fit_canvas_node}": {
+      "class_type": "ImageCompositeMasked",
+      "inputs": {
+        "destination": [
+          "107",
+          0
+        ],
+        "source": [
+          "101",
+          0
+        ],
+        "x": [
+          "106",
+          1
+        ],
+        "y": [
+          "99",
+          1
+        ],
+        "resize_source": false,
+        "mask": [
+          "104",
+          0
+        ]
+      }
+    }
+  }
+}

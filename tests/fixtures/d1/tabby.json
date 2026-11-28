@@ -1,0 +1,31 @@
+{
+  "id": "tabby",
+  "kind": "provider",
+  "capabilities": [
+    "vision",
+    "chat",
+    "completions"
+  ],
+  "enabled": false,
+  "config": {
+    "models": [
+      {
+        "id": "base",
+        "model_group": "base",
+        "upstream_model": "fixture-model"
+      },
+      {
+        "id": "fast",
+        "base_model_id": "base",
+        "policy_overlay": [
+          {
+            "kind": "default-params",
+            "set": {
+              "reasoning_effort": "none"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

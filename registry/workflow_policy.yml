@@ -1,0 +1,28 @@
+# The policy facts of each bundled workflow (CODE_TO_DATA_S3, D2): who may run it and at what cost. They are record data,
+# never part of a workflow document. A workflow that is not listed here (and has no facts of its own) needs configuration
+# and runs nothing: there are no defaults. S5 owns what the values mean; S3 only moves them here. The values below are what
+# the readers assumed for every bundled workflow before this file existed. A bundled extension package's workflow has no
+# place for facts in its own files (the document is schema 2, and the package manifest has no policy block), so its row is
+# here too, keyed by its id and naming the package (`package:`); a row that names a package belongs to the workflows of that
+# package alone, and a package that declares the same workflow id gets nothing from it (release_facts).
+schema_version: 1
+workflows:
+  audio.generate.ace-step-1.5-xl-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  audio.generate.sa3-small-sfx: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  audio.generate.yue2-song: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  image.edit.qwen-image-2.1-edit: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.seedvr2-upscale: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.krea2-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  video.edit.rife-interpolate: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  video.edit.video-mux: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  video.generate.ltx-2.5-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 2}
+  video.generate.ltx-2.5-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 2}
+  video.generate.ltx-2.5-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 2}
+  video.generate.ltx-2.5-long: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 2}
+  video.generate.ltx-2.5-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 2}
+  video.generate.minimax-h3-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 1}
+  video.generate.minimax-h3-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 1}
+  video.generate.minimax-h3-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 1}
+  video.generate.minimax-h3-long: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 1}
+  video.generate.minimax-h3-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: [], selection_rank: 1}
+  image.generate.test-demo-package: {exposure: opt_in, trust_tier: experimental, resource_tier: batch, resource_class: image, tags: [test, demo], package: test-demo-image-extension-package}

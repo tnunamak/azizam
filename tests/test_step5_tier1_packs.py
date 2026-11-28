@@ -1,0 +1,441 @@
+"""Step 5 tests — Tier-1 per-backend transform packs.
+
+GATE: Each named transform (ollama-unsupported-params, drop-null-params,
+llamacpp-cache-prompt, mistral-penalty-clamp) must:
+  1. Apply correctly when its condition is met.
+  2. Be a no-op when the `when:` condition is unmet (or when the target param
+     is already in range / absent).
+  3. NOT alter the current 8-service config behavior — these are additive,
+     suggested-on-add, not auto-attached.
+
+The tests are unit tests against the REGISTRY (not integration tests against
+the running proxy).
+"""
+
+from __future__ import annotations
+
+import copy
+from typing import Any
+
+import pytest
+import yaml
+
+from gateway.transforms import (
+    REGISTRY,
+    TRANSFORM_PACKS_FILE,
+    TransformRegistry,
+    load_transform_packs,
+    run_request_pipeline,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+
+def _req(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Run the named transform on a deep copy of body."""
+    return run_request_pipeline([name], copy.deepcopy(body))
+
+
+# ---------------------------------------------------------------------------
+# ollama-unsupported-params
+# ---------------------------------------------------------------------------
+
+
+class TestOllamaUnsupportedParams:
+    NAME = "ollama-unsupported-params"
+
+    @pytest.fixture(autouse=True, params=["global", "data-only"])
+    def registry_source(self, request, monkeypatch):
+        if request.param == "data-only":
+            registry = TransformRegistry()
+            load_transform_packs(TRANSFORM_PACKS_FILE, registry)
+            # Reuse every existing request case against data alone, not a
+            # singleton that could conceal a leftover Python registration.
+            monkeypatch.setitem(globals(), "REGISTRY", registry)
+            monkeypatch.setitem(
+                globals(), "_req",
+                lambda name, body: run_request_pipeline(
+                    [name], copy.deepcopy(body), registry=registry,
+                ),
+            )
+
+    def test_data_row_has_exact_drop_order(self) -> None:
+        data = yaml.safe_load(TRANSFORM_PACKS_FILE.read_text(encoding="utf-8"))
+        rows = [row for row in data["packs"] if row["id"] == self.NAME]
+        assert len(rows) == 1
+        assert rows[0]["specs"] == [{
+            "kind": "drop-params",
+            "drop": ["n", "logprobs", "top_logprobs", "logit_bias", "tool_choice", "user"],
+        }]
+        assert rows[0]["source"].strip()
+        expected = TransformRegistry()
+        expected.register(self.NAME, rows[0]["specs"])
+        assert [(type(p), vars(p)) for p in REGISTRY.resolve(self.NAME)] == [
+            (type(p), vars(p)) for p in expected.resolve(self.NAME)
+        ]
+
+    def test_registered(self) -> None:
+        primitives = REGISTRY.resolve(self.NAME)
+        assert len(primitives) == 1
+
+    @pytest.mark.parametrize("param", ["n", "logprobs", "top_logprobs", "logit_bias", "tool_choice", "user"])
+    def test_drops_each_unsupported_param(self, param: str) -> None:
+        body = {param: "some_value", "model": "llama3", "messages": []}
+        result = _req(self.NAME, body)
+        assert param not in result, f"Expected {param!r} to be dropped"
+
+    def test_drops_all_six_params_together(self) -> None:
+        body = {
+            "n": 2,
+            "logprobs": True,
+            "top_logprobs": 3,
+            "logit_bias": {1234: 5},
+            "tool_choice": "auto",
+            "user": "u123",
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        result = _req(self.NAME, body)
+        for param in ["n", "logprobs", "top_logprobs", "logit_bias", "tool_choice", "user"]:
+            assert param not in result
+        # Other params preserved
+        assert result["model"] == "llama3"
+        assert result["messages"] == [{"role": "user", "content": "Hello"}]
+
+    def test_absent_param_is_noop(self) -> None:
+        body = {"model": "llama3", "messages": []}
+        result = _req(self.NAME, body)
+        assert result == body
+
+    def test_does_not_touch_unrelated_params(self) -> None:
+        body = {"model": "llama3", "temperature": 0.7, "max_tokens": 512}
+        result = _req(self.NAME, body)
+        assert result == body
+
+
+# ---------------------------------------------------------------------------
+# drop-null-params
+# ---------------------------------------------------------------------------
+
+
+class TestDropNullParams:
+    NAME = "drop-null-params"
+
+    def test_registered(self) -> None:
+        primitives = REGISTRY.resolve(self.NAME)
+        assert len(primitives) == 1
+
+    def test_drops_null_valued_keys(self) -> None:
+        body = {"model": "llama3", "temperature": None, "max_tokens": None, "stream": True}
+        result = _req(self.NAME, body)
+        assert "temperature" not in result
+        assert "max_tokens" not in result
+        assert result["model"] == "llama3"
+        assert result["stream"] is True
+
+    def test_preserves_false_and_zero(self) -> None:
+        """False and 0 are not None — must NOT be stripped."""
+        body = {"model": "llama3", "stream": False, "n": 0, "temperature": 0.0}
+        result = _req(self.NAME, body)
+        assert "stream" in result
+        assert result["stream"] is False
+        assert "n" in result
+        assert result["n"] == 0
+        assert "temperature" in result
+        assert result["temperature"] == 0.0
+
+    def test_preserves_empty_string_and_empty_list(self) -> None:
+        """Empty string and empty list are not None — must NOT be stripped."""
+        body = {"model": "llama3", "user": "", "tools": []}
+        result = _req(self.NAME, body)
+        assert "user" in result
+        assert "tools" in result
+
+    def test_empty_body_is_noop(self) -> None:
+        result = _req(self.NAME, {})
+        assert result == {}
+
+    def test_no_null_values_is_noop(self) -> None:
+        body = {"model": "llama3", "temperature": 0.7}
+        result = _req(self.NAME, body)
+        assert result == body
+
+    def test_all_null_keys_removed(self) -> None:
+        body = {"a": None, "b": None, "c": "keep"}
+        result = _req(self.NAME, body)
+        assert "a" not in result
+        assert "b" not in result
+        assert result["c"] == "keep"
+
+
+# ---------------------------------------------------------------------------
+# llamacpp-cache-prompt
+# ---------------------------------------------------------------------------
+
+
+class TestLlamaCppCachePrompt:
+    NAME = "llamacpp-cache-prompt"
+
+    def test_registered(self) -> None:
+        primitives = REGISTRY.resolve(self.NAME)
+        assert len(primitives) == 1
+
+    def test_sets_cache_prompt_true_when_absent(self) -> None:
+        body = {"model": "llama3", "messages": []}
+        result = _req(self.NAME, body)
+        assert result["cache_prompt"] is True
+
+    def test_does_not_overwrite_existing_false(self) -> None:
+        """setdefault semantics — explicit false must be preserved."""
+        body = {"model": "llama3", "cache_prompt": False}
+        result = _req(self.NAME, body)
+        assert result["cache_prompt"] is False
+
+    def test_does_not_overwrite_existing_true(self) -> None:
+        body = {"model": "llama3", "cache_prompt": True}
+        result = _req(self.NAME, body)
+        assert result["cache_prompt"] is True
+
+    def test_does_not_touch_unrelated_params(self) -> None:
+        body = {"model": "llama3", "temperature": 0.5}
+        result = _req(self.NAME, body)
+        assert result["temperature"] == 0.5
+        assert result["cache_prompt"] is True
+
+
+# ---------------------------------------------------------------------------
+# mistral-penalty-clamp
+# ---------------------------------------------------------------------------
+
+
+class TestMistralPenaltyClamp:
+    NAME = "mistral-penalty-clamp"
+
+    def test_registered(self) -> None:
+        primitives = REGISTRY.resolve(self.NAME)
+        # Two primitives: one for frequency_penalty, one for presence_penalty
+        assert len(primitives) == 2
+
+    def test_frequency_penalty_above_max_clamped(self) -> None:
+        body = {"model": "mistral", "frequency_penalty": 5.0}
+        result = _req(self.NAME, body)
+        assert result["frequency_penalty"] == 2.0
+
+    def test_frequency_penalty_below_min_clamped(self) -> None:
+        body = {"model": "mistral", "frequency_penalty": -5.0}
+        result = _req(self.NAME, body)
+        assert result["frequency_penalty"] == -2.0
+
+    def test_frequency_penalty_in_range_unchanged(self) -> None:
+        body = {"model": "mistral", "frequency_penalty": 1.0}
+        result = _req(self.NAME, body)
+        assert result["frequency_penalty"] == 1.0
+
+    def test_presence_penalty_clamped(self) -> None:
+        body = {"model": "mistral", "presence_penalty": 3.0}
+        result = _req(self.NAME, body)
+        assert result["presence_penalty"] == 2.0
+
+    def test_presence_penalty_in_range_unchanged(self) -> None:
+        body = {"model": "mistral", "presence_penalty": -1.5}
+        result = _req(self.NAME, body)
+        assert result["presence_penalty"] == -1.5
+
+    def test_absent_params_are_noop(self) -> None:
+        body = {"model": "mistral", "temperature": 0.7}
+        result = _req(self.NAME, body)
+        assert result == body
+
+    def test_boundary_values_unchanged(self) -> None:
+        body = {"model": "mistral", "frequency_penalty": -2.0, "presence_penalty": 2.0}
+        result = _req(self.NAME, body)
+        assert result["frequency_penalty"] == -2.0
+        assert result["presence_penalty"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Non-alteration guard — none of these attach to the current config
+# ---------------------------------------------------------------------------
+
+
+class TestTier1PacksNonAlteration:
+    """None of the Tier-1 packs should auto-attach to existing services.
+
+    These transforms are registered in REGISTRY but are NOT in any existing
+    service's transform_ids list.  The guard: running a baseline body through
+    them (as opt-in) must not affect a body that doesn't trigger their when:.
+    """
+
+    def test_baseline_chat_request_unaffected_by_ollama(self) -> None:
+        body = {
+            "model": "qwen3",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7,
+            "stream": True,
+        }
+        result = run_request_pipeline(["ollama-unsupported-params"], copy.deepcopy(body))
+        # The baseline body has none of the 6 dropped params — should be unchanged
+        assert result == body
+
+    def test_baseline_chat_request_unaffected_by_drop_null_params(self) -> None:
+        body = {
+            "model": "qwen3",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7,
+        }
+        result = run_request_pipeline(["drop-null-params"], copy.deepcopy(body))
+        # No null values — unchanged
+        assert result == body
+
+    def test_baseline_request_penalty_in_range_for_mistral(self) -> None:
+        body = {
+            "model": "mistral",
+            "frequency_penalty": 0.5,
+            "presence_penalty": -0.5,
+        }
+        result = run_request_pipeline(["mistral-penalty-clamp"], copy.deepcopy(body))
+        # Both in [-2, 2] — unchanged
+        assert result == body
+
+
+# ---------------------------------------------------------------------------
+# Declarative pack file: compatibility, extension and validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "specs"),
+    [
+        ("llamacpp-cache-prompt", [
+            {"kind": "default-params", "set": {"cache_prompt": True}},
+        ]),
+        ("mistral-penalty-clamp", [
+            {"kind": "clamp", "param": "frequency_penalty", "min": -2.0, "max": 2.0},
+            {"kind": "clamp", "param": "presence_penalty", "min": -2.0, "max": 2.0},
+        ]),
+    ],
+)
+def test_data_packs_match_previous_primitives(name: str, specs: list[dict[str, Any]]) -> None:
+    expected = TransformRegistry()
+    expected.register(name, specs)
+    assert [(type(p), vars(p)) for p in REGISTRY.resolve(name)] == [
+        (type(p), vars(p)) for p in expected.resolve(name)
+    ]
+
+
+def test_pack_added_only_to_data_file_resolves(tmp_path) -> None:
+    data = yaml.safe_load(TRANSFORM_PACKS_FILE.read_text(encoding="utf-8"))
+    data["packs"].append({
+        "id": "fixture-only-pack",
+        "source": "Test fixture: a pack defined only in data.",
+        "specs": [{"kind": "default-params", "set": {"fixture_mode": "ready"}}],
+    })
+    path = tmp_path / "transform_packs.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    registry = TransformRegistry()
+
+    load_transform_packs(path, registry)
+
+    assert len(registry.resolve("fixture-only-pack")) == 1
+    assert run_request_pipeline(["fixture-only-pack"], {}, registry=registry) == {
+        "fixture_mode": "ready",
+    }
+
+
+def test_malformed_data_pack_names_file_and_id_without_partial_registration(tmp_path) -> None:
+    data = yaml.safe_load(TRANSFORM_PACKS_FILE.read_text(encoding="utf-8"))
+    data["packs"].append({
+        "id": "fixture-invalid",
+        "source": "Test fixture: clamp is missing its required param.",
+        "specs": [{"kind": "clamp", "min": -2.0}],
+    })
+    path = tmp_path / "malformed-packs.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    registry = TransformRegistry()
+
+    with pytest.raises(ValueError) as error:
+        load_transform_packs(path, registry)
+
+    assert str(path) in str(error.value)
+    assert "fixture-invalid" in str(error.value)
+    assert "param" in str(error.value)
+    assert registry.names() == []
+
+# File-only validation: no primitive constructor behavior is changed.
+@pytest.mark.parametrize(("spec", "field"), [
+    ({"kind":"value-map","param":"x","mapp":{}}, "mapp"),
+    ({"kind":"drop-params","dropp":[]}, "dropp"),
+    ({"kind":"default-params","sett":{}}, "sett"),
+    ({"kind":"param-map","from":"x","to":"y","too":"z"}, "too"),
+    ({"kind":"message-inject","texxt":"hello"}, "texxt"),
+    ({"kind":"clamp","param":"x","min":0,"mx":2}, "mx"),
+    ({"kind":"default-params","phsae":"response"}, "phsae"),
+    ({"kind":"default-params","phase":"respnse"}, "phase"),
+    ({"kind":"default-params","when":[{"field":"x","op":"presnt"}]}, "op"),
+    ({"kind":"default-params","when":[{"op":"present"}]}, "field"),
+    ({"kind":"default-params","when":[{"field":"x"}]}, "op"),
+    ({"kind":"default-params","when":{}}, "when"),
+    ({"kind":"default-params","when":[1]}, "when"),
+    ({"kind":"default-params","when":[{"field":"x","op":"present","typo":1}]}, "typo"),
+    ({"kind":"default-params","when":[{"field":"","op":"present"}]}, "field"),
+    ({"kind":"clamp","param":"x"}, "min"),
+    ({"kind":"clamp","param":"x","min":2,"max":1}, "min"),
+    ({"kind":"clamp","param":""}, "param"),
+    ({"kind":"value-map","param":" x"}, "param"),
+    ({"kind":"param-map","from":"x ","to":"y"}, "from"),
+    ({"kind":"param-map","from":"x","to":" y"}, "to"),
+    ({"kind":"default-params","set":{" x":1}}, "set"),
+    ({"kind":"drop-params","drop":["x "]}, "drop"),
+    (None, "max"),  # raw YAML repeated key, not representable by a dict
+])
+def test_pack_file_refusals_are_atomic_and_located(tmp_path, spec, field):
+    path = tmp_path / "closed-pack-fields.yml"
+    if spec is None:
+        text = (
+            "schema_version: 1\npacks:\n"
+            "  - id: good-before-bad\n    source: fixture\n"
+            "    specs: [{kind: default-params, set: {good: 1}}]\n"
+            "  - id: fixture-invalid\n    source: fixture\n    specs:\n"
+            "      - kind: clamp\n        param: x\n"
+            "        max: 2\n        max: 3\n"
+        )
+    else:
+        text = yaml.safe_dump({
+            "schema_version": 1,
+            "packs": [
+                {"id": "good-before-bad", "source": "fixture",
+                 "specs": [{"kind": "default-params", "set": {"good": 1}}]},
+                {"id": "fixture-invalid", "source": "fixture", "specs": [spec]},
+            ],
+        }, sort_keys=False)
+    path.write_text(text, encoding="utf-8")
+    target = TransformRegistry()
+    target.register("existing", {"kind": "default-params", "set": {"keep": 1}})
+    existing = target.resolve("existing")
+    with pytest.raises(ValueError) as error:
+        load_transform_packs(path, target)
+    assert str(path) in str(error.value)
+    assert "fixture-invalid" in str(error.value)
+    assert field in str(error.value)
+    assert target.names() == ["existing"]
+    assert target.resolve("existing") is existing
+    assert run_request_pipeline(["existing"], {}, registry=target) == {"keep": 1}
+
+
+def test_shipped_pack_file_still_loads_both_packs():
+    target = TransformRegistry()
+    load_transform_packs(TRANSFORM_PACKS_FILE, target)
+    assert set(target.names()) == {
+        "llamacpp-cache-prompt", "mistral-penalty-clamp",
+        TestOllamaUnsupportedParams.NAME,
+    }
+    assert len(target.resolve("llamacpp-cache-prompt")) == 1
+    assert len(target.resolve("mistral-penalty-clamp")) == 2
+    assert run_request_pipeline(["llamacpp-cache-prompt"], {}, registry=target) == {"cache_prompt": True}
+    assert run_request_pipeline(
+        ["mistral-penalty-clamp"], {"frequency_penalty": -5, "presence_penalty": 5},
+        registry=target,
+    ) == {"frequency_penalty": -2.0, "presence_penalty": 2.0}

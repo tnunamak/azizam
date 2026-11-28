@@ -1,0 +1,51 @@
+{
+  "protocol": "http-load-unload",
+  "name": "load-outcome",
+  "description": "Unload the old model, load the new one, answer the load with a given body; the verify read is optional.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "TabbyAPI model management routes POST /v1/model/load (streamed JSON lines), POST /v1/model/unload, GET /v1/model; the gateway's http-load-unload lifecycle driver reads them (gateway/lifecycle_drivers.py)"
+  },
+  "exchanges": [
+    {
+      "id": "unload",
+      "match": {
+        "method": "POST",
+        "path": "/v1/model/unload"
+      },
+      "response": {
+        "status": 204
+      }
+    },
+    {
+      "id": "load",
+      "match": {
+        "method": "POST",
+        "path": "/v1/model/load",
+        "json": {
+          "model_name": "wanted"
+        }
+      },
+      "response": {
+        "body": [
+          {
+            "text": "{{load_text}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "verify",
+      "required": false,
+      "match": {
+        "method": "GET",
+        "path": "/v1/model"
+      },
+      "response": {
+        "json": {
+          "id": "{{verified}}"
+        }
+      }
+    }
+  ]
+}

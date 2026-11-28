@@ -1,0 +1,24 @@
+kind: capability
+id: test-demo-image-capability
+intent: image.generate
+backend: test-demo-comfy-service
+workflow: image.generate.test-demo-package
+input_modalities:
+  - text
+output_modalities:
+  - image
+execution: job
+streaming: false
+exposure: opt_in
+trust_tier: experimental
+resource_tier: batch
+tags:
+  - test
+  - demo
+resources:
+  gpu_required: true
+  vram_gb_estimate: 4
+  duration_class: short
+  max_parallel: 1
+caveats:
+  - Bundled fixture for package import tests only.

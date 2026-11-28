@@ -1,0 +1,19 @@
+# The nightly scheduled test tier (docs/design/TEST_STRATEGY.md 1.3).
+# Install (the owner decides when; reversible with `systemctl --user disable --now azizam-test-nightly.timer`):
+#   install -m 644 docs/ops/azizam-test-nightly.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now azizam-test-nightly.timer
+[Unit]
+Description=Azizam nightly scheduled tests (SDK probes over the fake upstream, quality sweep, performance budgets on a copy of the live data)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/applications/azizam
+ExecStart=%h/applications/azizam/venv/bin/python scripts/test-scheduled nightly
+Nice=19
+IOSchedulingClass=idle
+# 3 is SKIPPED (load over 24 or a media job in flight): not a unit failure, but the
+# receipt in ~/.tmp/azizam-ci-receipts/scheduled/ says SKIPPED and it is never a pass.
+# 1 (FAIL) and 4 (INCOMPLETE) fail the unit.
+SuccessExitStatus=3
+# Three tasks of at most 10, 26 and 20 min plus lock waits; the run is bounded by its own task timeouts.
+TimeoutStartSec=90min

@@ -1,0 +1,86 @@
+{
+  "protocol": "comfyui",
+  "name": "image-rmbg-fails-then-completes",
+  "description": "The first round (the graph with background removal) is refused with a text error; the second round, the same prompt without it, completes.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt (a failed validation or run answers a text/JSON error), GET /queue, POST /free {unload_models, free_memory}, GET /history/{prompt_id}, GET /view (ComfyUI server.py)"
+  },
+  "exchanges": [
+    {
+      "id": "prompt-failed",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "status": 500,
+        "body": [
+          {
+            "text": "RMBG node exploded"
+          }
+        ]
+      }
+    },
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "fk-job"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/fk-job"
+      },
+      "response": {
+        "json": {
+          "fk-job": {
+            "status": {
+              "completed": true
+            },
+            "outputs": {
+              "1": {
+                "images": [
+                  {
+                    "filename": "café.png",
+                    "subfolder": "",
+                    "type": "output"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "café.png",
+          "type": "output"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "image/png"
+        },
+        "body": [
+          {
+            "hex": "89504e470d0a1a0a"
+          }
+        ]
+      }
+    }
+  ]
+}

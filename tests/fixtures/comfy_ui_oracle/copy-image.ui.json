@@ -1,0 +1,49 @@
+{
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO"
+        },
+        {
+          "name": "upload",
+          "type": "IMAGEUPLOAD"
+        }
+      ],
+      "widgets_values": [
+        "fixture.png",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "SaveImage",
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE"
+        },
+        {
+          "name": "filename_prefix",
+          "type": "STRING"
+        }
+      ],
+      "widgets_values": [
+        "fixture"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ]
+  ]
+}

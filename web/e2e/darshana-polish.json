@@ -1,0 +1,37 @@
+{
+  "title": "Azizam gateway polish review",
+  "url": "http://127.0.0.1:18180/",
+  "start": "/",
+  "authScript": "./darshana-auth.mjs",
+  "crawl": {
+    "include": [
+      "^/((models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings)/?)?$"
+    ],
+    "exclude": ["sign-out", "logout", "delete"],
+    "maxPages": 13,
+    "extraRoutes": [
+      "/",
+      "/models/",
+      "/workflows/",
+      "/try/",
+      "/library/",
+      "/usage/",
+      "/apps/",
+      "/status/",
+      "/engines/",
+      "/providers/",
+      "/people/",
+      "/activity/",
+      "/settings/"
+    ]
+  },
+  "capture": {
+    "themes": ["light", "dark"],
+    "viewports": ["desktop", "mobile"],
+    "delay": 500,
+    "waitFor": "document.fonts.status === 'loaded' && !!document.querySelector('h1') && !document.querySelector('[aria-busy=\"true\"]') && !document.querySelector('[data-slot=\"skeleton\"]') && Array.from(document.images).every(image => image.complete && image.naturalWidth > 0)"
+  },
+  "outputs": ["html", "images"],
+  "outputDir": "darshana-output/gw-ui-polish",
+  "authStorage": "../test-results/darshana-config-auth.json"
+}

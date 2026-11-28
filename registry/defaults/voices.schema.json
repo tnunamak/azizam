@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/voices",
+  "title": "voices",
+  "description": "Custom (user-created) voices: the limits per key, the sample rules and the two engines that check and design a voice (docs/design/CONFIG_HOMES.md, C8a). The store directory is a startup setting.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-azizam-startup-only": [
+    "dir"
+  ],
+  "properties": {
+    "consent_mode": {
+      "description": "optional: accept and check a consent id if one is given. required: refuse a voice without one.",
+      "enum": ["optional", "required"]
+    },
+    "max_voices_per_key": {
+      "description": "Custom voices one API key may hold.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_consents_per_key": {
+      "description": "Consent recordings one API key may hold.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_bytes_per_key": {
+      "description": "Bytes of voices and consents one API key may hold.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_upload_bytes": {
+      "description": "Largest sample or consent recording, in bytes.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "min_seconds": {
+      "description": "Shortest sample, in seconds.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "max_seconds": {
+      "description": "Longest sample, in seconds.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "min_speech_seconds": {
+      "description": "Least speech a sample must hold, in seconds.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "target_seconds": {
+      "description": "The stored reference clip is the best window of about this length, in seconds.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "quality_engine": {
+      "description": "The speech engine that makes the speaker-similarity probe after a voice is created. Unset: the probe uses the code's own default engine.",
+      "type": "string",
+      "minLength": 1
+    },
+    "quality_warn_below": {
+      "description": "A similarity below this value is reported as low (cosine).",
+      "type": "number"
+    },
+    "design_engine": {
+      "description": "The speech engine that renders a voice from a text description. Unset: voice design is not configured.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

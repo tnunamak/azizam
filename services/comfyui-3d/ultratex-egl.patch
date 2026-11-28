@@ -1,0 +1,15 @@
+diff --git a/ultratex_core/render.py b/ultratex_core/render.py
+index 7071f0e..845f7b0 100644
+--- a/ultratex_core/render.py
++++ b/ultratex_core/render.py
+@@ -196,7 +196,9 @@ def _context():
+     if _CTX is None:
+         import moderngl
+ 
+-        _CTX = moderngl.create_standalone_context(require=330)
++        # Local patch: the default backend picks GLX on DISPLAY=:0 and spins in xcb_dri3_query_version
++        # inside the headless ComfyUI service; EGL needs no display.
++        _CTX = moderngl.create_standalone_context(require=330, backend="egl")
+     return _CTX
+ 
+ 

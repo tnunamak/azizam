@@ -1,0 +1,500 @@
+"""Subprocess contract for the read-only rollback readiness command.
+
+Written before the CLI. Do not replace the rollback functions with stubs.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from types import SimpleNamespace
+
+import pytest
+
+from gateway import media_jobs
+from gateway.job_envelope import build_job_envelope
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "rollback_readiness.py"
+
+
+def seed_job(path, job_id, *, status="queued", pinned=False):
+    # Same production seeding as test_workflow_run_contracts.py:624-648.
+    envelope = build_job_envelope(
+        source_kind="workflow", source_id="pinned.workflow",
+        contract={"a": 1}, binding={"b": 1}, template=None,
+        protocol_id="p", adapter_id="a", interface_version=1,
+        service_id="s", origin="http://engine.test",
+    ) if pinned else None
+    media_jobs.create(
+        media_jobs.MediaJob(intent="workflow.run", job_id=job_id, status=status),
+        path=path, envelope=envelope, require_envelope=envelope is not None,
+    )
+
+
+def seed(path, case):
+    if case == "missing":
+        return 3, "store_missing", [], []
+    if case == "text":
+        path.write_text("not a sqlite database\n", encoding="utf-8")
+        return 3, "store_unreadable", [], []
+    if case == "directory":
+        path.mkdir()
+        return 3, "store_unreadable", [], []
+    if case == "uninitialized":
+        # A 0-byte file (a wrong path, or a store truncated by a failed
+        # deploy) holds no job table, so it proves nothing: refuse it.
+        with sqlite3.connect(path):
+            pass
+        return 3, "store_unreadable", [], []
+    if case == "other-tables":
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE sentinel (x)")
+        return 3, "store_unreadable", [], []
+    if case == "scalar-job-json":
+        # Valid JSON that is not an object must refuse, not crash.
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "CREATE TABLE media_jobs "
+                "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO media_jobs VALUES (?, ?, ?, ?)",
+                ("odd", "saved.workflow", "queued", '"42"'),
+            )
+        return 3, "store_unreadable", [], []
+    if case == "old-schema":
+        # Historical schema without application initialization, matching
+        # test_workflow_run_contracts.py:544-563.
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "CREATE TABLE media_jobs "
+                "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO media_jobs VALUES (?, ?, ?, ?)",
+                ("old-queued", "saved.workflow", "queued", "{}"),
+            )
+        return 0, None, [], [{
+            "job_id": "old-queued", "workflow": "saved.workflow",
+            "status": "queued", "envelope_version": None,
+            "reason": "pin_not_recorded",
+        }]
+
+    # This also covers a checkpointed WAL-mode database: init_db sets WAL,
+    # closes its connection, and leaves no source companions behind.
+    media_jobs.init_db(path)
+    if case == "empty":
+        return 0, None, [], []
+    if case == "running":
+        seed_job(path, "running-one", status="running")
+        return 2, "running_jobs", ["running-one"], [{
+            "job_id": "running-one", "workflow": None, "status": "running",
+            "envelope_version": None, "reason": "pin_not_recorded",
+        }]
+    if case == "retained-deleted":
+        seed_job(path, "deleted-one", status="succeeded")
+        media_jobs.tombstone_job("deleted-one", now=1, path=path)
+        return 2, "retained_deleted_jobs", ["deleted-one"], []
+    assert case == "queued-v2"
+    seed_job(path, "queued-v2", pinned=True)
+    return 2, "queued_jobs_unreadable_by_older_build", ["queued-v2"], [{
+        "job_id": "queued-v2", "workflow": "pinned.workflow", "status": "queued",
+        "envelope_version": 2, "reason": "definition_unavailable",
+    }]
+
+
+def source_state(path):
+    if not path.exists():
+        return None
+    if path.is_dir():
+        return ("directory", path.stat().st_mtime_ns, sorted(p.name for p in path.iterdir()))
+    return (path.read_bytes(), path.stat().st_mtime_ns)
+
+
+def run_cli(tmp_path, path, *args):
+    temporary = tmp_path / "temporary-snapshots"
+    temporary.mkdir()
+    before = source_state(path)
+    companions = [Path(str(path) + suffix) for suffix in ("-wal", "-journal", "-shm")]
+    assert all(not item.exists() for item in companions)
+    environment = dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
+                       TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--store", str(path), *args],
+            cwd=ROOT, env=environment, text=True, capture_output=True,
+            check=False, timeout=30,
+        )
+    finally:
+        assert source_state(path) == before, "the source bytes or mtime changed"
+        assert all(not item.exists() for item in companions), "source SQLite companion appeared"
+        assert list(temporary.iterdir()) == [], "temporary snapshot was not deleted"
+    assert result.stderr == "", result.stderr
+    return result
+
+
+# The text and JSON modes share one decision; they differ only in the printer. Every case runs in JSON mode (the
+# full decision and inventory). Text mode runs the cases that give each distinct line shape: READY with no rows,
+# READY with an inventory row, REFUSED with job ids and rows, REFUSED with job ids and no rows, REFUSED with neither.
+CASES = [
+    "empty", "running", "retained-deleted", "queued-v2",
+    "old-schema", "uninitialized", "other-tables", "scalar-job-json",
+    "missing", "text", "directory",
+]
+TEXT_SHAPES = ["empty", "old-schema", "running", "retained-deleted", "missing"]
+# Two text shapes run as a subprocess (READY alone; REFUSED with job ids and rows); the printer is the same function for the
+# rest, so those call main() in this process. Starting a process costs the import of the job reader each time.
+TEXT_IN_PROCESS = {"old-schema", "retained-deleted", "missing"}
+
+
+def run_cli_in_process(path, capsys, *args):
+    """main() in this process: the same checks that the source stays unchanged, and the same result shape as run_cli."""
+    # The same checks as run_cli: no SQLite companion of the source, and the snapshot folder empty at exit.
+    temporary = path.parent / "temporary-snapshots"
+    temporary.mkdir()
+    before = source_state(path)
+    companions = [Path(str(path) + suffix) for suffix in ("-wal", "-journal", "-shm")]
+    assert all(not item.exists() for item in companions)
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            for name in ("TMPDIR", "TEMP", "TMP"):
+                patch.setenv(name, str(temporary))
+            patch.setattr(tempfile, "tempdir", str(temporary))  # Python caches the temp folder
+            code = _load_script().main(["--store", str(path), *args])
+    finally:
+        assert source_state(path) == before, "the source bytes or mtime changed"
+        assert all(not item.exists() for item in companions), "source SQLite companion appeared"
+        assert list(temporary.iterdir()) == [], "temporary snapshot was not deleted"
+    captured = capsys.readouterr()
+    assert captured.err == "", captured.err
+    return SimpleNamespace(returncode=code, stdout=captured.out)
+
+
+@pytest.mark.parametrize("case, json_output", [(case, True) for case in CASES] + [(case, False) for case in TEXT_SHAPES],
+                         ids=[f"{case}-json" for case in CASES] + [f"{case}-text" for case in TEXT_SHAPES])
+def test_readiness_cli_preserves_source_and_reports_inventory(tmp_path, capsys, case, json_output):
+    # URI punctuation must name this exact path, never become URI options.
+    path = tmp_path / "source ?#% mode=rw.db"
+    code, reason, job_ids, inventory = seed(path, case)
+    flags = ["--json"] if json_output else []
+    if not json_output and case in TEXT_IN_PROCESS:
+        result = run_cli_in_process(path, capsys, *flags)
+    else:
+        result = run_cli(tmp_path, path, *flags)
+    assert result.returncode == code, result.stdout
+    if json_output:
+        assert json.loads(result.stdout) == {
+            "ready": code == 0, "reason": reason,
+            "job_ids": job_ids, "inventory": inventory,
+        }
+        assert len(result.stdout.splitlines()) == 1
+    else:
+        lines = result.stdout.splitlines()
+        assert lines[-1] == ("READY" if code == 0 else f"REFUSED {reason}")
+        # Human mode still gives one complete inventory row per line.
+        rows = [json.loads(line) for line in lines if line.startswith("{")]
+        assert rows == inventory
+        job_lines = [line for line in lines if line.startswith("JOB_IDS ")]
+        assert job_lines == (["JOB_IDS " + json.dumps(job_ids)] if job_ids else [])
+        assert len(lines) == len(inventory) + bool(job_ids) + 1
+
+
+def test_store_argument_is_required_and_never_checks_a_default(tmp_path):
+    # Place a ready-looking file in the cwd: it must not be selected implicitly.
+    path = tmp_path / "media_jobs.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE sentinel (value TEXT)")
+    before = source_state(path)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json"],
+        cwd=tmp_path, text=True, capture_output=True, check=False, timeout=30,
+        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+    )
+    assert result.returncode == 2
+    assert "--store" in result.stderr
+    assert result.stdout == ""
+    assert source_state(path) == before
+    assert all(not Path(str(path) + suffix).exists() for suffix in ("-wal", "-journal", "-shm"))
+
+
+def test_a_live_wal_is_read_not_ignored_and_the_store_and_wal_are_untouched(tmp_path):
+    path = tmp_path / "live.db"
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute(
+            "CREATE TABLE media_jobs "
+            "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+        )
+        connection.execute("INSERT INTO media_jobs VALUES ('live', 'w', 'running', '{}')")
+        connection.commit()
+        wal = Path(str(path) + "-wal")
+        assert wal.stat().st_size > 0
+        # A reader may update its read mark in the existing -shm, so only the database and the WAL must keep their bytes.
+        files = [path, wal]
+        before = {item: source_state(item) for item in files}
+        temporary = tmp_path / "temporary-snapshots"
+        temporary.mkdir()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--store", str(path), "--json"],
+            cwd=ROOT, text=True, capture_output=True, check=False, timeout=30,
+            env=dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
+                     TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+        )
+        assert result.stderr == ""
+        assert result.returncode == 2, "the running job lives only in the WAL; an immutable read would call the store ready"
+        assert json.loads(result.stdout) == {
+            "ready": False, "reason": "running_jobs", "job_ids": ["live"],
+            "inventory": [{"envelope_version": None, "job_id": "live", "reason": "pin_not_recorded",
+                           "status": "running", "workflow": "w"}],
+        }
+        assert {item: source_state(item) for item in files} == before
+        assert not Path(str(path) + "-journal").exists()
+        assert list(temporary.iterdir()) == []
+    finally:
+        connection.close()
+
+
+def directory_state(path):
+    """Include directory mtime to catch even a companion created then removed."""
+    return path.stat().st_mtime_ns, {
+        item.name: source_state(item) for item in path.iterdir()
+    }
+
+
+def store_state(path):
+    """directory_state without the SHM bytes. Any SQLite reader of a live WAL store may write its read marks or
+    rebuild the shared index in the SHM file; the store's data is the DB and WAL bytes, and the file set."""
+    mtime, files = directory_state(path)
+    return mtime, {name: (True if name.endswith("-shm") else state) for name, state in files.items()}
+
+
+def test_live_wal_backup_refuses_once_the_deadline_passes_without_source_or_temp_changes(tmp_path):
+    # A deadline already in the past refuses at the first backup step. (A held lock does not make a reliable fixture:
+    # a mode=ro reader can still read a store whose owner uses exclusive locking mode.)
+    source_directory = tmp_path / "live-source"
+    source_directory.mkdir()
+    path = source_directory / "live.db"
+    temporary = tmp_path / "temporary-snapshots"
+    temporary.mkdir()
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        connection.execute(
+            "CREATE TABLE media_jobs "
+            "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+        )
+        connection.execute("INSERT INTO media_jobs VALUES ('live', 'w', 'succeeded', '{}')")
+        connection.commit()
+        # WAL and SHM both exist, so this exercises the live-source backup path, not the private missing-SHM copy.
+        assert Path(str(path) + "-wal").stat().st_size > 0
+        assert Path(str(path) + "-shm").exists()
+        before = store_state(source_directory)
+        # run_path returns a namespace copy; patch the function's actual globals.
+        wrapper = (
+            "import runpy, sys\n"
+            "namespace = runpy.run_path(sys.argv[1], run_name='readiness_deadline_test')\n"
+            "main = namespace['main']\n"
+            "main.__globals__['BACKUP_TIMEOUT_SECONDS'] = -1.0\n"
+            "raise SystemExit(main(sys.argv[2:]))\n"
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", wrapper, str(SCRIPT), "--store", str(path)],
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=30,
+                env=dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
+                         TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+            )
+        finally:
+            # The parent keeps its connection open at every assertion.
+            assert store_state(source_directory) == before
+            assert list(temporary.iterdir()) == []
+        assert result.returncode == 3, result.stdout
+        assert result.stdout.splitlines() == ["REFUSED store_unreadable"]
+        assert result.stderr == ""
+    finally:
+        connection.close()
+
+
+def wal_without_shm_store(tmp_path, *, status="running"):
+    """Return the checkpointed seed and its DB+WAL-only copy for reuse by CLI tests."""
+    seed_directory = tmp_path / "seed"
+    source_directory = tmp_path / "source"
+    seed_directory.mkdir()
+    source_directory.mkdir()
+    seed_path = seed_directory / "seed.db"
+    path = source_directory / "copy ?#%.db"
+    connection = sqlite3.connect(seed_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        connection.execute("PRAGMA wal_autocheckpoint=0")
+        connection.execute(
+            "CREATE TABLE media_jobs "
+            "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+        )
+        connection.execute("INSERT INTO media_jobs VALUES ('wal-only', 'w', ?, '{}')", (status,))
+        connection.commit()
+        seed_wal = Path(str(seed_path) + "-wal")
+        assert seed_wal.stat().st_size > 0
+        # Copy while the writer is still open, before its final-close checkpoint.
+        path.write_bytes(seed_path.read_bytes())
+        Path(str(path) + "-wal").write_bytes(seed_wal.read_bytes())
+    finally:
+        connection.close()
+    assert not Path(str(path) + "-shm").exists()
+    assert sorted(item.name for item in source_directory.iterdir()) == [
+        path.name, path.name + "-wal",
+    ]
+    return seed_path, path
+
+
+def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_path):
+    seed_path, path = wal_without_shm_store(tmp_path)
+    source_directory = path.parent
+    before = directory_state(source_directory)
+    # This is the same committed store after its final-close checkpoint.
+    expected = run_cli(tmp_path, seed_path, "--json")
+    assert expected.returncode == 2
+    expected_body = json.loads(expected.stdout)
+    assert expected_body["job_ids"] == ["wal-only"]
+    temporary = tmp_path / "temporary-snapshots"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--store", str(path), "--json"],
+            cwd=ROOT, text=True, capture_output=True, check=False, timeout=30,
+            env=dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
+                     TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+        )
+    finally:
+        assert directory_state(source_directory) == before, "source companion or bytes changed"
+        assert list(temporary.iterdir()) == [], "temporary copy or snapshot was not deleted"
+    assert result.stderr == ""
+    assert result.returncode == expected.returncode
+    assert json.loads(result.stdout) == expected_body
+    assert len(result.stdout.splitlines()) == 1
+
+
+def _git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True,
+                          env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                                   GIT_COMMITTER_EMAIL="t@t")).stdout.strip()
+
+
+def test_the_target_reads_tombstones_only_when_it_contains_the_tombstone_reader_commit(tmp_path, monkeypatch):
+    readiness = _load_script()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    shas = []
+    for name in ("before", "reader", "after"):
+        _git(repo, "commit", "-q", "--allow-empty", "-m", name)
+        shas.append(_git(repo, "rev-parse", "HEAD"))
+    before, reader, after = shas
+    monkeypatch.setattr(readiness, "TOMBSTONE_READER_COMMIT", reader)
+    assert readiness.target_reads_tombstones(reader, repo) is True
+    assert readiness.target_reads_tombstones(after, repo) is True
+    assert readiness.target_reads_tombstones(before, repo) is False
+    for rev in (None, "", "no-such-commit", "--help", "-q"):
+        assert readiness.target_reads_tombstones(rev, repo) is False
+    assert readiness.target_reads_tombstones(after, tmp_path / "not-a-repo") is False
+    _git(repo, "replace", before, after)  # a local replace ref must not make the old target look newer
+    assert readiness.target_reads_tombstones(before, repo) is False
+
+
+def _load_script():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rollback_readiness_script", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _retained_store(tmp_path):
+    path = tmp_path / "jobs.db"
+    media_jobs.init_db(path)
+    seed_job(path, "deleted-one", status="failed")
+    media_jobs.tombstone_job("deleted-one", now=1_800_000_000, path=path)
+    return path
+
+
+def test_cli_target_commit_decides_retained_deletes_and_reports_the_decision(tmp_path, monkeypatch, capsys):
+    path = _retained_store(tmp_path)
+    readiness = _load_script()
+    monkeypatch.setattr(readiness, "target_reads_tombstones", lambda rev: rev == "knows")
+    assert readiness.main(["--store", str(path), "--json", "--target-commit", "knows"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "ready": True, "reason": None, "job_ids": [], "inventory": [], "target_reads_tombstones": True}
+    assert readiness.main(["--store", str(path), "--target-commit", "knows"]) == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == ["TARGET_READS_TOMBSTONES yes", "READY"]
+    assert readiness.main(["--store", str(path), "--json", "--target-commit", "older"]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ready": False, "reason": "retained_deleted_jobs", "job_ids": ["deleted-one"], "inventory": [],
+        "target_reads_tombstones": False}
+
+
+def test_cli_without_a_target_and_with_an_unknown_target_keeps_refusing_retained_deletes(tmp_path):
+    path = _retained_store(tmp_path)
+    result = run_cli(tmp_path, path, "--json")
+    assert result.returncode == 2
+    assert json.loads(result.stdout) == {
+        "ready": False, "reason": "retained_deleted_jobs", "job_ids": ["deleted-one"], "inventory": []}
+    temporary = tmp_path / "temporary-snapshots"
+    temporary.rmdir()
+    result = run_cli(tmp_path, path, "--json", "--target-commit", "no-such-commit-anywhere")
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["target_reads_tombstones"] is False
+    assert json.loads(result.stdout)["reason"] == "retained_deleted_jobs"
+
+
+def test_a_graft_does_not_make_an_older_target_look_newer(tmp_path, monkeypatch):
+    readiness = _load_script()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    shas = []
+    for name in ("before", "reader"):
+        _git(repo, "commit", "-q", "--allow-empty", "-m", name)
+        shas.append(_git(repo, "rev-parse", "HEAD"))
+    before, reader = shas
+    monkeypatch.setattr(readiness, "TOMBSTONE_READER_COMMIT", reader)
+    grafts = repo / ".git" / "info" / "grafts"
+    grafts.parent.mkdir(exist_ok=True)
+    grafts.write_text(f"{before} {reader}\n")  # claims reader is the parent of before
+    _git(repo, "commit-graph", "write", "--reachable")
+    assert readiness.target_reads_tombstones(before, repo) is False
+    monkeypatch.setenv("GIT_GRAFT_FILE", str(grafts))  # an inherited graft file must not count either
+    assert readiness.target_reads_tombstones(before, repo) is False
+
+def test_reader_import_failure_refuses_with_distinct_reason(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    readiness = _load_script()
+    monkeypatch.setattr(Path, "resolve", lambda self, *, strict: self)
+    monkeypatch.setattr(readiness, "fingerprint", lambda _path: (0, 0))
+    monkeypatch.setattr(readiness, "has_live_wal", lambda _path: False)
+    monkeypatch.setattr(readiness, "require_no_hot_journal", lambda _path: None)
+    monkeypatch.setattr(readiness, "tempfile", SimpleNamespace(
+        TemporaryDirectory=lambda **_kwargs: nullcontext("/synthetic/snapshot"),
+    ))
+    fake_connection = SimpleNamespace(
+        backup=lambda *_args, **_kwargs: None,
+        close=lambda: None,
+        execute=lambda _sql: SimpleNamespace(fetchone=lambda: (1,)),
+    )
+    monkeypatch.setattr(readiness, "sqlite3", SimpleNamespace(
+        connect=lambda *_args, **_kwargs: fake_connection, Error=sqlite3.Error,
+    ))
+    monkeypatch.setitem(sys.modules, "gateway.workflow_run", None)
+
+    code, verdict = readiness.inspect_store("/synthetic/input.sqlite")
+    assert code == 3
+    assert verdict == {
+        "ready": False, "reason": "gateway_reader_unavailable",
+        "job_ids": [], "inventory": [],
+    }

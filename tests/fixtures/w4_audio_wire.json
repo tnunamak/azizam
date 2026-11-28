@@ -1,0 +1,986 @@
+{
+  "delivery_failure": {
+    "caller": [
+      {
+        "label": "delivery_failure",
+        "request": {
+          "body": {
+            "kind": "json",
+            "text": "{\"model\":\"sa3-small-sfx\",\"prompt\":\"a door creaks\",\"duration\":4}"
+          },
+          "headers": {
+            "content-length": "63",
+            "content-type": "application/json"
+          },
+          "method": "POST",
+          "path": "/v1/audio/generate",
+          "query": []
+        },
+        "response": {
+          "body": {
+            "kind": "json",
+            "text": "{\"error\": {\"message\": \"Could not prepare audio for delivery\", \"type\": \"api_error\"}}"
+          },
+          "headers": {
+            "content-length": "83",
+            "content-type": "application/json",
+            "x-request-id": "<req:1>"
+          },
+          "status": 502
+        }
+      }
+    ],
+    "engine_requests": [
+      {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":{\"1\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"stable_audio_3_small_sfx.safetensors\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"t5gemma_b_b_ul2.safetensors\",\"type\":\"stable_audio\",\"device\":\"default\"}},\"3\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"a door creaks\"}},\"4\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"\"}},\"5\":{\"class_type\":\"EmptyLatentAudio\",\"inputs\":{\"seconds\":4.0,\"batch_size\":1}},\"6\":{\"class_type\":\"KSampler\",\"inputs\":{\"model\":[\"1\",0],\"seed\":192058881,\"steps\":8,\"cfg\":1.0,\"sampler_name\":\"lcm\",\"scheduler\":\"simple\",\"positive\":[\"3\",0],\"negative\":[\"4\",0],\"latent_image\":[\"5\",0],\"denoise\":1.0}},\"7\":{\"class_type\":\"VAEDecodeAudio\",\"inputs\":{\"samples\":[\"6\",0],\"vae\":[\"1\",2]}},\"8\":{\"class_type\":\"SaveAudio\",\"inputs\":{\"audio\":[\"7\",0],\"filename_prefix\":\"audio/sa3-sfx\"}}},\"client_id\":\"<hex32:1>\"}"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "content-length": "<885 after normalisation>",
+          "content-type": "application/json",
+          "host": "comfy.fk.test"
+        },
+        "method": "POST",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/prompt",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/history/p1",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/view",
+        "query": [
+          [
+            "filename",
+            "tone_00001_.wav"
+          ],
+          [
+            "type",
+            "output"
+          ]
+        ],
+        "step": 0,
+        "to": "comfy.fk.test"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "created_at": "<time>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "parent_request_id": null,
+          "path": "/v1/audio/generate",
+          "protocol": "openai.audio",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "test-app",
+            "app_id": "app_test",
+            "app_profile": "plan_everything",
+            "attempt_number": 1,
+            "backend": "comfyui",
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "audio.generate",
+            "job_id": "<job:1>",
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "status_code": 502,
+              "terminal_reason": "http_502"
+            },
+            "owner_key_hash": "app:app_test",
+            "parent_request_id": null,
+            "path": "/v1/audio/generate",
+            "policy_decision": "allowed",
+            "policy_reasons": [
+              "route_authorized",
+              "allowed by your access plan"
+            ],
+            "policy_sources": [
+              "runtime_route_policy",
+              "access_plan:plan_everything"
+            ],
+            "protocol": "openai.audio",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": "sa3-small-sfx",
+            "requested_workflow": null,
+            "resolved_model": "sa3-small-sfx",
+            "resolved_workflow": "audio.generate.sa3-small-sfx",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "library_prompt",
+                "reason": "no_person"
+              }
+            ],
+            "retention_facts": [
+              "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+              "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+              "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+              "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+              "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+              "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+              "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+              "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
+            ],
+            "source_kind": "app",
+            "source_label": "test-app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "full",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "duration_default": {
+    "caller": [
+      {
+        "label": "duration_default",
+        "request": {
+          "body": {
+            "kind": "json",
+            "text": "{\"model\":\"sa3-small-sfx\",\"prompt\":\"a door creaks\"}"
+          },
+          "headers": {
+            "content-length": "50",
+            "content-type": "application/json"
+          },
+          "method": "POST",
+          "path": "/v1/audio/generate",
+          "query": []
+        },
+        "response": {
+          "body": {
+            "kind": "binary",
+            "len": 3244,
+            "magic": "52494646a40c0000",
+            "sha256": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9"
+          },
+          "headers": {
+            "content-length": "3244",
+            "content-type": "audio/wav",
+            "x-audio-model": "sa3-small-sfx",
+            "x-audio-type": "music",
+            "x-request-id": "<req:1>"
+          },
+          "status": 200
+        }
+      }
+    ],
+    "engine_requests": [
+      {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":{\"1\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"stable_audio_3_small_sfx.safetensors\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"t5gemma_b_b_ul2.safetensors\",\"type\":\"stable_audio\",\"device\":\"default\"}},\"3\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"a door creaks\"}},\"4\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"\"}},\"5\":{\"class_type\":\"EmptyLatentAudio\",\"inputs\":{\"seconds\":10.0,\"batch_size\":1}},\"6\":{\"class_type\":\"KSampler\",\"inputs\":{\"model\":[\"1\",0],\"seed\":192058881,\"steps\":8,\"cfg\":1.0,\"sampler_name\":\"lcm\",\"scheduler\":\"simple\",\"positive\":[\"3\",0],\"negative\":[\"4\",0],\"latent_image\":[\"5\",0],\"denoise\":1.0}},\"7\":{\"class_type\":\"VAEDecodeAudio\",\"inputs\":{\"samples\":[\"6\",0],\"vae\":[\"1\",2]}},\"8\":{\"class_type\":\"SaveAudio\",\"inputs\":{\"audio\":[\"7\",0],\"filename_prefix\":\"audio/sa3-sfx\"}}},\"client_id\":\"<hex32:1>\"}"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "content-length": "<886 after normalisation>",
+          "content-type": "application/json",
+          "host": "comfy.fk.test"
+        },
+        "method": "POST",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/prompt",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/history/p1",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/view",
+        "query": [
+          [
+            "filename",
+            "tone_00001_.wav"
+          ],
+          [
+            "type",
+            "output"
+          ]
+        ],
+        "step": 0,
+        "to": "comfy.fk.test"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "created_at": "<time>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "parent_request_id": null,
+          "path": "/v1/audio/generate",
+          "protocol": "openai.audio",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "test-app",
+            "app_id": "app_test",
+            "app_profile": "plan_everything",
+            "attempt_number": 1,
+            "backend": "comfyui",
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "audio.generate",
+            "job_id": "<job:1>",
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "status_code": 200,
+              "terminal_reason": "http_200"
+            },
+            "owner_key_hash": "app:app_test",
+            "parent_request_id": null,
+            "path": "/v1/audio/generate",
+            "policy_decision": "allowed",
+            "policy_reasons": [
+              "route_authorized",
+              "allowed by your access plan"
+            ],
+            "policy_sources": [
+              "runtime_route_policy",
+              "access_plan:plan_everything"
+            ],
+            "protocol": "openai.audio",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": "sa3-small-sfx",
+            "requested_workflow": null,
+            "resolved_model": "sa3-small-sfx",
+            "resolved_workflow": "audio.generate.sa3-small-sfx",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "library_prompt",
+                "reason": "no_person"
+              }
+            ],
+            "retention_facts": [
+              "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+              "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+              "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+              "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+              "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+              "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+              "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+              "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
+            ],
+            "source_kind": "app",
+            "source_label": "test-app",
+            "started_at_ms": "<time>",
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "full",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "engine_failure": {
+    "caller": [
+      {
+        "label": "engine_failure",
+        "request": {
+          "body": {
+            "kind": "json",
+            "text": "{\"model\":\"sa3-small-sfx\",\"prompt\":\"a door creaks\",\"duration\":4}"
+          },
+          "headers": {
+            "content-length": "63",
+            "content-type": "application/json"
+          },
+          "method": "POST",
+          "path": "/v1/audio/generate",
+          "query": []
+        },
+        "response": {
+          "body": {
+            "kind": "json",
+            "text": "{\"error\": {\"message\": \"ComfyUI VAEDecodeAudio node 7: execution failed\", \"type\": \"api_error\"}}"
+          },
+          "headers": {
+            "content-length": "94",
+            "content-type": "application/json",
+            "x-request-id": "<req:1>"
+          },
+          "status": 502
+        }
+      }
+    ],
+    "engine_requests": [
+      {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":{\"1\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"stable_audio_3_small_sfx.safetensors\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"t5gemma_b_b_ul2.safetensors\",\"type\":\"stable_audio\",\"device\":\"default\"}},\"3\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"a door creaks\"}},\"4\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"\"}},\"5\":{\"class_type\":\"EmptyLatentAudio\",\"inputs\":{\"seconds\":4.0,\"batch_size\":1}},\"6\":{\"class_type\":\"KSampler\",\"inputs\":{\"model\":[\"1\",0],\"seed\":192058881,\"steps\":8,\"cfg\":1.0,\"sampler_name\":\"lcm\",\"scheduler\":\"simple\",\"positive\":[\"3\",0],\"negative\":[\"4\",0],\"latent_image\":[\"5\",0],\"denoise\":1.0}},\"7\":{\"class_type\":\"VAEDecodeAudio\",\"inputs\":{\"samples\":[\"6\",0],\"vae\":[\"1\",2]}},\"8\":{\"class_type\":\"SaveAudio\",\"inputs\":{\"audio\":[\"7\",0],\"filename_prefix\":\"audio/sa3-sfx\"}}},\"client_id\":\"<hex32:1>\"}"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "content-length": "<885 after normalisation>",
+          "content-type": "application/json",
+          "host": "comfy.fk.test"
+        },
+        "method": "POST",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/prompt",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/history/p1",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "created_at": "<time>",
+          "intent": "audio.generate",
+          "job_id": null,
+          "parent_request_id": null,
+          "path": "/v1/audio/generate",
+          "protocol": "openai.audio",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "test-app",
+            "app_id": "app_test",
+            "app_profile": "plan_everything",
+            "attempt_number": 1,
+            "backend": "comfyui",
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "audio.generate",
+            "job_id": null,
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "status_code": 502,
+              "terminal_reason": "http_502"
+            },
+            "owner_key_hash": "app:app_test",
+            "parent_request_id": null,
+            "path": "/v1/audio/generate",
+            "policy_decision": "allowed",
+            "policy_reasons": [
+              "route_authorized",
+              "allowed by your access plan"
+            ],
+            "policy_sources": [
+              "runtime_route_policy",
+              "access_plan:plan_everything"
+            ],
+            "protocol": "openai.audio",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": "sa3-small-sfx",
+            "requested_workflow": null,
+            "resolved_model": null,
+            "resolved_workflow": null,
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "library_prompt",
+                "reason": "no_person"
+              }
+            ],
+            "retention_facts": [
+              "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+              "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+              "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+              "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+              "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+              "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+              "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+              "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
+            ],
+            "source_kind": "app",
+            "source_label": "test-app",
+            "started_at_ms": null,
+            "status": "failed",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "full",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "failed"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "normalization": {
+    "caller": [
+      {
+        "label": "normalization",
+        "request": {
+          "body": {
+            "kind": "json",
+            "text": "{\"model\":\"sa3-small-sfx\",\"prompt\":\"a door creaks\",\"duration\":4}"
+          },
+          "headers": {
+            "content-length": "63",
+            "content-type": "application/json"
+          },
+          "method": "POST",
+          "path": "/v1/audio/generate",
+          "query": []
+        },
+        "response": {
+          "body": {
+            "kind": "binary",
+            "len": 3244,
+            "magic": "52494646a40c0000",
+            "sha256": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9"
+          },
+          "headers": {
+            "content-length": "3244",
+            "content-type": "audio/wav",
+            "x-audio-model": "sa3-small-sfx",
+            "x-audio-type": "music",
+            "x-request-id": "<req:1>"
+          },
+          "status": 200
+        }
+      }
+    ],
+    "engine_requests": [
+      {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":{\"1\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"stable_audio_3_small_sfx.safetensors\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"t5gemma_b_b_ul2.safetensors\",\"type\":\"stable_audio\",\"device\":\"default\"}},\"3\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"a door creaks\"}},\"4\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"\"}},\"5\":{\"class_type\":\"EmptyLatentAudio\",\"inputs\":{\"seconds\":4.0,\"batch_size\":1}},\"6\":{\"class_type\":\"KSampler\",\"inputs\":{\"model\":[\"1\",0],\"seed\":192058881,\"steps\":8,\"cfg\":1.0,\"sampler_name\":\"lcm\",\"scheduler\":\"simple\",\"positive\":[\"3\",0],\"negative\":[\"4\",0],\"latent_image\":[\"5\",0],\"denoise\":1.0}},\"7\":{\"class_type\":\"VAEDecodeAudio\",\"inputs\":{\"samples\":[\"6\",0],\"vae\":[\"1\",2]}},\"8\":{\"class_type\":\"SaveAudio\",\"inputs\":{\"audio\":[\"7\",0],\"filename_prefix\":\"audio/sa3-sfx\"}}},\"client_id\":\"<hex32:1>\"}"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "content-length": "<885 after normalisation>",
+          "content-type": "application/json",
+          "host": "comfy.fk.test"
+        },
+        "method": "POST",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/prompt",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/history/p1",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/view",
+        "query": [
+          [
+            "filename",
+            "tone_00001_.wav"
+          ],
+          [
+            "type",
+            "output"
+          ]
+        ],
+        "step": 0,
+        "to": "comfy.fk.test"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "created_at": "<time>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "parent_request_id": null,
+          "path": "/v1/audio/generate",
+          "protocol": "openai.audio",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "test-app",
+            "app_id": "app_test",
+            "app_profile": "plan_everything",
+            "attempt_number": 1,
+            "backend": "comfyui",
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "audio.generate",
+            "job_id": "<job:1>",
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "status_code": 200,
+              "terminal_reason": "http_200"
+            },
+            "owner_key_hash": "app:app_test",
+            "parent_request_id": null,
+            "path": "/v1/audio/generate",
+            "policy_decision": "allowed",
+            "policy_reasons": [
+              "route_authorized",
+              "allowed by your access plan"
+            ],
+            "policy_sources": [
+              "runtime_route_policy",
+              "access_plan:plan_everything"
+            ],
+            "protocol": "openai.audio",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": "sa3-small-sfx",
+            "requested_workflow": null,
+            "resolved_model": "sa3-small-sfx",
+            "resolved_workflow": "audio.generate.sa3-small-sfx",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "library_prompt",
+                "reason": "no_person"
+              }
+            ],
+            "retention_facts": [
+              "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+              "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+              "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+              "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+              "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+              "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+              "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+              "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
+            ],
+            "source_kind": "app",
+            "source_label": "test-app",
+            "started_at_ms": "<time>",
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "full",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  },
+  "success": {
+    "caller": [
+      {
+        "label": "success",
+        "request": {
+          "body": {
+            "kind": "json",
+            "text": "{\"model\":\"sa3-small-sfx\",\"prompt\":\"a door creaks\",\"duration\":4}"
+          },
+          "headers": {
+            "content-length": "63",
+            "content-type": "application/json"
+          },
+          "method": "POST",
+          "path": "/v1/audio/generate",
+          "query": []
+        },
+        "response": {
+          "body": {
+            "kind": "binary",
+            "len": 3244,
+            "magic": "52494646a40c0000",
+            "sha256": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9"
+          },
+          "headers": {
+            "content-length": "3244",
+            "content-type": "audio/wav",
+            "x-audio-model": "sa3-small-sfx",
+            "x-audio-type": "music",
+            "x-request-id": "<req:1>"
+          },
+          "status": 200
+        }
+      }
+    ],
+    "engine_requests": [
+      {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":{\"1\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"stable_audio_3_small_sfx.safetensors\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"t5gemma_b_b_ul2.safetensors\",\"type\":\"stable_audio\",\"device\":\"default\"}},\"3\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"a door creaks\"}},\"4\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"2\",0],\"text\":\"\"}},\"5\":{\"class_type\":\"EmptyLatentAudio\",\"inputs\":{\"seconds\":4.0,\"batch_size\":1}},\"6\":{\"class_type\":\"KSampler\",\"inputs\":{\"model\":[\"1\",0],\"seed\":192058881,\"steps\":8,\"cfg\":1.0,\"sampler_name\":\"lcm\",\"scheduler\":\"simple\",\"positive\":[\"3\",0],\"negative\":[\"4\",0],\"latent_image\":[\"5\",0],\"denoise\":1.0}},\"7\":{\"class_type\":\"VAEDecodeAudio\",\"inputs\":{\"samples\":[\"6\",0],\"vae\":[\"1\",2]}},\"8\":{\"class_type\":\"SaveAudio\",\"inputs\":{\"audio\":[\"7\",0],\"filename_prefix\":\"audio/sa3-sfx\"}}},\"client_id\":\"<hex32:1>\"}"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "content-length": "<885 after normalisation>",
+          "content-type": "application/json",
+          "host": "comfy.fk.test"
+        },
+        "method": "POST",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/prompt",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/history/p1",
+        "query": [],
+        "step": 0,
+        "to": "comfy.fk.test"
+      },
+      {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "host": "comfy.fk.test"
+        },
+        "method": "GET",
+        "outcome": {
+          "status": 200
+        },
+        "path": "/view",
+        "query": [
+          [
+            "filename",
+            "tone_00001_.wav"
+          ],
+          [
+            "type",
+            "output"
+          ]
+        ],
+        "step": 0,
+        "to": "comfy.fk.test"
+      }
+    ],
+    "receipts": {
+      "receipts": [
+        {
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "created_at": "<time>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "parent_request_id": null,
+          "path": "/v1/audio/generate",
+          "protocol": "openai.audio",
+          "receipt_json": {
+            "accepted_at_ms": "<time>",
+            "accepted_inputs": [],
+            "api_key_name": "test-app",
+            "app_id": "app_test",
+            "app_profile": "plan_everything",
+            "attempt_number": 1,
+            "backend": "comfyui",
+            "client_address": null,
+            "client_hint": null,
+            "connection_id": null,
+            "cost": null,
+            "effective_output_limit": null,
+            "fallback_reasons": [],
+            "finished_at_ms": "<time>",
+            "first_output_at_ms": null,
+            "ignored_inputs": {},
+            "intent": "audio.generate",
+            "job_id": "<job:1>",
+            "latency_ms": "<duration>",
+            "manifest_hash": null,
+            "manifest_id": null,
+            "manifest_version": null,
+            "metadata": {
+              "status_code": 200,
+              "terminal_reason": "http_200"
+            },
+            "owner_key_hash": "app:app_test",
+            "parent_request_id": null,
+            "path": "/v1/audio/generate",
+            "policy_decision": "allowed",
+            "policy_reasons": [
+              "route_authorized",
+              "allowed by your access plan"
+            ],
+            "policy_sources": [
+              "runtime_route_policy",
+              "access_plan:plan_everything"
+            ],
+            "protocol": "openai.audio",
+            "queued_at_ms": null,
+            "rejected_inputs": {},
+            "remote": false,
+            "request_id": "<req:1>",
+            "requested_model": "sa3-small-sfx",
+            "requested_workflow": null,
+            "resolved_model": "sa3-small-sfx",
+            "resolved_workflow": "audio.generate.sa3-small-sfx",
+            "retention": [
+              {
+                "decision": "not_kept",
+                "kind": "library_prompt",
+                "reason": "no_person"
+              }
+            ],
+            "retention_facts": [
+              "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+              "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+              "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+              "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+              "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+              "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+              "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+              "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
+            ],
+            "source_kind": "app",
+            "source_label": "test-app",
+            "started_at_ms": "<time>",
+            "status": "succeeded",
+            "stream": false,
+            "updated_at_ms": "<time>",
+            "usage": null,
+            "visibility": "full",
+            "warnings": []
+          },
+          "request_id": "<req:1>",
+          "status": "succeeded"
+        }
+      ],
+      "schema_version": [
+        {
+          "version": 2
+        }
+      ]
+    }
+  }
+}

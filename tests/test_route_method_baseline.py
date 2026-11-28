@@ -1,0 +1,609 @@
+"""Every route, method, status and Allow header matches the r18 baseline.
+
+The baseline was recorded on release 18 (8a3147f0) before the web app moved
+from /ui to the root. The current tree is probed over the union of the
+baseline's paths and its own. Only these differences are allowed:
+
+* paths that now classify as a web app shape (gateway/ui_routes.classify)
+  are served by the UI route for every method;
+* paths deleted with the move (the /ui mount, the server portal, the admin
+  dashboard and its aliases, /firehose, /r/{id}, old login/logout aliases)
+  now fall to the unchanged catch-all, or to the 405 of a route that remains;
+* GET /setup/console is the server setup console's new path;
+* /v1/assets/{asset_id}/thumbnail is new (signed WebP preview). Every method
+  must answer exactly as the sibling /v1/assets/{asset_id}/content route does:
+  GET is the one route, every other method is the same 405 or catch-all;
+* DELETE /v1/assets/{asset_id} (and its /openai alias) is new (an App key deletes an asset it made;
+  tests/test_app_asset_delete.py covers it). DELETE is the one route, HEAD is its 405, every other method
+  falls to the catch-all or to that 405;
+* POST /v1/assets (and its /openai alias) is new (an App key uploads one image to reference it by id in a chat
+  request; tests/test_chat_image_asset_refs.py covers it). POST is the one route, HEAD is its 405, every other
+  method falls to the catch-all or to that 405;
+* the MCP authorization server's paths are new (/.well-known/oauth-authorization-server,
+  /oauth/..., /me/api/mcp/...): each answers with its own route or that route's
+  405; in r18 they fell to the catch-all;
+* Add engine replaced the engine preset list: /admin/api/engine-definitions,
+  /admin/api/engine-protocols (installed description discovery), and
+  /admin/api/engines/... are new admin routes (tests/test_engine_admin_routes.py
+  covers them), and /admin/api/operator/service-presets is deleted and falls to
+  the catch-all or a 405;
+* /admin/api/operator/host-commands is the new owner-only command permission
+  (tests/test_admin_owner_holes_round4.py covers its write boundary);
+* GET and PUT /admin/api/settings/sessions (the owner's session settings), POST /auth/api/reauth and
+  POST /auth/api/sign-out-everywhere are new (tests/test_session_lifecycle.py and
+  tests/test_session_settings_api.py cover them); every other method falls to the catch-all as before;
+* GET /login/provider-sign-out is new (the sign-out redirect at the provider, A2;
+  tests/test_exposure_oidc_security.py covers it); HEAD answers 405 and every other
+  method falls to the catch-all, as /login does;
+* POST /admin/api/operator/services/{id}/secret-entries (the owner's secret commands, D27) and
+  PUT and DELETE /admin/api/operator/service-registry/excluded/{section}/{id} (fix or remove a record the registry
+  leaves out) are new owner routes (tests/test_secret_commands.py, tests/test_excluded_records.py);
+* GET /gateway/v1/media/jobs/{job_id}/results/{name:path} is new (a finished job's named result, S2.5b;
+  tests/test_media_job_results.py covers it): GET is its route, every other method falls to the catch-all
+  or a 405;
+* POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
+  method is its own route, and every other method answers as /me/api/media/{asset_id}
+  did before (the sample path /me/api/media/sample);
+* POST /me/api/media/confirm-folder is new (called by the Library "Remove missing items" confirmation):
+  the owner's marker confirmation is its own route, and every other method answers as
+  /me/api/media/{asset_id} did before, as for remove-missing;
+* /me/api/profile/avatar, /me/api/profile/avatars and /me/api/profile/avatar/picture are new (a person's avatar and the
+  sign-in picture served from the gateway; tests/test_me_avatar.py covers them): each answers with its own
+  route or that route's 405, and no other method reaches a handler;
+* POST /me/api/adapters is new (a member uploads one safetensors adapter; tests/test_adapter_upload_route.py covers
+  it): it answers with its own route, HEAD with that route's 405, and every other method falls to the catch-all;
+* PATCH /admin/api/apps/{app_id}/keys/{credential_id} is new (an administrator or the owner renames an App's key), and
+  PATCH on /me/api/apps/{app_id} and /me/api/credentials/{credential_id} is new (a person renames their own App or key;
+  tests/test_rename_apps_keys.py covers them): each is a route of its own, and every other method on those paths answers
+  as before;
+* GET /auth/api/remembered (the sign-in list) and DELETE /auth/api/remembered/{tile} (forget one name) are new
+  (gateway/accounts_api.py; tests/test_remembered_people.py covers them): every other method on those paths answers
+  as the catch-all did before;
+* POST /admin/api/categories/plan-reach is new (the access plan editor's before-Save preview of who a category change
+  reaches; tests/test_category_audience.py covers it): POST is the route itself, and every other method answers as
+  /admin/api/categories/preview-as does, the route it was registered beside;
+* GET /admin/api/settings/effective and /admin/api/settings/effective/export are deleted (config homes C10; the
+  sections routes under /admin/api/config replace them): each falls to the catch-all or a 405, like the other
+  deleted paths;
+* /admin/api/workflows and the paths under it are new owner routes (the owner's workflow store, CODE_TO_DATA_S4_S8
+  I2; tests/test_workflow_owner_api.py covers them, tests/test_admin_secret_sweep_writes.py their writes): each answers
+  with its own route, that route's 405, or the catch-all; none existed in r18;
+* GET and HEAD with an HTML Accept on a first segment no route registers get
+  the web app's 404 page (503 here: the sandbox has no web build). The same
+  requests without HTML in Accept keep their r18 answer.
+
+Everything else, including every API 405 and Allow header, must be equal.
+"""
+from __future__ import annotations
+
+import json
+import re
+import zlib
+from pathlib import Path
+
+import pytest
+
+import proxy
+import route_matrix
+import test_proxy_admin_integration as admin_integration
+from gateway import accounts, ui_routes
+
+BASELINE = json.loads((Path(__file__).parent / "fixtures" / "route_method_baseline.json").read_text())
+UI_ROUTE = route_matrix.route_label(proxy.WEB_UI_ROUTE)
+DELETED_SEGMENTS = {"ui", "r", "firehose"}
+ADMIN_SECTIONS = ("services", "status", "apps", "profiles", "users", "audit", "settings", "overview")
+DELETED_PATHS = {
+    "/admin", "/admin/", "/admin/login", "/admin/logout", "/me", "/me/", "/me/login", "/me/logout",
+    "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
+    # C10 removed the effective configuration view and its export; the config sections routes replace them.
+    "/admin/api/settings/effective", "/admin/api/settings/effective/export",
+}
+NEW_PATHS = {"/setup/console"}
+PROBLEM_REPORT_REST_PATH = "/gateway/v1/problem-reports"
+SESSION_END_TOKEN_PATH = "/me/api/session/end-token"
+# Per-engine native pass-through (contract section 5): new since the baseline, off unless an engine enables it.
+NATIVE_PREFIX = "/native"
+# The gateway lifecycle hop serves completions and embeddings next to chat, and answers a POST no route serves
+# with 404 endpoint_not_served (tests/test_litellm_inner_hop_endpoints.py). Its chat path is in the baseline and unchanged.
+LIFECYCLE_HOP_PREFIX = "/internal/litellm/local/"
+# The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
+# mappings, the policy simulator and editor, the LAN placeholder keys and the user-access defaults.
+ACCESS_PLAN_API_PREFIXES = (
+    "/admin/api/access-plans", "/admin/api/access/", "/admin/api/profiles", "/admin/api/runtime-profile-mappings",
+    "/admin/api/policy/", "/admin/api/settings/lan-placeholder-keys", "/admin/api/operator/user-access-defaults",
+)
+MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
+AVATAR_PREFIX = "/me/api/profile/avatar"
+ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
+ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
+# The two 3D rows (registry/protocol_frontends.yml, mounted by gateway/row_routes.py) are new since the baseline: POST is
+# the route; the other methods meet the catch-all, and HEAD meets the route's 405 (POST only). Live outcomes name each
+# caller's answer.
+MESH_PATHS = ("/v1/3d/generations", "/v1/3d/generations/glb")
+MESH_ROUTING = {
+    "POST": "<path> serve",
+    "HEAD": "405 allow=POST via <path> serve",
+}
+# The video create route is the registry row `videos-create` (gateway/row_routes.py) since the baseline: the path is the same, and the
+# handler that answers POST is the row's. HEAD meets the route's 405 (POST only). Other methods are unchanged.
+VIDEO_ROW_PATHS = ("/v1/videos", "/openai/v1/videos")
+VIDEO_ROW_ROUTING = {"POST": "<path> serve", "HEAD": "405 allow=POST via <path> serve"}
+MESH_LIVE = {
+    "HEAD": "none: 405 application/json allow=POST; app: 405 application/json allow=POST; admin: 405 application/json allow=POST",
+    "OTHER": "none: 401 application/json; app: 404 application/json; admin: 401 application/json",
+}
+DELETED_PRESETS = "/admin/api/operator/service-presets"
+HOST_COMMANDS = "/admin/api/operator/host-commands"
+ADAPTER_UPLOAD_PATH = "/me/api/adapters"  # a member's adapter upload; tests/test_adapter_upload_route.py covers it
+ADAPTER_UPLOADS = "/admin/api/operator/adapter-uploads"  # the owner's switch for member adapter uploads; tests/test_adapter_upload_setting.py covers it
+ENGINE_FOLDERS = "/admin/api/operator/engine-folders"  # the owner's list of folders engines may run from; tests/test_engine_process_template.py covers it
+SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere",
+                 "/auth/api/clear-browser-cache"}
+PROVIDER_SIGN_OUT_PATH = "/login/provider-sign-out"
+REMEMBERED_PATH = "/auth/api/remembered"
+LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
+PLAN_REACH_PATH, PLAN_REACH_SIBLING = "/admin/api/categories/plan-reach", "/admin/api/categories/preview-as"
+THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
+ASSET_DELETE_PATHS = ("/v1/assets/sample", "/openai/v1/assets/sample")
+ASSET_UPLOAD_PATHS = ("/v1/assets", "/openai/v1/assets")
+REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
+REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
+CONFIRM_FOLDER_PATH = "/me/api/media/confirm-folder"
+CONFIRM_FOLDER_ROUTE = "/me/api/media/confirm-folder confirm_media_folder"
+
+
+SHARDS = 4
+
+
+def _group(path: str) -> str:
+    """Rows that one comparison reads together (a thumbnail with the content route) form one group, and a group
+    is never split between shards."""
+    return THUMBNAIL_SIBLING if path == THUMBNAIL_PATH else path
+
+
+def _shard_map(current: dict) -> dict[str, int]:
+    """Every path of the baseline and of the current tree to the live-outcome item that owns it: the sorted
+    groups are dealt out in turn, so each item gets the same mix of cheap and costly paths."""
+    paths = {key.split(" ", 1)[1] for key in BASELINE["live"]} | {path for _, path in route_matrix.live_targets(current["routing"])}
+    dealt = {group: index % SHARDS for index, group in enumerate(sorted({_group(path) for path in paths}))}
+    return {path: dealt[_group(path)] for path in paths}
+
+
+def _flat(routing: dict) -> dict:
+    return {f"{method} {path}": outcome for path, row in routing.items() for method, outcome in row.items()}
+
+
+def _now_needs_a_key(old: str | None, new: str | None) -> bool:
+    """A method nothing serves answers a caller with no key 401 (key_required), not 404."""
+    if old is None or new is None:
+        return False
+    return re.sub(r"none: (404|405)[^;]*", "none: 401 application/json", old, count=1) == new
+
+
+def _same_as_sibling_or_needs_a_key(sibling: str | None, new: str | None) -> bool:
+    return sibling is not None and (sibling == new or _now_needs_a_key(sibling, new))
+
+
+def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
+    """Same as the API-client outcome, except a caller with no key now gets 401, not 404."""
+    old_any, new_any = _any_accept(old), _any_accept(new)
+    if old_any.get("none", "").startswith(("404", "405")) and new_any.get("none", "").startswith("401"):
+        old_any["none"] = new_any["none"]
+    return old_any == new_any
+
+
+def _deliberate(key: str) -> str | None:
+    """The reviewed class of a difference, or None if none may exist."""
+    _method, path = key.split(" ", 1)
+    if path == SESSION_END_TOKEN_PATH:
+        return "session_end_token"
+    if path == "/auth/api/browser-people" or path.startswith("/auth/api/browser-people/"):
+        return "browser_people"  # several sign-ins per browser: list, switch, remove (tests/test_browser_people.py)
+    if (path in {"/admin/api/me/retention/ledger", "/admin/api/requests/sample/retention/ledger",
+                 "/admin/api/settings/retention/ledger", "/admin/api/settings/retention/systems/sample/facts"}
+            or re.fullmatch(r"/admin/api/(engines|providers)/[^/]+/retention/(facts|ledger)", path)):
+        return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
+    if path.startswith("/admin/api/config/") and path not in {"/admin/api/config/export", "/admin/api/config/reload"} or path == "/admin/api/config":
+        return "config_sections"  # owner routes for the config sections (gateway/config_api.py); tests/test_config_api.py covers them
+    if path == "/admin/api/workflows" or path.startswith("/admin/api/workflows/") or path in {
+        "/admin/api/workflow-choices", "/admin/api/workflow-choices/refresh",
+    }:
+        return "workflow_owner"  # the owner's workflow store routes (gateway/workflow_owner_api.py)
+    if path == "/admin/api/subscriptions" or path.startswith("/admin/api/subscriptions/"):
+        return "subscriptions"  # the owner connects the gateway's subscription plans (gateway/subscription_api.py)
+    if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
+        return "access-plans"
+    if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
+        return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
+    if path.startswith("/me/api/apps/") and path.endswith("/trusted-addresses"):
+        return "trusted-addresses"  # a person's own App's address, added after the baseline (tests/test_me_trusted_addresses.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/adopt", path) or re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+/(adopt|readd)", path):
+        return "adopt"  # a person keeps, or adds again, an unproven binding on their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/replace", path):
+        return "adopt"  # a person replaces a key they cannot keep, on their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+", path):
+        return "trusted-addresses"  # a person removes an address from their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/admin/api/apps/[^/]+/keys/[^/]+", path) or (
+            _method == "PATCH" and re.fullmatch(r"/me/api/(apps|credentials)/[^/]+", path)):
+        return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)
+    if path == "/admin/api/signin" or path.startswith("/admin/api/signin/"):
+        return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
+    if path == "/admin/api/problem-reports" or path.startswith("/admin/api/problem-reports/"):
+        return "signin"  # owner routes added after the baseline (gateway/problem_reports.py; tests/test_problem_reports.py)
+    if path == PROBLEM_REPORT_REST_PATH:
+        return "problem_report_rest"  # an App key files a report without MCP (gateway/problem_reports.py); tests/test_problem_report_rest.py
+    if path == ENGINE_PROTOCOLS_PATH:
+        return "engine_protocols"
+    if path.startswith(ENGINE_PROTOCOLS_PATH + "/"):
+        return "engine_protocol_item"  # one description per id, owner-written (gateway/engine_protocol_admin.py; tests/test_engine_protocol_writer.py)
+    if path in MESH_PATHS:
+        return "mesh"
+    if path in VIDEO_ROW_PATHS and _method in ("POST", "HEAD"):
+        return "video_row"
+    if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
+        return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
+    if path in (HOST_COMMANDS, ENGINE_FOLDERS, ADAPTER_UPLOADS):
+        return "host_commands"
+    if path in SESSION_PATHS:
+        return "sessions"
+    if path == REMEMBERED_PATH or path.startswith(REMEMBERED_PATH + "/"):
+        return "remembered"  # the sign-in list and its forget route (gateway/accounts_api.py)
+    if path == PROVIDER_SIGN_OUT_PATH:
+        return "provider_sign_out"  # the sign-out redirect at the provider (proxy.py provider_sign_out)
+    if re.fullmatch(r"/admin/api/operator/services/[^/]+/secret-entries", path) or path.startswith(LEFT_OUT_PATHS):
+        return "secret_entries"  # decisions D27 and D22: the secret commands, and the records the registry leaves out
+    if ui_routes.classify(path) is not None:
+        return "ui"
+    if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
+        return "deleted"
+    if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
+        return "native"
+    if path.startswith(LIFECYCLE_HOP_PREFIX):
+        return "lifecycle_hop"
+    if (path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/")
+            or path in {"/me/api/retention", "/me/api/retention/notice-seen", "/gateway/v1/me/retention"}
+            or re.fullmatch(r"/me/api/credentials/[^/]+/privacy-permission", path)):
+        return "request_history"  # history rows, the member's own choice, its notice and permission; tests/test_request_history_*.py
+    if path == PLAN_REACH_PATH:
+        return "plan_reach"  # the access plan editor's before-Save preview (gateway/category_api.py); POST is the route
+    if re.fullmatch(r"/gateway/v1/media/jobs/[^/]+/results/.+", path):
+        return "media_job_results"  # a finished job's named result (gateway/api.py); tests/test_media_job_results.py
+    if path in NEW_PATHS:
+        return "new"
+    if path == THUMBNAIL_PATH:
+        return "thumbnail"
+    if path in ASSET_DELETE_PATHS:
+        return "asset_delete"
+    if path in ASSET_UPLOAD_PATHS:
+        return "asset_upload"
+    if path in (REMOVE_MISSING_PATH, CONFIRM_FOLDER_PATH):
+        return "media_folder"
+    if path.startswith(MCP_OAUTH_PREFIXES):
+        return "mcp_oauth"
+    if path.startswith(AVATAR_PREFIX):
+        return "avatar"
+    if path == ADAPTER_UPLOAD_PATH:
+        return "adapter_upload"
+    if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
+        return "html404"
+    return None
+
+
+def _media_folder_path(key: str) -> str:
+    return CONFIRM_FOLDER_PATH if CONFIRM_FOLDER_PATH in key else REMOVE_MISSING_PATH
+
+
+def _media_folder_sibling(key: str) -> str:
+    return key.replace(_media_folder_path(key), REMOVE_MISSING_SIBLING)
+
+
+def _thumbnail_sibling(key: str) -> str:
+    return key.replace(THUMBNAIL_PATH, THUMBNAIL_SIBLING)
+
+
+def _method_of(key: str) -> str:
+    return key.split(" ", 1)[0]
+
+
+def _any_accept(cells: str | None) -> dict:
+    """Per principal, the outcome for Accept */* (an API client)."""
+    result = {}
+    for cell in (cells or "").split("; "):
+        principal, _, outcome = cell.partition(": ")
+        result[principal] = outcome.split(" | any ", 1)[1] if outcome.startswith("html ") else outcome
+    return result
+
+
+@pytest.fixture(scope="module")
+def current():
+    """Routing is pure inspection: no request is made to build it."""
+    return {"routing": route_matrix.routing_matrix(proxy.app, extra_paths=BASELINE["routing"])}
+
+
+@pytest.fixture
+def live_client():
+    """A client and the three principals; every live-outcome item gets its own admin store."""
+    case = admin_integration.ProxyAdminIntegrationTests(methodName="runTest")
+    case.setUp()
+    try:
+        accounts.initialize(case.db)
+        app_key = route_matrix.mint_app_key(case)
+        with route_matrix.one_portal(case.client):
+            yield case.client, {"none": {}, "app": {"Authorization": f"Bearer {app_key}"},
+                                "admin": {"Authorization": f"Bearer {case.admin_key}"}}
+    finally:
+        case.tearDown()
+
+
+def test_routing_differs_from_baseline_only_where_reviewed(current):
+    old, new = _flat(BASELINE["routing"]), _flat(current["routing"])
+    unexpected = {}
+    for key in sorted(set(old) | set(new)):
+        if old.get(key) == new.get(key):
+            continue
+        kind = _deliberate(key)
+        outcome = new.get(key, "")
+        if kind == "ui" and outcome == UI_ROUTE:
+            continue
+        if kind == "deleted" and (route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
+            continue
+        if kind == "access-plans":
+            continue  # the access plan API replaced /admin/api/profiles
+        if kind == "trusted-addresses":
+            continue  # new owner routes; tests/test_trusted_addresses.py covers them
+        if kind == "adopt":
+            continue  # a person keeps an unproven binding on their own App; tests/test_me_binding_adoption.py covers it
+        if kind == "rename":
+            continue  # new rename routes; tests/test_rename_apps_keys.py covers them
+        if kind == "signin":
+            continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
+        if kind == "problem_report_rest" and key not in old:
+            # POST is the new route itself; every other method falls to the catch-all or to that route's 405.
+            if outcome == f"{PROBLEM_REPORT_REST_PATH} file_report" if _method_of(key) == "POST" else (
+                    route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
+                continue
+        if kind == "native" and key not in old:
+            continue  # a new lane; tests/test_native_passthrough.py covers it
+        if kind == "lifecycle_hop" and key not in old:
+            continue  # new lifecycle hop endpoints; tests/test_litellm_inner_hop_endpoints.py covers them
+        if kind == "mesh" and key not in old:
+            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route").replace("<path>", key.split(" ", 1)[1])
+            if outcome == expected:
+                continue
+        if kind == "video_row" and outcome == VIDEO_ROW_ROUTING[_method_of(key)].replace("<path>", key.split(" ", 1)[1]):
+            continue
+        if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
+            continue  # new Add engine routes, or the deleted preset list falling through
+        if kind == "engine_protocols" and key not in old:
+            method = _method_of(key)
+            expected = (f"{ENGINE_PROTOCOLS_PATH} engine_protocols" if method == "GET"
+                        else f"405 allow=GET via {ENGINE_PROTOCOLS_PATH} engine_protocols" if method == "HEAD"
+                        else "/{path:path} unmatched_route")
+            if outcome == expected:
+                continue
+        if kind == "engine_protocol_item" and key not in old:
+            continue  # new owner routes: GET, PUT and DELETE of one description; tests/test_engine_protocol_writer.py covers them
+        if kind == "host_commands" and key not in old:
+            continue  # new owner command permission route
+        if kind == "sessions" and key not in old:
+            continue  # new session settings, step-up, sign-out-everywhere and post-sign-out cache clearing routes
+        if kind == "session_end_token" and key not in old:
+            continue  # lightweight member CSRF-token read for sign-out; tests/test_session_lifecycle.py covers it
+        if kind == "browser_people" and key not in old:
+            continue  # new routes for several sign-ins per browser; tests/test_browser_people.py covers them
+        if kind == "remembered" and key not in old:
+            continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
+        if kind == "workflow_owner" and key not in old:
+            continue  # new owner workflow routes; tests/test_workflow_owner_api.py covers them
+        if kind == "subscriptions" and key not in old:
+            continue  # new owner subscription routes; tests/test_subscription_plan_access.py covers them
+        if kind == "provider_sign_out":
+            # As /login: GET is the route, HEAD says 405 for it, and every other method falls to the catch-all.
+            expected = {"GET": "/login/provider-sign-out provider_sign_out",
+                        "HEAD": "405 allow=GET via /login/provider-sign-out provider_sign_out"}.get(
+                            _method_of(key), "/{path:path} unmatched_route")
+            if outcome == expected:
+                continue
+        if kind == "retention_ledger" and key not in old:
+            continue  # new offline ledger and fact editor routes
+        if kind == "config_sections" and key not in old:
+            continue  # new owner routes for the config sections
+        if kind == "media_job_results" and key not in old:
+            expected_get = "/gateway/v1/media/jobs/{job_id}/results/{name:path} "
+            if (outcome.startswith(expected_get) if _method_of(key) == "GET"
+                    else route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
+                continue
+        if kind == "secret_entries" and key not in old:
+            continue  # new owner routes (the secret commands, and the records the registry leaves out)
+        if kind == "avatar" and key not in old:
+            continue  # new member routes; tests/test_me_avatar.py and tests/test_avatar_signin.py cover them
+        if kind == "adapter_upload" and key not in old:
+            # POST is the new route itself; HEAD says 405 for it; every other method falls to the catch-all.
+            expected = {"POST": f"{ADAPTER_UPLOAD_PATH} upload_adapter",
+                        "HEAD": f"405 allow=POST via {ADAPTER_UPLOAD_PATH} upload_adapter"}.get(_method_of(key))
+            if outcome == expected or (expected is None and route_matrix.is_catch_all(outcome)):
+                continue
+        if kind == "request_history" and key not in old:
+            continue  # new maker routes and the member choice; tests/test_request_history_*.py cover them
+        if _now_needs_a_key(old.get(key), new.get(key)):
+            continue
+        if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
+                f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
+            continue
+        if kind == "media_folder" and key not in old:
+            # POST is the new route itself and must say so; every other method answers as the sibling does.
+            expected = (CONFIRM_FOLDER_ROUTE if CONFIRM_FOLDER_PATH in key else REMOVE_MISSING_ROUTE) if _method_of(key) == "POST" else new.get(_media_folder_sibling(key))
+            if outcome == expected:
+                continue
+        if kind == "plan_reach" and key not in old:
+            # POST is the new route itself; every other method answers as the preview route beside it does.
+            expected = (f"{PLAN_REACH_PATH} endpoint" if _method_of(key) == "POST" else
+                        new.get(key.replace(PLAN_REACH_PATH, PLAN_REACH_SIBLING), "").replace(PLAN_REACH_SIBLING, PLAN_REACH_PATH))
+            if outcome == expected:
+                continue
+        if kind == "thumbnail" and key not in old:
+            same_as_content =new.get(_thumbnail_sibling(key), "").replace("/content", "/thumbnail").replace(
+                "assets_content", "assets_thumbnail")
+            if outcome == same_as_content:
+                continue
+        if kind == "asset_delete" and key not in old:
+            template = key.split(" ", 1)[1].replace("/sample", "/{asset_id}")
+            if outcome == {"DELETE": f"{template} assets_delete", "HEAD": f"405 allow=DELETE via {template} assets_delete"}.get(
+                    _method_of(key)) or (_method_of(key) not in ("DELETE", "HEAD") and (
+                    route_matrix.is_catch_all(outcome) or outcome == f"405 allow=DELETE via {template} assets_delete")):
+                continue
+        if kind == "asset_upload" and key not in old:
+            template = key.split(" ", 1)[1]
+            if outcome == {"POST": f"{template} assets_create", "HEAD": f"405 allow=POST via {template} assets_create"}.get(
+                    _method_of(key)) or (_method_of(key) not in ("POST", "HEAD") and (
+                    route_matrix.is_catch_all(outcome) or outcome == f"405 allow=POST via {template} assets_create")):
+                continue
+        if kind == "mcp_oauth" and (key not in old or route_matrix.is_catch_all(old[key])) and (
+                not route_matrix.is_catch_all(outcome) or key not in old):
+            continue
+        unexpected[key] = (old.get(key), outcome)
+    assert unexpected == {}
+
+
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")  # each is handled on its own (a body-less read, its HEAD twin, the preflight)
+
+
+def _sampled(targets: list[tuple[str, str]]) -> set[tuple[str, str]]:
+    """The live requests worth sending. A path answers GET, HEAD and OPTIONS on its own, so each of those is sent. The
+    state-changing verbs (POST, PUT, PATCH, DELETE) go through the same checks as one another, so one of them speaks for
+    the others, and which one varies from group to group (a fixed checksum of the group picks it): every verb is still
+    sent for about a quarter of the groups, and a rule that treats one verb alone is seen. A group is a path, or a pair
+    that one comparison reads together (see ``_group``), so a pair is always sent with the same verb."""
+    unsafe: dict[str, set[str]] = {}
+    chosen = set()
+    for method, path in targets:
+        if method in SAFE_METHODS:
+            chosen.add((method, path))
+        else:
+            unsafe.setdefault(_group(path), set()).add(method)
+    for method, path in targets:
+        methods = sorted(unsafe.get(_group(path), ()))
+        if methods and method == methods[zlib.crc32(_group(path).encode()) % len(methods)]:
+            chosen.add((method, path))
+    return chosen
+
+
+@pytest.mark.parametrize("shard", range(SHARDS))
+def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_client, shard):
+    # One item per path shard so the sweep spreads over workers; together they cover every baseline row.
+    assert {_method_of(key) for key in BASELINE["live"]} <= set(route_matrix.METHODS)
+    client, principals = live_client
+    owner = _shard_map(current)
+    all_targets = route_matrix.live_targets(current["routing"])
+    sent = _sampled(all_targets)
+    targets = [(verb, path) for verb, path in all_targets if (verb, path) in sent and owner[path] == shard]
+    # A baseline row whose request is still a live target but is not sent is not compared; one that is no longer a
+    # live target (a deleted or changed route) still is, and must be deliberate.
+    live_keys = {f"{verb} {path}" for verb, path in all_targets}
+    skipped = live_keys - {f"{verb} {path}" for verb, path in sent}
+    old = {key: cells for key, cells in BASELINE["live"].items()
+           if key not in skipped and owner[key.split(" ", 1)[1]] == shard}
+    new = route_matrix.live_matrix(client, targets, principals)
+    unexpected = {}
+    for key in sorted(set(old) | set(new)):
+        if old.get(key) == new.get(key):
+            continue
+        kind = _deliberate(key)
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "session_end_token", "browser_people", "secret_entries", "native", "avatar", "adapter_upload", "remembered", "request_history", "provider_sign_out", "problem_report_rest"}:
+            continue
+        if kind == "retention_ledger" and key not in old:
+            continue
+        if kind == "lifecycle_hop" and key not in old:
+            continue
+        if kind == "config_sections" and key not in old:
+            continue
+        if kind == "workflow_owner" and key not in old:
+            continue
+        if kind == "subscriptions" and key not in old:
+            continue
+        if kind == "media_job_results" and key not in old:
+            continue  # GET is the result route; the other methods answer as the catch-all does
+        if kind == "mesh" and key not in old:
+            # POST is never a live row (it has a real handler, sharded with its siblings); the rest answer as above.
+            assert _method_of(key) != "POST", key
+            if new.get(key) == (MESH_LIVE["HEAD"] if _method_of(key) == "HEAD" else MESH_LIVE["OTHER"]):
+                continue
+        if kind == "engine_protocols" and key not in old:
+            assert _method_of(key) != "GET", key
+            # HEAD has only a partial GET match. Other methods reach the unchanged
+            # catch-all, whose authentication rules reject these three callers.
+            expected = ("; ".join(f"{principal}: 405 application/json allow=GET" for principal in ("none", "app", "admin"))
+                        if _method_of(key) == "HEAD" else
+                        "none: 401 application/json; app: 404 application/json; admin: 401 application/json")
+            if new.get(key) == expected:
+                continue
+        if kind == "engine_protocol_item" and key not in old:
+            continue  # new owner routes: GET, PUT and DELETE of one description; HEAD answers as the sibling item routes do
+        if _now_needs_a_key(old.get(key), new.get(key)):
+            continue
+        if kind == "media_folder" and key not in old:
+            # A POST has a real handler, so it is never a live row; the others answer as the sibling did.
+            assert _method_of(key) != "POST", key
+            if _same_as_sibling_or_needs_a_key(BASELINE["live"].get(_media_folder_sibling(key)), new.get(key)):
+                continue
+        if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
+            continue
+        if kind == "plan_reach" and key not in old:
+            # POST is never a live row (it has a real handler). The others answer as the preview route beside it does:
+            # HEAD gets the same 405 and Allow header, and every other method gets the catch-all's key-required 401
+            # that _now_needs_a_key describes, applied to the sibling's baseline row.
+            assert _method_of(key) != "POST", key
+            if _same_as_sibling_or_needs_a_key(BASELINE["live"].get(key.replace(PLAN_REACH_PATH, PLAN_REACH_SIBLING)),
+                                               new.get(key)):
+                continue
+        if kind == "thumbnail" and key not in old and new.get(key) == new.get(_thumbnail_sibling(key)) is not None:
+            continue
+        if kind == "asset_delete" and key not in old and new.get(key) is not None:
+            # A keyless DELETE is refused (401); the other methods answer as an unmatched path or the 405 beside DELETE.
+            assert not new[key].startswith("none: 2"), key
+            continue
+        if kind == "asset_upload" and key not in old and new.get(key) is not None:
+            # A keyless request is refused; the other methods answer as an unmatched path or the 405 beside POST.
+            assert not new[key].startswith("none: 2"), key
+            continue
+        unexpected[key] = (old.get(key), new.get(key))
+    assert unexpected == {}
+
+
+def test_every_baseline_and_current_live_row_belongs_to_exactly_one_shard(current):
+    owner = _shard_map(current)
+    keys = set(BASELINE["live"]) | {f"{verb} {path}" for verb, path in route_matrix.live_targets(current["routing"])}
+    owned = [sorted(key for key in keys if owner[key.split(" ", 1)[1]] == shard) for shard in range(SHARDS)]
+    assert sorted(key for shard in owned for key in shard) == sorted(keys)
+    assert all(owned)
+    # A pair that one comparison reads together is never split.
+    assert owner[THUMBNAIL_PATH] == owner[THUMBNAIL_SIBLING]
+
+
+def test_deliberate_head_changes():
+    routing = route_matrix.routing_matrix(proxy.app, ["/", "/admin"])
+    assert routing["/"]["HEAD"] == UI_ROUTE
+    assert routing["/admin"]["HEAD"].startswith("405 allow=DELETE,GET,OPTIONS,PATCH,POST,PUT via /{path:path}")
+
+
+def test_api_protocol_paths_keep_their_r18_answers(current, live_client):
+    keys = ("HEAD /v1/models", "HEAD /mcp", "HEAD /health", "HEAD /llms.txt", "GET /mcp", "DELETE /mcp")
+    required = {key for key in keys if key in BASELINE["live"]}
+    targets = [(method, path) for method, path in route_matrix.live_targets(current["routing"])
+               if f"{method} {path}" in required]
+    # A sentinel that is no longer a 405 or catch-all target must fail here, as it did when the whole matrix ran.
+    assert {f"{method} {path}" for method, path in targets} == required
+    client, principals = live_client
+    live = route_matrix.live_matrix(client, targets, principals)
+    for key in sorted(required):
+        assert live[key] == BASELINE["live"][key], key
+    assert _flat(current["routing"])["HEAD /api/blobs/sample"] == _flat(BASELINE["routing"])["HEAD /api/blobs/sample"]
+
+
+def test_remove_missing_is_a_session_route_that_other_callers_cannot_use(current, live_client):
+    assert _flat(current["routing"])[f"POST {REMOVE_MISSING_PATH}"] == REMOVE_MISSING_ROUTE
+    client, principals = live_client
+    answers = {name: client.post(REMOVE_MISSING_PATH, headers=headers).status_code
+               for name, headers in principals.items()}
+    assert answers["none"] == 401
+    assert all(400 <= status < 500 for status in answers.values()), answers

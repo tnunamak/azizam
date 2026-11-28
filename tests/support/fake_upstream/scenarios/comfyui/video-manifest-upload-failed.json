@@ -1,0 +1,26 @@
+{
+  "protocol": "comfyui",
+  "name": "video-manifest-upload-failed",
+  "description": "The source clip upload is refused; nothing else is called.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image, POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "upload",
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "status": 503,
+        "body": [
+          {
+            "text": "offline"
+          }
+        ]
+      }
+    }
+  ]
+}

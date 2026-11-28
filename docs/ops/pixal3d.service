@@ -1,0 +1,25 @@
+# Install: copy to ~/.config/systemd/user/pixal3d.service, then `systemctl --user daemon-reload`
+# and `systemctl --user enable --now pixal3d.service`. The gateway's `pixal3d` service record
+# (docs/examples/mesh-pixal3d/README.md) calls POST /generate on 127.0.0.1:8892; the service runs the
+# shipped Pixal3D prompt in ComfyUI and returns the GLB. If this unit is down, the Pixal3D workflow fails
+# and a 3D request can name the TRELLIS.2 workflow with `model`; the gateway itself is unaffected.
+[Unit]
+Description=Pixal3D image-to-3D service (runs the shipped prompt in ComfyUI, loopback only, port 8892)
+After=network.target comfyui.service
+
+[Service]
+Type=simple
+# COMFYUI_URL is the ComfyUI the prompt runs in. The service holds no model; ComfyUI loads them.
+ExecStart=%h/applications/azizam/venv/bin/python -m uvicorn engines.pixal3d_comfy_service:app --host 127.0.0.1 --port 8892
+WorkingDirectory=%h/applications/azizam
+Environment=COMFYUI_URL=http://127.0.0.1:7890
+Environment=PYTHONDONTWRITEBYTECODE=1
+Nice=5
+MemoryMax=2G
+# earlyoom stops services with SIGTERM and they exit 0, so restart always; `systemctl stop` still stops it.
+Restart=always
+RestartSec=10
+LimitCORE=0
+
+[Install]
+WantedBy=default.target

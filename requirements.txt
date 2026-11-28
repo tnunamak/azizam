@@ -1,0 +1,13 @@
+fastapi>=0.100.0
+uvicorn>=0.23.0
+httpx>=0.24.0
+pyyaml>=6.0
+python-multipart
+brotli>=1.1
+websockets>=12.0
+Pillow>=10.0
+authlib>=1.7.2
+cryptography>=46.0
+litellm[proxy]==1.86.2  # exact pin: PyPI 1.82.7 and 1.82.8 were reported compromised (2026-03); bump deliberately
+prisma>=0.15.0
+playwright==1.63.0  # scripts/check_workflow_drift.py frontend-layout check (pip package only; run `playwright install chromium` once for the browser)

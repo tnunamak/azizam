@@ -1,0 +1,15 @@
+{
+  "protocol": "openai-compatible",
+  "name": "member-embeddings",
+  "description": "The LLM substrate answers one embeddings call attributed to the member key whose hash prefix the gateway reports.",
+  "provenance": {"source": "hand-written", "reference": "proxy._litellm_gateway_metadata (x-azizam-key-prefix) and https://platform.openai.com/docs/api-reference/embeddings/object"},
+  "exchanges": [
+    {
+      "id": "embeddings",
+      "match": {"method": "POST", "path": "/v1/embeddings", "headers": {"x-azizam-key-prefix": "{{key_prefix}}"}, "json": {"model": "{{model}}"}},
+      "response": {
+        "json": {"object": "list", "model": "{{model}}", "data": [{"object": "embedding", "index": 0, "embedding": [0.25, -0.5]}], "usage": {"prompt_tokens": 1, "total_tokens": 1}}
+      }
+    }
+  ]
+}

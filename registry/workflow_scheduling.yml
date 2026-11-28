@@ -1,0 +1,18 @@
+# Time before takeover can begin on a claimed request.
+claim_lease_s: 120.0
+# How long a concurrent request waits for the first to decide.
+claim_wait_s: 2.0
+# Interval at which a waiting claimant checks the claim.
+claim_poll_s: 0.05
+# Interval at which submission progress is observed.
+submit_poll_s: 0.02
+# Retry-After response interval when a caller should try again.
+retry_after_s: 2
+# Maximum attempts when a workflow binding does not specify its own value.
+retry_max_attempts: 3
+# Initial backoff in seconds when the binding does not specify it.
+retry_base_s: 5.0
+# Backoff cap in seconds when the binding does not specify it.
+retry_max_s: 30.0
+# GPU pool wait in seconds when the binding does not specify it.
+gpu_wait_s: 1800.0

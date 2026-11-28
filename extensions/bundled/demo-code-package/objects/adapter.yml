@@ -1,0 +1,20 @@
+kind: adapter
+id: test-demo-http-adapter
+name: Test Demo HTTP Adapter
+mode: bundled-python
+language: python
+interfaces:
+  - health
+  - invoke
+entrypoint: code.demo_adapter:DemoAdapter
+package_path: code
+permissions:
+  network:
+    outbound:
+      - ref: service.base_url
+  filesystem:
+    read:
+      - package://fixtures/**
+    write: []
+trust_tier: bundled
+description: Fixture adapter declaration for validating staged package code.

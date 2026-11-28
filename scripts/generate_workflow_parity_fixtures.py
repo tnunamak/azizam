@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Emit parity captures from a committed hermetic checkout without writing fixtures.
+
+Run ``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py [name ...]``
+(or ``--headless-openapi``, ``--readers``, ``--legacy-wire``).
+Each WORKFLOW_PARITY_JSON line contains a name and data from the documented
+``tests/fixtures/c2d_parity/capture.py`` capture functions. Review the emitted
+data before saving it with that module's canonical serializer.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import runpy
+import sys
+
+
+def main() -> None:
+    if os.environ.get("HERMETIC_TEST_NAMESPACE") != "1":
+        raise SystemExit("Use scripts/run-hermetic-pytest.sh --python-script; live stores must not be imported.")
+    root = Path(__file__).resolve().parents[1]
+    sys.path[:0] = [str(root), str(root / "tests")]
+    import conftest  # noqa: F401
+    from tests.support.c2d_parity import jsonable
+
+    if sys.argv[1:] == ["--web-image-edit"]:
+        from gateway.capabilities import capability_from_workflow_record
+        from gateway.discovery import WorkflowRegistry, BUNDLED_WORKFLOWS_DIR
+        from gateway.workflows_catalog import build_workflows_catalog
+
+        record = WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR).get("image.edit.qwen-image-2.1-edit")
+        cap = capability_from_workflow_record(record, backend="comfyui")
+        print("WEB_IMAGE_EDIT_JSON=" + json.dumps(build_workflows_catalog(records=[record], capabilities=[cap]), sort_keys=True))
+        return
+    if sys.argv[1:] == ["--config-homes"]:
+        import tempfile
+        from tests import config_homes_golden
+        Path.home().joinpath(".tmp").mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as directory:
+            config_homes_golden.GOLDEN_PATH = Path(directory) / "goldens.json"
+            config_homes_golden.main(["--write"])
+            data = json.loads(config_homes_golden.GOLDEN_PATH.read_text())
+        print("CONFIG_HOMES_JSON=" + json.dumps(data, sort_keys=True))
+        return
+    if sys.argv[1:] == ["--request-maps"]:
+        from tests.test_workflow_request_map_rows import registry, MODES, request_mapping
+        data = {f"{record.id} {mode}": [[name, placement] for name, placement in request_mapping(record, mode).items()]
+                for record in registry().records() for mode in MODES}
+        print("REQUEST_MAPS_JSON=" + json.dumps(data, sort_keys=True))
+        return
+    if sys.argv[1:] == ["--xc-shipped"]:
+        import pytest
+        from tests.test_xc_shipped_golden import capture
+        with pytest.MonkeyPatch.context() as patch:
+            data = capture(patch)
+        print("XC_SHIPPED_JSON=" + json.dumps(data, sort_keys=True))
+        return
+    if sys.argv[1:] == ["--legacy-wire"]:
+        import pytest
+        from gateway.litellm_content import profile
+        from tests.test_engine_protocol_legacy_wire import snapshot
+
+        with pytest.MonkeyPatch.context() as patch:
+            result = snapshot(patch)
+        for name in ("compiled", "seeded_compiled"):
+            assert result[name].pop("router_settings") == profile()["router_settings"]
+            for section in ("general_settings", "litellm_settings"):
+                for key, value in profile()[section].items():
+                    assert result[name][section].pop(key) == value
+        print("LEGACY_WIRE_JSON=" + json.dumps(result, sort_keys=True))
+        return
+    if sys.argv[1:] == ["--headless-openapi"]:
+        # The document tests/fixtures/headless_openapi.json pins (tests/test_headless_access.py); save it with
+        # json.dumps(..., indent=2, sort_keys=True) + "\n" after reviewing the diff.
+        import proxy
+        proxy.app.openapi_schema = None
+        print("HEADLESS_OPENAPI_JSON=" + json.dumps(proxy.app.openapi(), sort_keys=True))
+        return
+    if sys.argv[1:] == ["--readers"]:
+        from gateway.discovery import BUNDLED_WORKFLOWS_DIR, WorkflowRegistry
+        from tests.workflow_reader_outputs import read_all
+
+        print("WORKFLOW_READERS_JSON=" + json.dumps(read_all(WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR).records()), sort_keys=True))
+        return
+    captures = runpy.run_path(str(root / "tests/fixtures/c2d_parity/capture.py"))["CAPTURES"]
+    names = sys.argv[1:] or sorted(captures)
+    unknown = set(names) - captures.keys()
+    if unknown:
+        raise SystemExit(f"Unknown captures: {sorted(unknown)}")
+    for name in names:
+        print("WORKFLOW_PARITY_JSON=" + json.dumps({"name": name, "data": jsonable(captures[name]())}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

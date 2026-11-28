@@ -1,0 +1,5392 @@
+{
+  "inputs": {
+    "aliases": {
+      "audio_generate": {
+        "stable": [
+          {
+            "alias": "sfx-default",
+            "resolves_to": "sa3-small-sfx"
+          }
+        ]
+      },
+      "image_edits": {
+        "stable": [
+          {
+            "alias": "image-edit-fast",
+            "resolves_to": "qwen-image-2.1-edit"
+          }
+        ]
+      },
+      "images": {
+        "stable": [
+          {
+            "alias": "image-fast",
+            "resolves_to": "krea2-turbo"
+          },
+          {
+            "alias": "image-quality",
+            "resolves_to": "krea2-turbo"
+          }
+        ]
+      },
+      "videos": {
+        "stable": [
+          {
+            "alias": "video-default",
+            "resolves_to": "video-ltx-2.5-t2v"
+          },
+          {
+            "alias": "video-long",
+            "resolves_to": "video-ltx-2.5-long"
+          }
+        ]
+      }
+    },
+    "policy": "fixed: default/stable/batch/media/no tags",
+    "video_limits": {
+      "video-ltx-2.5-long": {
+        "max_total_seconds": 60,
+        "segment_seconds": 10
+      }
+    }
+  },
+  "path_operations": {
+    "/gateway/v1/media/jobs": {
+      "bytes": 3721,
+      "full": {
+        "post": {
+          "description": "Async route for image, audio and video generation. Poll `GET /gateway/v1/media/jobs/{job_id}` until `status` is terminal (`succeeded`, `failed`, `canceled`), then fetch `/gateway/v1/media/jobs/{job_id}/content` for signed asset URLs.",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "intent": {
+                      "enum": [
+                        "image.generate",
+                        "audio.generate",
+                        "music.generate",
+                        "sfx.generate",
+                        "video.generate"
+                      ],
+                      "type": "string"
+                    },
+                    "request": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/ImageGenerationRequest"
+                        },
+                        {
+                          "$ref": "#/components/schemas/AudioGenerationRequest"
+                        },
+                        {
+                          "$ref": "#/components/schemas/VideoGenerationRequest"
+                        }
+                      ],
+                      "description": "The body you would send to the matching sync route: `/v1/images/generations` (image.generate), `/v1/audio/generate` (audio.generate, music.generate, sfx.generate) or `/v1/videos` (video.generate)."
+                    }
+                  },
+                  "required": [
+                    "intent",
+                    "request"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "202": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          },
+          "summary": "Submit durable async media work"
+        }
+      },
+      "sha256": "af1f1ef47b932fa90cc3302548a012fe2f81ea9add0613cd69742b59dbaad5f5"
+    },
+    "/gateway/v1/media/jobs/image-generations": {
+      "bytes": 2359,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "202": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          }
+        }
+      },
+      "sha256": "76927474d0f5a3592b599df29bfb854980935094fdcad0e3226553d203b14686"
+    },
+    "/gateway/v1/media/jobs/{job_id}": {
+      "bytes": 533,
+      "full": {
+        "get": {
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job state."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            }
+          }
+        }
+      },
+      "sha256": "a6adde5a331bcc53769605513bdacb6293b81acc8249a21f9d2ae5f917c18a27"
+    },
+    "/gateway/v1/media/jobs/{job_id}/content": {
+      "bytes": 1640,
+      "full": {
+        "get": {
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJobContent"
+                  }
+                }
+              },
+              "description": "Signed URLs of the finished assets."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "409": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Job not finished yet (`media_job_not_ready`)."
+            },
+            "410": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Output files are missing (`media_job_outputs_missing`)."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Output storage is temporarily unavailable (`media_job_outputs_unavailable`); retry later.",
+              "headers": {
+                "Retry-After": {
+                  "description": "Seconds before retrying.",
+                  "schema": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "sha256": "2ccfdba86a41f4a90e3142b86b67ee2dad4ef74112040ddebd66108ba92ce9c7"
+    },
+    "/gateway/v1/workflows/{workflow_id}/run": {
+      "bytes": 3080,
+      "full": {
+        "post": {
+          "description": "Starts a media job for the workflow with this full id (`GET /gateway/v1/workflows` lists them) and answers the job: 202 while it is queued or running, with its address in `Location`. Read it at `GET /gateway/v1/media/jobs/{job_id}` and its output at `GET /gateway/v1/media/jobs/{job_id}/content`. `Prefer: wait=N` waits up to N seconds for the job to end before it answers. Each video-edit workflow also has a concrete path below with its exact form fields.",
+          "requestBody": {
+            "content": {
+              "multipart/form-data": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowForm_video_edit_rife_interpolate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowForm_video_edit_video_mux"
+                    }
+                  ]
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object"
+                  }
+                }
+              },
+              "description": "The job, ended within `Prefer: wait`."
+            },
+            "202": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object"
+                  }
+                }
+              },
+              "description": "The job, queued or running; `Location` is its address."
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          },
+          "summary": "Run a workflow by its full id"
+        }
+      },
+      "sha256": "9affcd24300ee3c47bbdd602be18beb89bdc976dc7cfda59df5e4ed9bdc1593b"
+    },
+    "/openai/v1/audio/generate": {
+      "bytes": 1449,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "f5921cfb5a948fbfd0521d0be138bbf19de4f4b4c6ba0af4c7ac625c8a82f7cb"
+    },
+    "/openai/v1/images/edits": {
+      "bytes": 96,
+      "full": {
+        "post": {
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "4eb8e501612f9d4780e0f85941638b5bd777fd7b08ce6b3719c3323680512eed"
+    },
+    "/openai/v1/images/generations": {
+      "bytes": 1449,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "f5921cfb5a948fbfd0521d0be138bbf19de4f4b4c6ba0af4c7ac625c8a82f7cb"
+    },
+    "/openai/v1/videos": {
+      "bytes": 1684,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          },
+          "x-azizam-async": {
+            "content": "GET /v1/videos/{video_id}/content",
+            "poll": "GET /v1/videos/{video_id}",
+            "statuses": [
+              "queued",
+              "in_progress",
+              "completed",
+              "failed"
+            ]
+          }
+        }
+      },
+      "sha256": "64e6d5c989a648c192675cac3c486555c48b270472649d79cd64ccf110d61efc"
+    },
+    "/openai/v1/videos/{video_id}/remix": {
+      "bytes": 2583,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "negative_prompt": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seconds": {
+                      "type": [
+                        "integer",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "size": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          }
+        }
+      },
+      "sha256": "6af9c719bd1e96f66033c98e648bb6e7a41c6a45a1f1bf2061b83adb7cc862f4"
+    },
+    "/v1/audio/generate": {
+      "bytes": 1449,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "f5921cfb5a948fbfd0521d0be138bbf19de4f4b4c6ba0af4c7ac625c8a82f7cb"
+    },
+    "/v1/images/edits": {
+      "bytes": 96,
+      "full": {
+        "post": {
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "4eb8e501612f9d4780e0f85941638b5bd777fd7b08ce6b3719c3323680512eed"
+    },
+    "/v1/images/generations": {
+      "bytes": 1449,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "f5921cfb5a948fbfd0521d0be138bbf19de4f4b4c6ba0af4c7ac625c8a82f7cb"
+    },
+    "/v1/videos": {
+      "bytes": 1684,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          },
+          "x-azizam-async": {
+            "content": "GET /v1/videos/{video_id}/content",
+            "poll": "GET /v1/videos/{video_id}",
+            "statuses": [
+              "queued",
+              "in_progress",
+              "completed",
+              "failed"
+            ]
+          }
+        }
+      },
+      "sha256": "64e6d5c989a648c192675cac3c486555c48b270472649d79cd64ccf110d61efc"
+    },
+    "/v1/videos/{video_id}/remix": {
+      "bytes": 2583,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "negative_prompt": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seconds": {
+                      "type": [
+                        "integer",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "size": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          }
+        }
+      },
+      "sha256": "6af9c719bd1e96f66033c98e648bb6e7a41c6a45a1f1bf2061b83adb7cc862f4"
+    }
+  },
+  "shared": {
+    "bytes": 8481,
+    "full": {
+      "info": {
+        "description": "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content.",
+        "title": "Azizam",
+        "version": "0"
+      },
+      "shared_components": {
+        "AudioGenerationRequest": {
+          "properties": {
+            "extensions": {
+              "additionalProperties": true,
+              "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+              "properties": {
+                "com.azizam.workflow": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                    }
+                  ],
+                  "description": "Inputs of the workflow named by `model`."
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "GatewayErrorEnvelope": {
+          "properties": {
+            "error": {
+              "additionalProperties": true,
+              "properties": {
+                "code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "param": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "error"
+          ],
+          "type": "object"
+        },
+        "ImageGenerationRequest": {
+          "properties": {
+            "extensions": {
+              "additionalProperties": true,
+              "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+              "properties": {
+                "com.azizam.workflow": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                    }
+                  ],
+                  "description": "Inputs of the workflow named by `model`."
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "MediaJob": {
+          "additionalProperties": true,
+          "properties": {
+            "assets": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "media_type": {
+                    "type": "string"
+                  },
+                  "size_bytes": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "content_url": {
+              "type": "string"
+            },
+            "error": {
+              "type": [
+                "string",
+                "object",
+                "null"
+              ]
+            },
+            "error_category": {
+              "description": "Who refused: the gateway (authorization, invalid_input, capacity), the work (upstream, timeout, safety), or a gateway bug (internal).",
+              "enum": [
+                "authorization",
+                "invalid_input",
+                "upstream",
+                "capacity",
+                "timeout",
+                "safety",
+                "internal",
+                null
+              ],
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "error_code": {
+              "description": "A short token naming the failure.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "job_id": {
+              "type": "string"
+            },
+            "object": {
+              "enum": [
+                "media.job"
+              ],
+              "type": "string"
+            },
+            "poll_url": {
+              "type": "string"
+            },
+            "progress": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "retryable": {
+              "description": "Whether the same job may succeed later.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "status": {
+              "enum": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "type": "string"
+            },
+            "upstream_http_status": {
+              "description": "The HTTP status of an upstream failure; null when the gateway refused.",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "job_id",
+            "status"
+          ],
+          "type": "object"
+        },
+        "MediaJobContent": {
+          "additionalProperties": true,
+          "properties": {
+            "data": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "b64_json": {
+                    "type": "string"
+                  },
+                  "media_type": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "Signed URL; fetch without a bearer token.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "job_id": {
+              "type": "string"
+            },
+            "object": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "VideoGenerationRequest": {
+          "properties": {
+            "extensions": {
+              "additionalProperties": true,
+              "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+              "properties": {
+                "com.azizam.workflow": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                    }
+                  ],
+                  "description": "Inputs of the workflow named by `model`."
+                }
+              },
+              "type": "object"
+            },
+            "model": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "workflow_ids_in_catalog_order": [
+        "audio.generate.ace-step-1.5-xl-turbo",
+        "audio.generate.sa3-small-sfx",
+        "audio.generate.yue2-song",
+        "image.edit.qwen-image-2.1-edit",
+        "image.edit.seedvr2-upscale",
+        "image.generate.krea2-turbo",
+        "video.edit.rife-interpolate",
+        "video.edit.video-mux",
+        "video.generate.ltx-2.5-i2v",
+        "video.generate.ltx-2.5-keyframes",
+        "video.generate.ltx-2.5-keyframes-mid",
+        "video.generate.ltx-2.5-long",
+        "video.generate.ltx-2.5-t2v",
+        "video.generate.minimax-h3-i2v",
+        "video.generate.minimax-h3-keyframes",
+        "video.generate.minimax-h3-keyframes-mid",
+        "video.generate.minimax-h3-long",
+        "video.generate.minimax-h3-t2v"
+      ]
+    },
+    "sha256": "5f157e444115be1f9cf3ec19afc7504cbeea974f23f37cf04b34a01fec2c222a"
+  },
+  "workflows": {
+    "audio.generate.ace-step-1.5-xl-turbo": {
+      "bytes": 10481,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Songs and instrumentals from a prompt",
+          "display_name": "ACE-Step 1.5 XL Turbo",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "bpm": {
+                  "field": "bpm",
+                  "in": "extension"
+                },
+                "cfg": {
+                  "field": "cfg",
+                  "in": "extension"
+                },
+                "cfg_scale": {
+                  "field": "cfg_scale",
+                  "in": "extension"
+                },
+                "duration": {
+                  "field": "duration",
+                  "in": "body"
+                },
+                "keyscale": {
+                  "field": "keyscale",
+                  "in": "extension"
+                },
+                "language": {
+                  "field": "language",
+                  "in": "extension"
+                },
+                "lyrics": {
+                  "field": "lyrics",
+                  "in": "body"
+                },
+                "min_p": {
+                  "field": "min_p",
+                  "in": "extension"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "tags": {
+                  "field": "tags",
+                  "in": "body"
+                },
+                "temperature": {
+                  "field": "temperature",
+                  "in": "extension"
+                },
+                "timesignature": {
+                  "field": "timesignature",
+                  "in": "extension"
+                },
+                "top_k": {
+                  "field": "top_k",
+                  "in": "extension"
+                },
+                "top_p": {
+                  "field": "top_p",
+                  "in": "extension"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "audio.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "ace-step-1.5-xl-turbo",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "async",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "bpm": {
+                  "field": "bpm",
+                  "in": "extension"
+                },
+                "cfg": {
+                  "field": "cfg",
+                  "in": "extension"
+                },
+                "cfg_scale": {
+                  "field": "cfg_scale",
+                  "in": "extension"
+                },
+                "duration": {
+                  "field": "duration",
+                  "in": "body"
+                },
+                "keyscale": {
+                  "field": "keyscale",
+                  "in": "extension"
+                },
+                "language": {
+                  "field": "language",
+                  "in": "extension"
+                },
+                "lyrics": {
+                  "field": "lyrics",
+                  "in": "body"
+                },
+                "min_p": {
+                  "field": "min_p",
+                  "in": "extension"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "tags": {
+                  "field": "tags",
+                  "in": "body"
+                },
+                "temperature": {
+                  "field": "temperature",
+                  "in": "extension"
+                },
+                "timesignature": {
+                  "field": "timesignature",
+                  "in": "extension"
+                },
+                "top_k": {
+                  "field": "top_k",
+                  "in": "extension"
+                },
+                "top_p": {
+                  "field": "top_p",
+                  "in": "extension"
+                }
+              },
+              "method": "POST",
+              "model": "ace-step-1.5-xl-turbo",
+              "output": "audio bytes (see Content-Type)",
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
+            }
+          },
+          "id": "audio.generate.ace-step-1.5-xl-turbo",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+          },
+          "intent": "audio.generate",
+          "outputs": [
+            {
+              "media_type": "audio/flac",
+              "name": "audio"
+            }
+          ],
+          "route_inputs": [],
+          "short_id": "ace-step-1.5-xl-turbo",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": null
+        },
+        "components": {
+          "WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo": {
+            "additionalProperties": false,
+            "description": "Songs and instrumentals from a prompt",
+            "properties": {
+              "bpm": {
+                "description": "Set the tempo.",
+                "maximum": 300,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "cfg": {
+                "description": "Higher follows your words more closely.",
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "cfg_scale": {
+                "description": "Higher follows your words more closely.",
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "duration": {
+                "description": "Length in seconds.",
+                "maximum": 300,
+                "minimum": 1,
+                "type": "number"
+              },
+              "keyscale": {
+                "description": "Choose the musical key for the piece.",
+                "enum": [
+                  "C major",
+                  "C# major",
+                  "Db major",
+                  "D major",
+                  "D# major",
+                  "Eb major",
+                  "E major",
+                  "F major",
+                  "F# major",
+                  "Gb major",
+                  "G major",
+                  "G# major",
+                  "Ab major",
+                  "A major",
+                  "A# major",
+                  "Bb major",
+                  "B major",
+                  "C minor",
+                  "C# minor",
+                  "Db minor",
+                  "D minor",
+                  "D# minor",
+                  "Eb minor",
+                  "E minor",
+                  "F minor",
+                  "F# minor",
+                  "Gb minor",
+                  "G minor",
+                  "G# minor",
+                  "Ab minor",
+                  "A minor",
+                  "A# minor",
+                  "Bb minor",
+                  "B minor"
+                ],
+                "type": "string"
+              },
+              "language": {
+                "description": "Choose the language for the lyrics.",
+                "enum": [
+                  "ar",
+                  "az",
+                  "bg",
+                  "bn",
+                  "ca",
+                  "cs",
+                  "da",
+                  "de",
+                  "el",
+                  "en",
+                  "es",
+                  "fa",
+                  "fi",
+                  "fr",
+                  "he",
+                  "hi",
+                  "hr",
+                  "ht",
+                  "hu",
+                  "id",
+                  "is",
+                  "it",
+                  "ja",
+                  "ko",
+                  "la",
+                  "lt",
+                  "ms",
+                  "ne",
+                  "nl",
+                  "no",
+                  "pa",
+                  "pl",
+                  "pt",
+                  "ro",
+                  "ru",
+                  "sa",
+                  "sk",
+                  "sr",
+                  "sv",
+                  "sw",
+                  "ta",
+                  "te",
+                  "th",
+                  "tl",
+                  "tr",
+                  "uk",
+                  "ur",
+                  "vi",
+                  "yue",
+                  "zh",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "lyrics": {
+                "description": "Enter the words to sing.",
+                "type": "string"
+              },
+              "min_p": {
+                "description": "Set the minimum planning choice likelihood from 0 to 1.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "sampler": {
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "type": "string"
+              },
+              "scheduler": {
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Reuse this number and the same settings for a similar result.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "description": "More steps take longer.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "tags": {
+                "description": "Describe the genre, mood and instruments.",
+                "type": "string"
+              },
+              "temperature": {
+                "description": "Set the planning variety value from 0 to 2.",
+                "maximum": 2,
+                "minimum": 0,
+                "type": "number"
+              },
+              "timesignature": {
+                "description": "Choose the number of beats in each bar.",
+                "enum": [
+                  "2",
+                  "3",
+                  "4",
+                  "6"
+                ],
+                "type": "string"
+              },
+              "top_k": {
+                "description": "Set the planning choice limit from 0 to 1000.",
+                "maximum": 1000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "top_p": {
+                "description": "Set the planning choice range from 0 to 1.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "title": "ACE-Step 1.5 XL Turbo",
+            "type": "object",
+            "x-azizam-workflow-id": "audio.generate.ace-step-1.5-xl-turbo"
+          }
+        },
+        "extension_carried_by_routes": [
+          "/v1/images/generations",
+          "/openai/v1/images/generations",
+          "/v1/videos",
+          "/openai/v1/videos",
+          "/v1/audio/generate",
+          "/openai/v1/audio/generate"
+        ],
+        "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo",
+        "run_path": null
+      },
+      "sha256": "d8cff8f02e0ec2fd7a134155791e639af67976dd6d850b20dfbffc657873d297"
+    },
+    "audio.generate.sa3-small-sfx": {
+      "bytes": 3642,
+      "full": {
+        "catalog_entry": {
+          "aliases": [
+            "sfx-default"
+          ],
+          "description": "Sound effects from a description",
+          "display_name": "Stable Audio 3 Small SFX",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "duration": {
+                  "field": "duration",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "audio.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "sa3-small-sfx",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "duration": {
+                  "field": "duration",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "sa3-small-sfx",
+              "output": "audio bytes (see Content-Type)",
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
+            }
+          },
+          "id": "audio.generate.sa3-small-sfx",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+          },
+          "intent": "audio.generate",
+          "outputs": [
+            {
+              "media_type": "audio/flac",
+              "name": "audio"
+            }
+          ],
+          "route_inputs": [],
+          "short_id": "sa3-small-sfx",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 1.0
+        },
+        "components": {
+          "WorkflowInputs_audio_generate_sa3_small_sfx": {
+            "additionalProperties": false,
+            "description": "Sound effects from a description",
+            "properties": {
+              "duration": {
+                "default": 10,
+                "description": "Length in seconds.",
+                "maximum": 120,
+                "minimum": 1,
+                "type": "number"
+              },
+              "prompt": {
+                "description": "Describe the sound you want.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "Stable Audio 3 Small SFX",
+            "type": "object",
+            "x-azizam-workflow-id": "audio.generate.sa3-small-sfx"
+          }
+        },
+        "extension_carried_by_routes": [
+          "/v1/images/generations",
+          "/openai/v1/images/generations",
+          "/v1/videos",
+          "/openai/v1/videos",
+          "/v1/audio/generate",
+          "/openai/v1/audio/generate"
+        ],
+        "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx",
+        "run_path": null
+      },
+      "sha256": "6f64533f2282e269e97b245d80b258e0208c2d2b46ad9de28892781f1ad80a7f"
+    },
+    "audio.generate.yue2-song": {
+      "bytes": 4009,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a song with vocals from musical styles and lyrics.",
+          "display_name": "YuE2 Song",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "duration": {
+                  "field": "duration",
+                  "in": "body"
+                },
+                "lyrics": {
+                  "field": "lyrics",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "tags": {
+                  "field": "tags",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "audio.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "yue2-song",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "duration": {
+                  "field": "duration",
+                  "in": "body"
+                },
+                "lyrics": {
+                  "field": "lyrics",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "tags": {
+                  "field": "tags",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "yue2-song",
+              "output": "audio bytes (see Content-Type)",
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
+            }
+          },
+          "id": "audio.generate.yue2-song",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+          },
+          "intent": "audio.generate",
+          "outputs": [
+            {
+              "media_type": "audio/mpeg",
+              "name": "audio"
+            }
+          ],
+          "route_inputs": [],
+          "short_id": "yue2-song",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 30.0
+        },
+        "components": {
+          "WorkflowInputs_audio_generate_yue2_song": {
+            "additionalProperties": false,
+            "description": "Make a song with vocals from musical styles and lyrics.",
+            "properties": {
+              "duration": {
+                "default": 180,
+                "description": "Length in seconds. The model can stop early on long prompts.",
+                "maximum": 360,
+                "minimum": 10,
+                "type": "number"
+              },
+              "lyrics": {
+                "description": "Words to sing.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tags": {
+                "description": "Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tags"
+            ],
+            "title": "YuE2 Song",
+            "type": "object",
+            "x-azizam-workflow-id": "audio.generate.yue2-song"
+          }
+        },
+        "extension_carried_by_routes": [
+          "/v1/images/generations",
+          "/openai/v1/images/generations",
+          "/v1/videos",
+          "/openai/v1/videos",
+          "/v1/audio/generate",
+          "/openai/v1/audio/generate"
+        ],
+        "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song",
+        "run_path": null
+      },
+      "sha256": "405c2c4cb765139589c673d6ee14ce7e0faf9eaa3ba27dde2e120a52fa76f063"
+    },
+    "image.edit.qwen-image-2.1-edit": {
+      "bytes": 7722,
+      "full": {
+        "catalog_entry": {
+          "aliases": [
+            "image-edit-fast"
+          ],
+          "description": "Change a photo by telling it what to do, such as swapping the background or adding an object.",
+          "display_name": "Qwen-Image 2.1 Edit",
+          "execution": {
+            "async": null,
+            "recommended": "sync",
+            "sync": {
+              "content_type": "multipart/form-data",
+              "extensions_field": "extensions (JSON string)",
+              "fields": {
+                "cfg": {
+                  "field": "cfg",
+                  "in": "extension"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "negative_prompt": {
+                  "field": "negative_prompt",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "form"
+                },
+                "reference_resolution": {
+                  "field": "reference_resolution",
+                  "in": "extension"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "source_image": {
+                  "field": "image[]",
+                  "in": "file"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                }
+              },
+              "method": "POST",
+              "model": "qwen-image-2.1-edit",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.edit.qwen-image-2.1-edit",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit"
+          },
+          "intent": "image.edit",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            },
+            {
+              "description": "WIDTHxHEIGHT, e.g. 960x512.",
+              "field": "size",
+              "in": "form",
+              "name": "size",
+              "type": "string"
+            }
+          ],
+          "short_id": "qwen-image-2.1-edit",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 20.0
+        },
+        "components": {
+          "WorkflowInputs_image_edit_qwen_image_2_1_edit": {
+            "additionalProperties": false,
+            "description": "Change a photo by telling it what to do, such as swapping the background or adding an object.",
+            "properties": {
+              "cfg": {
+                "default": 1.0,
+                "description": "Higher follows your words more closely. Try 3 to 5 if colours look too warm.",
+                "maximum": 10,
+                "minimum": 0,
+                "type": "number"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              "negative_prompt": {
+                "default": "",
+                "description": "Describe anything you want left out.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Describe the change you want.",
+                "type": "string"
+              },
+              "reference_resolution": {
+                "default": 1024,
+                "description": "Lower is faster. Large pictures can be much slower above 1024.",
+                "maximum": 2048,
+                "minimum": 256,
+                "type": "integer"
+              },
+              "sampler": {
+                "default": "euler",
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "enum": [
+                  "euler",
+                  "euler_cfg_pp",
+                  "euler_ancestral",
+                  "euler_ancestral_cfg_pp",
+                  "heun",
+                  "heunpp2",
+                  "exp_heun_2_x0",
+                  "exp_heun_2_x0_sde",
+                  "dpm_2",
+                  "dpm_2_ancestral",
+                  "lms",
+                  "dpm_fast",
+                  "dpm_adaptive",
+                  "dpmpp_2s_ancestral",
+                  "dpmpp_2s_ancestral_cfg_pp",
+                  "dpmpp_sde",
+                  "dpmpp_sde_gpu",
+                  "dpmpp_2m",
+                  "dpmpp_2m_cfg_pp",
+                  "dpmpp_2m_sde",
+                  "dpmpp_2m_sde_gpu",
+                  "dpmpp_2m_sde_heun",
+                  "dpmpp_2m_sde_heun_gpu",
+                  "dpmpp_3m_sde",
+                  "dpmpp_3m_sde_gpu",
+                  "ddpm",
+                  "lcm",
+                  "ipndm",
+                  "ipndm_v",
+                  "deis",
+                  "cfgpp_ud10_ab",
+                  "res_multistep",
+                  "res_multistep_cfg_pp",
+                  "res_multistep_ancestral",
+                  "res_multistep_ancestral_cfg_pp",
+                  "gradient_estimation",
+                  "gradient_estimation_cfg_pp",
+                  "er_sde",
+                  "seeds_2",
+                  "seeds_3",
+                  "sa_solver",
+                  "sa_solver_pece",
+                  "ddim",
+                  "uni_pc",
+                  "uni_pc_bh2"
+                ],
+                "type": "string"
+              },
+              "scheduler": {
+                "default": "simple",
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "enum": [
+                  "simple",
+                  "sgm_uniform",
+                  "karras",
+                  "exponential",
+                  "ddim_uniform",
+                  "beta",
+                  "normal",
+                  "linear_quadratic",
+                  "kl_optimal"
+                ],
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source_image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "steps": {
+                "default": 25,
+                "description": "More steps add detail but take longer. 20 to 30 works well for this model.",
+                "maximum": 60,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_8b_w4a8.safetensors"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "prompt",
+              "source_image"
+            ],
+            "title": "Qwen-Image 2.1 Edit",
+            "type": "object",
+            "x-azizam-workflow-id": "image.edit.qwen-image-2.1-edit"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit",
+        "run_path": null
+      },
+      "sha256": "4a27fc4885d48f9e3062e1ce819ae87609b53b90ad49b214ca4ebcdd6acf8ce2"
+    },
+    "image.edit.seedvr2-upscale": {
+      "bytes": 3329,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a picture larger and sharper, with finer detail.",
+          "display_name": "SeedVR2 7B Sharp Upscale",
+          "execution": {
+            "async": null,
+            "recommended": "sync",
+            "sync": {
+              "content_type": "multipart/form-data",
+              "extensions_field": "extensions (JSON string)",
+              "fields": {
+                "color_correction_method": {
+                  "field": "color_correction_method",
+                  "in": "extension"
+                },
+                "scale": {
+                  "field": "scale",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "source_image": {
+                  "field": "image[]",
+                  "in": "file"
+                }
+              },
+              "method": "POST",
+              "model": "seedvr2-upscale",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.edit.seedvr2-upscale",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_edit_seedvr2_upscale"
+          },
+          "intent": "image.edit",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            },
+            {
+              "description": "WIDTHxHEIGHT, e.g. 960x512.",
+              "field": "size",
+              "in": "form",
+              "name": "size",
+              "type": "string"
+            }
+          ],
+          "short_id": "seedvr2-upscale",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 3.0
+        },
+        "components": {
+          "WorkflowInputs_image_edit_seedvr2_upscale": {
+            "additionalProperties": false,
+            "description": "Make a picture larger and sharper, with finer detail.",
+            "properties": {
+              "color_correction_method": {
+                "default": "none",
+                "description": "How colors are matched to the original picture.",
+                "enum": [
+                  "none",
+                  "lab",
+                  "wavelet",
+                  "adain"
+                ],
+                "type": "string"
+              },
+              "scale": {
+                "default": 2,
+                "description": "How much larger the picture gets before sharpening.",
+                "enum": [
+                  2,
+                  4
+                ],
+                "type": "number"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source_image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture to make bigger and sharper.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_image"
+            ],
+            "title": "SeedVR2 7B Sharp Upscale",
+            "type": "object",
+            "x-azizam-workflow-id": "image.edit.seedvr2-upscale"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_seedvr2_upscale",
+        "run_path": null
+      },
+      "sha256": "500927fdac6555c16ce426a4827c05d55c97834a1631694235ab500e513d10ab"
+    },
+    "image.generate.krea2-turbo": {
+      "bytes": 9192,
+      "full": {
+        "catalog_entry": {
+          "aliases": [
+            "image-fast",
+            "image-quality"
+          ],
+          "description": "Make a realistic photo-style picture from a description.",
+          "display_name": "Krea 2 Turbo",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "POST",
+                "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}/content"
+              },
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "media_job",
+              "poll": {
+                "method": "GET",
+                "path": "/gateway/v1/media/jobs/{job_id}"
+              },
+              "statuses": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "submit": {
+                "body": {
+                  "intent": "image.generate",
+                  "request": "<the sync request body>"
+                },
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "krea2-turbo",
+                "path": "/gateway/v1/media/jobs"
+              },
+              "terminal": [
+                "succeeded",
+                "failed",
+                "canceled"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "application/json",
+              "fields": {
+                "batch_size": {
+                  "field": "batch_size",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "loras": {
+                  "field": "loras",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "sampler": {
+                  "field": "sampler",
+                  "in": "extension"
+                },
+                "scheduler": {
+                  "field": "scheduler",
+                  "in": "extension"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "extension"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "text_encoder": {
+                  "field": "text_encoder",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "method": "POST",
+              "model": "krea2-turbo",
+              "output": "data[].b64_json or data[].url",
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
+            }
+          },
+          "id": "image.generate.krea2-turbo",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo"
+          },
+          "intent": "image.generate",
+          "outputs": [
+            {
+              "media_type": "image/png",
+              "name": "image"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Number of images.",
+              "field": "n",
+              "in": "body",
+              "label": "number of results",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "n",
+              "type": "integer"
+            }
+          ],
+          "short_id": "krea2-turbo",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 9.0
+        },
+        "components": {
+          "WorkflowInputs_image_generate_krea2_turbo": {
+            "additionalProperties": false,
+            "description": "Make a realistic photo-style picture from a description.",
+            "properties": {
+              "batch_size": {
+                "default": 1,
+                "description": "How many pictures to make at once.",
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "height": {
+                "default": 1024,
+                "description": "Picture height in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "loras": {
+                "description": "Add up to 3 installed style adapters for this model. Strength runs from -4 to 4; 1.0 is usual.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "One of the installed adapters listed for this model.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1.0,
+                      "description": "How strongly the adapter applies. 1.0 is the usual setting.",
+                      "maximum": 4,
+                      "minimum": -4,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              "prompt": {
+                "description": "Describe the picture you want.",
+                "type": "string"
+              },
+              "sampler": {
+                "default": "euler",
+                "description": "The method the model uses to build the result. Keep the default unless you are comparing methods.",
+                "enum": [
+                  "euler",
+                  "euler_cfg_pp",
+                  "euler_ancestral",
+                  "euler_ancestral_cfg_pp",
+                  "heun",
+                  "heunpp2",
+                  "exp_heun_2_x0",
+                  "exp_heun_2_x0_sde",
+                  "dpm_2",
+                  "dpm_2_ancestral",
+                  "lms",
+                  "dpm_fast",
+                  "dpm_adaptive",
+                  "dpmpp_2s_ancestral",
+                  "dpmpp_2s_ancestral_cfg_pp",
+                  "dpmpp_sde",
+                  "dpmpp_sde_gpu",
+                  "dpmpp_2m",
+                  "dpmpp_2m_cfg_pp",
+                  "dpmpp_2m_sde",
+                  "dpmpp_2m_sde_gpu",
+                  "dpmpp_2m_sde_heun",
+                  "dpmpp_2m_sde_heun_gpu",
+                  "dpmpp_3m_sde",
+                  "dpmpp_3m_sde_gpu",
+                  "ddpm",
+                  "lcm",
+                  "ipndm",
+                  "ipndm_v",
+                  "deis",
+                  "cfgpp_ud10_ab",
+                  "res_multistep",
+                  "res_multistep_cfg_pp",
+                  "res_multistep_ancestral",
+                  "res_multistep_ancestral_cfg_pp",
+                  "gradient_estimation",
+                  "gradient_estimation_cfg_pp",
+                  "er_sde",
+                  "seeds_2",
+                  "seeds_3",
+                  "sa_solver",
+                  "sa_solver_pece",
+                  "ddim",
+                  "uni_pc",
+                  "uni_pc_bh2"
+                ],
+                "type": "string"
+              },
+              "scheduler": {
+                "default": "simple",
+                "description": "How the refinement steps are spaced. Keep the default unless you are comparing results.",
+                "enum": [
+                  "simple",
+                  "sgm_uniform",
+                  "karras",
+                  "exponential",
+                  "ddim_uniform",
+                  "beta",
+                  "normal",
+                  "linear_quadratic",
+                  "kl_optimal"
+                ],
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps add detail but take longer. 8 to 12 works well for this model.",
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "text_encoder": {
+                "description": "Use a different text encoder that the server owner approved for this model. Leave empty for the usual one.",
+                "enum": [
+                  "qwen3vl_4b_fp8_scaled.safetensors"
+                ],
+                "type": "string"
+              },
+              "width": {
+                "default": 1024,
+                "description": "Picture width in pixels.",
+                "maximum": 2048,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "Krea 2 Turbo",
+            "type": "object",
+            "x-azizam-workflow-id": "image.generate.krea2-turbo"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo",
+        "run_path": null
+      },
+      "sha256": "e69a8c258b3bf8decba6bcacbe90d98e6c27841079526d4ae9d4bcf8bf3cb3b8"
+    },
+    "video.edit.rife-interpolate": {
+      "bytes": 7960,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+          "display_name": "RIFE 2x Frame Interpolation",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "multiplier": {
+                  "field": "multiplier",
+                  "in": "extension"
+                },
+                "source_video": {
+                  "field": "source_video",
+                  "in": "extension"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-rife-interpolate",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "multipart/form-data",
+              "fields": {
+                "multiplier": {
+                  "field": "multiplier",
+                  "in": "form"
+                },
+                "source_video": {
+                  "field": "source_video",
+                  "in": "file"
+                }
+              },
+              "method": "POST",
+              "output": "a media job; its content is the video",
+              "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run",
+              "response": {
+                "content": "/gateway/v1/media/jobs/{job_id}/content",
+                "kind": "media_job",
+                "poll": "/gateway/v1/media/jobs/{job_id}"
+              }
+            }
+          },
+          "id": "video.edit.rife-interpolate",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
+          },
+          "intent": "video.edit",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [],
+          "short_id": "rife-interpolate",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 4.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_edit_rife_interpolate": {
+            "additionalProperties": false,
+            "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+            "properties": {
+              "multiplier": {
+                "default": 2,
+                "description": "How many times more frames the video gets.",
+                "enum": [
+                  2,
+                  3,
+                  4
+                ],
+                "type": "integer"
+              },
+              "source_video": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to make smoother.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video"
+            ],
+            "title": "RIFE 2x Frame Interpolation",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.rife-interpolate"
+          },
+          "WorkflowForm_video_edit_rife_interpolate": {
+            "additionalProperties": false,
+            "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+            "properties": {
+              "multiplier": {
+                "default": 2,
+                "description": "How many times more frames the video gets.",
+                "enum": [
+                  2,
+                  3,
+                  4
+                ],
+                "type": "integer"
+              },
+              "source_video": {
+                "description": "The video to make smoother.",
+                "format": "binary",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video"
+            ],
+            "title": "RIFE 2x Frame Interpolation",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.rife-interpolate"
+          },
+          "WorkflowInputs_video_edit_rife_interpolate": {
+            "additionalProperties": false,
+            "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+            "properties": {
+              "multiplier": {
+                "default": 2,
+                "description": "How many times more frames the video gets.",
+                "enum": [
+                  2,
+                  3,
+                  4
+                ],
+                "type": "integer"
+              },
+              "source_video": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to make smoother.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video"
+            ],
+            "title": "RIFE 2x Frame Interpolation",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.rife-interpolate"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate",
+        "run_path": {
+          "post": {
+            "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+            "operationId": "run_rife_interpolate",
+            "requestBody": {
+              "content": {
+                "multipart/form-data": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowForm_video_edit_rife_interpolate"
+                  }
+                }
+              },
+              "required": true
+            },
+            "responses": {
+              "200": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "description": "The job, ended within `Prefer: wait`."
+              },
+              "202": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "description": "The job, queued or running; `Location` is its address."
+              },
+              "400": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Invalid input. `error.message` names the field and the rule."
+              },
+              "401": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Missing or invalid bearer token."
+              },
+              "403": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Not permitted by the app profile."
+              },
+              "404": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Unknown workflow, model, or job."
+              },
+              "502": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Backend failed while rendering."
+              },
+              "503": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Backend unavailable or disabled."
+              }
+            },
+            "summary": "Run RIFE 2x Frame Interpolation",
+            "tags": [
+              "gateway-workflows"
+            ],
+            "x-azizam-workflow-id": "video.edit.rife-interpolate"
+          }
+        }
+      },
+      "sha256": "e72e818713e6b2d4161b7980be69da13a38606627df641f156bcd7d05fea6a4a"
+    },
+    "video.edit.video-mux": {
+      "bytes": 9066,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+          "display_name": "Add a Soundtrack to a Video",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "source_audio": {
+                  "field": "source_audio",
+                  "in": "extension"
+                },
+                "source_video": {
+                  "field": "source_video",
+                  "in": "extension"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-video-mux",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "multipart/form-data",
+              "fields": {
+                "source_audio": {
+                  "field": "source_audio",
+                  "in": "file"
+                },
+                "source_video": {
+                  "field": "source_video",
+                  "in": "file"
+                }
+              },
+              "method": "POST",
+              "output": "a media job; its content is the video",
+              "path": "/gateway/v1/workflows/video.edit.video-mux/run",
+              "response": {
+                "content": "/gateway/v1/media/jobs/{job_id}/content",
+                "kind": "media_job",
+                "poll": "/gateway/v1/media/jobs/{job_id}"
+              }
+            }
+          },
+          "id": "video.edit.video-mux",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_edit_video_mux"
+          },
+          "intent": "video.edit",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [],
+          "short_id": "video-mux",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 5.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_edit_video_mux": {
+            "additionalProperties": false,
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "properties": {
+              "source_audio": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "source_video": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video that gets the new sound.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video",
+              "source_audio"
+            ],
+            "title": "Add a Soundtrack to a Video",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          },
+          "WorkflowForm_video_edit_video_mux": {
+            "additionalProperties": false,
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "properties": {
+              "source_audio": {
+                "description": "The song or sound to put on the video.",
+                "format": "binary",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "source_video": {
+                "description": "The video that gets the new sound.",
+                "format": "binary",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video",
+              "source_audio"
+            ],
+            "title": "Add a Soundtrack to a Video",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          },
+          "WorkflowInputs_video_edit_video_mux": {
+            "additionalProperties": false,
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "properties": {
+              "source_audio": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "source_video": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video that gets the new sound.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video",
+              "source_audio"
+            ],
+            "title": "Add a Soundtrack to a Video",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_video_mux",
+        "run_path": {
+          "post": {
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "operationId": "run_video_mux",
+            "requestBody": {
+              "content": {
+                "multipart/form-data": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowForm_video_edit_video_mux"
+                  }
+                }
+              },
+              "required": true
+            },
+            "responses": {
+              "200": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "description": "The job, ended within `Prefer: wait`."
+              },
+              "202": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "description": "The job, queued or running; `Location` is its address."
+              },
+              "400": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Invalid input. `error.message` names the field and the rule."
+              },
+              "401": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Missing or invalid bearer token."
+              },
+              "403": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Not permitted by the app profile."
+              },
+              "404": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Unknown workflow, model, or job."
+              },
+              "502": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Backend failed while rendering."
+              },
+              "503": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Backend unavailable or disabled."
+              }
+            },
+            "summary": "Run Add a Soundtrack to a Video",
+            "tags": [
+              "gateway-workflows"
+            ],
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          }
+        }
+      },
+      "sha256": "81f7d78194caf955b353af86db1ec009da648f4829f946631884ffefedd6f9ca"
+    },
+    "video.generate.ltx-2.5-i2v": {
+      "bytes": 4749,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with sound from a starting picture and a description.",
+          "display_name": "LTX 2.5 Distilled I2V",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "image_strength": {
+                  "field": "image_strength",
+                  "in": "body"
+                },
+                "length": {
+                  "in": "none"
+                },
+                "negative_prompt": {
+                  "field": "negative_prompt",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-ltx-2.5-i2v",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.ltx-2.5-i2v",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "ltx-2.5-i2v",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 56.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_ltx_2_5_i2v": {
+            "additionalProperties": false,
+            "description": "Make a video with sound from a starting picture and a description.",
+            "properties": {},
+            "title": "LTX 2.5 Distilled I2V",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-i2v"
+          },
+          "WorkflowInputs_video_generate_ltx_2_5_i2v": {
+            "additionalProperties": false,
+            "description": "Make a video with sound from a starting picture and a description.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "image_strength": {
+                "default": 0.7,
+                "description": "Adjust how strongly the starting picture shapes the video.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "negative_prompt": {
+                "description": "Describe anything you want left out.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt",
+              "image"
+            ],
+            "title": "LTX 2.5 Distilled I2V",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-i2v"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v",
+        "run_path": null
+      },
+      "sha256": "aab4ba7cf6dc4976cc2b46f4fa82b1505decd00049f12e0aee71dd78b4690e1e"
+    },
+    "video.generate.ltx-2.5-keyframes": {
+      "bytes": 7327,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+          "display_name": "LTX 2.5 Distilled Keyframes",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "frames": {
+                  "field": "frames",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "image_strength": {
+                  "field": "image_strength",
+                  "in": "body"
+                },
+                "img_compression": {
+                  "field": "img_compression",
+                  "in": "extension"
+                },
+                "last_frame": {
+                  "field": "last_frame",
+                  "in": "extension"
+                },
+                "last_frame_strength": {
+                  "field": "last_frame_strength",
+                  "in": "extension"
+                },
+                "negative_prompt": {
+                  "field": "negative_prompt",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-ltx-2.5-keyframes",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.ltx-2.5-keyframes",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "ltx-2.5-keyframes",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 40.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes": {
+            "additionalProperties": false,
+            "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+                "maximum": 241,
+                "minimum": 9,
+                "type": "integer",
+                "x-azizam-offset": 1,
+                "x-azizam-step": 8
+              },
+              "img_compression": {
+                "default": 18,
+                "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "last_frame_strength": {
+                "default": 1,
+                "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "last_frame"
+            ],
+            "title": "LTX 2.5 Distilled Keyframes",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes"
+          },
+          "WorkflowInputs_video_generate_ltx_2_5_keyframes": {
+            "additionalProperties": false,
+            "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+                "maximum": 241,
+                "minimum": 9,
+                "type": "integer",
+                "x-azizam-offset": 1,
+                "x-azizam-step": 8
+              },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "image_strength": {
+                "default": 0.7,
+                "description": "Adjust how strongly the starting picture shapes the video.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "img_compression": {
+                "default": 18,
+                "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "last_frame_strength": {
+                "default": 1,
+                "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "negative_prompt": {
+                "description": "Describe anything you want left out.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt",
+              "image",
+              "last_frame"
+            ],
+            "title": "LTX 2.5 Distilled Keyframes",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes",
+        "run_path": null
+      },
+      "sha256": "9f322cbe75e22b95d07371ff0075e3ea744ee57f07ca4a8879d809744256553e"
+    },
+    "video.generate.ltx-2.5-keyframes-mid": {
+      "bytes": 9352,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+          "display_name": "LTX 2.5 Distilled Keyframes + Middle",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "frames": {
+                  "field": "frames",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "image_strength": {
+                  "field": "image_strength",
+                  "in": "body"
+                },
+                "img_compression": {
+                  "field": "img_compression",
+                  "in": "extension"
+                },
+                "last_frame": {
+                  "field": "last_frame",
+                  "in": "extension"
+                },
+                "last_frame_strength": {
+                  "field": "last_frame_strength",
+                  "in": "extension"
+                },
+                "mid_frame": {
+                  "field": "mid_frame",
+                  "in": "extension"
+                },
+                "mid_frame_index": {
+                  "field": "mid_frame_index",
+                  "in": "extension"
+                },
+                "mid_frame_strength": {
+                  "field": "mid_frame_strength",
+                  "in": "extension"
+                },
+                "negative_prompt": {
+                  "field": "negative_prompt",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-ltx-2.5-keyframes-mid",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.ltx-2.5-keyframes-mid",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes_mid"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "ltx-2.5-keyframes-mid",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 45.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid": {
+            "additionalProperties": false,
+            "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+                "maximum": 241,
+                "minimum": 9,
+                "type": "integer",
+                "x-azizam-offset": 1,
+                "x-azizam-step": 8
+              },
+              "img_compression": {
+                "default": 18,
+                "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "last_frame_strength": {
+                "default": 1,
+                "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "mid_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video passes through part-way.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "mid_frame_index": {
+                "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+                "maximum": 239,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "mid_frame_strength": {
+                "default": 1,
+                "description": "Adjust how strongly the middle picture shapes its frame; 1 pins it.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "last_frame",
+              "mid_frame"
+            ],
+            "title": "LTX 2.5 Distilled Keyframes + Middle",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes-mid"
+          },
+          "WorkflowInputs_video_generate_ltx_2_5_keyframes_mid": {
+            "additionalProperties": false,
+            "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+                "maximum": 241,
+                "minimum": 9,
+                "type": "integer",
+                "x-azizam-offset": 1,
+                "x-azizam-step": 8
+              },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "image_strength": {
+                "default": 0.7,
+                "description": "Adjust how strongly the starting picture shapes the video.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "img_compression": {
+                "default": 18,
+                "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "last_frame_strength": {
+                "default": 1,
+                "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "mid_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video passes through part-way.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "mid_frame_index": {
+                "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+                "maximum": 239,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "mid_frame_strength": {
+                "default": 1,
+                "description": "Adjust how strongly the middle picture shapes its frame; 1 pins it.",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "negative_prompt": {
+                "description": "Describe anything you want left out.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt",
+              "image",
+              "last_frame",
+              "mid_frame"
+            ],
+            "title": "LTX 2.5 Distilled Keyframes + Middle",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes-mid"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid",
+        "run_path": null
+      },
+      "sha256": "7aa6ab4fee6f86d31842ef25ca9a9750ed9954a090469f5c3a5baa62ed235e5c"
+    },
+    "video.generate.ltx-2.5-long": {
+      "bytes": 3902,
+      "full": {
+        "catalog_entry": {
+          "aliases": [
+            "video-long"
+          ],
+          "description": "Make a longer video from a description.",
+          "display_name": "LTX 2.5 Long",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "negative_prompt": {
+                  "field": "negative_prompt",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-ltx-2.5-long",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.ltx-2.5-long",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
+          },
+          "intent": "video.generate",
+          "limits": {
+            "max_total_seconds": 60,
+            "segment_seconds": 10
+          },
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 40,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "ltx-2.5-long",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": null
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_ltx_2_5_long": {
+            "additionalProperties": false,
+            "description": "Make a longer video from a description.",
+            "properties": {},
+            "title": "LTX 2.5 Long",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-long"
+          },
+          "WorkflowInputs_video_generate_ltx_2_5_long": {
+            "additionalProperties": false,
+            "description": "Make a longer video from a description.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 720,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "negative_prompt": {
+                "description": "Describe anything you want left out.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "title": "LTX 2.5 Long",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-long"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_long",
+        "run_path": null
+      },
+      "sha256": "15f36d52086c12ce9cf96299f50477c3ba1724c09f315637e7946b62a2194997"
+    },
+    "video.generate.ltx-2.5-t2v": {
+      "bytes": 4014,
+      "full": {
+        "catalog_entry": {
+          "aliases": [
+            "video-default"
+          ],
+          "description": "Make a video with sound from a description or picture.",
+          "display_name": "LTX 2.5",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "length": {
+                  "in": "none"
+                },
+                "negative_prompt": {
+                  "field": "negative_prompt",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-ltx-2.5-t2v",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.ltx-2.5-t2v",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_t2v"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 1,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "ltx-2.5-t2v",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 49.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_ltx_2_5_t2v": {
+            "additionalProperties": false,
+            "description": "Make a video with sound from a description or picture.",
+            "properties": {},
+            "title": "LTX 2.5",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-t2v"
+          },
+          "WorkflowInputs_video_generate_ltx_2_5_t2v": {
+            "additionalProperties": false,
+            "description": "Make a video with sound from a description or picture.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "negative_prompt": {
+                "description": "Describe anything you want left out.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "LTX 2.5",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.ltx-2.5-t2v"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v",
+        "run_path": null
+      },
+      "sha256": "7b899a80c5a1a0747bf3f7f9bf691997901e9583a14dd89d001f7e907c06a273"
+    },
+    "video.generate.minimax-h3-i2v": {
+      "bytes": 4668,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with stereo sound from a starting picture and a description.",
+          "display_name": "MiniMax H3 I2V",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "length": {
+                  "in": "none"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-minimax-h3-i2v",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.minimax-h3-i2v",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "minimax-h3-i2v",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 135.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_minimax_h3_i2v": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound from a starting picture and a description.",
+            "properties": {
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "title": "MiniMax H3 I2V",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-i2v"
+          },
+          "WorkflowInputs_video_generate_minimax_h3_i2v": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound from a starting picture and a description.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt",
+              "image"
+            ],
+            "title": "MiniMax H3 I2V",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-i2v"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v",
+        "run_path": null
+      },
+      "sha256": "7d8a56057a07bcbf45ce179bb0ecb5830e7b15a91e40e097a98965ef2b2a2093"
+    },
+    "video.generate.minimax-h3-keyframes": {
+      "bytes": 6030,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+          "display_name": "MiniMax H3 Keyframes",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "frames": {
+                  "field": "frames",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "last_frame": {
+                  "field": "last_frame",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-minimax-h3-keyframes",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.minimax-h3-keyframes",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "minimax-h3-keyframes",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 120.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_minimax_h3_keyframes": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+                "maximum": 362,
+                "minimum": 22,
+                "type": "integer",
+                "x-azizam-offset": 5,
+                "x-azizam-step": 17
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "last_frame"
+            ],
+            "title": "MiniMax H3 Keyframes",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes"
+          },
+          "WorkflowInputs_video_generate_minimax_h3_keyframes": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+                "maximum": 362,
+                "minimum": 22,
+                "type": "integer",
+                "x-azizam-offset": 5,
+                "x-azizam-step": 17
+              },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt",
+              "image",
+              "last_frame"
+            ],
+            "title": "MiniMax H3 Keyframes",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes",
+        "run_path": null
+      },
+      "sha256": "51a93dd82ecd35488f0fb32e74fac50404bb15fc5855cbfbe5d36f97e8e16bfe"
+    },
+    "video.generate.minimax-h3-keyframes-mid": {
+      "bytes": 7500,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+          "display_name": "MiniMax H3 Keyframes + Middle",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "frames": {
+                  "field": "frames",
+                  "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "image": {
+                  "field": "input_reference",
+                  "in": "body"
+                },
+                "last_frame": {
+                  "field": "last_frame",
+                  "in": "extension"
+                },
+                "mid_frame_index": {
+                  "field": "mid_frame_index",
+                  "in": "extension"
+                },
+                "middle_frame": {
+                  "field": "middle_frame",
+                  "in": "extension"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-minimax-h3-keyframes-mid",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.minimax-h3-keyframes-mid",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "minimax-h3-keyframes-mid",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 120.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+                "maximum": 362,
+                "minimum": 22,
+                "type": "integer",
+                "x-azizam-offset": 5,
+                "x-azizam-step": 17
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "mid_frame_index": {
+                "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+                "maximum": 360,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "middle_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture the video passes through halfway, at half its frame count.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "last_frame",
+              "middle_frame"
+            ],
+            "title": "MiniMax H3 Keyframes + Middle",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes-mid"
+          },
+          "WorkflowInputs_video_generate_minimax_h3_keyframes_mid": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+            "properties": {
+              "frames": {
+                "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+                "maximum": 362,
+                "minimum": 22,
+                "type": "integer",
+                "x-azizam-offset": 5,
+                "x-azizam-step": 17
+              },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "image": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "last_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "mid_frame_index": {
+                "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+                "maximum": 360,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "middle_frame": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture the video passes through halfway, at half its frame count.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt",
+              "image",
+              "last_frame",
+              "middle_frame"
+            ],
+            "title": "MiniMax H3 Keyframes + Middle",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes-mid"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid",
+        "run_path": null
+      },
+      "sha256": "bdc4dac0dd1606817a49984bc0a5d78fa8cd33c79cb5fc278ef9a8e49fe3fbef"
+    },
+    "video.generate.minimax-h3-long": {
+      "bytes": 3624,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a longer video with sound from a description.",
+          "display_name": "MiniMax H3 Long",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-minimax-h3-long",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.minimax-h3-long",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 40,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "minimax-h3-long",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": null
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_minimax_h3_long": {
+            "additionalProperties": false,
+            "description": "Make a longer video with sound from a description.",
+            "properties": {},
+            "title": "MiniMax H3 Long",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-long"
+          },
+          "WorkflowInputs_video_generate_minimax_h3_long": {
+            "additionalProperties": false,
+            "description": "Make a longer video with sound from a description.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "title": "MiniMax H3 Long",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-long"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_long",
+        "run_path": null
+      },
+      "sha256": "6edeea815f520bdcfa5d82a31bbc5a03a53ef0466d52882fe788b54b013aa014"
+    },
+    "video.generate.minimax-h3-t2v": {
+      "bytes": 4249,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Make a video with stereo sound from a description.",
+          "display_name": "MiniMax H3 T2V",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "length": {
+                  "in": "none"
+                },
+                "prompt": {
+                  "field": "prompt",
+                  "in": "body"
+                },
+                "seed": {
+                  "field": "seed",
+                  "in": "body"
+                },
+                "steps": {
+                  "field": "steps",
+                  "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-minimax-h3-t2v",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "async",
+            "sync": null
+          },
+          "id": "video.generate.minimax-h3-t2v",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_t2v"
+          },
+          "intent": "video.generate",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [
+            {
+              "description": "Clip length in seconds.",
+              "field": "seconds",
+              "in": "body",
+              "maximum": 10,
+              "minimum": 2,
+              "name": "seconds",
+              "type": "number"
+            }
+          ],
+          "short_id": "minimax-h3-t2v",
+          "status": "current",
+          "superseded_by": null,
+          "typical_seconds": 122.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_generate_minimax_h3_t2v": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound from a description.",
+            "properties": {
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "title": "MiniMax H3 T2V",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-t2v"
+          },
+          "WorkflowInputs_video_generate_minimax_h3_t2v": {
+            "additionalProperties": false,
+            "description": "Make a video with stereo sound from a description.",
+            "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "prompt": {
+                "description": "Describe the scene, action, and mood.",
+                "type": "string"
+              },
+              "seed": {
+                "description": "Use the same number to repeat a variation with the same settings.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "steps": {
+                "default": 8,
+                "description": "More steps take longer.",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "prompt"
+            ],
+            "title": "MiniMax H3 T2V",
+            "type": "object",
+            "x-azizam-workflow-id": "video.generate.minimax-h3-t2v"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v",
+        "run_path": null
+      },
+      "sha256": "a3944105266922aa05a27b2a92959f73578fd225d7bd68442114ba9f9dd5ee74"
+    }
+  }
+}

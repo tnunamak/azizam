@@ -1,0 +1,86 @@
+# How Azizam calls a Stable Diffusion web API server (the "sdapi" dialect).
+#
+# This file is data. Several servers speak this dialect; the name here is the
+# dialect, never a product. Images come back as base64 in one answer. The
+# server holds one selected checkpoint at a time, so an offering picks a
+# checkpoint with the `choose` control call, and Azizam reads the selection
+# back (`selected`) before it sends a generation request. A server that
+# silently ignores an unknown checkpoint therefore never produces an image
+# from the wrong one.
+protocol_version: 1
+id: sdapi
+title: Stable Diffusion web API
+executor: http-v1
+auth:
+  inference: {kind: none}
+  control: {kind: none}
+
+errors:
+  - {status: 404, code: route_missing, advice: "The server has no such route. Start it with its web API enabled."}
+  - {status: 422, code: request_refused, advice: "The server refused the request. Check the image size and the other settings."}
+  - {status: 503, code: engine_unavailable, advice: "The server is up but cannot serve now, for example while it loads a checkpoint. Retry later."}
+
+operations:
+  # One entry per checkpoint the server holds. The title is the name a switch uses.
+  models:
+    class: inventory
+    request: {method: GET, path: /sdapi/v1/sd-models}
+    response:
+      framing: json
+      map:
+        - set: {to: /object, value: list}
+        - each:
+            from: /body
+            to: /data
+            map:
+              - copy: {from: /item/title, to: /id}
+              - set: {to: /object, value: model}
+              - set: {to: /created, value: 0}
+              - set: {to: /owned_by, value: engine}
+
+  images:
+    class: generate
+    request:
+      method: POST
+      path: /sdapi/v1/txt2img
+      body:
+        encoding: json
+        base: empty
+        map:
+          - copy: {from: /body/prompt, to: /prompt}
+          - copy: {from: /body/negative_prompt, to: /negative_prompt}
+          - copy: {from: /body/steps, to: /steps}
+          - copy: {from: /body/seed, to: /seed}
+          - copy: {from: /body/cfg_scale, to: /cfg_scale}
+          # OpenAI clients send `size` ("1024x1024"), never width and height.
+          - size: {from: /body/size, width: /width, height: /height}
+          - copy: {from: /body/n, to: /batch_size}
+          - set: {to: /send_images, value: true}
+          - set: {to: /save_images, value: false}
+    response:
+      framing: json
+      map:
+        - each:
+            from: /body/images
+            to: /data
+            map:
+              - copy: {from: /item, to: /b64_json}
+
+  # The selection switch. The body is the offering's switch arguments.
+  choose:
+    class: control
+    request:
+      method: POST
+      path: /sdapi/v1/options
+      body:
+        encoding: json
+        base: passthrough
+    response: {framing: none}
+
+  # The server's options hold the selected checkpoint beside many other settings.
+  selected:
+    class: control
+    request: {method: GET, path: /sdapi/v1/options}
+    response:
+      framing: json
+      select: {value: /sd_model_checkpoint}

@@ -1,0 +1,414 @@
+schema_version: 1
+prompt_namespace_description: "Per-request prompt retention choice; this control is removed before backend dispatch."
+workflow_namespace_description: "Gateway-owned workflow controls for image, video, and audio routes."
+chat_namespace_description: "Gateway-owned chat diagnostics controls."
+routing_namespace_description: "Gateway-owned routing hints that cannot override app profile policy."
+metadata_description: >-
+  Whether delivered media keeps its embedded ComfyUI workflow
+  and gateway provenance (full) or has all metadata removed
+  losslessly (none). Valid on every route that returns generated media.
+tool_call_advisory: >-
+  Detected {family}-format tool calls in the response content, but tool_calls
+  is empty; this backend{backend_label} is not lifting tool calls into the OpenAI tool_calls field. Enable
+  tool-call parsing in the backend's own configuration (most OpenAI-compatible servers have a flag or template setting for this), and confirm
+  the loaded model's chat template supports tools.
+backend_label: " ({backend_hint})"
+unknown_family: unknown
+long_video_not_supported: "Model {model} cannot render shots or clips longer than {max_seconds} s; use video-long, ltx-2.5-long or minimax-h3"
+video_extend_not_supported: "model {model} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3"
+surface_existing_clients: "; {convenience} remains available for existing OpenAI-compatible clients."
+surface_new_setup: "Use canonical {canonical} endpoints for new OpenAI-compatible setup"
+current_loaded_model_description: "Use the currently loaded local LLM without activating a backend or swapping models."
+current_loaded_fast_model_description: "Use the currently loaded local LLM with Qwen thinking off; do not activate a backend or swap models."
+transition_unsupported: This engine's residency domain enables transitions, and this gateway does not lease this kind of request for it yet.
+engine_transitioning: The engine is changing state and is not admitting requests now. Retry after the stated delay.
+audio_translation_unsupported: Audio translation is not supported by the configured local STT backend. This gateway will not return transcription output from the translations route.
+video_extend_shots_unsupported: shots is not supported on extensions; call extensions once per shot, or send shots to POST /v1/videos
+video_extend_not_configured: Video extension is not configured on this gateway. Set videos.extend_workflow in proxy_config.yml to enable it.
+voice_design_not_configured: 'Voice design is not configured: set voices.design_engine to a speech engine.'
+measurement_backend_unavailable: The transcription service is unavailable; measurement stopped before downloading samples.
+mcp_reconnect_required: This connection was made before renaming could be allowed, so it can't rename apps or keys. Disconnect it on the Connect page and connect it again to allow renaming.
+definition_unavailable: A definition this job was accepted with is no longer available; please submit it again.
+asset_delete_not_found_description: '{error_code}: no such asset, or it is not owned by this App''s accountable person.'
+protocol_failure_default: The engine protocol request failed. Check Status or gateway logs.
+protocol_upstream_refused: The engine refused the request. Check its status and protocol configuration.
+stt_chunking_defaults_note: Values listed in from_bundled_defaults are not saved on this engine; they come from the bundled defaults (registry/stt_chunking_defaults.yml). Save them on the engine to fix them.
+stt_chunking_all_saved_note: All values are saved on this engine.
+tables:
+  removed_auth_settings:
+    enabled: Auth is always on. Remove auth.enabled.
+    lan_bypass_enabled: Keyless LAN access is removed. Give each device an app and a key in Apps.
+    lan_bypass_cidrs: Keyless LAN access is removed. Give each device an app and a key in Apps.
+    path_tokens: Path tokens are removed. Give each device an app and a key in Apps.
+    ollama_compat_discovery: Public Ollama discovery is removed. Ollama clients send an app key.
+  removed_auth_env:
+    AZIZAM_AUTH_ENABLED: Auth is always on.
+    AZIZAM_LAN_BYPASS: Keyless LAN access is removed.
+    OLLAMA_COMPAT_DISCOVERY: Public Ollama discovery is removed.
+  access_errors:
+    key_required: This gateway needs an app key. Create one in Apps.
+    key_invalid: This key isn't valid. It may have been revoked. Create a new key in Apps.
+    app_disabled: This app is turned off. Ask the gateway owner to turn it on.
+    person_disabled: The person this app belongs to is turned off or missing. Ask the gateway owner.
+    person_signin_refused: Sign-in for the person this app belongs to was refused. The app works again after they sign in successfully.
+  protocol_failures:
+    invalid_description: The engine protocol description is invalid. Check Status for the file name.
+    malformed_response: The mapped engine response does not match the public OpenAI response shape.
+    mapping_failed: The engine mapping could not process this request or response.
+    transport_failed: The engine could not be reached or did not respond in time.
+    budget_exceeded: The engine response exceeded a protocol size, depth or time limit.
+    engine_credential_unavailable: The credential required by this operation is unavailable.
+    unknown_operation: The selected engine does not declare this operation.
+    unknown_protocol: The selected engine protocol description is unavailable.
+    ambiguous_model: The model names more than one offering. Use engine/id.
+    engine_disabled: The selected engine is disabled.
+    protocol_dispatch_refused: Protocol dispatch does not enforce paid-provider access or spend limits. Use the existing provider route.
+  client_reasons:
+    upstream_unreachable: The engine could not be reached.
+    upstream_timeout: The engine did not answer in time.
+    upstream_failed: The engine failed while handling this request.
+    upstream_refused: The engine refused this request.
+    upstream_dropped: The connection to the engine dropped.
+    upstream_out_of_memory: The engine ran out of memory. Try a smaller request.
+    upstream_invalid_reply: The engine's reply could not be read.
+    upload_failed: 'Image upload failed: the engine refused the file.'
+    upload_no_name: No filename returned from upload
+    mask_upload_failed: 'Mask upload failed: the engine refused the file.'
+    asset_upload_failed: 'Asset upload failed: the engine refused the file.'
+    proxy_error: The gateway could not complete this request. Try again.
+    invalid_form: The form data could not be read.
+    invalid_request: The request could not be read. Check its shape and try again.
+    invalid_json: The request body is not valid JSON.
+    cancel_failed: The gateway could not cancel the job that was in progress.
+    tts_unavailable: The speech engine is unavailable.
+    tts_failed: The speech engine failed while handling this request.
+    voice_design_failed: Voice design failed.
+    audio_failed: The audio engine failed while handling this request.
+    video_failed: The video engine failed while handling this request.
+    setup_failed: The gateway could not complete this step. Try again.
+    provider_failed: The provider failed while handling this request.
+    admin_failed: The administration service could not be reached.
+    sign_in_failed: The identity provider refused the request.
+    host_memory_busy: The host's memory is busy with other work. Try again soon.
+  client_status_reasons:
+    400: The engine rejected the request.
+    401: The engine did not accept the credentials the gateway holds for it.
+    403: The engine refused the request.
+    404: The engine does not have what the request asked for.
+    408: The engine did not answer in time.
+    409: The engine could not accept the request in its current state.
+    413: The request is larger than the engine accepts.
+    415: The engine does not accept this kind of content.
+    422: The engine could not process the request.
+    429: The engine is busy or limiting requests. Try again later.
+  client_code_reasons:
+    member_origin_forbidden: Use your account page on this gateway to make changes.
+    context_length_exceeded: The request is longer than the model's context window.
+    model_not_found: The model was not found.
+    model_not_deployed: The model is not deployed.
+    rate_limit_exceeded: The engine is busy or limiting requests. Try again later.
+    insufficient_quota: The provider quota is used up.
+    billing_not_active: The provider account is not active.
+    billing_hard_limit_reached: The provider spending limit is reached.
+    content_policy_violation: The request was refused by the model's content policy.
+    content_filter: The request was refused by the model's content policy.
+    string_above_max_length: A value in the request is longer than the engine accepts.
+    string_below_min_length: A value in the request is shorter than the engine accepts.
+    array_above_max_length: A list in the request has more items than the engine accepts.
+    array_below_min_length: A list in the request has fewer items than the engine needs.
+    integer_above_max_value: A number in the request is larger than the engine accepts.
+    integer_below_min_value: A number in the request is smaller than the engine accepts.
+    decimal_above_max_value: A number in the request is larger than the engine accepts.
+    decimal_below_min_value: A number in the request is smaller than the engine accepts.
+    empty_string: A value in the request is empty.
+    invalid_api_key: The credentials were not accepted.
+    invalid_value: A value in the request is not valid.
+    invalid_type: A value in the request has the wrong type.
+    unsupported_value: A value in the request is not supported.
+    unsupported_parameter: A field in the request is not supported.
+    unknown_parameter: A field in the request is not known.
+    missing_required_parameter: A required field is missing from the request.
+    invalid_image: The image could not be read.
+    invalid_image_format: The image format is not supported.
+    invalid_image_url: The image address could not be used.
+    invalid_media_job_input: The media job input must be a JSON object.
+    invalid_prompt: The prompt was refused.
+    invalid_json: The request body is not valid JSON.
+    json_validate_failed: The model's reply did not match the requested format.
+    tool_use_failed: The model could not complete the tool call.
+    request_too_large: The request is larger than the engine accepts.
+    payload_too_large: The request is larger than the engine accepts.
+    file_too_large: The file is larger than the engine accepts.
+    overloaded: The engine is overloaded. Try again later.
+    engine_overloaded: The engine is overloaded. Try again later.
+    model_overloaded: The engine is overloaded. Try again later.
+    service_unavailable: The engine is unavailable. Try again later.
+    backend_unavailable: The engine is unavailable. Try again later.
+    timeout: The engine did not answer in time.
+    request_timeout: The engine did not answer in time.
+    server_error: The engine failed while handling the request.
+    internal_error: The engine failed while handling the request.
+    upstream_error: The engine failed while handling the request.
+    upstream_stream_interrupted: The LLM execution stream ended before the response was complete.
+    unsupported_country_region_territory: The provider does not serve this region.
+  public_failures:
+    target_unknown:
+      layer: request
+      message: This model isn't available. Choose another model.
+      api_message: Unknown target. Call capabilities to list valid targets.
+    mode_unavailable:
+      layer: request
+      message: This way of running the task isn't available. Choose another way.
+      api_message: The requested execution mode is unavailable for this target.
+    response_invalid:
+      layer: gateway
+      message: The gateway returned a result it couldn't read. Try again.
+      api_message: The gateway returned an unsupported result format.
+    value_too_large:
+      layer: request
+      message: A request value is too large. Choose a smaller value.
+      api_message: A request value must be at most {maximum}.
+    value_too_small:
+      layer: request
+      message: A request value is too small. Choose a larger value.
+      api_message: A request value must be at least {minimum}.
+    input_string:
+      layer: request
+      message: An input needs text. Enter text and try again.
+      api_message: An input must be a string.
+    input_integer:
+      layer: request
+      message: An input needs a whole number. Enter a whole number.
+      api_message: An input must be an integer.
+    input_number:
+      layer: request
+      message: An input needs a number. Enter a number.
+      api_message: An input must be a number.
+    input_boolean:
+      layer: request
+      message: An input needs a yes or no choice. Choose one.
+      api_message: An input must be a boolean.
+    input_choice:
+      layer: request
+      message: An input has an unsupported choice. Choose a supported value.
+      api_message: An input must match one of the supported choices.
+    input_required:
+      layer: request
+      message: A required input is missing. Add the missing input.
+      api_message: A required input is missing.
+    input_unknown:
+      layer: request
+      message: The request has an unknown input. Remove the unknown input.
+      api_message: The request contains an unknown input.
+    file_base64_invalid:
+      layer: request
+      message: The input file couldn't be read. Send a valid file again.
+      api_message: The input file has invalid base64 encoding.
+    file_url_unsupported:
+      layer: request
+      message: The file link can't be read. Send the file itself.
+      api_message: External file URLs are not fetched; use a data URI or a file from an earlier result.
+    invalid_inputs:
+      layer: request
+      message: The request has an invalid input. Check the inputs and try again.
+      api_message: One or more inputs do not match the required type or supported choices.
+    input_file_invalid:
+      layer: request
+      message: The input file couldn't be read. Send a valid file again.
+      api_message: The input must be a valid data URI or a file from an earlier result.
+    dimensions_incomplete:
+      layer: request
+      message: A picture dimension is missing. Send both dimensions.
+      api_message: Width and height must be supplied together.
+    out_of_memory:
+      layer: engine
+      message: The engine couldn't finish this request. Try a smaller request.
+      api_message: The engine ran out of memory. Try a smaller request.
+    profile_denied:
+      layer: account
+      message: Your account can't run this request. Ask the owner for access.
+      api_message: This profile may not run this request.
+    canceled:
+      layer: request
+      message: This task was canceled. Make it again if you still want it.
+    unknown:
+      layer: unknown
+      message: We couldn't tell where this request stopped. Try again.
+    not_authenticated:
+      layer: account
+      message: You're signed out. Sign in again.
+    session_user_not_found:
+      layer: account
+      message: Your sign-in no longer matches an account. Sign in again.
+    owner_required:
+      layer: account
+      message: Only the owner can see other people's work. Choose your own work.
+    source_not_allowed:
+      layer: account
+      message: You can't see this app's work. Choose one of your apps.
+    make_disabled:
+      layer: account
+      message: Making is turned off for your account. Ask the owner to turn it on.
+    too_many_jobs:
+      layer: account
+      message: You already have {maximum} things being made. Wait for one to finish, then try again.
+    asset_not_found:
+      layer: library
+      message: This item isn't in your Library. Return to the Library and choose another item.
+    asset_unavailable:
+      layer: library
+      message: This file is no longer available in the Library. Check a downloaded copy, or make it again.
+    media_folder_unavailable:
+      layer: library
+      message: Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back.
+    media_folder_empty:
+      layer: library
+      message: Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again.
+    media_folder_unconfirmed:
+      layer: library
+      message: Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings.
+    media_folder_no_matches:
+      layer: library
+      message: None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again.
+    media_folder_owner_required:
+      layer: account
+      message: Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings.
+    media_folder_changed:
+      layer: library
+      message: Your Library changed since you opened this. Review it again.
+    prompt_not_accessible:
+      layer: library
+      message: Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt.
+    job_not_found:
+      layer: library
+      message: This task isn't in your account. Return to the list and choose another task.
+    job_finished:
+      layer: library
+      message: This task has already finished. Refresh to see the result.
+    job_finishing:
+      layer: library
+      message: This picture is already made, so it can't be canceled. Wait for it to appear in your Library.
+    source_not_found:
+      layer: library
+      message: That source picture isn't in your Library. Choose another picture.
+    source_pending:
+      layer: library
+      message: That picture isn't ready. Wait for it to finish.
+    source_missing:
+      layer: library
+      message: That task didn't produce a picture. Choose another source picture.
+    input_file_unavailable:
+      layer: library
+      message: The input file isn't available. Send the file again, or choose another one.
+      api_message: The file for input '{input}' isn't available. Send the file again, or choose another one.
+    invalid_since:
+      layer: request
+      message: This list can't be refreshed from that point. Refresh the page.
+    invalid_cursor:
+      layer: request
+      message: This page of results can't be loaded. Refresh the list.
+    invalid_limit:
+      layer: request
+      message: This page of results can't be loaded. Refresh the list.
+    invalid_status:
+      layer: request
+      message: This task filter isn't recognized. Refresh the page.
+    invalid_source:
+      layer: request
+      message: This app filter isn't recognized. Choose an app from the list.
+    invalid_date:
+      layer: request
+      message: This date isn't recognized. Choose the date again.
+    invalid_metadata:
+      layer: request
+      message: This download option isn't offered. Choose Download again.
+    unsupported_period:
+      layer: request
+      message: Usage is shown for the current month only. Refresh the page.
+    invalid_json:
+      layer: request
+      message: The gateway couldn't read this request. Refresh the page and try again.
+    unsupported_field:
+      layer: request
+      message: This request has a setting the gateway doesn't accept. Refresh the page and try again.
+    unsupported_intent:
+      layer: request
+      message: This page can only make or edit pictures. Refresh the page and try again.
+    invalid_prompt_mode:
+      layer: request
+      message: The prompt setting isn't recognized. Refresh the page and try again.
+    model_required:
+      layer: request
+      message: No model is chosen. Choose a model.
+    prompt_required:
+      layer: request
+      message: The description is empty. Describe what to make.
+    prompt_too_long:
+      layer: request
+      message: The description is too long. Keep it to {max_chars:,} characters or fewer.
+    invalid_n:
+      layer: request
+      message: That number of pictures isn't allowed. Choose from 1 to {max_images}.
+    edit_needs_source:
+      layer: request
+      message: Editing needs a source picture. Choose a picture to edit.
+    generate_takes_no_source:
+      layer: request
+      message: A new picture doesn't use a source picture. Remove the source picture.
+    one_source:
+      layer: request
+      message: Two source pictures were sent. Choose one.
+    idempotency_conflict:
+      layer: request
+      message: This submission was already used for a different request. Refresh the page before you submit again.
+    input_not_accepted:
+      layer: request
+      message: This workflow doesn't take that input. Remove it and try again.
+      api_message: This workflow doesn't take input '{input}'. Remove it and try again.
+    input_set_by_gateway:
+      layer: request
+      message: The gateway sets that input itself. Remove it and try again.
+      api_message: The gateway sets input '{input}' itself. Remove it and try again.
+    make_unavailable:
+      layer: gateway
+      message: Making pictures isn't set up on this gateway. Ask the owner to set it up.
+    make_busy:
+      layer: gateway
+      message: The gateway is busy making other things. Try again in a minute.
+    make_queue_failed:
+      layer: gateway
+      message: The gateway couldn't save this task to the queue. Try again.
+    input_lost:
+      layer: gateway
+      message: The gateway lost this task's details before it ran. Make it again.
+    restart_while_canceling:
+      layer: gateway
+      message: The gateway restarted while this task was being canceled. Make it again if you still want it.
+    restart_before_finish:
+      layer: gateway
+      message: The gateway restarted before this task finished. Make it again.
+    restart_while_running:
+      layer: gateway
+      message: The gateway restarted while this task was running, and it wasn't run again. Check your Library, then make it again if the picture is missing.
+    alias_misconfigured:
+      layer: gateway
+      message: This model is set up incorrectly on this gateway. Ask the owner to check it.
+      api_message: Model '{model}' is set up incorrectly on this gateway. Ask the owner to check it.
+    alias_not_configured:
+      layer: gateway
+      message: This model isn't set up on this gateway yet. Ask the owner to set it up.
+      api_message: Model '{model}' isn't set up on this gateway yet. Ask the owner to set it up.
+    model_not_deployed:
+      layer: engine
+      message: No engine or provider is running this model right now. Choose another model, or ask the owner to turn one on.
+      api_message: No engine or provider is running model '{model}' right now. Choose another model, or ask the owner to turn one on.
+    make_failed:
+      layer: unknown
+      message: The picture couldn't be made, and we couldn't tell where it stopped. Try again.
+    no_picture:
+      layer: model
+      message: The model finished without a picture. Try again.
+    input_mapping_invalid:
+      layer: workflow
+      message: An input of this workflow is set up incorrectly. Ask the owner to check the workflow.
+      api_message: Input '{input}' of this workflow is set up incorrectly. Ask the owner to check the workflow.

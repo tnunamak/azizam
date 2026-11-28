@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/identity",
+  "title": "identity",
+  "description": "The identity scene and the likeness check (docs/design/CONFIG_HOMES.md, C8c): the face sidecar they call and how long the identity scene waits for the image engine.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_wait_s": {
+      "description": "Seconds the identity scene waits for the image engine, queue time included.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "face_service": {
+      "description": "The CPU face sidecar. It is config data, not a registry service: where to reach it and how its lifecycle driver starts it (the same keys a service record's lifecycle takes). Absent means not configured. It holds no secret.",
+      "x-azizam-entry": "atomic",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "health_endpoint": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "lifecycle": {
+          "type": "object"
+        },
+        "process": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

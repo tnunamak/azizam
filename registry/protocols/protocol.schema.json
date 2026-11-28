@@ -1,0 +1,874 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam/protocol-description/1",
+  "title": "Protocol description (http-v1 grammar, version 1)",
+  "description": "A protocol description is data: how Azizam talks to a kind of engine. Closed schema: unknown keys are refused. Pointers, rules and budgets are checked by gateway/engine_protocol/description.py when the file loads.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "id",
+    "executor",
+    "operations"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "implementation": {
+            "const": "chunked_transcription"
+          }
+        },
+        "required": [
+          "implementation"
+        ]
+      },
+      "then": {
+        "required": [
+          "multipart_filenames"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "implementation": {
+            "const": "multipart_post"
+          }
+        },
+        "required": [
+          "implementation"
+        ]
+      },
+      "then": {
+        "required": [
+          "multipart"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": 1
+    },
+    "retention_facts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object"
+      }
+    },
+    "result_selectors": {
+      "type": "object",
+      "description": "The selector form a binding of this engine accepts (gateway/output_selectors.py). Checked when the file loads; a malformed block refuses the whole description."
+    },
+    "multipart_filenames": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unnamed",
+        "chunk_stem",
+        "normalized"
+      ],
+      "properties": {
+        "unnamed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "chunk_stem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "normalized": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?![\\s\\S])"
+        }
+      }
+    },
+    "binding_fields": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/binding_field"
+      },
+      "description": "Every field a binding of this adapter may hold, and its kind. Closes the binding block (gateway/binding_descriptors.py). Checked when the file loads; an adapter executor only."
+    },
+    "roles": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/binding_field"
+            }
+          }
+        }
+      },
+      "description": "The reviewed implementations a binding's role field may name, each with the fields only that role reads. Code registers an implementation by the same id (gateway/binding_registry.py); an id with no registered code never executes."
+    },
+    "check_targets": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "description": "The name of the reviewed hook (gateway/binding_targets.py) that checks what a binding's engine-side references point at."
+    },
+    "inputs_via": {
+      "enum": [
+        "map",
+        "role"
+      ],
+      "description": "Whether the engine receives inputs only through the binding's input map, or the role's implementation reads them."
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "executor": {
+      "type": "string",
+      "pattern": "^(http-v1|adapter:[a-z][a-z0-9-]{0,63})$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "description": "How messages name this engine to the caller. An adapter executor reads it, so no module spells an engine name."
+    },
+    "serves": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+      },
+      "description": "Capability tokens an engine record carries. An adapter executor uses them to answer for a record that names no protocol."
+    },
+    "binding": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "The key under a workflow manifest's bindings that holds this engine's artifact. An adapter executor reads it, so no module spells an engine name."
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inference": {
+          "$ref": "#/$defs/auth"
+        },
+        "control": {
+          "$ref": "#/$defs/auth"
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/advice"
+      }
+    },
+    "operations": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "implementation": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent"
+      ],
+      "properties": {
+        "intent": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "multipart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "path",
+        "map"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "map": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "binding_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "template",
+            "input_map",
+            "input_list",
+            "target",
+            "target_list",
+            "relative_path",
+            "selectors",
+            "requirements",
+            "service",
+            "role",
+            "text",
+            "enum",
+            "enum_list",
+            "boolean",
+            "retry",
+            "graph_roles"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Longest text, or most list items."
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "pointer": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "scalar": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "bearer",
+            "header",
+            "query",
+            "none"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        },
+        "scheme": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{0,32}$"
+        }
+      }
+    },
+    "advice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "code",
+        "advice"
+      ],
+      "properties": {
+        "status": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 599
+              }
+            }
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "advice": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class"
+      ],
+      "properties": {
+        "class": {
+          "enum": [
+            "inventory",
+            "generate",
+            "control"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "response": {
+          "$ref": "#/$defs/response"
+        },
+        "job": {
+          "$ref": "#/$defs/job"
+        },
+        "run": {
+          "type": "boolean",
+          "description": "True for an operation a workflow run executes (named by the workflow contract's intent). Such an operation declares `poll`; no other operation may."
+        },
+        "poll": {
+          "$ref": "#/$defs/poll"
+        },
+        "files": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/fileInput"
+          },
+          "description": "The named file inputs of this operation, each read by a multipart `file` part from `/files/<name>`. A caller binds a Library asset to a name; the media type of the stored bytes must match `accepts`."
+        }
+      }
+    },
+    "fileInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepts"
+      ],
+      "properties": {
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.+-]*/([a-z0-9][a-z0-9.+-]*|\\*)$"
+          },
+          "description": "Media types the input takes: an exact type (`image/png`) or a whole top-level type (`image/*`)."
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "poll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ramp_s",
+        "interval_s"
+      ],
+      "description": "How often the gateway asks the engine whether a run finished: the first checks wait the `ramp_s` gaps in order (0 is an immediate check), then every `interval_s`. `max_polls` bounds the checks; null leaves the deployment's wait budget as the bound.",
+      "properties": {
+        "ramp_s": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 60
+          }
+        },
+        "interval_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 60
+        },
+        "max_polls": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100000
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "path"
+      ],
+      "properties": {
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "query": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "from"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+              },
+              "from": {
+                "$ref": "#/$defs/pointer"
+              },
+              "default": {
+                "$ref": "#/$defs/scalar"
+              }
+            }
+          }
+        },
+        "headers": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "encoding": {
+              "enum": [
+                "none",
+                "json",
+                "multipart"
+              ]
+            },
+            "base": {
+              "enum": [
+                "empty",
+                "passthrough"
+              ]
+            },
+            "map": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/mappingRule"
+              }
+            },
+            "parts": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/part"
+              }
+            }
+          }
+        }
+      }
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "from"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+        },
+        "kind": {
+          "enum": [
+            "field",
+            "json",
+            "file"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/pointer"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "default": {
+          "$ref": "#/$defs/scalar"
+        }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/pointer"
+        },
+        "present": {
+          "type": "boolean"
+        },
+        "equals": {
+          "$ref": "#/$defs/scalar"
+        },
+        "in": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/scalar"
+          }
+        }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sentinel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "event": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "path": {
+          "$ref": "#/$defs/pointer"
+        },
+        "equals": {
+          "$ref": "#/$defs/scalar"
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "framing": {
+          "enum": [
+            "json",
+            "sse",
+            "ndjson",
+            "binary",
+            "none"
+          ]
+        },
+        "select": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": {
+            "$ref": "#/$defs/pointer"
+          }
+        },
+        "map": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mappingRule"
+          }
+        },
+        "terminal": {
+          "$ref": "#/$defs/terminal"
+        },
+        "stream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "when",
+            "framing"
+          ],
+          "properties": {
+            "when": {
+              "$ref": "#/$defs/predicate"
+            },
+            "framing": {
+              "enum": [
+                "sse",
+                "ndjson"
+              ]
+            },
+            "terminal": {
+              "$ref": "#/$defs/terminal"
+            },
+            "map": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/mappingRule"
+              }
+            },
+            "base": {
+              "enum": [
+                "empty",
+                "passthrough"
+              ]
+            }
+          }
+        },
+        "base": {
+          "enum": [
+            "empty",
+            "passthrough"
+          ]
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "submit",
+        "poll"
+      ],
+      "properties": {
+        "submit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request",
+            "id"
+          ],
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/request"
+            },
+            "id": {
+              "$ref": "#/$defs/pointer"
+            }
+          }
+        },
+        "poll": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request",
+            "status",
+            "interval_s",
+            "max_wait_s"
+          ],
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/request"
+            },
+            "status": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "states"
+              ],
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/pointer"
+                },
+                "states": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "maxProperties": 32,
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "error": {
+              "$ref": "#/$defs/pointer"
+            },
+            "assets": {
+              "$ref": "#/$defs/pointer"
+            },
+            "interval_s": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 300
+            },
+            "max_wait_s": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 86400
+            }
+          }
+        },
+        "fetch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request"
+          ],
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/request"
+            }
+          }
+        },
+        "cancel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request"
+          ],
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/request"
+            }
+          }
+        }
+      }
+    },
+    "mappingRule": {
+      "type": "object",
+      "description": "Rules are validated by the mapping compiler. The rule names are copy, rename, set, default, drop, enum, clamp, stringify, size, when and each; size {from, width, height} reads an OpenAI WIDTHxHEIGHT string into two integers. each maps an array to fresh objects with lexical /item and /index roots; max_rules, combined max_when_depth, cumulative max_selected, mapping_s, max_json_depth and request/response byte budgets apply.",
+      "if": {
+        "required": [
+          "each"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "each"
+        ],
+        "properties": {
+          "each": {
+            "$ref": "#/$defs/each"
+          }
+        }
+      }
+    },
+    "each": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "map"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/pointer"
+        },
+        "to": {
+          "$ref": "#/$defs/pointer"
+        },
+        "map": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mappingRule"
+          }
+        }
+      }
+    }
+  }
+}

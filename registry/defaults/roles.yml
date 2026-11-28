@@ -1,0 +1,4 @@
+# Release defaults of the roles section (docs/design/CONFIG_HOMES.md, C7). Read-only. A release ships no role: the
+# logical model names an install serves come from the owner's overrides (the legacy import of its startup file, or the
+# config API). A role names a backend and a model file of this install, so none belongs in the release.
+{}

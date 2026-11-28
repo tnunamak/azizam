@@ -1,0 +1,138 @@
+# A subscription connection kind: how the operator connects a plan to the gateway, and how a request is sent on it.
+# The gateway code is generic over these rows; a new provider kind is a new row here, not new code.
+# Source: OpenAI's open-source sign-in flow (developers.openai.com/siwc/token-sharing-open-source), checked 2026-11-23.
+id: chatgpt
+display_name: ChatGPT
+mechanism: oauth-pkce-dynamic
+protocol: openai-responses-plan
+billing_mode: plan
+model_prefix: chatgpt-plan
+oauth:
+  authorize_url: https://auth.openai.com/api/accounts/authorize
+  token_url: https://auth.openai.com/api/accounts/oauth/token
+  discovery_url: https://auth.openai.com/.well-known/openid-configuration
+  issuer: https://auth.openai.com
+  resource: https://api.openai.com/v1
+  scope: openid profile email offline_access resource.invoke chatgpt.tokens.use.direct
+  required_scope: chatgpt.tokens.use.direct
+  redirect_uri: http://127.0.0.1:1455/auth/callback
+  dynamic_client_id: dynamic_agent_client
+  agent_name_hint: Azizam
+  host_id_scheme: urn:uuid
+  refresh_margin_seconds: 300
+upstream:
+  base_url: https://api.openai.com/v1
+  models_path: /models
+  models_items_path: models
+  models_id_path: slug
+  models_visibility_path: visibility
+  models_visible_value: list
+  responses_path: /responses
+  # Seconds the plan call waits between bytes. A reasoning model can be silent a long time before its first event.
+  read_timeout_seconds: 300
+  # Each model row may list the reasoning efforts it supports; an effort outside that list is a named 400.
+  models_efforts_path: supported_reasoning_levels
+  models_effort_key: effort
+# What every request carries, as Codex CLI's Responses request builder does
+# (codex-rs/core/src/client.rs build_responses_request: store=false, stream=true, include=[reasoning.encrypted_content],
+# prompt_cache_key). The cache key is derived when the client sends none.
+request:
+  include:
+    - reasoning.encrypted_content
+  cache_key_prefix: azizam-plan
+  # ChatGPT-account traffic picks its prompt-cache shard from these HTTP headers, not from the body's prompt_cache_key
+  # (codex-rs: "ChatGPT derives cache affinity from the Responses session-id header"; Codex PR #44862, issue #44716).
+  # Each carries the request's prompt_cache_key, so one conversation keeps one cache.
+  cache_affinity_headers:
+    - session-id
+    - thread-id
+    - x-client-request-id
+  # A routing value the upstream returns in this response header at the start of a turn. Codex sends it back on every
+  # later request of the same turn and never across turns (codex-rs/core/src/client.rs, ModelClientSession.turn_state;
+  # tests/suite/turn_state.rs). The gateway does the same, in memory only (gateway/turn_state.py). Remove this line to
+  # turn it off.
+  turn_state_header: x-codex-turn-state
+# The plan's own usage windows, read from the response headers of each plan call, as Codex CLI reads them
+# (codex-rs/codex-api/src/rate_limits.rs parse_rate_limit_for_limit, on every Responses stream it opens). Only the numbers
+# are kept. resets_at is a Unix time in seconds; resets_after_seconds is the older form (seconds after the response).
+usage_windows:
+  - used_percent: x-codex-primary-used-percent
+    window_minutes: x-codex-primary-window-minutes
+    resets_at: x-codex-primary-reset-at
+    resets_after_seconds: x-codex-primary-reset-after-seconds
+  - used_percent: x-codex-secondary-used-percent
+    window_minutes: x-codex-secondary-window-minutes
+    resets_at: x-codex-secondary-reset-at
+    resets_after_seconds: x-codex-secondary-reset-after-seconds
+# Where the owner reads plan usage. The direct plan route documents no usage reading (no usage headers, no usage
+# endpoint); its errors page says to "link to ChatGPT settings → Usage"
+# (developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery, checked 2026-11-23).
+usage_page_url: https://chatgpt.com/settings/usage
+# Chat callers commonly send these. Drop and disclose them on the chosen plan
+# route; the Responses unsupported_fields below still take precedence.
+dropped_fields:
+  - max_tokens
+  - max_completion_tokens
+  - temperature
+  - top_p
+  - top_k
+  - stop
+  - user
+# Fields the plan endpoint rejects (OpenAI "preview limitations"); each becomes a named 400 before any upstream call.
+unsupported_fields:
+  - background
+  - conversation
+  - max_output_tokens
+  - max_tool_calls
+  - metadata
+  - moderation
+  - multi_agent
+  - previous_response_id
+  - prompt
+  - prompt_cache_retention
+  - safety_identifier
+  - temperature
+  - top_logprobs
+  - top_p
+  - truncation
+  - user
+# Upstream error codes (error.code, or detail.code) mapped to the gateway's named refusals.
+errors:
+  subscription_sharing_usage_limit_exceeded: {status: 429, code: plan_usage_limit_exceeded, message: "The usage limit of the connected plan was reached. Try again later, or check the usage page of your account."}
+  subscription_sharing_usage_unavailable: {status: 503, code: plan_usage_unavailable, message: "Your plan's usage could not be checked right now. Try again shortly."}
+  subscription_sharing_user_not_eligible: {status: 403, code: plan_not_eligible, message: "Your account or workspace is not eligible to use its plan through this gateway."}
+  subscription_sharing_unsupported_capability: {status: 400, code: plan_unsupported_capability, message: "Your plan does not support this model or feature."}
+  subscription_sharing_route_not_supported: {status: 403, code: plan_route_not_supported, message: "The gateway's plan connection is not allowed to use this endpoint."}
+  subscription_sharing_invalid_user: {status: 503, code: plan_connection_invalid, message: "The gateway's plan connection is no longer valid. The owner needs to connect again."}
+  subscription_sharing_user_unavailable: {status: 503, code: plan_user_unavailable, message: "Your account could not be looked up right now. Try again shortly."}
+  chatpass_v2_scope_not_authorized: {status: 403, code: plan_scope_not_authorized, message: "The gateway's plan connection lacks permission for this request. The owner needs to connect again."}
+  chatpass_v2_invalid_authorization_context: {status: 403, code: plan_scope_not_authorized, message: "The gateway's plan connection lacks permission for this request. The owner needs to connect again."}
+status_errors:
+  # Never a 401 to a client: it did not fail to sign in, the gateway's connection did.
+  400: {status: 400, code: plan_request_rejected, message: "The plan service rejected this request. Check the model, the parameters and the input."}
+  401: {status: 503, code: plan_connection_invalid, message: "The gateway's plan connection is no longer valid. The owner needs to connect again."}
+  403: {status: 403, code: plan_forbidden, message: "The upstream refused this request for your plan."}
+  429: {status: 429, code: plan_usage_limit_exceeded, message: "The usage limit of the connected plan was reached. Try again later."}
+  default: {status: 502, code: plan_upstream_error, message: "The upstream plan service could not complete the request."}
+# Codes of a failed response event, which has no HTTP status, and the status each stands for.
+failed_codes:
+  invalid_prompt: 400
+  context_length_exceeded: 400
+  invalid_image: 400
+  invalid_image_format: 400
+  invalid_base64_image: 400
+  invalid_image_url: 400
+  image_too_large: 400
+  image_too_small: 400
+  image_parse_error: 400
+  image_content_policy_violation: 400
+  unsupported_image_media_type: 400
+  rate_limit_exceeded: 429
+# Refresh failures that mean the owner must connect again.
+terminal_refresh_errors:
+  - invalid_grant
+  - invalid_refresh_token
+  - token_expired
+  - refresh_token_expired
+  - refresh_token_invalidated
+  - refresh_token_reused

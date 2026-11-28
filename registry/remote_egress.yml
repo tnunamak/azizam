@@ -1,0 +1,17 @@
+version: 1
+limits:
+  dns_s: {default: 5, maximum: 15}
+  connect_s: {default: 5, maximum: 15}
+  tls_s: {default: 5, maximum: 15}
+  first_byte_s: {default: 30, maximum: 60}
+  idle_read_s: {default: 15, maximum: 30}
+  total_s: {default: 120, maximum: 600}
+  wire_bytes: {default: 67108864, maximum: 268435456, integer: true}
+  decoded_bytes: {default: 134217728, maximum: 536870912, integer: true}
+  header_bytes: {default: 32768, maximum: 65536, integer: true}
+  header_fields: {default: 100, maximum: 256, integer: true}
+  polls: {default: 60, maximum: 300, integer: true}
+  operations: {default: 4, maximum: 16, integer: true}
+  connections: {default: 1, maximum: 4, integer: true}
+  authority_check_s: {default: 0.05, maximum: 1}
+  authority_refreshes: {default: 3, maximum: 16, integer: true}

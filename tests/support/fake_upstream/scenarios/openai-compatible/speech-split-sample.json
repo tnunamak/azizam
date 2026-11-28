@@ -1,0 +1,37 @@
+{
+  "protocol": "openai-compatible",
+  "name": "speech-split-sample",
+  "description": "One 16-bit sample cut across two chunks; the rest arrives after the clock advances.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "OpenAI-compatible POST /v1/audio/speech with chunked raw PCM (response_format=pcm) as served by speech engines; the gateway reads it in gateway/speech_stream.py via proxy._stream_tts_upstream"
+  },
+  "exchanges": [
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "headers": {
+          "content-type": "audio/pcm"
+        },
+        "body": [
+          {
+            "hex": "01"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "hex": "0002"
+          },
+          {
+            "hex": "00"
+          }
+        ]
+      }
+    }
+  ]
+}

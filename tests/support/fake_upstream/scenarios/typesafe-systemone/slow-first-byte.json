@@ -1,0 +1,28 @@
+{
+  "protocol": "typesafe-systemone",
+  "name": "slow-first-byte",
+  "description": "The provider never sends headers; only the caller's deadline ends the wait.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "gateway/providers.py call_typesafe_systemone (POST /v1/systemone, JSON answers keyed by question, usage.cost)"
+  },
+  "exchanges": [
+    {
+      "id": "decide",
+      "match": {
+        "method": "POST",
+        "path": "/v1/systemone",
+        "headers": {
+          "authorization": "Bearer {{api_key}}"
+        },
+        "json": {
+          "model": "{{model}}"
+        }
+      },
+      "response": {
+        "wait_before_headers": "forever",
+        "json": {}
+      }
+    }
+  ]
+}

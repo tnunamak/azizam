@@ -1,0 +1,244 @@
+"""Media types and kinds of stored assets, as data.
+
+An asset's kind is the top-level part of its IANA media type (``image``, ``video``, ``audio``, ``model``,
+``text``...), or ``file`` when the type is unknown. Nothing here names an engine or an output format that
+only one engine makes: a new output type is one row in ``SUFFIX_MEDIA_TYPES``, or nothing at all when the
+standard library already knows the suffix.
+"""
+from __future__ import annotations
+
+import mimetypes
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+UNKNOWN_MEDIA_TYPE = "application/octet-stream"
+UNKNOWN_KIND = "file"
+
+# The words for a kind live in the shipped data file ``registry/asset_kinds.yml``, one row per IANA top-level type this
+# product has words for. The web reads them from ``GET /me/api/media`` and ``GET /me/api/home`` and keeps only icons of
+# its own. A kind with no row is named from its own type, so a new media type needs no entry to list, filter and download.
+KIND_NAMES_PATH = Path(__file__).resolve().parent.parent / "registry" / "asset_kinds.yml"
+KIND_WORDS = ("label", "plural", "untitled", "input")
+# Optional boolean per kind: whether Home's Recent shows items of this kind. A kind with no row, or a row without it, shows.
+RECENT_FIELD = "recent"
+# Optional per kind: the lowercase plural noun that counts items in a sentence ("videos"). A kind with no such field counts as its name plus "s".
+ITEMS_FIELD = "items"
+# Optional boolean per kind: whether Home names the kind on a tile while a request that makes it is still running.
+# A kind with no row, or a row without it, is shown as a plain "item" until it is done.
+MAKING_FIELD = "making"
+# A stored file whose kind has no prefix of its own is stored under this one, so no kind row may claim it.
+OTHER_ASSET_PREFIX = "ast"
+
+
+def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
+    """Load kind words, optional unique stored-id prefixes and the optional ``recent`` and ``making`` flags from the bundled data file.
+
+    Words must be non-empty text; a prefix must be 1-8 lowercase ASCII letters; ``recent`` and ``making`` must be booleans.
+    Invalid or unknown fields are a fault in what was shipped, so they raise.
+    """
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    rows = document.get("kinds") if isinstance(document, dict) else None
+    if not isinstance(rows, dict) or not rows:
+        raise ValueError(f"{path.name}: expected a 'kinds' mapping")
+    table: dict[str, dict[str, Any]] = {}
+    prefixes: set[str] = set()
+    for kind, words in rows.items():
+        if not isinstance(kind, str) or not kind or kind != kind.lower() or not isinstance(words, dict):
+            raise ValueError(f"{path.name}: kind {kind!r} must be a lower-case name with a mapping of words")
+        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD, ITEMS_FIELD, MAKING_FIELD} or not all(
+            isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS
+        ):
+            raise ValueError(
+                f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix, {RECENT_FIELD}, {ITEMS_FIELD} and {MAKING_FIELD}"
+            )
+        for flag in (RECENT_FIELD, MAKING_FIELD):
+            if flag in words and not isinstance(words[flag], bool):
+                raise ValueError(f"{path.name}: kind {kind!r} {flag} must be true or false")
+        table[kind] = {word: words[word].strip() for word in KIND_WORDS}
+        if RECENT_FIELD in words:
+            table[kind][RECENT_FIELD] = words[RECENT_FIELD]
+        if MAKING_FIELD in words:
+            table[kind][MAKING_FIELD] = words[MAKING_FIELD]
+        if ITEMS_FIELD in words:
+            if not isinstance(words[ITEMS_FIELD], str) or not words[ITEMS_FIELD].strip() or words[ITEMS_FIELD] != words[ITEMS_FIELD].lower():
+                raise ValueError(f"{path.name}: kind {kind!r} {ITEMS_FIELD} must be a lower-case non-empty string")
+            table[kind][ITEMS_FIELD] = words[ITEMS_FIELD].strip()
+        if "prefix" in words:
+            prefix = words["prefix"]
+            if not isinstance(prefix, str) or re.fullmatch(r"[a-z]{1,8}", prefix) is None:
+                raise ValueError(f"{path.name}: kind {kind!r} prefix must be 1-8 lowercase ASCII letters")
+            if prefix in prefixes:
+                raise ValueError(f"{path.name}: kind {kind!r} has duplicate prefix {prefix!r}")
+            if prefix == OTHER_ASSET_PREFIX:
+                raise ValueError(f"{path.name}: kind {kind!r} prefix {prefix!r} is reserved for kinds with no prefix")
+            prefixes.add(prefix)
+            table[kind]["prefix"] = prefix
+    return table
+
+
+KIND_NAMES: dict[str, dict[str, Any]] = load_kind_names()
+
+# Suffix -> media type. These rows win over the standard library, which lacks some types and
+# disagrees on others (for example ``.m4a``).
+SUFFIX_MEDIA_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".glb": "model/gltf-binary",
+    ".gltf": "model/gltf+json",
+    ".obj": "model/obj",
+    ".stl": "model/stl",
+    ".ply": "model/ply",
+    ".usdz": "model/vnd.usdz+zip",
+    # A person's own adapter file (gateway/adapter_upload.py). Its kind, ``adapter``, has no stored-id prefix: it is stored
+    # under the generic one, and the Library derives the kind from this row.
+    ".safetensors": "adapter/safetensors",
+}
+
+
+def media_type_for_suffix(suffix: str) -> str:
+    """The media type for a file suffix such as ``.glb``; unknown suffixes give ``application/octet-stream``."""
+    suffix = (suffix or "").lower()
+    known = SUFFIX_MEDIA_TYPES.get(suffix)
+    if known:
+        return known
+    guessed, _encoding = mimetypes.guess_type(f"x{suffix}") if suffix else (None, None)
+    return guessed or UNKNOWN_MEDIA_TYPE
+
+
+def kind_for_media_type(media_type: str | None) -> str:
+    """The kind of an asset with this media type: its top-level type, or ``file`` when unknown."""
+    top, _, rest = str(media_type or "").partition("/")
+    top = top.strip().lower()
+    if not top or not rest or (top == "application" and rest.strip().lower() == "octet-stream"):
+        return UNKNOWN_KIND
+    return top
+
+
+def kind_names(kind: str) -> dict[str, Any]:
+    """``{kind, label, plural, untitled, input, recent}`` for a kind; a kind with no row is named from its own type.
+
+    ``recent`` says whether Home's Recent shows items of the kind; it is true unless the kind's row says false."""
+    row = KIND_NAMES.get(kind)
+    if row is None:
+        word = kind[:1].upper() + kind[1:] if kind else "File"
+        row = {"label": word, "plural": word, "untitled": word, "input": word.lower()}
+    return {"kind": kind, **{word: row[word] for word in KIND_WORDS}, RECENT_FIELD: row.get(RECENT_FIELD, True)}
+
+
+def making_kinds() -> list[str]:
+    """The kinds Home names on a tile while a request that makes them runs, in the data file's order (``making: true``)."""
+    return [kind for kind, row in KIND_NAMES.items() if row.get(MAKING_FIELD) is True]
+
+
+def items_word(kind: str) -> str:
+    """The lowercase plural noun for counting items of a kind in a sentence ("videos"); a kind with no field is its name plus "s"."""
+    return KIND_NAMES.get(kind, {}).get(ITEMS_FIELD) or f"{kind}s"
+
+
+def input_word(modality: str) -> str:
+    """What a person calls a file of this modality when a workflow asks for it: "picture", "recording", "clip"."""
+    return kind_names(str(modality or "").strip().lower())["input"]
+
+
+def file_words(media_type: str | None) -> dict[str, str | None]:
+    """How a person names a file of this media type: ``{"word": "picture", "format": "PNG"}``. The format is None when
+    the type has no known suffix."""
+    suffix = suffix_for_media_type(media_type)
+    return {"word": input_word(kind_for_media_type(media_type)), "format": suffix.lstrip(".").upper() if suffix != ".bin" else None}
+
+
+def suffix_for_media_type(media_type: str | None) -> str:
+    """A file suffix for a media type, such as ``.glb`` for ``model/gltf-binary``; ``.bin`` when none is known."""
+    clean = str(media_type or "").split(";")[0].strip().lower()
+    for suffix, known in SUFFIX_MEDIA_TYPES.items():
+        if known == clean:
+            return suffix
+    guessed = mimetypes.guess_extension(clean) if clean else None
+    return guessed or ".bin"
+
+
+def download_file_name(stem: str | None, suffix: str | None, media_type: str | None, fallback: str = "download") -> str:
+    """The name a saved copy gets: a safe stem plus the stored suffix, or the suffix the media type gives."""
+    clean = "".join(ch if ch.isalnum() or ch in "-_. ()" else "-" for ch in str(stem or "")).strip(" .-")[:80]
+    extension = str(suffix or "").lower()
+    if not extension.startswith(".") or len(extension) < 2:
+        extension = suffix_for_media_type(media_type)
+    return f"{clean or fallback}{extension}"
+
+
+def asset_prefixes_by_top_type(kinds: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """The stored-id prefixes declared by validated kind rows; rows without one are omitted."""
+    return {kind: row["prefix"] for kind, row in kinds.items() if "prefix" in row}
+
+
+# A kind without a configured prefix is stored under the generic prefix.
+ASSET_PREFIX_BY_TOP_TYPE: dict[str, str] = asset_prefixes_by_top_type(KIND_NAMES)
+
+
+def asset_prefix_for_media_type(media_type: str | None) -> str:
+    """The asset id prefix a stored file of this media type gets."""
+    return ASSET_PREFIX_BY_TOP_TYPE.get(kind_for_media_type(media_type), OTHER_ASSET_PREFIX)
+
+
+def asset_kind_names_by_prefix() -> dict[str, str]:
+    """Stored-id prefix -> kind name, e.g. ``{"img": "image"}``; kinds without a prefix are omitted."""
+    return {prefix: kind for kind, prefix in ASSET_PREFIX_BY_TOP_TYPE.items()}
+
+
+def asset_suffixes_by_prefix() -> dict[str, tuple[str, ...]]:
+    """Stored-id prefix -> the suffixes a stored file under it may have, in probe order.
+
+    Prefixes and suffixes both follow ``SUFFIX_MEDIA_TYPES`` order (the gateway's "one of" error lists the prefixes
+    in this order); a prefixed kind with no suffix row follows with none. The generic prefix holds any other stored
+    file, whatever its suffix, so it comes last and probes none.
+    """
+    by_prefix: dict[str, list[str]] = {}
+    for suffix, media_type in SUFFIX_MEDIA_TYPES.items():
+        prefix = ASSET_PREFIX_BY_TOP_TYPE.get(kind_for_media_type(media_type))
+        if prefix:
+            by_prefix.setdefault(prefix, []).append(suffix)
+    table = {prefix: tuple(suffixes) for prefix, suffixes in by_prefix.items()}
+    for prefix in ASSET_PREFIX_BY_TOP_TYPE.values():
+        table.setdefault(prefix, ())
+    table[OTHER_ASSET_PREFIX] = ()
+    return table
+
+
+@dataclass(frozen=True)
+class OutputInput:
+    """One file a workflow was given, kept so the output can say what it was made from."""
+
+    data: bytes
+    #: The name the caller gave it (``garden-gnome.png``); only its stem is shown.
+    name: str
+    media_type: str
+
+
+@dataclass(frozen=True)
+class WorkflowOutput:
+    """A file a workflow made, with what made it. Any workflow route can hand this to the asset store."""
+
+    data: bytes
+    suffix: str
+    workflow_name: str | None
+    request_id: str
+    inputs: tuple[OutputInput, ...] = ()
+    #: Whether the workflow takes words from the caller. When it does not, the Library does not say a prompt is missing.
+    takes_text: bool = True

@@ -1,0 +1,64 @@
+{
+  "entries": [
+    {
+      "date": "2026-11-23",
+      "title": "Better default videos and steadier plan chats",
+      "detail": "New videos now use the higher-quality video model first; the faster one is still there when you pick it. Chats on a connected ChatGPT plan that use tools keep reusing their earlier steps, and the plan page now lists each model with its reasoning levels."
+    },
+    {
+      "date": "2026-11-23",
+      "title": "Connect and check a ChatGPT plan in one place",
+      "detail": "The owner can now connect a ChatGPT plan, connect it again after it signs out, import an existing sign-in, or disconnect it, all on one page. That page says whether the plan is working and when it last failed. A connected plan no longer shows a false warning about a missing key, and its models show as included in the plan."
+    },
+    {
+      "date": "2026-11-23",
+      "title": "ChatGPT plan chats can reuse their earlier turns",
+      "detail": "Each request on a connected ChatGPT plan now tells the plan which conversation it belongs to, so the plan can reuse the part it has already seen. This should lower plan usage on long chats."
+    },
+    {
+      "date": "2026-11-23",
+      "title": "Photo to 3D says when it waits for the graphics card",
+      "detail": "While a Photo to 3D job waits for graphics memory, the page now says it is waiting and will start when memory is free."
+    },
+    {
+      "date": "2026-11-23",
+      "title": "ChatGPT plan models under their own names",
+      "detail": "Plan models are listed by their plain names, such as gpt-6.1-terra, and requests for them go to the plan. A name with the chatgpt-plan/ prefix still sends a request to the plan only."
+    },
+    {
+      "date": "2026-11-23",
+      "title": "Idle speech engines make room on the graphics card",
+      "detail": "When a job such as Photo to 3D needs more graphics memory than is free, idle speech and transcription engines now free theirs, so the job can start. They load again on their next request."
+    },
+    {
+      "date": "2026-11-23",
+      "title": "ChatGPT plan chat goes to the plan",
+      "detail": "Chat requests to a connected ChatGPT plan model are now answered by that plan, not by a local model with a similar name."
+    },
+    {
+      "date": "2026-11-22",
+      "title": "Connect a ChatGPT plan once",
+      "detail": "The owner can connect a ChatGPT plan to the gateway. People and apps get its models only through the access plans the owner gives them."
+    },
+    {
+      "date": "2026-11-22",
+      "title": "Choose the text encoder for Klein images",
+      "detail": "Both Klein image workflows list both text encoders, so you can pick the one you want."
+    },
+    {
+      "date": "2026-11-22",
+      "title": "Photo to 3D waits for a busy graphics card",
+      "detail": "When the graphics card is busy, a Photo to 3D job now waits inside the job and starts when memory is free, instead of failing. Cancel stops the wait."
+    },
+    {
+      "date": "2026-11-22",
+      "title": "Clearer busy-card messages",
+      "detail": "When a job cannot get enough graphics memory, the message says how much was short and whether idle models were already freed."
+    },
+    {
+      "date": "2026-11-22",
+      "title": "Images keep their details",
+      "detail": "Generated and edited images keep their photo details (EXIF), and WebP output is lossless."
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "protocol": "openai-compatible",
+  "name": "stream-split-event",
+  "description": "A streamed chat completion whose SSE events arrive cut across chunks: inside JSON, inside a UTF-8 multibyte character, and inside the [DONE] event. Each cut follows at least one complete event, so a test can release the next chunk once the client has that event. The upstream then keeps the socket open.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation"
+  },
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "json": {
+          "model": "{{model}}",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "body": [
+          {
+            "text": "data: {\"id\":\"chatcmpl-fk-split\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"{{model}}\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fk-split\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"{{model}}\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "text": "lo\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fk-split\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"{{model}}\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" caf"
+          },
+          {
+            "hex": "c3"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "hex": "a9"
+          },
+          {
+            "text": "\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fk-split\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"{{model}}\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DO"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "text": "NE]\n\n"
+          },
+          {
+            "wait": "forever"
+          }
+        ]
+      }
+    }
+  ]
+}

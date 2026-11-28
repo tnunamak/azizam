@@ -1,0 +1,49 @@
+# The sign-in policy: the values browser sign-in uses when the sign-in provider's config leaves them out, and the
+# lifetimes and bounds of a sign-in attempt.
+#
+# This file is data. registry/sign_in_policy.schema.json is its closed schema and gateway/sign_in_policy.py reads it;
+# the gateway holds none of these values of its own. A value in the provider config (admin.db oidc_provider_config, or
+# the startup file's admin.oidc block until admin.db holds one) wins over the provider and session_cookie defaults here.
+# The file holds no secret, issuer, client id or address.
+#
+# Protocol facts are not here and stay in code: the "openid" scope that OIDC requires (the schema also refuses default
+# scopes without it), PKCE S256, the 256-bit state and nonce, the 32-byte minimum signing key, and the host-only
+# binding cookie's prefix and flags.
+
+# What the provider config gets when it omits a key. An explicit empty scope list stays empty: only an omitted one
+# receives these scopes. display_name_max_chars bounds the provider's public name.
+provider:
+  enabled: false
+  scopes: [openid, email, profile]
+  groups_claim: groups
+  clock_skew_seconds: 60
+  display_name_max_chars: 80
+
+# The signed admin-session cookie, when the provider config's cookie block omits them. max_age_seconds is not the
+# session lifetime (that is the owner's session policy, gateway/session_policy.py): it is how long a role the provider
+# granted stays confirmed after a sign-in, and the lifetime of a session built without a policy.
+session_cookie:
+  name: opx_admin_session
+  max_age_seconds: 28800
+
+# One browser sign-in attempt, from the redirect to the provider to its callback. seconds is both how long the server
+# keeps the pending state and the max-age of the browser cookie that binds the attempt to its browser: they guard the
+# same attempt. max_pending bounds how many attempts may wait at once.
+pending_login:
+  seconds: 600
+  max_pending: 1024
+
+# How far a provider's auth_time may fall before a sign-in began, or after the token's iat, and still count as "signed
+# in again" (decision D40, docs/ops/SIGN_IN_SESSIONS.md). Distinct from provider.clock_skew_seconds, which the owner may
+# change and which checks exp and iat.
+auth_time_clock_skew_seconds: 60
+
+# The provider's signing keys (JWKS): how long a fetched key set is used, and how often an unknown key id may force one
+# refresh.
+jwks:
+  ttl_seconds: 300
+  refresh_interval_seconds: 30
+
+# How long a plan connection's OAuth sign-in attempt (gateway/connections/oauth_pkce.py) stays open, and how long its
+# loopback callback listener waits.
+connection_attempt_seconds: 600

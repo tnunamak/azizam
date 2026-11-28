@@ -1,0 +1,215 @@
+[
+  {
+    "file": "kitchen-morning.webp",
+    "kind": "image",
+    "prompt": "A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.",
+    "model": "krea2-turbo",
+    "owner": "sam",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "garden-plan.webp",
+    "kind": "image",
+    "prompt": "An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "school-ecosystem.webp",
+    "kind": "image",
+    "prompt": "A beautifully crafted school science project showing a miniature pond ecosystem in a glass terrarium with moss, stones and tiny plants on a classroom desk. Editorial photograph, no text.",
+    "model": "krea2-turbo",
+    "owner": "alex",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "dog-window.webp",
+    "kind": "image",
+    "prompt": "A golden retriever asleep beside a sunlit living room window, knitted cream blanket and houseplants, quiet ordinary family afternoon, candid photography.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "coastal-weekend.webp",
+    "kind": "image",
+    "prompt": "A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence, blue sea and distant fishing boats, sunny family weekend mood, natural travel photography.",
+    "model": "krea2-turbo",
+    "owner": "sam",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "reading-nook.webp",
+    "kind": "image",
+    "prompt": "A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt, rain on the window, warm lamp light, tasteful interior photography.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "solar-project.webp",
+    "kind": "image",
+    "prompt": "A tiny handmade solar-powered model house made of balsa wood with a small solar panel on the roof on a teenager workbench, tools and colored pencils, detailed natural photography.",
+    "model": "krea2-turbo",
+    "owner": "alex",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "apple-tart.webp",
+    "kind": "image",
+    "prompt": "A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, folded linen towel and a bowl of autumn apples, gentle window light, food photography.",
+    "model": "krea2-turbo",
+    "owner": "sam",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "cat-bookshelf.webp",
+    "kind": "image",
+    "prompt": "A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in family living room, soft afternoon light, candid photograph.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "mountain-cabin.webp",
+    "kind": "image",
+    "prompt": "A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe pulled onto a pebble shore, peaceful family holiday scene, travel photograph.",
+    "model": "krea2-turbo",
+    "owner": "sam",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "wildflower-study.webp",
+    "kind": "image",
+    "prompt": "A hand-painted watercolor study of local wildflowers on a sketchbook page, paint palette and brushes on a teenager desk, warm natural light, charming believable craft photograph, no lettering.",
+    "model": "krea2-turbo",
+    "owner": "alex",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "herb-window.webp",
+    "kind": "image",
+    "prompt": "Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old brass watering can, morning sun and soft shadows, honest domestic photograph.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "birthday-table.webp",
+    "kind": "image",
+    "prompt": "A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flowers in jam jars and warm string lights, intimate family celebration, no people no text, editorial photograph.",
+    "model": "krea2-turbo",
+    "owner": "sam",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "train-journey.webp",
+    "kind": "image",
+    "prompt": "View from a train window over rolling countryside in autumn, a travel journal and two takeaway coffee cups on the small table, warm quiet family travel photograph.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "birdhouse.webp",
+    "kind": "image",
+    "prompt": "A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a backyard, a small bird nearby, spring sunlight, thoughtful school craft project photograph.",
+    "model": "krea2-turbo",
+    "owner": "alex",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "rainy-patio.webp",
+    "kind": "image",
+    "prompt": "Rain drops on a small covered patio with terracotta planters, a folded green umbrella and two wooden chairs, warm light through a kitchen door, cozy documentary photograph.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "picnic-lake.webp",
+    "kind": "image",
+    "prompt": "A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwiches, shoes placed neatly on grass, golden afternoon light, candid travel photograph.",
+    "model": "krea2-turbo",
+    "owner": "sam",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "garden-evening.webp",
+    "kind": "image",
+    "prompt": "A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch lights, the first stars above, peaceful lived-in home photography.",
+    "model": "krea2-turbo",
+    "owner": "robin",
+    "width": 768,
+    "height": 768
+  },
+  {
+    "file": "garden-reminder.mp3",
+    "kind": "audio",
+    "prompt": "The tomatoes are ready to pick. Please water the herb pots before dinner.",
+    "model": "tts-1",
+    "owner": "robin",
+    "duration_s": 4.28
+  },
+  {
+    "file": "school-intro.mp3",
+    "kind": "audio",
+    "prompt": "Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.",
+    "model": "tts-1",
+    "owner": "alex",
+    "duration_s": 5.48
+  },
+  {
+    "file": "weekend-plan.mp3",
+    "kind": "audio",
+    "prompt": "On Saturday we will take the train to the coast, walk by the harbor, and have a picnic.",
+    "model": "tts-1",
+    "owner": "sam",
+    "duration_s": 4.96
+  },
+  {
+    "file": "welcome-june.mp3",
+    "kind": "audio",
+    "prompt": "Hi June. Welcome to our household gateway. You can try a voice message or make a picture of your garden.",
+    "model": "tts-1",
+    "owner": "sam",
+    "duration_s": 5.92
+  },
+  {
+    "file": "recipe-note.mp3",
+    "kind": "audio",
+    "prompt": "For the apple tart, slice the apples thinly and bake until the pastry is golden. Let it cool before serving.",
+    "model": "tts-1",
+    "owner": "robin",
+    "duration_s": 6.84
+  },
+  {
+    "file": "garden-breeze.mp4",
+    "poster": "garden-breeze-poster.webp",
+    "kind": "video",
+    "prompt": "A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering can beside the raised bed, quiet warm family afternoon, slow steady camera. Audio: birds chirping softly.",
+    "model": "ltx-2.5",
+    "owner": "robin",
+    "duration_s": 3.04,
+    "width": 768,
+    "height": 512
+  }
+]

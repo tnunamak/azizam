@@ -1,0 +1,13 @@
+schema_version: 1
+groups:
+  clip_delivery:
+    namespace: com.azizam.video
+    controls:
+      retain_sound:
+        field: audio
+        type: boolean
+        default: true
+    errors:
+      block_not_object: "extensions.{namespace} must be an object"
+      unknown_control: "{field} is not a video control"
+      invalid_value: "{field} must be true or false"

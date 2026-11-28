@@ -1,0 +1,10 @@
+# Names the gateway publishes about itself in its model listings.
+# catalog_owner: the `owned_by` of a listed record that declares no owner of its own.
+# loaded_model_aliases: the router names that serve whatever model the lifecycle service has loaded.
+#   `fast` marks the variant that answers from the loaded model without reasoning.
+#   Exactly one row is fast and exactly one is not.
+schema_version: 1
+catalog_owner: azizam
+loaded_model_aliases:
+  - {name: current, fast: false}
+  - {name: current-fast, fast: true}

@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Record one synthetic request set against a local engine into a replay transcript.
+
+Manual use only, by the owner, with explicit authorization each time (TEST_STRATEGY 4.7).
+No agent or timer runs this. It talks to the engine DIRECTLY (a literal loopback
+address from canaries.toml), never through gateway ports 5000 or 15000, and only
+while no inference is active (GPU utilization and the media queue).
+
+  scripts/record-upstream --check [--canaries FILE]
+  scripts/record-upstream --service ID --set NAME [--canaries FILE] [--dry-run]
+
+canaries.toml: --canaries, else $AZIZAM_CANARIES, else tests/live/canaries.toml.
+Idle means no active inference: every GPU at or under 5% utilization in three samples
+about 10 s apart, and, when --queue-url is given, an empty media-engine queue. The
+recorder waits up to 30 minutes for that, never interrupts anything, and re-checks
+before every request. The gateway (ports 5000/15000) is never contacted.
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from tests.support.replay import canaries, idle, recorder, transcript  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--canaries", type=Path)
+    parser.add_argument("--check", action="store_true", help="validate canaries.toml and exit")
+    parser.add_argument("--service")
+    parser.add_argument("--set", dest="set_name")
+    parser.add_argument("--queue-url", help="the media engine's queue endpoint (GET); both lists must be empty")
+    parser.add_argument("--dry-run", action="store_true", help="record, validate and print a summary; write nothing")
+    args = parser.parse_args()
+    path = args.canaries or Path(os.environ.get("AZIZAM_CANARIES") or ROOT / "tests/live/canaries.toml")
+    try:
+        data = canaries.load(path)
+    except (OSError, ValueError) as error:
+        print(f"record-upstream: {type(error).__name__}: {str(error).splitlines()[0] if str(error) else ''}", file=sys.stderr)
+        if isinstance(error, ValueError):
+            print("\n".join(str(error).splitlines()[1:]), file=sys.stderr)
+        return 2
+    if args.check:
+        print(f"record-upstream: {len(data['services'])} service row(s) valid")
+        return 0
+    if not (args.service and args.set_name):
+        parser.error("--service and --set are required")
+    service = next((s for s in data["services"] if s["id"] == args.service), None)
+    if service is None:
+        parser.error(f"no service {args.service!r} in the canaries file")
+    checks = [idle.gpu_idle] + ([lambda: idle.queue_idle(args.queue_url)] if args.queue_url else [])
+    check = idle.both(*checks)
+    waited = idle.wait_until_idle(check)
+    if waited:
+        print(f"record-upstream: still not idle after waiting: {waited}", file=sys.stderr)
+        return 1
+    try:
+        result = recorder.record(service, args.set_name, idle_check=check)
+        if args.dry_run:
+            print(f"record-upstream: dry run ok: {result['name']}, {len(result['exchanges'])} exchange(s), nothing written")
+        else:
+            print(f"record-upstream: wrote {transcript.write(result).relative_to(ROOT)}")
+    except (recorder.RecordingError, ValueError, FileExistsError) as error:
+        print(f"record-upstream: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
